@@ -1,0 +1,8 @@
+[package]
+name = "fabricator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "d18259e33bd360beb6f8e07a86fc774512aec965", features = ["allocator-api2", "hashbrown"] }
+thiserror = "1.0"
