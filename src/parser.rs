@@ -1,5 +1,3 @@
-use std::fmt;
-
 use thiserror::Error;
 
 use crate::{
@@ -119,28 +117,28 @@ pub struct ParseError {
 pub fn parse<S>(source: &str, interner: S) -> Result<Block<S::String>, ParseError>
 where
     S: StringInterner,
-    <S as StringInterner>::String: fmt::Debug,
 {
-    Parser {
-        lexer: Lexer::new(source, interner),
-        peek_buffer: Vec::new(),
-    }
-    .parse()
+    Parser::new(source, interner).parse()
 }
 
 struct Parser<'a, S: StringInterner> {
     lexer: Lexer<'a, S>,
-    peek_buffer: Vec<(Token<S::String>, LineNumber)>,
+    look_ahead_buffer: Vec<Option<(Token<S::String>, LineNumber)>>,
 }
 
-impl<'a, S: StringInterner> Parser<'a, S>
-where
-    <S as StringInterner>::String: fmt::Debug,
-{
+impl<'a, S: StringInterner> Parser<'a, S> {
+    fn new(source: &'a str, interner: S) -> Self {
+        Parser {
+            lexer: Lexer::new(source, interner),
+            look_ahead_buffer: Vec::new(),
+        }
+    }
+
     fn parse(&mut self) -> Result<Block<S::String>, ParseError> {
         let block = self.parse_block()?;
 
-        if let Some((token, line_number)) = self.look_ahead(0)? {
+        self.look_ahead(1)?;
+        if let Some((token, line_number)) = self.peek(0) {
             Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(token),
@@ -156,20 +154,25 @@ where
     fn parse_block(&mut self) -> Result<Block<S::String>, ParseError> {
         let mut statements = Vec::new();
         loop {
-            if matches!(self.peek(0)?, None | Some(&Token::RightBrace)) {
+            self.look_ahead(1)?;
+            if matches!(self.peek(0), None | Some((Token::RightBrace, _))) {
                 break;
             }
 
             statements.push(self.parse_statement()?);
-            if matches!(self.peek(0)?, Some(Token::SemiColon)) {
+
+            self.look_ahead(1)?;
+            if matches!(self.peek(0), Some((Token::SemiColon, _))) {
                 self.advance(1);
             }
         }
+
         Ok(Block { statements })
     }
 
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
-        match self.expect_ahead(0, "<statement>")? {
+        self.look_ahead(2)?;
+        match self.peek_expected(0, "<statement>")? {
             (Token::For, _) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
@@ -206,41 +209,42 @@ where
                 Ok(Statement::Block(block))
             }
             (token, line_number) => {
-                if matches!(token, Token::Identifier(_)) {
-                    if let Some(assignment_op) = self.peek(1)?.and_then(get_assignment_operator) {
-                        let Ok(Some((Token::Identifier(name), _))) = self.next() else {
-                            unreachable!()
-                        };
-                        self.advance(1);
-                        let value = self.parse_expression()?;
-                        return Ok(Statement::Assignment(AssignmentStatement {
-                            name,
-                            op: assignment_op,
-                            value: Box::new(value),
-                        }));
+                if let (Token::Identifier(_), Some(assignment_op)) = (
+                    token,
+                    self.peek(1).and_then(|(t, _)| get_assignment_operator(t)),
+                ) {
+                    let Ok(Some((Token::Identifier(name), _))) = self.next() else {
+                        unreachable!()
+                    };
+                    self.advance(1);
+                    let value = self.parse_expression()?;
+                    Ok(Statement::Assignment(AssignmentStatement {
+                        name,
+                        op: assignment_op,
+                        value: Box::new(value),
+                    }))
+                } else {
+                    match self.parse_suffixed_expression() {
+                        Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
+                        Ok(_) => Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: "<non-statement expression>",
+                                expected: "<statement>",
+                            },
+                            line_number,
+                        }),
+                        Err(ParseError {
+                            kind: ParseErrorKind::Unexpected { unexpected, .. },
+                            line_number,
+                        }) => Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected,
+                                expected: "<statement>",
+                            },
+                            line_number,
+                        }),
+                        Err(err) => Err(err),
                     }
-                }
-
-                match self.parse_suffixed_expression() {
-                    Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
-                    Ok(_) => Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: "<non-statement expression>",
-                            expected: "<statement>",
-                        },
-                        line_number,
-                    }),
-                    Err(ParseError {
-                        kind: ParseErrorKind::Unexpected { unexpected, .. },
-                        line_number,
-                    }) => Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected,
-                            expected: "<statement>",
-                        },
-                        line_number,
-                    }),
-                    Err(err) => Err(err),
                 }
             }
         }
@@ -254,7 +258,9 @@ where
         &mut self,
         priority_limit: OperatorPriority,
     ) -> Result<Expression<S::String>, ParseError> {
-        let mut expr = if let Some(unary_op) = self.peek(0)?.and_then(get_unary_operator) {
+        self.look_ahead(1)?;
+        let mut expr = if let Some(unary_op) = self.peek(0).and_then(|(t, _)| get_unary_operator(t))
+        {
             self.advance(1);
             Expression::Unary(
                 unary_op,
@@ -264,7 +270,8 @@ where
             self.parse_simple_expression()?
         };
 
-        while let Some(binary_op) = self.peek(0)?.and_then(|t| get_binary_operator(t)) {
+        self.look_ahead(1)?;
+        while let Some(binary_op) = self.peek(0).and_then(|(t, _)| get_binary_operator(t)) {
             let (left_priority, right_priority) = binary_priority(binary_op);
             if left_priority <= priority_limit {
                 break;
@@ -281,8 +288,9 @@ where
     fn parse_suffixed_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
         let mut expr = self.parse_primary_expression()?;
         loop {
-            match self.peek(0)? {
-                Some(Token::LeftParen) => {
+            self.look_ahead(1)?;
+            match self.peek(0) {
+                Some((Token::LeftParen, _)) => {
                     self.advance(1);
                     let arguments = self.parse_expression_list()?;
                     expr = Expression::Call(FunctionCall {
@@ -330,9 +338,11 @@ where
     fn parse_expression_list(&mut self) -> Result<Vec<Expression<S::String>>, ParseError> {
         let mut expressions = Vec::new();
         expressions.push(self.parse_expression()?);
-        while matches!(self.peek(0)?, Some(Token::Comma)) {
+        self.look_ahead(1)?;
+        while matches!(self.peek(0), Some((Token::Comma, _))) {
             self.advance(1);
             expressions.push(self.parse_expression()?);
+            self.look_ahead(1)?;
         }
         Ok(expressions)
     }
@@ -379,59 +389,66 @@ where
         }
     }
 
-    // Returns the `n`th token ahead in the token stream if it exists, along with the line number on
-    // which it is found.
-    fn look_ahead(
-        &mut self,
-        n: usize,
-    ) -> Result<Option<(&Token<S::String>, LineNumber)>, ParseError> {
-        while self.peek_buffer.len() <= n {
+    // Look ahead `n` tokens in the lexer, making them available to peek methods.
+    fn look_ahead(&mut self, n: usize) -> Result<(), ParseError> {
+        while self.look_ahead_buffer.len() < n {
             self.lexer.skip_whitespace();
             let line_number = self.lexer.line_number();
             if let Some(token) = self.lexer.read_token().map_err(|e| ParseError {
                 kind: ParseErrorKind::LexError(e),
                 line_number: self.lexer.line_number(),
             })? {
-                self.peek_buffer.push((token, line_number));
+                self.look_ahead_buffer.push(Some((token, line_number)));
             } else {
-                break;
+                self.look_ahead_buffer.push(None);
             }
         }
-        Ok(self.peek_buffer.get(n).map(|(t, ln)| (t, *ln)))
+        Ok(())
     }
 
-    // Returns the `n`th token ahead in the token stream, and if it doesn't exist produces a
-    // `ParseErrorKind::EndOfStream` error.
-    fn expect_ahead(
-        &mut self,
+    // Advance the token stream `n` tokens.
+    //
+    // # Panics
+    //
+    // Panics if the given `n` is less than the number of tokens we have previously buffered with
+    // `Parser::look_ahead`.
+    fn advance(&mut self, n: usize) {
+        self.look_ahead_buffer.drain(0..n);
+    }
+
+    // Returns a reference to the `n`th token ahead in the look-ahead token buffer if it exists,
+    // along with the line number on which it is found.
+    //
+    // # Panics
+    //
+    // Panics if the given `n` is less than the number of tokens we have previously buffered with
+    // `Parser::look_ahead`.
+    fn peek(&self, n: usize) -> Option<(&Token<S::String>, LineNumber)> {
+        self.look_ahead_buffer[n].as_ref().map(|(t, ln)| (t, *ln))
+    }
+
+    // Equivalent to `Parser::peek`, except if the the `n`th token ahead in the token stream doesn't
+    // exist produces a `ParseErrorKind::EndOfStream` error.
+    //
+    // # Panics
+    //
+    // Panics if the given `n` is less than the number of tokens we have previously buffered with
+    // `Parser::look_ahead`.
+    fn peek_expected(
+        &self,
         n: usize,
         expected: &'static str,
     ) -> Result<(&Token<S::String>, LineNumber), ParseError> {
-        if self.look_ahead(n)?.is_some() {
-            // Workaround for lack of polonius borrow checker:
-            // https://github.com/rust-lang/rust/issues/54663
-            Ok(self.look_ahead(n).unwrap().unwrap())
-        } else {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream { expected },
-                line_number: self.lexer.line_number(),
-            })
-        }
-    }
-
-    // Equivalent to `Parser::look_ahead` but only returns the token.
-    fn peek(&mut self, n: usize) -> Result<Option<&Token<S::String>>, ParseError> {
-        Ok(self.look_ahead(n)?.map(|(t, _)| t))
+        self.peek(n).ok_or_else(|| ParseError {
+            kind: ParseErrorKind::EndOfStream { expected },
+            line_number: self.lexer.line_number(),
+        })
     }
 
     // Return the next token in the token stream if it exists and advance the stream.
     fn next(&mut self) -> Result<Option<(Token<S::String>, LineNumber)>, ParseError> {
         self.look_ahead(1)?;
-        Ok(if !self.peek_buffer.is_empty() {
-            Some(self.peek_buffer.remove(0))
-        } else {
-            None
-        })
+        Ok(self.look_ahead_buffer.remove(0))
     }
 
     // Return the next token in the token stream, producing a `ParseErrorKind::EndOfStream` error if
@@ -448,19 +465,6 @@ where
                 line_number: self.lexer.line_number(),
             })
         }
-    }
-
-    // Advance the token stream `n` tokens.
-    //
-    // # Panics
-    //
-    // Panics if this would advance over tokens that have not been observed with a peek method.
-    fn advance(&mut self, n: usize) {
-        assert!(
-            n <= self.peek_buffer.len(),
-            "cannot advance over un-peeked tokens"
-        );
-        self.peek_buffer.drain(0..n);
     }
 }
 

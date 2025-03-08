@@ -220,7 +220,7 @@ where
         }
     }
 
-    /// Current line number of the source file.
+    /// Returns the current line number of the source file.
     pub fn line_number(&self) -> LineNumber {
         LineNumber(self.line_number)
     }
@@ -266,6 +266,9 @@ where
         }
     }
 
+    // Read and return the next token in the stream.
+    //
+    // Returns `None` once the token stream is finished.
     pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexError> {
         self.skip_whitespace();
 
