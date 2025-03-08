@@ -188,13 +188,16 @@ pub enum LexError {
     BadNumber,
 }
 
-/// A 0-indexed line number of the current source input.
+/// The current line number of the source input.
+///
+/// It is stored as 0-indexed internally, but will display as a more human-readable 1-indexed line
+/// number.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct LineNumber(pub u64);
+pub struct LineNumber(pub usize);
 
 impl fmt::Display for LineNumber {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", u128::from(self.0) + 1)
+        write!(f, "{}", self.0 + 1)
     }
 }
 
@@ -203,7 +206,7 @@ pub struct Lexer<'a, S> {
     interner: S,
     peek_buffer: Vec<char>,
     string_buffer: String,
-    line_number: u64,
+    line_number: usize,
 }
 
 impl<'a, S> Lexer<'a, S>
@@ -227,8 +230,8 @@ where
 
     /// Skips any leading whitespace before the next token in the stream.
     ///
-    /// It is not necessary to call this, but this will make the current line number accurate for
-    /// the start of the next returned token.
+    /// It is not necessary to call this explicitly, but doing so will make the current line number
+    /// accurate for the start of the next returned token.
     pub fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek(0) {
             let nc = self.peek(1);

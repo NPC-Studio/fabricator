@@ -101,8 +101,6 @@ pub enum ParseErrorKind {
     },
     #[error("unexpected end of token stream, expected {expected:?}")]
     EndOfStream { expected: &'static str },
-    #[error("recursion limit reached")]
-    RecursionLimit,
     #[error("lexer error")]
     LexError(#[from] LexError),
 }
