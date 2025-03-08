@@ -225,6 +225,10 @@ where
         LineNumber(self.line_number)
     }
 
+    /// Skips any leading whitespace before the next token in the stream.
+    ///
+    /// It is not necessary to call this, but this will make the current line number accurate for
+    /// the start of the next returned token.
     pub fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek(0) {
             let nc = self.peek(1);
@@ -266,9 +270,9 @@ where
         }
     }
 
-    // Read and return the next token in the stream.
-    //
-    // Returns `None` once the token stream is finished.
+    /// Read and return the next token in the stream.
+    ///
+    /// Returns `None` once the token stream is finished.
     pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexError> {
         self.skip_whitespace();
 
