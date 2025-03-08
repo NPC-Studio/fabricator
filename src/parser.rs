@@ -16,6 +16,10 @@ pub enum Statement<S> {
     Var(VarStatement<S>),
     Assignment(AssignmentStatement<S>),
     Block(Block<S>),
+    Call {
+        base: Box<Expression<S>>,
+        arguments: Vec<Expression<S>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +137,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
-        let (line_number, token) = self.expect_next("statement")?;
+        let (line_number, token) = self.expect_next("<statement>")?;
         let next = self.peek(0)?;
         match token {
             Token::For => {
@@ -168,7 +172,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             unexpected: token_indicator(&assignment),
-                            expected: "assignment",
+                            expected: "<assignment operator>",
                         },
                         line_number,
                     });
@@ -180,13 +184,19 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     value,
                 }))
             }
-            t => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&t),
-                    expected: "statement",
-                },
-                line_number,
-            }),
+            _ => {
+                if let Expression::Call { base, arguments } = self.parse_suffixed_expression()? {
+                    Ok(Statement::Call { base, arguments })
+                } else {
+                    Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: "<non expression statement>",
+                            expected: "<statement>",
+                        },
+                        line_number,
+                    })
+                }
+            }
         }
     }
 
@@ -251,7 +261,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             (line_number, token) => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&token),
-                    expected: "grouped expression or name",
+                    expected: "<grouped expression or name>",
                 },
                 line_number,
             }),
