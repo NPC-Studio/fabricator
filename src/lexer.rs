@@ -36,9 +36,9 @@ pub enum Token<S> {
 
     DoubleEqual,
     BangEqual,
-    LessThan,
+    Less,
     LessEqual,
-    GreaterThan,
+    Greater,
     GreaterEqual,
 
     DoublePlus,
@@ -94,9 +94,9 @@ impl<S: AsRef<str>> Token<S> {
             Token::PercentEqual => Token::PercentEqual,
             Token::DoubleEqual => Token::DoubleEqual,
             Token::BangEqual => Token::BangEqual,
-            Token::LessThan => Token::LessThan,
+            Token::Less => Token::Less,
             Token::LessEqual => Token::LessEqual,
-            Token::GreaterThan => Token::GreaterThan,
+            Token::Greater => Token::Greater,
             Token::GreaterEqual => Token::GreaterEqual,
             Token::DoublePlus => Token::DoublePlus,
             Token::DoubleMinus => Token::DoubleMinus,
@@ -148,9 +148,9 @@ impl<S: PartialEq> PartialEq for Token<S> {
             (Token::PercentEqual, Token::PercentEqual) => true,
             (Token::DoubleEqual, Token::DoubleEqual) => true,
             (Token::BangEqual, Token::BangEqual) => true,
-            (Token::LessThan, Token::LessThan) => true,
+            (Token::Less, Token::Less) => true,
             (Token::LessEqual, Token::LessEqual) => true,
-            (Token::GreaterThan, Token::GreaterThan) => true,
+            (Token::Greater, Token::Greater) => true,
             (Token::GreaterEqual, Token::GreaterEqual) => true,
             (Token::DoublePlus, Token::DoublePlus) => true,
             (Token::DoubleMinus, Token::DoubleMinus) => true,
@@ -391,11 +391,11 @@ where
             }
             (Some('<'), _) => {
                 self.advance(1);
-                Some(Token::LessThan)
+                Some(Token::Less)
             }
             (Some('>'), _) => {
                 self.advance(1);
-                Some(Token::GreaterThan)
+                Some(Token::Greater)
             }
             (Some('"'), _) => {
                 self.read_string()?;
@@ -606,6 +606,7 @@ where
         }
     }
 
+    // Peek to the `n`th character ahead in the character stream.
     fn peek(&mut self, n: usize) -> Option<char> {
         while self.peek_buffer.len() <= n {
             let mut chars = self.source.chars();
@@ -620,6 +621,11 @@ where
         self.peek_buffer.get(n).copied()
     }
 
+    // Advance the character stream `n` characters.
+    //
+    // # Panics
+    //
+    // Panics if this would advance over characters that have not been observed with `Lexer::peek`.
     fn advance(&mut self, n: usize) {
         assert!(
             n <= self.peek_buffer.len(),
@@ -706,7 +712,7 @@ mod tests {
                 Token::Integer(0),
                 Token::SemiColon,
                 Token::Identifier("i".to_owned()),
-                Token::LessThan,
+                Token::Less,
                 Token::Integer(1000000),
                 Token::SemiColon,
                 Token::DoublePlus,
