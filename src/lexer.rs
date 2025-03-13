@@ -52,6 +52,7 @@ pub enum Token<S> {
     Switch,
     Case,
     Break,
+    If,
     For,
     Repeat,
 
@@ -106,6 +107,7 @@ impl<S: AsRef<str>> Token<S> {
             Token::Switch => Token::Switch,
             Token::Case => Token::Case,
             Token::Break => Token::Break,
+            Token::If => Token::If,
             Token::For => Token::For,
             Token::Repeat => Token::Repeat,
             Token::Undefined => Token::Undefined,
@@ -160,6 +162,7 @@ impl<S: PartialEq> PartialEq for Token<S> {
             (Token::Switch, Token::Switch) => true,
             (Token::Case, Token::Case) => true,
             (Token::Break, Token::Break) => true,
+            (Token::If, Token::If) => true,
             (Token::For, Token::For) => true,
             (Token::Repeat, Token::Repeat) => true,
             (Token::Undefined, Token::Undefined) => true,
@@ -262,6 +265,9 @@ where
                             (Some('*'), Some('/')) => {
                                 self.advance(2);
                                 break;
+                            }
+                            (Some(c), _) if is_newline(c) => {
+                                self.read_line_end();
                             }
                             (None, _) => break,
                             _ => self.advance(1),
@@ -420,6 +426,7 @@ where
                     "switch" => Some(Token::Switch),
                     "case" => Some(Token::Case),
                     "break" => Some(Token::Break),
+                    "if" => Some(Token::If),
                     "for" => Some(Token::For),
                     "repeat" => Some(Token::Repeat),
                     "true" => Some(Token::True),

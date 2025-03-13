@@ -12,11 +12,18 @@ pub struct Block<S> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement<S> {
+    If(IfStatement<S>),
     For(ForStatement<S>),
     Var(VarStatement<S>),
     Assignment(AssignmentStatement<S>),
     Block(Block<S>),
     Call(FunctionCall<S>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStatement<S> {
+    pub condition: Box<Expression<S>>,
+    pub body: Block<S>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,6 +178,17 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
         self.look_ahead(2)?;
         match self.peek_expected(0, "<statement>")? {
+            (Token::If, _) => {
+                self.advance(1);
+                let condition = self.parse_expression()?;
+                self.parse_token(Token::LeftBrace)?;
+                let body = self.parse_block()?;
+                self.parse_token(Token::RightBrace)?;
+                Ok(Statement::If(IfStatement {
+                    condition: Box::new(condition),
+                    body,
+                }))
+            }
             (Token::For, _) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
@@ -295,6 +313,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         base: Box::new(expr),
                         arguments,
                     });
+                    self.parse_token(Token::RightParen)?;
                 }
                 _ => break,
             }
@@ -543,6 +562,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::Switch => "switch",
         Token::Case => "case",
         Token::Break => "break",
+        Token::If => "if",
         Token::For => "for",
         Token::Repeat => "repeat",
         Token::Undefined => "undefined",
@@ -614,6 +634,10 @@ mod tests {
                 */
                 sum += i;
             }
+
+            if sum > 100 {
+                print("yes");
+            }
         "#;
 
         assert_eq!(
@@ -646,7 +670,20 @@ mod tests {
                                 value: Box::new(Expression::Name("i".to_owned())),
                             })]
                         }
-                    })
+                    }),
+                    Statement::If(IfStatement {
+                        condition: Box::new(Expression::Binary(
+                            Box::new(Expression::Name("sum".to_owned())),
+                            BinaryOperator::GreaterThan,
+                            Box::new(Expression::Integer(100)),
+                        )),
+                        body: Block {
+                            statements: vec![Statement::Call(FunctionCall {
+                                base: Box::new(Expression::Name("print".to_owned())),
+                                arguments: vec![Expression::String("yes".to_owned())],
+                            })]
+                        },
+                    }),
                 ]
             }
         );
