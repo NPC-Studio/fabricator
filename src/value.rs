@@ -2,9 +2,16 @@ use std::string::String as StdString;
 
 use gc_arena::{Collect, Gc};
 
-use crate::{callback::Callback, constant::Constant};
+use crate::{callback::Callback, closure::Closure, constant::Constant};
 
 pub type String<'gc> = Gc<'gc, StdString>;
+
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub enum Function<'gc> {
+    Closure(Closure<'gc>),
+    Callback(Callback<'gc>),
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
@@ -14,6 +21,7 @@ pub enum Value<'gc> {
     Integer(i64),
     Float(f64),
     String(String<'gc>),
+    Closure(Closure<'gc>),
     Callback(Callback<'gc>),
 }
 
@@ -29,6 +37,14 @@ impl<'gc> Value<'gc> {
             Value::Undefined => false,
             Value::Boolean(b) => b,
             _ => true,
+        }
+    }
+
+    pub fn to_function(self) -> Option<Function<'gc>> {
+        match self {
+            Value::Closure(closure) => Some(Function::Closure(closure)),
+            Value::Callback(callback) => Some(Function::Callback(callback)),
+            _ => None,
         }
     }
 

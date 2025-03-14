@@ -3,11 +3,11 @@ use thiserror::Error;
 
 use crate::{
     callback::Callback,
+    closure::Closure,
     constant::Constant,
     ops::{self, Instruction, OpCode, Operation as _},
-    prototype::Prototype,
     stack::Stack,
-    value::{String, Value},
+    value::{Function, String, Value},
 };
 
 #[derive(Debug, Error)]
@@ -32,22 +32,49 @@ impl<'gc> Thread<'gc> {
     pub fn exec(
         &mut self,
         mc: &Mutation<'gc>,
-        proto: &Prototype<'gc>,
+        func: Function<'gc>,
     ) -> Result<Vec<Value<'gc>>, VmError> {
         self.registers.clear();
         self.stack.clear();
         self.frames.clear();
 
-        self.registers.resize(256, Value::Undefined);
+        self.call(mc, func, 0)?;
+
+        Ok(self.stack.drain(..).collect())
+    }
+
+    fn call(
+        &mut self,
+        mc: &Mutation<'gc>,
+        function: Function<'gc>,
+        stack_bottom: usize,
+    ) -> Result<(), VmError> {
+        match function {
+            Function::Closure(closure) => self.call_closure(mc, closure, stack_bottom),
+            Function::Callback(callback) => self.call_callback(mc, callback, stack_bottom),
+        }
+    }
+
+    fn call_closure(
+        &mut self,
+        mc: &Mutation<'gc>,
+        closure: Closure<'gc>,
+        stack_bottom: usize,
+    ) -> Result<(), VmError> {
+        let register_bottom = self.registers.len();
+        self.registers
+            .resize(register_bottom + 256, Value::Undefined);
         self.frames.push(Frame {
-            register_bottom: 0,
-            stack_bottom: 0,
+            register_bottom,
+            stack_bottom,
             pc: 0,
         });
 
-        let frame = &mut self.frames[0];
+        let proto = &closure.0;
 
         loop {
+            let frame = self.frames.last_mut().unwrap();
+
             match dispatch(
                 &proto.instructions,
                 &proto.constants,
@@ -62,17 +89,47 @@ impl<'gc> Thread<'gc> {
                     args,
                     returns,
                 } => {
-                    let arg_offset = self.stack.len() - args as usize;
-                    func.call(mc, Stack::new(&mut self.stack, arg_offset));
+                    // Truncate the registers vec to only the required length to prevent storing all
+                    // 256 registers for every function call.
+                    self.registers
+                        .truncate(frame.register_bottom + proto.max_register as usize + 1);
+
+                    let register_bottom = frame.register_bottom;
+                    let arg_bottom = (self.stack.len() - args as usize).max(frame.stack_bottom);
+
+                    // Pad stack with undefined values to match the requested args len.
                     self.stack
-                        .resize(arg_offset + returns as usize, Value::Undefined);
+                        .resize(arg_bottom + args as usize, Value::Undefined);
+
+                    self.call(mc, func, arg_bottom)?;
+
+                    // Pad stack with undefined values to match the expected return len.
+                    self.stack
+                        .resize(arg_bottom + returns as usize, Value::Undefined);
+
+                    // Resize the registers vec back to have a full 256 register bank.
+                    self.registers
+                        .resize(register_bottom + 256, Value::Undefined);
                 }
                 Next::Return { returns } => {
-                    self.stack.resize(returns as usize, Value::Undefined);
-                    return Ok(self.stack[..].to_vec());
+                    // Pad the stack with the requested number of returns.
+                    self.stack
+                        .resize(frame.stack_bottom + returns as usize, Value::Undefined);
+
+                    return Ok(());
                 }
             }
         }
+    }
+
+    fn call_callback(
+        &mut self,
+        mc: &Mutation<'gc>,
+        callback: Callback<'gc>,
+        stack_bottom: usize,
+    ) -> Result<(), VmError> {
+        callback.call(mc, Stack::new(&mut self.stack, stack_bottom));
+        Ok(())
     }
 }
 
@@ -86,7 +143,7 @@ struct Frame {
 
 enum Next<'gc> {
     Call {
-        func: Callback<'gc>,
+        func: Function<'gc>,
         args: u8,
         returns: u8,
     },
@@ -162,16 +219,15 @@ fn dispatch<'gc>(
             }
             OpCode::Call => {
                 let call = ops::Call::decode(inst.args());
-                match registers[call.func.0 as usize] {
-                    Value::Callback(callback) => {
-                        return Ok(Next::Call {
-                            func: callback,
-                            args: call.args,
-                            returns: call.returns,
-                        });
-                    }
-                    _ => return Err(VmError::BadCall),
-                }
+                return if let Some(func) = registers[call.func.0 as usize].to_function() {
+                    Ok(Next::Call {
+                        func,
+                        args: call.args,
+                        returns: call.returns,
+                    })
+                } else {
+                    Err(VmError::BadCall)
+                };
             }
             OpCode::Return => {
                 let ret = ops::Return::decode(inst.args());

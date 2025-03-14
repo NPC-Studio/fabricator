@@ -1,17 +1,18 @@
 use std::time::Instant;
 
 use fabricator::{
+    closure::{Closure, Prototype},
     constant::Constant,
     ops,
-    prototype::{Prototype, StackSize},
     thread::Thread,
+    value::Function,
 };
 
 fn main() {
     gc_arena::arena::rootless_mutate(|mc| {
         let prototype = Prototype {
             fixed_params: 0,
-            stack_size: StackSize::new(5),
+            max_register: 4,
             constants: vec![
                 Constant::Integer(0),
                 Constant::Integer(1),
@@ -64,10 +65,12 @@ fn main() {
             .into_boxed_slice(),
         };
 
+        let func = Function::Closure(Closure::new(mc, prototype));
+
         let mut thread = Thread::default();
 
         let instant = Instant::now();
-        let res = thread.exec(mc, &prototype).unwrap();
+        let res = thread.exec(mc, func).unwrap();
         let elapsed = instant.elapsed();
 
         println!("result: {:?}, total time: {elapsed:?}", res[0]);
