@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use crate::string_interner::StringInterner;
+use super::string_interner::StringInterner;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Token<S> {

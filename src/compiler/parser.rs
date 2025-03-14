@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::{
+use super::{
     lexer::{LexError, Lexer, LineNumber, Token},
     string_interner::StringInterner,
 };
