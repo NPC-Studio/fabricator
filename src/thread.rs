@@ -1,11 +1,12 @@
+use std::ops::ControlFlow;
+
 use gc_arena::{Collect, Mutation};
 use thiserror::Error;
 
 use crate::{
-    callback::Callback,
     closure::Closure,
     constant::Constant,
-    ops::{self, Instruction, OpCode, Operation as _},
+    ops::{self, ByteCode},
     stack::Stack,
     value::{Function, String, Value},
 };
@@ -25,20 +26,18 @@ pub enum VmError {
 pub struct Thread<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
-    frames: Vec<Frame>,
 }
 
 impl<'gc> Thread<'gc> {
     pub fn exec(
         &mut self,
         mc: &Mutation<'gc>,
-        func: Function<'gc>,
+        closure: Closure<'gc>,
     ) -> Result<Vec<Value<'gc>>, VmError> {
         self.registers.clear();
         self.stack.clear();
-        self.frames.clear();
 
-        self.call(mc, func, 0)?;
+        self.call(mc, closure, 0)?;
 
         Ok(self.stack.drain(..).collect())
     }
@@ -46,104 +45,64 @@ impl<'gc> Thread<'gc> {
     fn call(
         &mut self,
         mc: &Mutation<'gc>,
-        function: Function<'gc>,
-        stack_bottom: usize,
-    ) -> Result<(), VmError> {
-        match function {
-            Function::Closure(closure) => self.call_closure(mc, closure, stack_bottom),
-            Function::Callback(callback) => self.call_callback(mc, callback, stack_bottom),
-        }
-    }
-
-    fn call_closure(
-        &mut self,
-        mc: &Mutation<'gc>,
         closure: Closure<'gc>,
         stack_bottom: usize,
     ) -> Result<(), VmError> {
-        let register_bottom = self.registers.len();
-        self.registers
-            .resize(register_bottom + 256, Value::Undefined);
-        self.frames.push(Frame {
-            register_bottom,
-            stack_bottom,
-            pc: 0,
-        });
-
         let proto = &closure.0;
 
-        loop {
-            let frame = self.frames.last_mut().unwrap();
+        let register_bottom = self.registers.len();
+        let register_len = proto.max_register as usize + 1;
+        self.registers
+            .resize(register_bottom + register_len, Value::Undefined);
 
+        let mut pc: usize = 0;
+
+        loop {
             match dispatch(
-                &proto.instructions,
+                mc,
+                &proto.bytecode,
                 &proto.constants,
-                &mut frame.pc,
-                (&mut self.registers[frame.register_bottom..frame.register_bottom + 256])
+                &mut pc,
+                (&mut self.registers[register_bottom..register_bottom + register_len])
                     .try_into()
                     .unwrap(),
-                Stack::new(&mut self.stack, frame.stack_bottom),
+                Stack::new(&mut self.stack, stack_bottom),
             )? {
                 Next::Call {
-                    func,
+                    closure,
                     args,
                     returns,
                 } => {
-                    // Truncate the registers vec to only the required length to prevent storing all
-                    // 256 registers for every function call.
-                    self.registers
-                        .truncate(frame.register_bottom + proto.max_register as usize + 1);
-
-                    let register_bottom = frame.register_bottom;
-                    let arg_bottom = (self.stack.len() - args as usize).max(frame.stack_bottom);
+                    let arg_bottom = (self.stack.len() - args as usize).max(stack_bottom);
 
                     // Pad stack with undefined values to match the requested args len.
                     self.stack
                         .resize(arg_bottom + args as usize, Value::Undefined);
 
-                    self.call(mc, func, arg_bottom)?;
+                    self.call(mc, closure, arg_bottom)?;
 
                     // Pad stack with undefined values to match the expected return len.
                     self.stack
                         .resize(arg_bottom + returns as usize, Value::Undefined);
-
-                    // Resize the registers vec back to have a full 256 register bank.
-                    self.registers
-                        .resize(register_bottom + 256, Value::Undefined);
                 }
                 Next::Return { returns } => {
                     // Pad the stack with the requested number of returns.
                     self.stack
-                        .resize(frame.stack_bottom + returns as usize, Value::Undefined);
+                        .resize(stack_bottom + returns as usize, Value::Undefined);
+
+                    // Clear the registers for this frame.
+                    self.registers.truncate(register_bottom);
 
                     return Ok(());
                 }
             }
         }
     }
-
-    fn call_callback(
-        &mut self,
-        mc: &Mutation<'gc>,
-        callback: Callback<'gc>,
-        stack_bottom: usize,
-    ) -> Result<(), VmError> {
-        callback.call(mc, Stack::new(&mut self.stack, stack_bottom));
-        Ok(())
-    }
-}
-
-#[derive(Collect)]
-#[collect(require_static)]
-struct Frame {
-    register_bottom: usize,
-    stack_bottom: usize,
-    pc: usize,
 }
 
 enum Next<'gc> {
     Call {
-        func: Function<'gc>,
+        closure: Closure<'gc>,
         args: u8,
         returns: u8,
     },
@@ -153,92 +112,135 @@ enum Next<'gc> {
 }
 
 fn dispatch<'gc>(
-    ops: &[Instruction],
+    mc: &Mutation<'gc>,
+    bytecode: &ByteCode,
     constants: &[Constant<String<'gc>>],
     pc: &mut usize,
-    registers: &mut [Value<'gc>; 256],
+    registers: &mut [Value<'gc>],
     mut stack: Stack<'gc, '_>,
 ) -> Result<Next<'gc>, VmError> {
-    loop {
-        let inst = ops[*pc];
-        *pc += 1;
+    struct Dispatch<'gc, 'a> {
+        mc: &'a Mutation<'gc>,
+        constants: &'a [Constant<String<'gc>>],
+        registers: &'a mut [Value<'gc>],
+        stack: Stack<'gc, 'a>,
+    }
 
-        match inst.opcode() {
-            OpCode::Move => {
-                let op = ops::Move::decode(inst.args());
-                registers[op.dest.0 as usize] = registers[op.source.0 as usize];
-            }
-            OpCode::Jump => {
-                let op = ops::Jump::decode(inst.args());
-                *pc = add_offset(*pc, op.offset);
-            }
-            OpCode::IsLess => {
-                let op = ops::IsLess::decode(inst.args());
-                if registers[op.arg1.0 as usize].less_than(registers[op.arg2.0 as usize])
-                    == op.skip_if
-                {
-                    *pc += 1;
+    impl<'gc, 'a> ops::Dispatch for Dispatch<'gc, 'a> {
+        type Return = Result<Next<'gc>, VmError>;
+
+        fn move_(self, source: ops::Register, dest: ops::Register) -> ControlFlow<Self::Return> {
+            self.registers[dest as usize] = self.registers[source as usize];
+            ControlFlow::Continue(())
+        }
+
+        fn test_less(
+            self,
+            arg1: ops::Register,
+            arg2: ops::Register,
+        ) -> ControlFlow<Self::Return, bool> {
+            ControlFlow::Continue(
+                self.registers[arg1 as usize].less_than(self.registers[arg2 as usize]),
+            )
+        }
+
+        fn test_less_equal(
+            self,
+            arg1: ops::Register,
+            arg2: ops::Register,
+        ) -> ControlFlow<Self::Return, bool> {
+            ControlFlow::Continue(
+                self.registers[arg1 as usize].less_equal(self.registers[arg2 as usize]),
+            )
+        }
+
+        fn add(
+            self,
+            arg1: ops::Register,
+            arg2: ops::Register,
+            dest: ops::Register,
+        ) -> ControlFlow<Self::Return> {
+            match self.registers[arg1 as usize].add(self.registers[arg2 as usize]) {
+                Some(v) => {
+                    self.registers[dest as usize] = v;
+                    ControlFlow::Continue(())
                 }
-            }
-            OpCode::IsLessEqual => {
-                let op = ops::IsLess::decode(inst.args());
-                if registers[op.arg1.0 as usize].less_equal(registers[op.arg2.0 as usize])
-                    == op.skip_if
-                {
-                    *pc += 1;
-                }
-            }
-            OpCode::Add => {
-                let op = ops::Add::decode(inst.args());
-                registers[op.dest.0 as usize] = registers[op.arg1.0 as usize]
-                    .add(registers[op.arg2.0 as usize])
-                    .ok_or(VmError::BadOp)?;
-            }
-            OpCode::Sub => {
-                let op = ops::Sub::decode(inst.args());
-                registers[op.dest.0 as usize] = registers[op.arg1.0 as usize]
-                    .sub(registers[op.arg2.0 as usize])
-                    .ok_or(VmError::BadOp)?;
-            }
-            OpCode::Load => {
-                let op = ops::Load::decode(inst.args());
-                registers[op.dest.0 as usize] = constants[op.constant.0 as usize].into();
-            }
-            OpCode::Push => {
-                let op = ops::Push::decode(inst.args());
-                for i in 0..op.len {
-                    stack.push_back(registers[op.source.0 as usize + i as usize]);
-                }
-            }
-            OpCode::Pop => {
-                let op = ops::Pop::decode(inst.args());
-                for i in (0..op.len).rev() {
-                    registers[op.dest.0 as usize + i as usize] =
-                        stack.pop_back().ok_or(VmError::StackUnderflow)?;
-                }
-            }
-            OpCode::Call => {
-                let call = ops::Call::decode(inst.args());
-                return if let Some(func) = registers[call.func.0 as usize].to_function() {
-                    Ok(Next::Call {
-                        func,
-                        args: call.args,
-                        returns: call.returns,
-                    })
-                } else {
-                    Err(VmError::BadCall)
-                };
-            }
-            OpCode::Return => {
-                let ret = ops::Return::decode(inst.args());
-                return Ok(Next::Return {
-                    returns: ret.returns,
-                });
+                None => ControlFlow::Break(Err(VmError::BadOp)),
             }
         }
-    }
-}
 
-fn add_offset(pc: usize, offset: i16) -> usize {
-    ((pc as isize) + offset as isize) as usize
+        fn sub(
+            self,
+            arg1: ops::Register,
+            arg2: ops::Register,
+            dest: ops::Register,
+        ) -> ControlFlow<Self::Return> {
+            match self.registers[arg1 as usize].sub(self.registers[arg2 as usize]) {
+                Some(v) => {
+                    self.registers[dest as usize] = v;
+                    ControlFlow::Continue(())
+                }
+                None => ControlFlow::Break(Err(VmError::BadOp)),
+            }
+        }
+
+        fn load(self, constant: ops::Constant, dest: ops::Register) -> ControlFlow<Self::Return> {
+            self.registers[dest as usize] = self.constants[constant as usize].into();
+            ControlFlow::Continue(())
+        }
+
+        fn push(mut self, source: ops::Register, len: u8) -> ControlFlow<Self::Return> {
+            for i in 0..len {
+                self.stack
+                    .push_back(self.registers[source as usize + i as usize]);
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn pop(mut self, dest: ops::Register, len: u8) -> ControlFlow<Self::Return> {
+            for i in (0..len).rev() {
+                match self.stack.pop_back() {
+                    Some(v) => {
+                        self.registers[dest as usize + i as usize] = v;
+                    }
+                    None => {
+                        return ControlFlow::Break(Err(VmError::StackUnderflow));
+                    }
+                }
+            }
+            ControlFlow::Continue(())
+        }
+
+        fn call(mut self, func: ops::Register, args: u8, returns: u8) -> ControlFlow<Self::Return> {
+            match self.registers[func as usize].to_function() {
+                Some(Function::Closure(closure)) => ControlFlow::Break(Ok(Next::Call {
+                    closure,
+                    args,
+                    returns,
+                })),
+                Some(Function::Callback(callback)) => {
+                    callback.call(self.mc, self.stack.reborrow());
+                    ControlFlow::Continue(())
+                }
+                None => ControlFlow::Break(Err(VmError::BadCall)),
+            }
+        }
+
+        fn return_(self, returns: u8) -> Self::Return {
+            Ok(Next::Return { returns })
+        }
+    }
+
+    let mut dispatcher = ops::Dispatcher::new(bytecode, *pc);
+
+    loop {
+        if let ControlFlow::Break(ret) = dispatcher.dispatch(Dispatch {
+            mc,
+            constants,
+            registers,
+            stack: stack.reborrow(),
+        }) {
+            return ret;
+        }
+    }
 }

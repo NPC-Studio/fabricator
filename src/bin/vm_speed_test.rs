@@ -3,9 +3,8 @@ use std::time::Instant;
 use fabricator::{
     closure::{Closure, Prototype},
     constant::Constant,
-    ops,
+    ops::{ByteCode, Instruction},
     thread::Thread,
-    value::Function,
 };
 
 fn main() {
@@ -19,58 +18,48 @@ fn main() {
                 Constant::Integer(1000000),
             ]
             .into_boxed_slice(),
-            instructions: vec![
-                ops::Instruction::encode(ops::Load {
-                    constant: ops::Constant(0),
-                    dest: ops::Register(0),
-                }),
-                ops::Instruction::encode(ops::Load {
-                    constant: ops::Constant(1),
-                    dest: ops::Register(1),
-                }),
-                ops::Instruction::encode(ops::Load {
-                    constant: ops::Constant(2),
-                    dest: ops::Register(2),
-                }),
-                ops::Instruction::encode(ops::Move {
-                    source: ops::Register(0),
-                    dest: ops::Register(3),
-                }),
-                ops::Instruction::encode(ops::Move {
-                    source: ops::Register(1),
-                    dest: ops::Register(4),
-                }),
-                ops::Instruction::encode(ops::Add {
-                    arg1: ops::Register(3),
-                    arg2: ops::Register(4),
-                    dest: ops::Register(3),
-                }),
-                ops::Instruction::encode(ops::Add {
-                    arg1: ops::Register(4),
-                    arg2: ops::Register(1),
-                    dest: ops::Register(4),
-                }),
-                ops::Instruction::encode(ops::IsLessEqual {
-                    skip_if: false,
-                    arg1: ops::Register(4),
-                    arg2: ops::Register(2),
-                }),
-                ops::Instruction::encode(ops::Jump { offset: -4 }),
-                ops::Instruction::encode(ops::Push {
-                    source: ops::Register(3),
-                    len: 1,
-                }),
-                ops::Instruction::encode(ops::Return { returns: 1 }),
-            ]
-            .into_boxed_slice(),
+            bytecode: ByteCode::encode(&[
+                Instruction::Load {
+                    constant: 0,
+                    dest: 0,
+                },
+                Instruction::Load {
+                    constant: 1,
+                    dest: 1,
+                },
+                Instruction::Load {
+                    constant: 2,
+                    dest: 2,
+                },
+                Instruction::Move { source: 0, dest: 3 },
+                Instruction::Move { source: 1, dest: 4 },
+                Instruction::Add {
+                    arg1: 3,
+                    arg2: 4,
+                    dest: 3,
+                },
+                Instruction::Add {
+                    arg1: 4,
+                    arg2: 1,
+                    dest: 4,
+                },
+                Instruction::JumpIfLessEqual {
+                    arg1: 4,
+                    arg2: 2,
+                    offset: -3,
+                },
+                Instruction::Push { source: 3, len: 1 },
+                Instruction::Return { returns: 1 },
+            ])
+            .unwrap(),
         };
 
-        let func = Function::Closure(Closure::new(mc, prototype));
+        let closure = Closure::new(mc, prototype);
 
         let mut thread = Thread::default();
 
         let instant = Instant::now();
-        let res = thread.exec(mc, func).unwrap();
+        let res = thread.exec(mc, closure).unwrap();
         let elapsed = instant.elapsed();
 
         println!("result: {:?}, total time: {elapsed:?}", res[0]);
