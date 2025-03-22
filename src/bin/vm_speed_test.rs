@@ -12,11 +12,10 @@ fn main() {
     gc_arena::arena::rootless_mutate(|mc| {
         let prototype = Prototype {
             fixed_params: 0,
-            max_register: 4,
             constants: vec![
                 Constant::Integer(0),
                 Constant::Integer(1),
-                Constant::Integer(1000000),
+                Constant::Integer(10000000),
             ]
             .into_boxed_slice(),
             bytecode: ByteCode::encode(&[
@@ -39,15 +38,10 @@ fn main() {
                     arg2: 4,
                     dest: 3,
                 },
-                Instruction::Add {
-                    arg1: 4,
-                    arg2: 1,
-                    dest: 4,
-                },
-                Instruction::JumpIfLessEqual {
-                    arg1: 4,
-                    arg2: 2,
-                    offset: -2,
+                Instruction::IncAndTestLessEqual {
+                    inc: 4,
+                    test: 2,
+                    offset: -1,
                 },
                 Instruction::Push { source: 3, len: 1 },
                 Instruction::Return { returns: 1 },

@@ -11,6 +11,7 @@ pub trait Dispatch {
     fn move_(self, source: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
     fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool>;
     fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool>;
+    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> ControlFlow<Self::Return, bool>;
     fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
     fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
     fn load(self, constant: ConstIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
@@ -113,6 +114,11 @@ impl ByteCode {
                     check_register(arg2, 1)?;
                     check_jump(i, offset)?;
                 }
+                Instruction::IncAndTestLessEqual { inc, test, offset } => {
+                    check_register(inc, 1)?;
+                    check_register(test, 1)?;
+                    check_jump(i, offset)?;
+                }
                 Instruction::Add { arg1, arg2, dest } => {
                     check_register(arg1, 1)?;
                     check_register(arg2, 1)?;
@@ -188,6 +194,11 @@ impl ByteCode {
                 Instruction::JumpIfLessEqual { arg1, arg2, offset } => {
                     write_u8(&mut bytes, arg1);
                     write_u8(&mut bytes, arg2);
+                    write_i16(&mut bytes, calc_jump(i, offset)?);
+                }
+                Instruction::IncAndTestLessEqual { inc, test, offset } => {
+                    write_u8(&mut bytes, inc);
+                    write_u8(&mut bytes, test);
                     write_i16(&mut bytes, calc_jump(i, offset)?);
                 }
                 Instruction::Add { arg1, arg2, dest } => {
@@ -304,6 +315,14 @@ impl<'a> Dispatcher<'a> {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
                 }
+                OpCode::IncAndTestLessEqual => {
+                    let inc = read_u8(&mut self.ptr);
+                    let test = read_u8(&mut self.ptr);
+                    let offset = read_i16(&mut self.ptr);
+                    if dispatch.inc_test_less_equal(inc, test)? {
+                        self.ptr = self.ptr.offset(offset as isize);
+                    }
+                }
                 OpCode::Add => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
@@ -355,6 +374,7 @@ enum OpCode {
     Jump,
     JumpIfLess,
     JumpIfLessEqual,
+    IncAndTestLessEqual,
     Add,
     Sub,
     Load,
@@ -372,6 +392,7 @@ impl OpCode {
             Instruction::Jump { .. } => OpCode::Jump,
             Instruction::JumpIfLess { .. } => OpCode::JumpIfLess,
             Instruction::JumpIfLessEqual { .. } => OpCode::JumpIfLessEqual,
+            Instruction::IncAndTestLessEqual { .. } => OpCode::IncAndTestLessEqual,
             Instruction::Add { .. } => OpCode::Add,
             Instruction::Sub { .. } => OpCode::Sub,
             Instruction::Load { .. } => OpCode::Load,
@@ -389,6 +410,7 @@ impl OpCode {
             OpCode::Jump => 3,
             OpCode::JumpIfLess => 5,
             OpCode::JumpIfLessEqual => 5,
+            OpCode::IncAndTestLessEqual => 5,
             OpCode::Add => 4,
             OpCode::Sub => 4,
             OpCode::Load => 4,
@@ -398,6 +420,26 @@ impl OpCode {
             OpCode::Return => 2,
         }
     }
+}
+
+#[inline]
+fn write_u8(buf: &mut Vec<u8>, val: u8) {
+    buf.push(val);
+}
+
+#[inline]
+fn write_u16(buf: &mut Vec<u8>, val: u16) {
+    buf.extend(val.to_ne_bytes());
+}
+
+#[inline]
+fn write_i16(buf: &mut Vec<u8>, val: i16) {
+    buf.extend(val.to_ne_bytes());
+}
+
+#[inline]
+fn write_opcode(buf: &mut Vec<u8>, val: OpCode) {
+    write_u8(buf, val as u8);
 }
 
 #[inline]
@@ -423,23 +465,6 @@ unsafe fn read_i16(ptr: &mut *const u8) -> i16 {
 unsafe fn read_opcode(ptr: &mut *const u8) -> OpCode {
     mem::transmute(read_u8(ptr))
 }
-
-fn write_u8(buf: &mut Vec<u8>, val: u8) {
-    buf.push(val);
-}
-
-fn write_u16(buf: &mut Vec<u8>, val: u16) {
-    buf.extend(val.to_ne_bytes());
-}
-
-fn write_i16(buf: &mut Vec<u8>, val: i16) {
-    buf.extend(val.to_ne_bytes());
-}
-
-fn write_opcode(buf: &mut Vec<u8>, val: OpCode) {
-    write_u8(buf, val as u8);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +505,19 @@ mod tests {
                         arg2,
                         ..
                     } if arg1 == a1 && arg2 == a2));
+                    ControlFlow::Continue(false)
+                }
+
+                fn inc_test_less_equal(
+                    self,
+                    i: RegIdx,
+                    t: RegIdx,
+                ) -> ControlFlow<Self::Return, bool> {
+                    assert!(matches!(self.inst, Instruction::IncAndTestLessEqual {
+                        inc,
+                        test,
+                        ..
+                    } if inc == i && test == t));
                     ControlFlow::Continue(false)
                 }
 

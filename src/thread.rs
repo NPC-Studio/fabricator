@@ -52,7 +52,7 @@ impl<'gc> Thread<'gc> {
         let proto = &closure.0;
 
         let register_bottom = self.registers.len();
-        let register_len = proto.max_register as usize + 1;
+        let register_len = proto.bytecode.max_register() as usize + 1;
         self.registers
             .resize(register_bottom + register_len, Value::Undefined);
 
@@ -127,51 +127,83 @@ fn dispatch<'gc>(
         stack: Stack<'gc, 'a>,
     }
 
+    assert!((bytecode.max_register() as usize) < registers.len());
+    assert!((bytecode.max_constant() as usize) < constants.len());
+
     impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
         type Return = Result<Next<'gc>, VmError>;
 
+        #[inline]
         fn move_(self, source: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             self.registers[dest as usize] = self.registers[source as usize];
             ControlFlow::Continue(())
         }
 
+        #[inline]
         fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool> {
-            ControlFlow::Continue(
-                self.registers[arg1 as usize].less_than(self.registers[arg2 as usize]),
-            )
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            ControlFlow::Continue(arg1.less_than(arg2))
         }
 
+        #[inline]
         fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool> {
-            ControlFlow::Continue(
-                self.registers[arg1 as usize].less_equal(self.registers[arg2 as usize]),
-            )
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            ControlFlow::Continue(arg1.less_equal(arg2))
         }
 
+        #[inline]
+        fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> ControlFlow<Self::Return, bool> {
+            let test = self.registers[test as usize];
+            let inc = &mut self.registers[inc as usize];
+
+            match inc.add(Value::Integer(1)) {
+                Some(v) => {
+                    *inc = v;
+                    ControlFlow::Continue(v.less_equal(test))
+                }
+                None => ControlFlow::Break(Err(VmError::BadOp)),
+            }
+        }
+
+        #[inline]
         fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
-            match self.registers[arg1 as usize].add(self.registers[arg2 as usize]) {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+
+            match arg1.add(arg2) {
                 Some(v) => {
-                    self.registers[dest as usize] = v;
+                    *dest = v;
                     ControlFlow::Continue(())
                 }
                 None => ControlFlow::Break(Err(VmError::BadOp)),
             }
         }
 
+        #[inline]
         fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
-            match self.registers[arg1 as usize].sub(self.registers[arg2 as usize]) {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+
+            match arg1.sub(arg2) {
                 Some(v) => {
-                    self.registers[dest as usize] = v;
+                    *dest = v;
                     ControlFlow::Continue(())
                 }
                 None => ControlFlow::Break(Err(VmError::BadOp)),
             }
         }
 
+        #[inline]
         fn load(self, constant: ConstIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             self.registers[dest as usize] = self.constants[constant as usize].into();
             ControlFlow::Continue(())
         }
 
+        #[inline]
         fn push(mut self, source: RegIdx, len: u8) -> ControlFlow<Self::Return> {
             for i in 0..len {
                 self.stack
@@ -180,6 +212,7 @@ fn dispatch<'gc>(
             ControlFlow::Continue(())
         }
 
+        #[inline]
         fn pop(mut self, dest: RegIdx, len: u8) -> ControlFlow<Self::Return> {
             for i in (0..len).rev() {
                 match self.stack.pop_back() {
@@ -194,6 +227,7 @@ fn dispatch<'gc>(
             ControlFlow::Continue(())
         }
 
+        #[inline]
         fn call(mut self, func: RegIdx, args: u8, returns: u8) -> ControlFlow<Self::Return> {
             match self.registers[func as usize].to_function() {
                 Some(Function::Closure(closure)) => ControlFlow::Break(Ok(Next::Call {
@@ -209,6 +243,7 @@ fn dispatch<'gc>(
             }
         }
 
+        #[inline]
         fn return_(self, returns: u8) -> Self::Return {
             Ok(Next::Return { returns })
         }
@@ -223,6 +258,7 @@ fn dispatch<'gc>(
             registers,
             stack: stack.reborrow(),
         }) {
+            *pc = dispatcher.pc();
             return ret;
         }
     }

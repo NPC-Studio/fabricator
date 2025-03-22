@@ -20,6 +20,11 @@ pub enum Instruction {
         arg2: RegIdx,
         offset: i16,
     },
+    IncAndTestLessEqual {
+        inc: RegIdx,
+        test: RegIdx,
+        offset: i16,
+    },
     Add {
         arg1: RegIdx,
         arg2: RegIdx,
