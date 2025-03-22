@@ -1,8 +1,9 @@
+pub mod bytecode;
 pub mod callback;
 pub mod closure;
 pub mod compiler;
 pub mod constant;
-pub mod ops;
+pub mod instructions;
 pub mod stack;
 pub mod thread;
 pub mod value;

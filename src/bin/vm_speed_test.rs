@@ -1,9 +1,10 @@
 use std::time::Instant;
 
 use fabricator::{
+    bytecode::ByteCode,
     closure::{Closure, Prototype},
     constant::Constant,
-    ops::{ByteCode, Instruction},
+    instructions::Instruction,
     thread::Thread,
 };
 
@@ -46,7 +47,7 @@ fn main() {
                 Instruction::JumpIfLessEqual {
                     arg1: 4,
                     arg2: 2,
-                    offset: -3,
+                    offset: -2,
                 },
                 Instruction::Push { source: 3, len: 1 },
                 Instruction::Return { returns: 1 },

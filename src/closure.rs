@@ -2,17 +2,13 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{
-    constant::Constant,
-    ops::{ByteCode, Register},
-    value::String,
-};
+use crate::{bytecode::ByteCode, constant::Constant, instructions::RegIdx, value::String};
 
-#[derive(Debug, Collect)]
+#[derive(Collect)]
 #[collect(no_drop)]
 pub struct Prototype<'gc> {
     pub fixed_params: u8,
-    pub max_register: Register,
+    pub max_register: RegIdx,
     pub constants: Box<[Constant<String<'gc>>]>,
     pub bytecode: ByteCode,
 }

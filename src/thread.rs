@@ -4,9 +4,10 @@ use gc_arena::{Collect, Mutation};
 use thiserror::Error;
 
 use crate::{
+    bytecode::{self, ByteCode},
     closure::Closure,
     constant::Constant,
-    ops::{self, ByteCode},
+    instructions::{ConstIdx, RegIdx},
     stack::Stack,
     value::{Function, String, Value},
 };
@@ -126,40 +127,27 @@ fn dispatch<'gc>(
         stack: Stack<'gc, 'a>,
     }
 
-    impl<'gc, 'a> ops::Dispatch for Dispatch<'gc, 'a> {
+    impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
         type Return = Result<Next<'gc>, VmError>;
 
-        fn move_(self, source: ops::Register, dest: ops::Register) -> ControlFlow<Self::Return> {
+        fn move_(self, source: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             self.registers[dest as usize] = self.registers[source as usize];
             ControlFlow::Continue(())
         }
 
-        fn test_less(
-            self,
-            arg1: ops::Register,
-            arg2: ops::Register,
-        ) -> ControlFlow<Self::Return, bool> {
+        fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool> {
             ControlFlow::Continue(
                 self.registers[arg1 as usize].less_than(self.registers[arg2 as usize]),
             )
         }
 
-        fn test_less_equal(
-            self,
-            arg1: ops::Register,
-            arg2: ops::Register,
-        ) -> ControlFlow<Self::Return, bool> {
+        fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool> {
             ControlFlow::Continue(
                 self.registers[arg1 as usize].less_equal(self.registers[arg2 as usize]),
             )
         }
 
-        fn add(
-            self,
-            arg1: ops::Register,
-            arg2: ops::Register,
-            dest: ops::Register,
-        ) -> ControlFlow<Self::Return> {
+        fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             match self.registers[arg1 as usize].add(self.registers[arg2 as usize]) {
                 Some(v) => {
                     self.registers[dest as usize] = v;
@@ -169,12 +157,7 @@ fn dispatch<'gc>(
             }
         }
 
-        fn sub(
-            self,
-            arg1: ops::Register,
-            arg2: ops::Register,
-            dest: ops::Register,
-        ) -> ControlFlow<Self::Return> {
+        fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             match self.registers[arg1 as usize].sub(self.registers[arg2 as usize]) {
                 Some(v) => {
                     self.registers[dest as usize] = v;
@@ -184,12 +167,12 @@ fn dispatch<'gc>(
             }
         }
 
-        fn load(self, constant: ops::Constant, dest: ops::Register) -> ControlFlow<Self::Return> {
+        fn load(self, constant: ConstIdx, dest: RegIdx) -> ControlFlow<Self::Return> {
             self.registers[dest as usize] = self.constants[constant as usize].into();
             ControlFlow::Continue(())
         }
 
-        fn push(mut self, source: ops::Register, len: u8) -> ControlFlow<Self::Return> {
+        fn push(mut self, source: RegIdx, len: u8) -> ControlFlow<Self::Return> {
             for i in 0..len {
                 self.stack
                     .push_back(self.registers[source as usize + i as usize]);
@@ -197,7 +180,7 @@ fn dispatch<'gc>(
             ControlFlow::Continue(())
         }
 
-        fn pop(mut self, dest: ops::Register, len: u8) -> ControlFlow<Self::Return> {
+        fn pop(mut self, dest: RegIdx, len: u8) -> ControlFlow<Self::Return> {
             for i in (0..len).rev() {
                 match self.stack.pop_back() {
                     Some(v) => {
@@ -211,7 +194,7 @@ fn dispatch<'gc>(
             ControlFlow::Continue(())
         }
 
-        fn call(mut self, func: ops::Register, args: u8, returns: u8) -> ControlFlow<Self::Return> {
+        fn call(mut self, func: RegIdx, args: u8, returns: u8) -> ControlFlow<Self::Return> {
             match self.registers[func as usize].to_function() {
                 Some(Function::Closure(closure)) => ControlFlow::Break(Ok(Next::Call {
                     closure,
@@ -231,7 +214,7 @@ fn dispatch<'gc>(
         }
     }
 
-    let mut dispatcher = ops::Dispatcher::new(bytecode, *pc);
+    let mut dispatcher = bytecode::Dispatcher::new(bytecode, *pc);
 
     loop {
         if let ControlFlow::Break(ret) = dispatcher.dispatch(Dispatch {
