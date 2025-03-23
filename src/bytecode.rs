@@ -371,13 +371,17 @@ impl<'a> Dispatcher<'a> {
                 OpCode::Push => {
                     let source = read_u8(&mut self.ptr);
                     let len = read_u8(&mut self.ptr);
-                    valid_reg!(source + len - 1);
+                    if len > 0 {
+                        valid_reg!(source + len - 1);
+                    };
                     dispatch.push(source, len)?;
                 }
                 OpCode::Pop => {
                     let dest = read_u8(&mut self.ptr);
                     let len = read_u8(&mut self.ptr);
-                    valid_reg!(dest + len - 1);
+                    if len > 0 {
+                        valid_reg!(dest + len - 1);
+                    };
                     dispatch.pop(dest, len)?;
                 }
                 OpCode::Call => {
