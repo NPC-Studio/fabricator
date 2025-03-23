@@ -287,12 +287,33 @@ impl<'a> Dispatcher<'a> {
         debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
 
         unsafe {
+            // We try and prove to the optimizer that we can elide bounds checks for register and
+            // constant indexes by asserting that they are within the bounds of max_register and
+            // max_constant.
+
+            macro_rules! valid_reg {
+                ($($reg:expr),* $(,)?) => {
+                    $(
+                        std::hint::assert_unchecked($reg <= self.bytecode.max_register);
+                    )*
+                };
+            }
+
+            macro_rules! valid_const {
+                ($($const:expr),* $(,)?) => {
+                    $(
+                        std::hint::assert_unchecked($const <= self.bytecode.max_constant);
+                    )*
+                };
+            }
+
             let opcode = read_opcode(&mut self.ptr);
 
             match opcode {
                 OpCode::Move => {
                     let source = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
+                    valid_reg!(source, dest);
                     dispatch.move_(source, dest)?;
                 }
                 OpCode::Jump => {
@@ -302,6 +323,7 @@ impl<'a> Dispatcher<'a> {
                 OpCode::JumpIfLess => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
+                    valid_reg!(arg1, arg2);
                     let offset = read_i16(&mut self.ptr);
                     if dispatch.test_less(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -310,6 +332,7 @@ impl<'a> Dispatcher<'a> {
                 OpCode::JumpIfLessEqual => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
+                    valid_reg!(arg1, arg2);
                     let offset = read_i16(&mut self.ptr);
                     if dispatch.test_less_equal(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -318,6 +341,7 @@ impl<'a> Dispatcher<'a> {
                 OpCode::IncAndTestLessEqual => {
                     let inc = read_u8(&mut self.ptr);
                     let test = read_u8(&mut self.ptr);
+                    valid_reg!(inc, test);
                     let offset = read_i16(&mut self.ptr);
                     if dispatch.inc_test_less_equal(inc, test)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -327,33 +351,40 @@ impl<'a> Dispatcher<'a> {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
+                    valid_reg!(arg1, arg2, dest);
                     dispatch.add(arg1, arg2, dest)?;
                 }
                 OpCode::Sub => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
+                    valid_reg!(arg1, arg2, dest);
                     dispatch.sub(arg1, arg2, dest)?;
                 }
                 OpCode::Load => {
                     let constant = read_u16(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
+                    valid_const!(constant);
+                    valid_reg!(dest);
                     dispatch.load(constant, dest)?;
                 }
                 OpCode::Push => {
                     let source = read_u8(&mut self.ptr);
                     let len = read_u8(&mut self.ptr);
+                    valid_reg!(source + len - 1);
                     dispatch.push(source, len)?;
                 }
                 OpCode::Pop => {
                     let dest = read_u8(&mut self.ptr);
                     let len = read_u8(&mut self.ptr);
+                    valid_reg!(dest + len - 1);
                     dispatch.pop(dest, len)?;
                 }
                 OpCode::Call => {
                     let func = read_u8(&mut self.ptr);
                     let args = read_u8(&mut self.ptr);
                     let returns = read_u8(&mut self.ptr);
+                    valid_reg!(func);
                     dispatch.call(func, args, returns)?;
                 }
                 OpCode::Return => {
