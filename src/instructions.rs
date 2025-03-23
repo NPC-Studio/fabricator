@@ -3,6 +3,10 @@ pub type ConstIdx = u16;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Instruction {
+    Load {
+        constant: ConstIdx,
+        dest: RegIdx,
+    },
     Move {
         source: RegIdx,
         dest: RegIdx,
@@ -33,10 +37,6 @@ pub enum Instruction {
     Sub {
         arg1: RegIdx,
         arg2: RegIdx,
-        dest: RegIdx,
-    },
-    Load {
-        constant: ConstIdx,
         dest: RegIdx,
     },
     Push {

@@ -6,19 +6,35 @@ use thiserror::Error;
 use crate::instructions::{ConstIdx, Instruction, RegIdx};
 
 pub trait Dispatch {
-    type Return;
+    type Break;
+    type Error;
 
-    fn move_(self, source: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
-    fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool>;
-    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> ControlFlow<Self::Return, bool>;
-    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> ControlFlow<Self::Return, bool>;
-    fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
-    fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
-    fn load(self, constant: ConstIdx, dest: RegIdx) -> ControlFlow<Self::Return>;
-    fn push(self, source: RegIdx, len: u8) -> ControlFlow<Self::Return>;
-    fn pop(self, dest: RegIdx, len: u8) -> ControlFlow<Self::Return>;
-    fn call(self, func: RegIdx, args: u8, returns: u8) -> ControlFlow<Self::Return>;
-    fn return_(self, returns: u8) -> Self::Return;
+    fn load(self, constant: ConstIdx, dest: RegIdx);
+    fn move_(self, source: RegIdx, dest: RegIdx);
+    fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
+    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
+    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> Result<bool, Self::Error>;
+    fn add(
+        self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn sub(
+        self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn push(self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn pop(self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn call(
+        self,
+        func: RegIdx,
+        args: u8,
+        returns: u8,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn return_(self, returns: u8) -> Result<Self::Break, Self::Error>;
 }
 
 struct BoolVec(Box<[u8]>);
@@ -97,6 +113,10 @@ impl ByteCode {
 
         for (i, &inst) in insts.iter().enumerate() {
             match inst {
+                Instruction::Load { constant, dest } => {
+                    check_constant(constant);
+                    check_register(dest, 1)?;
+                }
                 Instruction::Move { source, dest } => {
                     check_register(source, 1)?;
                     check_register(dest, 1)?;
@@ -127,10 +147,6 @@ impl ByteCode {
                 Instruction::Sub { arg1, arg2, dest } => {
                     check_register(arg1, 1)?;
                     check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::Load { constant, dest } => {
-                    check_constant(constant);
                     check_register(dest, 1)?;
                 }
                 Instruction::Push { source, len } => {
@@ -179,6 +195,10 @@ impl ByteCode {
             write_opcode(&mut bytes, OpCode::for_inst(inst));
 
             match inst {
+                Instruction::Load { constant, dest } => {
+                    write_u16(&mut bytes, constant);
+                    write_u8(&mut bytes, dest);
+                }
                 Instruction::Move { source, dest } => {
                     write_u8(&mut bytes, source);
                     write_u8(&mut bytes, dest);
@@ -209,10 +229,6 @@ impl ByteCode {
                 Instruction::Sub { arg1, arg2, dest } => {
                     write_u8(&mut bytes, arg1);
                     write_u8(&mut bytes, arg2);
-                    write_u8(&mut bytes, dest);
-                }
-                Instruction::Load { constant, dest } => {
-                    write_u16(&mut bytes, constant);
                     write_u8(&mut bytes, dest);
                 }
                 Instruction::Push { source, len } => {
@@ -283,7 +299,10 @@ impl<'a> Dispatcher<'a> {
     }
 
     #[inline]
-    pub fn dispatch<D: Dispatch>(&mut self, dispatch: D) -> ControlFlow<D::Return> {
+    pub fn dispatch<D: Dispatch>(
+        &mut self,
+        dispatch: D,
+    ) -> Result<ControlFlow<D::Break>, D::Error> {
         debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
 
         unsafe {
@@ -309,16 +328,26 @@ impl<'a> Dispatcher<'a> {
 
             let opcode = read_opcode(&mut self.ptr);
 
-            match opcode {
+            Ok(match opcode {
+                OpCode::Load => {
+                    let constant = read_u16(&mut self.ptr);
+                    let dest = read_u8(&mut self.ptr);
+                    valid_const!(constant);
+                    valid_reg!(dest);
+                    dispatch.load(constant, dest);
+                    ControlFlow::Continue(())
+                }
                 OpCode::Move => {
                     let source = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
                     valid_reg!(source, dest);
-                    dispatch.move_(source, dest)?;
+                    dispatch.move_(source, dest);
+                    ControlFlow::Continue(())
                 }
                 OpCode::Jump => {
                     let offset = read_i16(&mut self.ptr);
                     self.ptr = self.ptr.offset(offset as isize);
+                    ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLess => {
                     let arg1 = read_u8(&mut self.ptr);
@@ -328,6 +357,7 @@ impl<'a> Dispatcher<'a> {
                     if dispatch.test_less(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
+                    ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLessEqual => {
                     let arg1 = read_u8(&mut self.ptr);
@@ -337,6 +367,7 @@ impl<'a> Dispatcher<'a> {
                     if dispatch.test_less_equal(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
+                    ControlFlow::Continue(())
                 }
                 OpCode::IncAndTestLessEqual => {
                     let inc = read_u8(&mut self.ptr);
@@ -346,27 +377,21 @@ impl<'a> Dispatcher<'a> {
                     if dispatch.inc_test_less_equal(inc, test)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
+                    ControlFlow::Continue(())
                 }
                 OpCode::Add => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
-                    dispatch.add(arg1, arg2, dest)?;
+                    dispatch.add(arg1, arg2, dest)?
                 }
                 OpCode::Sub => {
                     let arg1 = read_u8(&mut self.ptr);
                     let arg2 = read_u8(&mut self.ptr);
                     let dest = read_u8(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
-                    dispatch.sub(arg1, arg2, dest)?;
-                }
-                OpCode::Load => {
-                    let constant = read_u16(&mut self.ptr);
-                    let dest = read_u8(&mut self.ptr);
-                    valid_const!(constant);
-                    valid_reg!(dest);
-                    dispatch.load(constant, dest)?;
+                    dispatch.sub(arg1, arg2, dest)?
                 }
                 OpCode::Push => {
                     let source = read_u8(&mut self.ptr);
@@ -375,6 +400,7 @@ impl<'a> Dispatcher<'a> {
                         valid_reg!(source + len - 1);
                     };
                     dispatch.push(source, len)?;
+                    ControlFlow::Continue(())
                 }
                 OpCode::Pop => {
                     let dest = read_u8(&mut self.ptr);
@@ -383,22 +409,21 @@ impl<'a> Dispatcher<'a> {
                         valid_reg!(dest + len - 1);
                     };
                     dispatch.pop(dest, len)?;
+                    ControlFlow::Continue(())
                 }
                 OpCode::Call => {
                     let func = read_u8(&mut self.ptr);
                     let args = read_u8(&mut self.ptr);
                     let returns = read_u8(&mut self.ptr);
                     valid_reg!(func);
-                    dispatch.call(func, args, returns)?;
+                    dispatch.call(func, args, returns)?
                 }
                 OpCode::Return => {
                     let returns = read_u8(&mut self.ptr);
-                    return ControlFlow::Break(dispatch.return_(returns));
+                    ControlFlow::Break(dispatch.return_(returns)?)
                 }
-            }
+            })
         }
-
-        ControlFlow::Continue(())
     }
 }
 
@@ -423,6 +448,7 @@ impl OpCode {
     #[inline]
     fn for_inst(inst: Instruction) -> Self {
         match inst {
+            Instruction::Load { .. } => OpCode::Load,
             Instruction::Move { .. } => OpCode::Move,
             Instruction::Jump { .. } => OpCode::Jump,
             Instruction::JumpIfLess { .. } => OpCode::JumpIfLess,
@@ -430,7 +456,6 @@ impl OpCode {
             Instruction::IncAndTestLessEqual { .. } => OpCode::IncAndTestLessEqual,
             Instruction::Add { .. } => OpCode::Add,
             Instruction::Sub { .. } => OpCode::Sub,
-            Instruction::Load { .. } => OpCode::Load,
             Instruction::Push { .. } => OpCode::Push,
             Instruction::Pop { .. } => OpCode::Pop,
             Instruction::Call { .. } => OpCode::Call,
@@ -441,6 +466,7 @@ impl OpCode {
     #[inline]
     fn encoded_len(self) -> usize {
         match self {
+            OpCode::Load => 4,
             OpCode::Move => 3,
             OpCode::Jump => 3,
             OpCode::JumpIfLess => 5,
@@ -448,7 +474,6 @@ impl OpCode {
             OpCode::IncAndTestLessEqual => 5,
             OpCode::Add => 4,
             OpCode::Sub => 4,
-            OpCode::Load => 4,
             OpCode::Push => 3,
             OpCode::Pop => 3,
             OpCode::Call => 4,
@@ -512,106 +537,112 @@ mod tests {
             }
 
             impl Dispatch for Checker {
-                type Return = ();
+                type Break = ();
+                type Error = ();
 
-                fn move_(self, s: RegIdx, d: RegIdx) -> ControlFlow<Self::Return> {
+                fn load(self, c: ConstIdx, d: RegIdx) {
+                    assert!(matches!(self.inst, Instruction::Load {
+                        constant,
+                        dest,
+                    } if constant == c && dest == d));
+                }
+
+                fn move_(self, s: RegIdx, d: RegIdx) {
                     assert!(
                         matches!(self.inst, Instruction::Move { source, dest } if source == s && dest == d)
                     );
-                    ControlFlow::Continue(())
                 }
 
-                fn test_less(self, a1: RegIdx, a2: RegIdx) -> ControlFlow<Self::Return, bool> {
+                fn test_less(self, a1: RegIdx, a2: RegIdx) -> Result<bool, Self::Error> {
                     assert!(matches!(self.inst, Instruction::JumpIfLess {
                         arg1,
                         arg2,
                         ..
                     } if arg1 == a1 && arg2 == a2));
-                    ControlFlow::Continue(false)
+                    Ok(false)
                 }
 
-                fn test_less_equal(
-                    self,
-                    a1: RegIdx,
-                    a2: RegIdx,
-                ) -> ControlFlow<Self::Return, bool> {
+                fn test_less_equal(self, a1: RegIdx, a2: RegIdx) -> Result<bool, Self::Error> {
                     assert!(matches!(self.inst, Instruction::JumpIfLessEqual {
                         arg1,
                         arg2,
                         ..
                     } if arg1 == a1 && arg2 == a2));
-                    ControlFlow::Continue(false)
+                    Ok(false)
                 }
 
-                fn inc_test_less_equal(
-                    self,
-                    i: RegIdx,
-                    t: RegIdx,
-                ) -> ControlFlow<Self::Return, bool> {
+                fn inc_test_less_equal(self, i: RegIdx, t: RegIdx) -> Result<bool, Self::Error> {
                     assert!(matches!(self.inst, Instruction::IncAndTestLessEqual {
                         inc,
                         test,
                         ..
                     } if inc == i && test == t));
-                    ControlFlow::Continue(false)
+                    Ok(false)
                 }
 
-                fn add(self, a1: RegIdx, a2: RegIdx, d: RegIdx) -> ControlFlow<Self::Return> {
+                fn add(
+                    self,
+                    a1: RegIdx,
+                    a2: RegIdx,
+                    d: RegIdx,
+                ) -> Result<ControlFlow<Self::Break>, Self::Error> {
                     assert!(matches!(self.inst, Instruction::Add {
                         arg1,
                         arg2,
                         dest,
                     } if arg1 == a1 && arg2 == a2 && dest == d));
-                    ControlFlow::Continue(())
+                    Ok(ControlFlow::Continue(()))
                 }
 
-                fn sub(self, a1: RegIdx, a2: RegIdx, d: RegIdx) -> ControlFlow<Self::Return> {
+                fn sub(
+                    self,
+                    a1: RegIdx,
+                    a2: RegIdx,
+                    d: RegIdx,
+                ) -> Result<ControlFlow<Self::Break>, Self::Error> {
                     assert!(matches!(self.inst, Instruction::Sub {
                         arg1,
                         arg2,
                         dest,
                     } if arg1 == a1 && arg2 == a2 && dest == d));
-                    ControlFlow::Continue(())
+                    Ok(ControlFlow::Continue(()))
                 }
 
-                fn load(self, c: ConstIdx, d: RegIdx) -> ControlFlow<Self::Return> {
-                    assert!(matches!(self.inst, Instruction::Load {
-                        constant,
-                        dest,
-                    } if constant == c && dest == d));
-                    ControlFlow::Continue(())
-                }
-
-                fn push(self, s: RegIdx, l: u8) -> ControlFlow<Self::Return> {
+                fn push(self, s: RegIdx, l: u8) -> Result<(), Self::Error> {
                     assert!(matches!(self.inst, Instruction::Push {
                         source,
                         len,
                     } if source == s && len == l));
-                    ControlFlow::Continue(())
+                    Ok(())
                 }
 
-                fn pop(self, d: RegIdx, l: u8) -> ControlFlow<Self::Return> {
+                fn pop(self, d: RegIdx, l: u8) -> Result<(), Self::Error> {
                     assert!(matches!(self.inst, Instruction::Pop {
                         dest,
                         len,
                     } if dest == d && len == l));
-                    ControlFlow::Continue(())
+                    Ok(())
                 }
 
-                fn call(self, f: RegIdx, a: u8, r: u8) -> ControlFlow<Self::Return> {
+                fn call(
+                    self,
+                    f: RegIdx,
+                    a: u8,
+                    r: u8,
+                ) -> Result<ControlFlow<Self::Break>, Self::Error> {
                     assert!(matches!(self.inst, Instruction::Call {
                         func,
                         args,
                         returns,
                     } if func == f && args == a && returns == r));
-                    ControlFlow::Continue(())
+                    Ok(ControlFlow::Continue(()))
                 }
 
-                fn return_(self, r: u8) -> Self::Return {
+                fn return_(self, r: u8) -> Result<Self::Break, Self::Error> {
                     assert!(matches!(self.inst, Instruction::Return {
                         returns,
                     } if returns == r));
-                    ()
+                    Ok(())
                 }
             }
 
@@ -620,7 +651,11 @@ mod tests {
 
             let mut pos = 0;
             loop {
-                if dispatcher.dispatch(Checker { inst: insts[pos] }).is_break() {
+                if dispatcher
+                    .dispatch(Checker { inst: insts[pos] })
+                    .unwrap()
+                    .is_break()
+                {
                     break;
                 }
 
@@ -629,6 +664,10 @@ mod tests {
         }
 
         check(&[
+            Instruction::Load {
+                constant: 12,
+                dest: 3,
+            },
             Instruction::Move { source: 2, dest: 3 },
             Instruction::Jump { offset: 1 },
             Instruction::JumpIfLess {
@@ -649,10 +688,6 @@ mod tests {
             Instruction::Sub {
                 arg1: 1,
                 arg2: 2,
-                dest: 3,
-            },
-            Instruction::Load {
-                constant: 12,
                 dest: 3,
             },
             Instruction::Push { source: 13, len: 4 },
