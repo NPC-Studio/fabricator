@@ -127,6 +127,7 @@ fn dispatch<'gc>(
         stack: Stack<'gc, 'a>,
     }
 
+    // Try to elide bounds checks on registers / constants, see `Dispatcher`.
     assert!((bytecode.max_register() as usize) < registers.len());
     assert!((bytecode.max_constant() as usize) < constants.len());
 

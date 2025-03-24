@@ -1,65 +1,9 @@
-use std::{mem, ops::ControlFlow};
+use std::{hint, mem, ops::ControlFlow};
 
 use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::instructions::{ConstIdx, Instruction, RegIdx};
-
-pub trait Dispatch {
-    type Break;
-    type Error;
-
-    fn load(self, constant: ConstIdx, dest: RegIdx);
-    fn move_(self, source: RegIdx, dest: RegIdx);
-    fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
-    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
-    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> Result<bool, Self::Error>;
-    fn add(
-        self,
-        arg1: RegIdx,
-        arg2: RegIdx,
-        dest: RegIdx,
-    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-    fn sub(
-        self,
-        arg1: RegIdx,
-        arg2: RegIdx,
-        dest: RegIdx,
-    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-    fn push(self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
-    fn pop(self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
-    fn call(
-        self,
-        func: RegIdx,
-        args: u8,
-        returns: u8,
-    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-    fn return_(self, returns: u8) -> Result<Self::Break, Self::Error>;
-}
-
-struct BoolVec(Box<[u8]>);
-
-impl BoolVec {
-    fn new(min_len: usize) -> Self {
-        Self(vec![0; min_len.div_ceil(8)].into_boxed_slice())
-    }
-
-    fn set(&mut self, i: usize, val: bool) {
-        let base = i >> 8;
-        let off = i % 8;
-        if val {
-            self.0[base] |= 1 << off;
-        } else {
-            self.0[base] &= !(1 << off);
-        }
-    }
-
-    fn get(&self, i: usize) -> bool {
-        let base = i >> 8;
-        let off = i % 8;
-        self.0[base] & (1 << off) != 0
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
@@ -71,6 +15,9 @@ pub enum ByteCodeEncodingError {
     BadlastInstruction,
 }
 
+/// An encoded list of [`Instruction`]s.
+///
+/// Stored in a variable-length, optimized bytecode format internally.
 #[derive(Collect)]
 #[collect(require_static)]
 pub struct ByteCode {
@@ -81,6 +28,7 @@ pub struct ByteCode {
 }
 
 impl ByteCode {
+    /// Encode a list of instructions as bytecode.
     pub fn encode(insts: &[Instruction]) -> Result<Self, ByteCodeEncodingError> {
         let mut max_register = 0;
         let mut max_constant = 0;
@@ -273,12 +221,24 @@ impl ByteCode {
     }
 }
 
+/// Read [`ByteCode`] in a optimized way and dispatch to instruction handlers.
+///
+/// Highly unsafe internally and relies on `ByteCode` being built correctly for soundness. Since
+/// it is only possible to build `ByteCode` in-memory by validating a sequence of [`Instruction`]s,
+/// this can provide a completely safe interface to highly optimized instruction dispatch.
 pub struct Dispatcher<'a> {
     bytecode: &'a ByteCode,
     ptr: *const u8,
 }
 
 impl<'a> Dispatcher<'a> {
+    /// Construct a new `Dispatcher` for the given bytecode, restoring the given `pc` program
+    /// counter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if given a program counter that does not fall on an instruction start point. `0` is
+    /// always a valid program counter for the starting instruction.
     #[inline]
     pub fn new(bytecode: &'a ByteCode, pc: usize) -> Self {
         assert!(bytecode.inst_boundaries.get(pc));
@@ -293,11 +253,20 @@ impl<'a> Dispatcher<'a> {
         self.bytecode
     }
 
+    /// Returns the current program counter. `Dispatcher` state can be completely restored by
+    /// constructing a new `Dispatcher` with the same [`ByteCode`] and a stored program counter.
     #[inline]
     pub fn pc(&self) -> usize {
         unsafe { self.ptr.offset_from(self.bytecode.bytes.as_ptr()) as usize }
     }
 
+    /// Dispatch a single instruction to the given [`Dispatch`] impl.
+    ///
+    /// Because instruction dispatch is so performance crucial, this uses [`hint::assert_unchecked`]
+    /// internally to prove to the optimizer that all provided indexes for registers and constants
+    /// are within the max limits reported by [`ByteCode`] methods. Adding asserts that register /
+    /// constant slices satisfy the bounds reported by `ByteCode` *should* allow the optimizer to
+    /// avoid bounds checks.
     #[inline]
     pub fn dispatch<D: Dispatch>(
         &mut self,
@@ -309,11 +278,15 @@ impl<'a> Dispatcher<'a> {
             // We try and prove to the optimizer that we can elide bounds checks for register and
             // constant indexes by asserting that they are within the bounds of max_register and
             // max_constant.
+            //
+            // Instruction dispatch is already highly unsafe and relies on similar facts that are
+            // determined during `ByteCode` construction for soundness, so it makes sense to keep
+            // this unsafety here rather than in the core VM code.
 
             macro_rules! valid_reg {
                 ($($reg:expr),* $(,)?) => {
                     $(
-                        std::hint::assert_unchecked($reg <= self.bytecode.max_register);
+                        hint::assert_unchecked($reg <= self.bytecode.max_register);
                     )*
                 };
             }
@@ -321,7 +294,7 @@ impl<'a> Dispatcher<'a> {
             macro_rules! valid_const {
                 ($($const:expr),* $(,)?) => {
                     $(
-                        std::hint::assert_unchecked($const <= self.bytecode.max_constant);
+                        hint::assert_unchecked($const <= self.bytecode.max_constant);
                     )*
                 };
             }
@@ -427,6 +400,38 @@ impl<'a> Dispatcher<'a> {
     }
 }
 
+pub trait Dispatch {
+    type Break;
+    type Error;
+
+    fn load(self, constant: ConstIdx, dest: RegIdx);
+    fn move_(self, source: RegIdx, dest: RegIdx);
+    fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
+    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
+    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> Result<bool, Self::Error>;
+    fn add(
+        self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn sub(
+        self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn push(self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn pop(self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn call(
+        self,
+        func: RegIdx,
+        args: u8,
+        returns: u8,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn return_(self, returns: u8) -> Result<Self::Break, Self::Error>;
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[repr(u8)]
 enum OpCode {
@@ -482,6 +487,31 @@ impl OpCode {
     }
 }
 
+#[derive(Debug)]
+struct BoolVec(Box<[u8]>);
+
+impl BoolVec {
+    fn new(min_len: usize) -> Self {
+        Self(vec![0; min_len.div_ceil(8)].into_boxed_slice())
+    }
+
+    fn set(&mut self, i: usize, val: bool) {
+        let base = i / 8;
+        let off = i % 8;
+        if val {
+            self.0[base] |= 1 << off;
+        } else {
+            self.0[base] &= !(1 << off);
+        }
+    }
+
+    fn get(&self, i: usize) -> bool {
+        let base = i / 8;
+        let off = i % 8;
+        self.0[base] & (1 << off) != 0
+    }
+}
+
 #[inline]
 fn write_u8(buf: &mut Vec<u8>, val: u8) {
     buf.push(val);
@@ -528,6 +558,23 @@ unsafe fn read_opcode(ptr: &mut *const u8) -> OpCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bool_vec() {
+        let mut bv = BoolVec::new(17);
+
+        bv.set(0, true);
+        bv.set(7, true);
+        bv.set(16, true);
+
+        assert!(bv.get(0));
+        assert!(bv.get(7));
+        assert!(bv.get(16));
+        assert!(!bv.get(1));
+        assert!(!bv.get(6));
+        assert!(!bv.get(8));
+        assert!(!bv.get(15));
+    }
 
     #[test]
     fn test_bytecode_dispatch() {
