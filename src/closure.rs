@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gc_arena::{Collect, Gc, Mutation};
+use gc_arena::{Collect, Gc};
 
 use crate::{bytecode::ByteCode, constant::Constant, value::String};
 
@@ -17,8 +17,8 @@ pub struct Prototype<'gc> {
 pub struct Closure<'gc>(pub Gc<'gc, Prototype<'gc>>);
 
 impl<'gc> Closure<'gc> {
-    pub fn new(mc: &Mutation<'gc>, proto: Prototype<'gc>) -> Self {
-        Closure(Gc::new(mc, proto))
+    pub fn new(proto: Gc<'gc, Prototype<'gc>>) -> Self {
+        Closure(proto)
     }
 }
 

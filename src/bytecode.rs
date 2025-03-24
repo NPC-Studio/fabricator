@@ -1,4 +1,4 @@
-use std::{hint, mem, ops::ControlFlow};
+use std::{hint::assert_unchecked, mem, ops::ControlFlow};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -262,7 +262,7 @@ impl<'a> Dispatcher<'a> {
 
     /// Dispatch a single instruction to the given [`Dispatch`] impl.
     ///
-    /// Because instruction dispatch is so performance crucial, this uses [`hint::assert_unchecked`]
+    /// Because instruction dispatch is so performance crucial, this uses [`assert_unchecked`]
     /// internally to prove to the optimizer that all provided indexes for registers and constants
     /// are within the max limits reported by [`ByteCode`] methods. Adding asserts that register /
     /// constant slices satisfy the bounds reported by `ByteCode` *should* allow the optimizer to
@@ -286,7 +286,7 @@ impl<'a> Dispatcher<'a> {
             macro_rules! valid_reg {
                 ($($reg:expr),* $(,)?) => {
                     $(
-                        hint::assert_unchecked($reg <= self.bytecode.max_register);
+                        assert_unchecked($reg <= self.bytecode.max_register);
                     )*
                 };
             }
@@ -294,7 +294,7 @@ impl<'a> Dispatcher<'a> {
             macro_rules! valid_const {
                 ($($const:expr),* $(,)?) => {
                     $(
-                        hint::assert_unchecked($const <= self.bytecode.max_constant);
+                        assert_unchecked($const <= self.bytecode.max_constant);
                     )*
                 };
             }

@@ -1,5 +1,6 @@
-use std::time::Instant;
+use std::hint::black_box;
 
+use criterion::{criterion_group, criterion_main, Criterion};
 use fabricator::{
     bytecode::ByteCode,
     closure::{Closure, Prototype},
@@ -7,10 +8,16 @@ use fabricator::{
     instructions::Instruction,
     thread::Thread,
 };
+use gc_arena::{Arena, Gc, Rootable};
 
-fn main() {
-    gc_arena::arena::rootless_mutate(|mc| {
-        let prototype = Prototype {
+pub fn criterion_benchmark(c: &mut Criterion) {
+    struct Root<'gc> {
+        proto: Gc<'gc, Prototype<'gc>>,
+        thread: Thread<'gc>,
+    }
+
+    let mut arena: Arena<Rootable![Root<'_>]> = Arena::new(|mc| {
+        let proto = Prototype {
             fixed_params: 0,
             constants: vec![
                 Constant::Integer(0),
@@ -49,14 +56,22 @@ fn main() {
             .unwrap(),
         };
 
-        let closure = Closure::new(mc, prototype);
+        Root {
+            proto: Gc::new(mc, proto),
+            thread: Thread::default(),
+        }
+    });
 
-        let mut thread = Thread::default();
-
-        let instant = Instant::now();
-        let res = thread.exec(mc, closure).unwrap();
-        let elapsed = instant.elapsed();
-
-        println!("result: {:?}, total time: {elapsed:?}", res[0]);
-    })
+    c.bench_function("sum loop", move |b| {
+        b.iter(|| {
+            let arena = black_box(&mut arena);
+            arena.mutate_root(|mc, root| {
+                let closure = Closure::new(root.proto);
+                root.thread.exec(mc, closure).unwrap();
+            });
+        })
+    });
 }
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
