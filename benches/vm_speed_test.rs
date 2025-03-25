@@ -7,6 +7,7 @@ use fabricator::{
     constant::Constant,
     instructions::Instruction,
     thread::Thread,
+    value::Value,
 };
 use gc_arena::{Arena, Gc, Rootable};
 
@@ -45,10 +46,20 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                     arg2: 4,
                     dest: 3,
                 },
-                Instruction::IncAndTestLessEqual {
-                    inc: 4,
-                    test: 2,
-                    offset: -1,
+                Instruction::Add {
+                    arg1: 4,
+                    arg2: 1,
+                    dest: 4,
+                },
+                Instruction::TestLessEqual {
+                    arg1: 4,
+                    arg2: 2,
+                    dest: 5,
+                },
+                Instruction::JumpIf {
+                    arg: 5,
+                    is_true: true,
+                    offset: -3,
                 },
                 Instruction::Push { source: 3, len: 1 },
                 Instruction::Return { returns: 1 },
@@ -67,7 +78,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let arena = black_box(&mut arena);
             arena.mutate_root(|mc, root| {
                 let closure = Closure::new(root.proto);
-                root.thread.exec(mc, closure).unwrap();
+                assert_eq!(
+                    root.thread.exec(mc, closure).unwrap()[0],
+                    Value::Integer(50000005000000)
+                );
             });
         })
     });

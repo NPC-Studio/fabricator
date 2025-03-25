@@ -52,19 +52,20 @@ impl<'gc> Thread<'gc> {
         let proto = &closure.0;
 
         let register_bottom = self.registers.len();
-        let register_len = proto.bytecode.max_register() as usize + 1;
+        let used_registers = proto.bytecode.max_register() as usize + 1;
         self.registers
-            .resize(register_bottom + register_len, Value::Undefined);
+            .resize(register_bottom + 256, Value::Undefined);
 
         let mut pc: usize = 0;
 
         loop {
+            // We pass in a 256 slice of registers to avoid register bounds checks.
             match dispatch(
                 mc,
                 &proto.bytecode,
                 &proto.constants,
                 &mut pc,
-                (&mut self.registers[register_bottom..register_bottom + register_len])
+                (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
                     .unwrap(),
                 Stack::new(&mut self.stack, stack_bottom),
@@ -80,7 +81,11 @@ impl<'gc> Thread<'gc> {
                     self.stack
                         .resize(arg_bottom + args as usize, Value::Undefined);
 
+                    // We only preserve the registers that are intended to be used,
+                    self.stack.truncate(register_bottom + used_registers);
                     self.call(mc, closure, arg_bottom)?;
+                    // Resize the register slice to be 256 wide.
+                    self.stack.resize(register_bottom + 256, Value::Undefined);
 
                     // Pad stack with undefined values to match the expected return len.
                     self.stack
@@ -117,7 +122,7 @@ fn dispatch<'gc>(
     bytecode: &ByteCode,
     constants: &[Constant<String<'gc>>],
     pc: &mut usize,
-    registers: &mut [Value<'gc>],
+    registers: &mut [Value<'gc>; 256],
     mut stack: Stack<'gc, '_>,
 ) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
@@ -127,17 +132,13 @@ fn dispatch<'gc>(
         stack: Stack<'gc, 'a>,
     }
 
-    // Try to elide bounds checks on registers and constants, see `Dispatcher`.
-    assert!((bytecode.max_register() as usize) < registers.len());
-    assert!((bytecode.max_constant() as usize) < constants.len());
-
     impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
         type Break = Next<'gc>;
         type Error = VmError;
 
         #[inline]
         fn load(self, constant: ConstIdx, dest: RegIdx) {
-            self.registers[dest as usize] = self.constants[constant as usize].into();
+            self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
         }
 
         #[inline]
@@ -146,53 +147,80 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
-            Ok(arg1.less_than(arg2))
+        fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Boolean(self.registers[arg as usize].to_bool());
+            Ok(())
         }
 
         #[inline]
-        fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
-            Ok(arg1.less_equal(arg2))
-        }
-
-        #[inline]
-        fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> Result<bool, Self::Error> {
-            let test = self.registers[test as usize];
-            let inc = &mut self.registers[inc as usize];
-            *inc = inc.add(Value::Integer(1)).ok_or(VmError::BadOp)?;
-            Ok(inc.less_equal(test))
-        }
-
-        #[inline]
-        fn add(
-            self,
-            arg1: RegIdx,
-            arg2: RegIdx,
-            dest: RegIdx,
-        ) -> Result<ControlFlow<Self::Break>, Self::Error> {
+        fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
             *dest = arg1.add(arg2).ok_or(VmError::BadOp)?;
-            Ok(ControlFlow::Continue(()))
+            Ok(())
         }
 
         #[inline]
-        fn sub(
-            self,
-            arg1: RegIdx,
-            arg2: RegIdx,
-            dest: RegIdx,
-        ) -> Result<ControlFlow<Self::Break>, Self::Error> {
+        fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
             *dest = arg1.sub(arg2).ok_or(VmError::BadOp)?;
-            Ok(ControlFlow::Continue(()))
+            Ok(())
+        }
+
+        #[inline]
+        fn test_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = Value::Boolean(arg1.equal(arg2).ok_or(VmError::BadOp)?);
+            Ok(())
+        }
+
+        #[inline]
+        fn test_not_equal(
+            self,
+            arg1: RegIdx,
+            arg2: RegIdx,
+            dest: RegIdx,
+        ) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = Value::Boolean(!arg1.equal(arg2).ok_or(VmError::BadOp)?);
+            Ok(())
+        }
+
+        #[inline]
+        fn test_less(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Boolean(
+                self.registers[arg1 as usize]
+                    .less_than(self.registers[arg2 as usize])
+                    .ok_or(VmError::BadOp)?,
+            );
+            Ok(())
+        }
+
+        #[inline]
+        fn test_less_equal(
+            self,
+            arg1: RegIdx,
+            arg2: RegIdx,
+            dest: RegIdx,
+        ) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Boolean(
+                self.registers[arg1 as usize]
+                    .less_equal(self.registers[arg2 as usize])
+                    .ok_or(VmError::BadOp)?,
+            );
+            Ok(())
+        }
+
+        #[inline]
+        fn check(self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
+            Ok(self.registers[test as usize].to_bool() == is_true)
         }
 
         #[inline]

@@ -1,5 +1,4 @@
 use std::{
-    hint::assert_unchecked,
     mem::{self, MaybeUninit},
     ops::ControlFlow,
 };
@@ -73,23 +72,9 @@ impl ByteCode {
                     check_register(source, 1)?;
                     check_register(dest, 1)?;
                 }
-                Instruction::Jump { offset } => {
-                    check_jump(i, offset)?;
-                }
-                Instruction::JumpIfLess { arg1, arg2, offset } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_jump(i, offset)?;
-                }
-                Instruction::JumpIfLessEqual { arg1, arg2, offset } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_jump(i, offset)?;
-                }
-                Instruction::IncAndTestLessEqual { inc, test, offset } => {
-                    check_register(inc, 1)?;
-                    check_register(test, 1)?;
-                    check_jump(i, offset)?;
+                Instruction::Not { arg, dest } => {
+                    check_register(arg, 1)?;
+                    check_register(dest, 1)?;
                 }
                 Instruction::Add { arg1, arg2, dest } => {
                     check_register(arg1, 1)?;
@@ -100,6 +85,35 @@ impl ByteCode {
                     check_register(arg1, 1)?;
                     check_register(arg2, 1)?;
                     check_register(dest, 1)?;
+                }
+                Instruction::TestEqual { arg1, arg2, dest } => {
+                    check_register(arg1, 1)?;
+                    check_register(arg2, 1)?;
+                    check_register(dest, 1)?;
+                }
+                Instruction::TestNotEqual { arg1, arg2, dest } => {
+                    check_register(arg1, 1)?;
+                    check_register(arg2, 1)?;
+                    check_register(dest, 1)?;
+                }
+                Instruction::TestLess { arg1, arg2, dest } => {
+                    check_register(arg1, 1)?;
+                    check_register(arg2, 1)?;
+                    check_register(dest, 1)?;
+                }
+                Instruction::TestLessEqual { arg1, arg2, dest } => {
+                    check_register(arg1, 1)?;
+                    check_register(arg2, 1)?;
+                    check_register(dest, 1)?;
+                }
+                Instruction::Jump { offset } => {
+                    check_jump(i, offset)?;
+                }
+                Instruction::JumpIf {
+                    arg: test, offset, ..
+                } => {
+                    check_register(test, 1)?;
+                    check_jump(i, offset)?;
                 }
                 Instruction::Push { source, len } => {
                     check_register(source, len)?;
@@ -153,6 +167,21 @@ impl ByteCode {
                 Instruction::Move { source, dest } => {
                     bytecode_write(&mut bytes, MoveParams { source, dest });
                 }
+                Instruction::Not { arg, dest } => {
+                    bytecode_write(&mut bytes, NotParams { arg, dest });
+                }
+                Instruction::TestEqual { arg1, arg2, dest } => {
+                    bytecode_write(&mut bytes, TestEqualParams { arg1, arg2, dest });
+                }
+                Instruction::TestNotEqual { arg1, arg2, dest } => {
+                    bytecode_write(&mut bytes, TestNotEqualParams { arg1, arg2, dest });
+                }
+                Instruction::TestLess { arg1, arg2, dest } => {
+                    bytecode_write(&mut bytes, TestLessParams { arg1, arg2, dest });
+                }
+                Instruction::TestLessEqual { arg1, arg2, dest } => {
+                    bytecode_write(&mut bytes, TestLessEqualParams { arg1, arg2, dest });
+                }
                 Instruction::Jump { offset } => {
                     bytecode_write(
                         &mut bytes,
@@ -161,32 +190,16 @@ impl ByteCode {
                         },
                     );
                 }
-                Instruction::JumpIfLess { arg1, arg2, offset } => {
+                Instruction::JumpIf {
+                    arg,
+                    is_true,
+                    offset,
+                } => {
                     bytecode_write(
                         &mut bytes,
-                        JumpIfLessParams {
-                            arg1,
-                            arg2,
-                            offset: calc_jump(i, offset)?,
-                        },
-                    );
-                }
-                Instruction::JumpIfLessEqual { arg1, arg2, offset } => {
-                    bytecode_write(
-                        &mut bytes,
-                        JumpIfLessEqualParams {
-                            arg1,
-                            arg2,
-                            offset: calc_jump(i, offset)?,
-                        },
-                    );
-                }
-                Instruction::IncAndTestLessEqual { inc, test, offset } => {
-                    bytecode_write(
-                        &mut bytes,
-                        IncAndTestLessEqualParams {
-                            inc,
-                            test,
+                        JumpIfParams {
+                            arg,
+                            is_true,
                             offset: calc_jump(i, offset)?,
                         },
                     );
@@ -282,12 +295,6 @@ impl<'a> Dispatcher<'a> {
     }
 
     /// Dispatch a single instruction to the given [`Dispatch`] impl.
-    ///
-    /// Because instruction dispatch is so performance crucial, this uses [`assert_unchecked`]
-    /// internally to prove to the optimizer that all provided indexes for registers and constants
-    /// are within the max limits reported by [`ByteCode`] methods. Adding asserts that register /
-    /// constant slices satisfy the bounds reported by `ByteCode` *should* allow the optimizer to
-    /// avoid bounds checks.
     #[inline]
     pub fn dispatch<D: Dispatch>(
         &mut self,
@@ -296,44 +303,52 @@ impl<'a> Dispatcher<'a> {
         debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
 
         unsafe {
-            // We try and prove to the optimizer that we can elide bounds checks for register and
-            // constant indexes by asserting that they are within the bounds of max_register and
-            // max_constant.
-            //
-            // Instruction dispatch is already highly unsafe and relies on similar facts that are
-            // determined during `ByteCode` construction for soundness, so it makes sense to keep
-            // this unsafety here rather than in the core VM code.
-
-            macro_rules! valid_reg {
-                ($($reg:expr),* $(,)?) => {
-                    $(
-                        assert_unchecked($reg <= self.bytecode.max_register);
-                    )*
-                };
-            }
-
-            macro_rules! valid_const {
-                ($($const:expr),* $(,)?) => {
-                    $(
-                        assert_unchecked($const <= self.bytecode.max_constant);
-                    )*
-                };
-            }
-
             let opcode: OpCode = bytecode_read(&mut self.ptr);
 
             Ok(match opcode {
                 OpCode::Load => {
                     let LoadParams { constant, dest } = bytecode_read(&mut self.ptr);
-                    valid_const!(constant);
-                    valid_reg!(dest);
                     dispatch.load(constant, dest);
                     ControlFlow::Continue(())
                 }
                 OpCode::Move => {
                     let MoveParams { source, dest } = bytecode_read(&mut self.ptr);
-                    valid_reg!(source, dest);
                     dispatch.move_(source, dest);
+                    ControlFlow::Continue(())
+                }
+                OpCode::Not => {
+                    let NotParams { arg, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.not(arg, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::Add => {
+                    let AddParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.add(arg1, arg2, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::Sub => {
+                    let SubParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.sub(arg1, arg2, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::TestEqual => {
+                    let TestEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.test_equal(arg1, arg2, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::TestNotEqual => {
+                    let TestNotEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.test_not_equal(arg1, arg2, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::TestLess => {
+                    let TestLessParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.test_less(arg1, arg2, dest)?;
+                    ControlFlow::Continue(())
+                }
+                OpCode::TestLessEqual => {
+                    let TestLessEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.test_less_equal(arg1, arg2, dest)?;
                     ControlFlow::Continue(())
                 }
                 OpCode::Jump => {
@@ -341,54 +356,24 @@ impl<'a> Dispatcher<'a> {
                     self.ptr = self.ptr.offset(offset as isize);
                     ControlFlow::Continue(())
                 }
-                OpCode::JumpIfLess => {
-                    let JumpIfLessParams { arg1, arg2, offset } = bytecode_read(&mut self.ptr);
-                    valid_reg!(arg1, arg2);
-                    if dispatch.test_less(arg1, arg2)? {
+                OpCode::JumpIf => {
+                    let JumpIfParams {
+                        arg,
+                        is_true,
+                        offset,
+                    } = bytecode_read(&mut self.ptr);
+                    if dispatch.check(arg, is_true)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
                     ControlFlow::Continue(())
-                }
-                OpCode::JumpIfLessEqual => {
-                    let JumpIfLessEqualParams { arg1, arg2, offset } = bytecode_read(&mut self.ptr);
-                    valid_reg!(arg1, arg2);
-                    if dispatch.test_less_equal(arg1, arg2)? {
-                        self.ptr = self.ptr.offset(offset as isize);
-                    }
-                    ControlFlow::Continue(())
-                }
-                OpCode::IncAndTestLessEqual => {
-                    let IncAndTestLessEqualParams { inc, test, offset } =
-                        bytecode_read(&mut self.ptr);
-                    valid_reg!(inc, test);
-                    if dispatch.inc_test_less_equal(inc, test)? {
-                        self.ptr = self.ptr.offset(offset as isize);
-                    }
-                    ControlFlow::Continue(())
-                }
-                OpCode::Add => {
-                    let AddParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    valid_reg!(arg1, arg2, dest);
-                    dispatch.add(arg1, arg2, dest)?
-                }
-                OpCode::Sub => {
-                    let SubParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    valid_reg!(arg1, arg2, dest);
-                    dispatch.sub(arg1, arg2, dest)?
                 }
                 OpCode::Push => {
                     let PushParams { source, len } = bytecode_read(&mut self.ptr);
-                    if len > 0 {
-                        valid_reg!(source + len - 1);
-                    };
                     dispatch.push(source, len)?;
                     ControlFlow::Continue(())
                 }
                 OpCode::Pop => {
                     let PopParams { dest, len } = bytecode_read(&mut self.ptr);
-                    if len > 0 {
-                        valid_reg!(dest + len - 1);
-                    };
                     dispatch.pop(dest, len)?;
                     ControlFlow::Continue(())
                 }
@@ -398,7 +383,6 @@ impl<'a> Dispatcher<'a> {
                         args,
                         returns,
                     } = bytecode_read(&mut self.ptr);
-                    valid_reg!(func);
                     dispatch.call(func, args, returns)?
                 }
                 OpCode::Return => {
@@ -416,21 +400,14 @@ pub trait Dispatch {
 
     fn load(self, constant: ConstIdx, dest: RegIdx);
     fn move_(self, source: RegIdx, dest: RegIdx);
-    fn test_less(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
-    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx) -> Result<bool, Self::Error>;
-    fn inc_test_less_equal(self, inc: RegIdx, test: RegIdx) -> Result<bool, Self::Error>;
-    fn add(
-        self,
-        arg1: RegIdx,
-        arg2: RegIdx,
-        dest: RegIdx,
-    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-    fn sub(
-        self,
-        arg1: RegIdx,
-        arg2: RegIdx,
-        dest: RegIdx,
-    ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+    fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_not_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_less(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn check(self, arg: RegIdx, is_true: bool) -> Result<bool, Self::Error>;
     fn push(self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
     fn pop(self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
     fn call(
@@ -445,14 +422,17 @@ pub trait Dispatch {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[repr(u8)]
 enum OpCode {
+    Load,
     Move,
-    Jump,
-    JumpIfLess,
-    JumpIfLessEqual,
-    IncAndTestLessEqual,
+    Not,
     Add,
     Sub,
-    Load,
+    TestEqual,
+    TestNotEqual,
+    TestLess,
+    TestLessEqual,
+    Jump,
+    JumpIf,
     Push,
     Pop,
     Call,
@@ -465,12 +445,15 @@ impl OpCode {
         match inst {
             Instruction::Load { .. } => OpCode::Load,
             Instruction::Move { .. } => OpCode::Move,
-            Instruction::Jump { .. } => OpCode::Jump,
-            Instruction::JumpIfLess { .. } => OpCode::JumpIfLess,
-            Instruction::JumpIfLessEqual { .. } => OpCode::JumpIfLessEqual,
-            Instruction::IncAndTestLessEqual { .. } => OpCode::IncAndTestLessEqual,
+            Instruction::Not { .. } => OpCode::Not,
             Instruction::Add { .. } => OpCode::Add,
             Instruction::Sub { .. } => OpCode::Sub,
+            Instruction::TestEqual { .. } => OpCode::TestEqual,
+            Instruction::TestNotEqual { .. } => OpCode::TestNotEqual,
+            Instruction::TestLess { .. } => OpCode::TestLess,
+            Instruction::TestLessEqual { .. } => OpCode::TestLessEqual,
+            Instruction::Jump { .. } => OpCode::Jump,
+            Instruction::JumpIf { .. } => OpCode::JumpIf,
             Instruction::Push { .. } => OpCode::Push,
             Instruction::Pop { .. } => OpCode::Pop,
             Instruction::Call { .. } => OpCode::Call,
@@ -483,12 +466,15 @@ impl OpCode {
         match self {
             OpCode::Load => mem::size_of::<LoadParams>(),
             OpCode::Move => mem::size_of::<MoveParams>(),
-            OpCode::Jump => mem::size_of::<JumpParams>(),
-            OpCode::JumpIfLess => mem::size_of::<JumpIfLessParams>(),
-            OpCode::JumpIfLessEqual => mem::size_of::<JumpIfLessEqualParams>(),
-            OpCode::IncAndTestLessEqual => mem::size_of::<IncAndTestLessEqualParams>(),
+            OpCode::Not => mem::size_of::<NotParams>(),
             OpCode::Add => mem::size_of::<AddParams>(),
             OpCode::Sub => mem::size_of::<SubParams>(),
+            OpCode::TestEqual => mem::size_of::<TestEqualParams>(),
+            OpCode::TestNotEqual => mem::size_of::<TestNotEqualParams>(),
+            OpCode::TestLess => mem::size_of::<TestLessParams>(),
+            OpCode::TestLessEqual => mem::size_of::<TestLessEqualParams>(),
+            OpCode::Jump => mem::size_of::<JumpParams>(),
+            OpCode::JumpIf => mem::size_of::<JumpIfParams>(),
             OpCode::Push => mem::size_of::<PushParams>(),
             OpCode::Pop => mem::size_of::<PopParams>(),
             OpCode::Call => mem::size_of::<CallParams>(),
@@ -510,29 +496,9 @@ struct MoveParams {
 }
 
 #[repr(packed)]
-struct JumpParams {
-    offset: i16,
-}
-
-#[repr(packed)]
-struct JumpIfLessParams {
-    arg1: RegIdx,
-    arg2: RegIdx,
-    offset: i16,
-}
-
-#[repr(packed)]
-struct JumpIfLessEqualParams {
-    arg1: RegIdx,
-    arg2: RegIdx,
-    offset: i16,
-}
-
-#[repr(packed)]
-struct IncAndTestLessEqualParams {
-    inc: RegIdx,
-    test: RegIdx,
-    offset: i16,
+struct NotParams {
+    arg: RegIdx,
+    dest: RegIdx,
 }
 
 #[repr(packed)]
@@ -547,6 +513,46 @@ struct SubParams {
     arg1: RegIdx,
     arg2: RegIdx,
     dest: RegIdx,
+}
+
+#[repr(packed)]
+struct TestEqualParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+#[repr(packed)]
+struct TestNotEqualParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+#[repr(packed)]
+struct TestLessParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+#[repr(packed)]
+struct TestLessEqualParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+#[repr(packed)]
+struct JumpParams {
+    offset: i16,
+}
+
+#[repr(packed)]
+struct JumpIfParams {
+    arg: RegIdx,
+    is_true: bool,
+    offset: i16,
 }
 
 #[repr(packed)]
@@ -609,6 +615,7 @@ impl BoolVec {
         Self(vec![0; min_len.div_ceil(8)].into_boxed_slice())
     }
 
+    #[inline]
     fn set(&mut self, i: usize, val: bool) {
         let base = i / 8;
         let off = i % 8;
@@ -619,6 +626,7 @@ impl BoolVec {
         }
     }
 
+    #[inline]
     fn get(&self, i: usize) -> bool {
         let base = i / 8;
         let off = i % 8;
@@ -671,59 +679,68 @@ mod tests {
                     );
                 }
 
-                fn test_less(self, a1: RegIdx, a2: RegIdx) -> Result<bool, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::JumpIfLess {
-                        arg1,
-                        arg2,
-                        ..
-                    } if arg1 == a1 && arg2 == a2));
-                    Ok(false)
+                fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::Not { arg, dest });
+                    Ok(())
                 }
 
-                fn test_less_equal(self, a1: RegIdx, a2: RegIdx) -> Result<bool, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::JumpIfLessEqual {
-                        arg1,
-                        arg2,
-                        ..
-                    } if arg1 == a1 && arg2 == a2));
-                    Ok(false)
+                fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::Add { arg1, arg2, dest });
+                    Ok(())
                 }
 
-                fn inc_test_less_equal(self, i: RegIdx, t: RegIdx) -> Result<bool, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::IncAndTestLessEqual {
-                        inc,
-                        test,
-                        ..
-                    } if inc == i && test == t));
-                    Ok(false)
+                fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::Sub { arg1, arg2, dest });
+                    Ok(())
                 }
 
-                fn add(
+                fn test_equal(
                     self,
-                    a1: RegIdx,
-                    a2: RegIdx,
-                    d: RegIdx,
-                ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Add {
-                        arg1,
-                        arg2,
-                        dest,
-                    } if arg1 == a1 && arg2 == a2 && dest == d));
-                    Ok(ControlFlow::Continue(()))
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::TestEqual { arg1, arg2, dest });
+                    Ok(())
                 }
 
-                fn sub(
+                fn test_not_equal(
                     self,
-                    a1: RegIdx,
-                    a2: RegIdx,
-                    d: RegIdx,
-                ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Sub {
-                        arg1,
-                        arg2,
-                        dest,
-                    } if arg1 == a1 && arg2 == a2 && dest == d));
-                    Ok(ControlFlow::Continue(()))
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::TestNotEqual { arg1, arg2, dest });
+                    Ok(())
+                }
+
+                fn test_less(
+                    self,
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::TestLess { arg1, arg2, dest });
+                    Ok(())
+                }
+
+                fn test_less_equal(
+                    self,
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.inst == Instruction::TestLessEqual { arg1, arg2, dest });
+                    Ok(())
+                }
+
+                fn check(self, a: RegIdx, it: bool) -> Result<bool, Self::Error> {
+                    assert!(matches!(self.inst, Instruction::JumpIf {
+                        arg,
+                        is_true,
+                        ..
+                    } if arg == a && is_true == it));
+                    Ok(false)
                 }
 
                 fn push(self, s: RegIdx, l: u8) -> Result<(), Self::Error> {
@@ -787,17 +804,7 @@ mod tests {
                 dest: 3,
             },
             Instruction::Move { source: 2, dest: 3 },
-            Instruction::Jump { offset: 1 },
-            Instruction::JumpIfLess {
-                arg1: 3,
-                arg2: 4,
-                offset: -1,
-            },
-            Instruction::JumpIfLessEqual {
-                arg1: 4,
-                arg2: 5,
-                offset: 3,
-            },
+            Instruction::Not { arg: 3, dest: 1 },
             Instruction::Add {
                 arg1: 3,
                 arg2: 2,
@@ -812,6 +819,39 @@ mod tests {
             Instruction::Pop { dest: 14, len: 5 },
             Instruction::Call {
                 func: 7,
+                args: 2,
+                returns: 1,
+            },
+            Instruction::TestEqual {
+                arg1: 3,
+                arg2: 2,
+                dest: 3,
+            },
+            Instruction::TestNotEqual {
+                arg1: 7,
+                arg2: 9,
+                dest: 7,
+            },
+            Instruction::TestLess {
+                arg1: 5,
+                arg2: 4,
+                dest: 3,
+            },
+            Instruction::TestLessEqual {
+                arg1: 7,
+                arg2: 8,
+                dest: 9,
+            },
+            Instruction::Jump { offset: 1 },
+            Instruction::JumpIf {
+                arg: 11,
+                is_true: true,
+                offset: -1,
+            },
+            Instruction::Push { source: 1, len: 2 },
+            Instruction::Pop { dest: 2, len: 1 },
+            Instruction::Call {
+                func: 3,
                 args: 2,
                 returns: 1,
             },

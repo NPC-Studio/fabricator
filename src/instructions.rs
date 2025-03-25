@@ -11,23 +11,9 @@ pub enum Instruction {
         source: RegIdx,
         dest: RegIdx,
     },
-    Jump {
-        offset: i16,
-    },
-    JumpIfLess {
-        arg1: RegIdx,
-        arg2: RegIdx,
-        offset: i16,
-    },
-    JumpIfLessEqual {
-        arg1: RegIdx,
-        arg2: RegIdx,
-        offset: i16,
-    },
-    IncAndTestLessEqual {
-        inc: RegIdx,
-        test: RegIdx,
-        offset: i16,
+    Not {
+        arg: RegIdx,
+        dest: RegIdx,
     },
     Add {
         arg1: RegIdx,
@@ -38,6 +24,34 @@ pub enum Instruction {
         arg1: RegIdx,
         arg2: RegIdx,
         dest: RegIdx,
+    },
+    TestEqual {
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    },
+    TestNotEqual {
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    },
+    TestLess {
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    },
+    TestLessEqual {
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    },
+    Jump {
+        offset: i16,
+    },
+    JumpIf {
+        arg: RegIdx,
+        is_true: bool,
+        offset: i16,
     },
     Push {
         source: RegIdx,
