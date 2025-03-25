@@ -578,7 +578,7 @@ fn bytecode_write<T>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
     unsafe {
         let len = buf.len();
         buf.reserve(mem::size_of::<T>());
-        let p = buf[len..].as_mut_ptr() as *mut T;
+        let p = buf.as_mut_ptr().add(len) as *mut T;
         p.write_unaligned(val);
         buf.set_len(len + mem::size_of::<T>());
     }
