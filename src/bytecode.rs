@@ -121,7 +121,7 @@ impl ByteCode {
         let mut pos = 0;
         for &inst in insts {
             inst_positions.push(pos);
-            pos += OpCode::for_inst(inst).encoded_len();
+            pos += 1 + OpCode::for_inst(inst).param_len();
         }
         let mut inst_boundaries = BoolVec::new(pos);
 
@@ -144,60 +144,67 @@ impl ByteCode {
 
             match inst {
                 Instruction::Load { constant, dest } => {
-                    write_u16(&mut bytes, constant);
-                    write_u8(&mut bytes, dest);
+                    LoadParams { constant, dest }.write(&mut bytes);
                 }
                 Instruction::Move { source, dest } => {
-                    write_u8(&mut bytes, source);
-                    write_u8(&mut bytes, dest);
+                    MoveParams { source, dest }.write(&mut bytes);
                 }
                 Instruction::Jump { offset } => {
-                    write_i16(&mut bytes, calc_jump(i, offset)?);
+                    JumpParams {
+                        offset: calc_jump(i, offset)?,
+                    }
+                    .write(&mut bytes);
                 }
                 Instruction::JumpIfLess { arg1, arg2, offset } => {
-                    write_u8(&mut bytes, arg1);
-                    write_u8(&mut bytes, arg2);
-                    write_i16(&mut bytes, calc_jump(i, offset)?);
+                    JumpIfLessParams {
+                        arg1,
+                        arg2,
+                        offset: calc_jump(i, offset)?,
+                    }
+                    .write(&mut bytes);
                 }
                 Instruction::JumpIfLessEqual { arg1, arg2, offset } => {
-                    write_u8(&mut bytes, arg1);
-                    write_u8(&mut bytes, arg2);
-                    write_i16(&mut bytes, calc_jump(i, offset)?);
+                    JumpIfLessEqualParams {
+                        arg1,
+                        arg2,
+                        offset: calc_jump(i, offset)?,
+                    }
+                    .write(&mut bytes);
                 }
                 Instruction::IncAndTestLessEqual { inc, test, offset } => {
-                    write_u8(&mut bytes, inc);
-                    write_u8(&mut bytes, test);
-                    write_i16(&mut bytes, calc_jump(i, offset)?);
+                    IncAndTestLessEqualParams {
+                        inc,
+                        test,
+                        offset: calc_jump(i, offset)?,
+                    }
+                    .write(&mut bytes);
                 }
                 Instruction::Add { arg1, arg2, dest } => {
-                    write_u8(&mut bytes, arg1);
-                    write_u8(&mut bytes, arg2);
-                    write_u8(&mut bytes, dest);
+                    AddParams { arg1, arg2, dest }.write(&mut bytes);
                 }
                 Instruction::Sub { arg1, arg2, dest } => {
-                    write_u8(&mut bytes, arg1);
-                    write_u8(&mut bytes, arg2);
-                    write_u8(&mut bytes, dest);
+                    SubParams { arg1, arg2, dest }.write(&mut bytes);
                 }
                 Instruction::Push { source, len } => {
-                    write_u8(&mut bytes, source);
-                    write_u8(&mut bytes, len);
+                    PushParams { source, len }.write(&mut bytes);
                 }
                 Instruction::Pop { dest, len } => {
-                    write_u8(&mut bytes, dest);
-                    write_u8(&mut bytes, len);
+                    PopParams { dest, len }.write(&mut bytes);
                 }
                 Instruction::Call {
                     func,
                     args,
                     returns,
                 } => {
-                    write_u8(&mut bytes, func);
-                    write_u8(&mut bytes, args);
-                    write_u8(&mut bytes, returns);
+                    CallParams {
+                        func,
+                        args,
+                        returns,
+                    }
+                    .write(&mut bytes);
                 }
                 Instruction::Return { returns } => {
-                    write_u8(&mut bytes, returns);
+                    ReturnParams { returns }.write(&mut bytes);
                 }
             }
         }
@@ -303,72 +310,61 @@ impl<'a> Dispatcher<'a> {
 
             Ok(match opcode {
                 OpCode::Load => {
-                    let constant = read_u16(&mut self.ptr);
-                    let dest = read_u8(&mut self.ptr);
+                    let LoadParams { constant, dest } = OpParams::read(&mut self.ptr);
                     valid_const!(constant);
                     valid_reg!(dest);
                     dispatch.load(constant, dest);
                     ControlFlow::Continue(())
                 }
                 OpCode::Move => {
-                    let source = read_u8(&mut self.ptr);
-                    let dest = read_u8(&mut self.ptr);
+                    let MoveParams { source, dest } = OpParams::read(&mut self.ptr);
                     valid_reg!(source, dest);
                     dispatch.move_(source, dest);
                     ControlFlow::Continue(())
                 }
                 OpCode::Jump => {
-                    let offset = read_i16(&mut self.ptr);
+                    let JumpParams { offset } = OpParams::read(&mut self.ptr);
                     self.ptr = self.ptr.offset(offset as isize);
                     ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLess => {
-                    let arg1 = read_u8(&mut self.ptr);
-                    let arg2 = read_u8(&mut self.ptr);
+                    let JumpIfLessParams { arg1, arg2, offset } = OpParams::read(&mut self.ptr);
                     valid_reg!(arg1, arg2);
-                    let offset = read_i16(&mut self.ptr);
                     if dispatch.test_less(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
                     ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLessEqual => {
-                    let arg1 = read_u8(&mut self.ptr);
-                    let arg2 = read_u8(&mut self.ptr);
+                    let JumpIfLessEqualParams { arg1, arg2, offset } =
+                        OpParams::read(&mut self.ptr);
                     valid_reg!(arg1, arg2);
-                    let offset = read_i16(&mut self.ptr);
                     if dispatch.test_less_equal(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
                     ControlFlow::Continue(())
                 }
                 OpCode::IncAndTestLessEqual => {
-                    let inc = read_u8(&mut self.ptr);
-                    let test = read_u8(&mut self.ptr);
+                    let IncAndTestLessEqualParams { inc, test, offset } =
+                        OpParams::read(&mut self.ptr);
                     valid_reg!(inc, test);
-                    let offset = read_i16(&mut self.ptr);
                     if dispatch.inc_test_less_equal(inc, test)? {
                         self.ptr = self.ptr.offset(offset as isize);
                     }
                     ControlFlow::Continue(())
                 }
                 OpCode::Add => {
-                    let arg1 = read_u8(&mut self.ptr);
-                    let arg2 = read_u8(&mut self.ptr);
-                    let dest = read_u8(&mut self.ptr);
+                    let AddParams { arg1, arg2, dest } = OpParams::read(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
                     dispatch.add(arg1, arg2, dest)?
                 }
                 OpCode::Sub => {
-                    let arg1 = read_u8(&mut self.ptr);
-                    let arg2 = read_u8(&mut self.ptr);
-                    let dest = read_u8(&mut self.ptr);
+                    let SubParams { arg1, arg2, dest } = OpParams::read(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
                     dispatch.sub(arg1, arg2, dest)?
                 }
                 OpCode::Push => {
-                    let source = read_u8(&mut self.ptr);
-                    let len = read_u8(&mut self.ptr);
+                    let PushParams { source, len } = OpParams::read(&mut self.ptr);
                     if len > 0 {
                         valid_reg!(source + len - 1);
                     };
@@ -376,8 +372,7 @@ impl<'a> Dispatcher<'a> {
                     ControlFlow::Continue(())
                 }
                 OpCode::Pop => {
-                    let dest = read_u8(&mut self.ptr);
-                    let len = read_u8(&mut self.ptr);
+                    let PopParams { dest, len } = OpParams::read(&mut self.ptr);
                     if len > 0 {
                         valid_reg!(dest + len - 1);
                     };
@@ -385,14 +380,16 @@ impl<'a> Dispatcher<'a> {
                     ControlFlow::Continue(())
                 }
                 OpCode::Call => {
-                    let func = read_u8(&mut self.ptr);
-                    let args = read_u8(&mut self.ptr);
-                    let returns = read_u8(&mut self.ptr);
+                    let CallParams {
+                        func,
+                        args,
+                        returns,
+                    } = OpParams::read(&mut self.ptr);
                     valid_reg!(func);
                     dispatch.call(func, args, returns)?
                 }
                 OpCode::Return => {
-                    let returns = read_u8(&mut self.ptr);
+                    let ReturnParams { returns } = OpParams::read(&mut self.ptr);
                     ControlFlow::Break(dispatch.return_(returns)?)
                 }
             })
@@ -469,21 +466,342 @@ impl OpCode {
     }
 
     #[inline]
-    fn encoded_len(self) -> usize {
+    fn param_len(self) -> usize {
         match self {
-            OpCode::Load => 4,
-            OpCode::Move => 3,
-            OpCode::Jump => 3,
-            OpCode::JumpIfLess => 5,
-            OpCode::JumpIfLessEqual => 5,
-            OpCode::IncAndTestLessEqual => 5,
-            OpCode::Add => 4,
-            OpCode::Sub => 4,
-            OpCode::Push => 3,
-            OpCode::Pop => 3,
-            OpCode::Call => 4,
-            OpCode::Return => 2,
+            OpCode::Load => LoadParams::LEN,
+            OpCode::Move => MoveParams::LEN,
+            OpCode::Jump => JumpParams::LEN,
+            OpCode::JumpIfLess => JumpIfLessParams::LEN,
+            OpCode::JumpIfLessEqual => JumpIfLessEqualParams::LEN,
+            OpCode::IncAndTestLessEqual => IncAndTestLessEqualParams::LEN,
+            OpCode::Add => AddParams::LEN,
+            OpCode::Sub => SubParams::LEN,
+            OpCode::Push => PushParams::LEN,
+            OpCode::Pop => PopParams::LEN,
+            OpCode::Call => CallParams::LEN,
+            OpCode::Return => ReturnParams::LEN,
         }
+    }
+}
+
+#[inline]
+unsafe fn read_opcode(ptr: &mut *const u8) -> OpCode {
+    mem::transmute(read_u8(ptr))
+}
+
+#[inline]
+fn write_opcode(buf: &mut Vec<u8>, val: OpCode) {
+    write_u8(buf, val as u8);
+}
+
+trait OpParams {
+    const LEN: usize;
+
+    unsafe fn read(ptr: &mut *const u8) -> Self;
+    fn write(self, buf: &mut Vec<u8>);
+}
+
+struct LoadParams {
+    constant: ConstIdx,
+    dest: RegIdx,
+}
+
+impl OpParams for LoadParams {
+    const LEN: usize = 3;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let constant = read_u16(ptr);
+            let dest = read_u8(ptr);
+            Self { constant, dest }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u16(buf, self.constant);
+        write_u8(buf, self.dest);
+    }
+}
+
+struct MoveParams {
+    source: RegIdx,
+    dest: RegIdx,
+}
+
+impl OpParams for MoveParams {
+    const LEN: usize = 2;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let source = read_u8(ptr);
+            let dest = read_u8(ptr);
+            Self { source, dest }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.source);
+        write_u8(buf, self.dest);
+    }
+}
+
+struct JumpParams {
+    offset: i16,
+}
+
+impl OpParams for JumpParams {
+    const LEN: usize = 2;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let offset = read_i16(ptr);
+            Self { offset }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_i16(buf, self.offset);
+    }
+}
+
+struct JumpIfLessParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    offset: i16,
+}
+
+impl OpParams for JumpIfLessParams {
+    const LEN: usize = 4;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let arg1 = read_u8(ptr);
+            let arg2 = read_u8(ptr);
+            let offset = read_i16(ptr);
+            Self { arg1, arg2, offset }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.arg1);
+        write_u8(buf, self.arg2);
+        write_i16(buf, self.offset);
+    }
+}
+
+struct JumpIfLessEqualParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    offset: i16,
+}
+
+impl OpParams for JumpIfLessEqualParams {
+    const LEN: usize = 4;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let arg1 = read_u8(ptr);
+            let arg2 = read_u8(ptr);
+            let offset = read_i16(ptr);
+            Self { arg1, arg2, offset }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.arg1);
+        write_u8(buf, self.arg2);
+        write_i16(buf, self.offset);
+    }
+}
+
+struct IncAndTestLessEqualParams {
+    inc: RegIdx,
+    test: RegIdx,
+    offset: i16,
+}
+
+impl OpParams for IncAndTestLessEqualParams {
+    const LEN: usize = 4;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let inc = read_u8(ptr);
+            let test = read_u8(ptr);
+            let offset = read_i16(ptr);
+            Self { inc, test, offset }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.inc);
+        write_u8(buf, self.test);
+        write_i16(buf, self.offset);
+    }
+}
+
+struct AddParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+impl OpParams for AddParams {
+    const LEN: usize = 3;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let arg1 = read_u8(ptr);
+            let arg2 = read_u8(ptr);
+            let dest = read_u8(ptr);
+            Self { arg1, arg2, dest }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.arg1);
+        write_u8(buf, self.arg2);
+        write_u8(buf, self.dest);
+    }
+}
+
+struct SubParams {
+    arg1: RegIdx,
+    arg2: RegIdx,
+    dest: RegIdx,
+}
+
+impl OpParams for SubParams {
+    const LEN: usize = 3;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let arg1 = read_u8(ptr);
+            let arg2 = read_u8(ptr);
+            let dest = read_u8(ptr);
+            Self { arg1, arg2, dest }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.arg1);
+        write_u8(buf, self.arg2);
+        write_u8(buf, self.dest);
+    }
+}
+
+struct PushParams {
+    source: RegIdx,
+    len: u8,
+}
+
+impl OpParams for PushParams {
+    const LEN: usize = 2;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let source = read_u8(ptr);
+            let len = read_u8(ptr);
+            Self { source, len }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.source);
+        write_u8(buf, self.len);
+    }
+}
+
+struct PopParams {
+    dest: RegIdx,
+    len: u8,
+}
+
+impl OpParams for PopParams {
+    const LEN: usize = 2;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let dest = read_u8(ptr);
+            let len = read_u8(ptr);
+            Self { dest, len }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.dest);
+        write_u8(buf, self.len);
+    }
+}
+
+struct CallParams {
+    func: RegIdx,
+    args: u8,
+    returns: u8,
+}
+
+impl OpParams for CallParams {
+    const LEN: usize = 3;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let func = read_u8(ptr);
+            let args = read_u8(ptr);
+            let returns = read_u8(ptr);
+            Self {
+                func,
+                args,
+                returns,
+            }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.func);
+        write_u8(buf, self.args);
+        write_u8(buf, self.returns);
+    }
+}
+
+struct ReturnParams {
+    returns: u8,
+}
+
+impl OpParams for ReturnParams {
+    const LEN: usize = 1;
+
+    #[inline]
+    unsafe fn read(ptr: &mut *const u8) -> Self {
+        unsafe {
+            let returns = read_u8(ptr);
+            Self { returns }
+        }
+    }
+
+    #[inline]
+    fn write(self, buf: &mut Vec<u8>) {
+        write_u8(buf, self.returns);
     }
 }
 
@@ -513,26 +831,6 @@ impl BoolVec {
 }
 
 #[inline]
-fn write_u8(buf: &mut Vec<u8>, val: u8) {
-    buf.push(val);
-}
-
-#[inline]
-fn write_u16(buf: &mut Vec<u8>, val: u16) {
-    buf.extend(val.to_ne_bytes());
-}
-
-#[inline]
-fn write_i16(buf: &mut Vec<u8>, val: i16) {
-    buf.extend(val.to_ne_bytes());
-}
-
-#[inline]
-fn write_opcode(buf: &mut Vec<u8>, val: OpCode) {
-    write_u8(buf, val as u8);
-}
-
-#[inline]
 unsafe fn read_u8(ptr: &mut *const u8) -> u8 {
     let v = unsafe { ptr.read() };
     *ptr = ptr.offset(1);
@@ -552,9 +850,20 @@ unsafe fn read_i16(ptr: &mut *const u8) -> i16 {
 }
 
 #[inline]
-unsafe fn read_opcode(ptr: &mut *const u8) -> OpCode {
-    mem::transmute(read_u8(ptr))
+fn write_u8(buf: &mut Vec<u8>, val: u8) {
+    buf.push(val);
 }
+
+#[inline]
+fn write_u16(buf: &mut Vec<u8>, val: u16) {
+    buf.extend(val.to_ne_bytes());
+}
+
+#[inline]
+fn write_i16(buf: &mut Vec<u8>, val: i16) {
+    buf.extend(val.to_ne_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
