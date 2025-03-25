@@ -1,4 +1,8 @@
-use std::{hint::assert_unchecked, mem, ops::ControlFlow};
+use std::{
+    hint::assert_unchecked,
+    mem::{self, MaybeUninit},
+    ops::ControlFlow,
+};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -21,7 +25,7 @@ pub enum ByteCodeEncodingError {
 #[derive(Collect)]
 #[collect(require_static)]
 pub struct ByteCode {
-    bytes: Box<[u8]>,
+    bytes: Box<[MaybeUninit<u8>]>,
     inst_boundaries: BoolVec,
     max_register: RegIdx,
     max_constant: ConstIdx,
@@ -140,71 +144,81 @@ impl ByteCode {
             assert_eq!(inst_positions[i], bytes.len());
             inst_boundaries.set(bytes.len(), true);
 
-            write_opcode(&mut bytes, OpCode::for_inst(inst));
+            bytecode_write(&mut bytes, OpCode::for_inst(inst));
 
             match inst {
                 Instruction::Load { constant, dest } => {
-                    LoadParams { constant, dest }.write(&mut bytes);
+                    bytecode_write(&mut bytes, LoadParams { constant, dest });
                 }
                 Instruction::Move { source, dest } => {
-                    MoveParams { source, dest }.write(&mut bytes);
+                    bytecode_write(&mut bytes, MoveParams { source, dest });
                 }
                 Instruction::Jump { offset } => {
-                    JumpParams {
-                        offset: calc_jump(i, offset)?,
-                    }
-                    .write(&mut bytes);
+                    bytecode_write(
+                        &mut bytes,
+                        JumpParams {
+                            offset: calc_jump(i, offset)?,
+                        },
+                    );
                 }
                 Instruction::JumpIfLess { arg1, arg2, offset } => {
-                    JumpIfLessParams {
-                        arg1,
-                        arg2,
-                        offset: calc_jump(i, offset)?,
-                    }
-                    .write(&mut bytes);
+                    bytecode_write(
+                        &mut bytes,
+                        JumpIfLessParams {
+                            arg1,
+                            arg2,
+                            offset: calc_jump(i, offset)?,
+                        },
+                    );
                 }
                 Instruction::JumpIfLessEqual { arg1, arg2, offset } => {
-                    JumpIfLessEqualParams {
-                        arg1,
-                        arg2,
-                        offset: calc_jump(i, offset)?,
-                    }
-                    .write(&mut bytes);
+                    bytecode_write(
+                        &mut bytes,
+                        JumpIfLessEqualParams {
+                            arg1,
+                            arg2,
+                            offset: calc_jump(i, offset)?,
+                        },
+                    );
                 }
                 Instruction::IncAndTestLessEqual { inc, test, offset } => {
-                    IncAndTestLessEqualParams {
-                        inc,
-                        test,
-                        offset: calc_jump(i, offset)?,
-                    }
-                    .write(&mut bytes);
+                    bytecode_write(
+                        &mut bytes,
+                        IncAndTestLessEqualParams {
+                            inc,
+                            test,
+                            offset: calc_jump(i, offset)?,
+                        },
+                    );
                 }
                 Instruction::Add { arg1, arg2, dest } => {
-                    AddParams { arg1, arg2, dest }.write(&mut bytes);
+                    bytecode_write(&mut bytes, AddParams { arg1, arg2, dest });
                 }
                 Instruction::Sub { arg1, arg2, dest } => {
-                    SubParams { arg1, arg2, dest }.write(&mut bytes);
+                    bytecode_write(&mut bytes, SubParams { arg1, arg2, dest });
                 }
                 Instruction::Push { source, len } => {
-                    PushParams { source, len }.write(&mut bytes);
+                    bytecode_write(&mut bytes, PushParams { source, len });
                 }
                 Instruction::Pop { dest, len } => {
-                    PopParams { dest, len }.write(&mut bytes);
+                    bytecode_write(&mut bytes, PopParams { dest, len });
                 }
                 Instruction::Call {
                     func,
                     args,
                     returns,
                 } => {
-                    CallParams {
-                        func,
-                        args,
-                        returns,
-                    }
-                    .write(&mut bytes);
+                    bytecode_write(
+                        &mut bytes,
+                        CallParams {
+                            func,
+                            args,
+                            returns,
+                        },
+                    );
                 }
                 Instruction::Return { returns } => {
-                    ReturnParams { returns }.write(&mut bytes);
+                    bytecode_write(&mut bytes, ReturnParams { returns });
                 }
             }
         }
@@ -235,7 +249,7 @@ impl ByteCode {
 /// this can provide a completely safe interface to highly optimized instruction dispatch.
 pub struct Dispatcher<'a> {
     bytecode: &'a ByteCode,
-    ptr: *const u8,
+    ptr: *const MaybeUninit<u8>,
 }
 
 impl<'a> Dispatcher<'a> {
@@ -306,29 +320,29 @@ impl<'a> Dispatcher<'a> {
                 };
             }
 
-            let opcode = read_opcode(&mut self.ptr);
+            let opcode: OpCode = bytecode_read(&mut self.ptr);
 
             Ok(match opcode {
                 OpCode::Load => {
-                    let LoadParams { constant, dest } = OpParams::read(&mut self.ptr);
+                    let LoadParams { constant, dest } = bytecode_read(&mut self.ptr);
                     valid_const!(constant);
                     valid_reg!(dest);
                     dispatch.load(constant, dest);
                     ControlFlow::Continue(())
                 }
                 OpCode::Move => {
-                    let MoveParams { source, dest } = OpParams::read(&mut self.ptr);
+                    let MoveParams { source, dest } = bytecode_read(&mut self.ptr);
                     valid_reg!(source, dest);
                     dispatch.move_(source, dest);
                     ControlFlow::Continue(())
                 }
                 OpCode::Jump => {
-                    let JumpParams { offset } = OpParams::read(&mut self.ptr);
+                    let JumpParams { offset } = bytecode_read(&mut self.ptr);
                     self.ptr = self.ptr.offset(offset as isize);
                     ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLess => {
-                    let JumpIfLessParams { arg1, arg2, offset } = OpParams::read(&mut self.ptr);
+                    let JumpIfLessParams { arg1, arg2, offset } = bytecode_read(&mut self.ptr);
                     valid_reg!(arg1, arg2);
                     if dispatch.test_less(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -336,8 +350,7 @@ impl<'a> Dispatcher<'a> {
                     ControlFlow::Continue(())
                 }
                 OpCode::JumpIfLessEqual => {
-                    let JumpIfLessEqualParams { arg1, arg2, offset } =
-                        OpParams::read(&mut self.ptr);
+                    let JumpIfLessEqualParams { arg1, arg2, offset } = bytecode_read(&mut self.ptr);
                     valid_reg!(arg1, arg2);
                     if dispatch.test_less_equal(arg1, arg2)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -346,7 +359,7 @@ impl<'a> Dispatcher<'a> {
                 }
                 OpCode::IncAndTestLessEqual => {
                     let IncAndTestLessEqualParams { inc, test, offset } =
-                        OpParams::read(&mut self.ptr);
+                        bytecode_read(&mut self.ptr);
                     valid_reg!(inc, test);
                     if dispatch.inc_test_less_equal(inc, test)? {
                         self.ptr = self.ptr.offset(offset as isize);
@@ -354,17 +367,17 @@ impl<'a> Dispatcher<'a> {
                     ControlFlow::Continue(())
                 }
                 OpCode::Add => {
-                    let AddParams { arg1, arg2, dest } = OpParams::read(&mut self.ptr);
+                    let AddParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
                     dispatch.add(arg1, arg2, dest)?
                 }
                 OpCode::Sub => {
-                    let SubParams { arg1, arg2, dest } = OpParams::read(&mut self.ptr);
+                    let SubParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
                     valid_reg!(arg1, arg2, dest);
                     dispatch.sub(arg1, arg2, dest)?
                 }
                 OpCode::Push => {
-                    let PushParams { source, len } = OpParams::read(&mut self.ptr);
+                    let PushParams { source, len } = bytecode_read(&mut self.ptr);
                     if len > 0 {
                         valid_reg!(source + len - 1);
                     };
@@ -372,7 +385,7 @@ impl<'a> Dispatcher<'a> {
                     ControlFlow::Continue(())
                 }
                 OpCode::Pop => {
-                    let PopParams { dest, len } = OpParams::read(&mut self.ptr);
+                    let PopParams { dest, len } = bytecode_read(&mut self.ptr);
                     if len > 0 {
                         valid_reg!(dest + len - 1);
                     };
@@ -384,12 +397,12 @@ impl<'a> Dispatcher<'a> {
                         func,
                         args,
                         returns,
-                    } = OpParams::read(&mut self.ptr);
+                    } = bytecode_read(&mut self.ptr);
                     valid_reg!(func);
                     dispatch.call(func, args, returns)?
                 }
                 OpCode::Return => {
-                    let ReturnParams { returns } = OpParams::read(&mut self.ptr);
+                    let ReturnParams { returns } = bytecode_read(&mut self.ptr);
                     ControlFlow::Break(dispatch.return_(returns)?)
                 }
             })
@@ -468,340 +481,123 @@ impl OpCode {
     #[inline]
     fn param_len(self) -> usize {
         match self {
-            OpCode::Load => LoadParams::LEN,
-            OpCode::Move => MoveParams::LEN,
-            OpCode::Jump => JumpParams::LEN,
-            OpCode::JumpIfLess => JumpIfLessParams::LEN,
-            OpCode::JumpIfLessEqual => JumpIfLessEqualParams::LEN,
-            OpCode::IncAndTestLessEqual => IncAndTestLessEqualParams::LEN,
-            OpCode::Add => AddParams::LEN,
-            OpCode::Sub => SubParams::LEN,
-            OpCode::Push => PushParams::LEN,
-            OpCode::Pop => PopParams::LEN,
-            OpCode::Call => CallParams::LEN,
-            OpCode::Return => ReturnParams::LEN,
+            OpCode::Load => mem::size_of::<LoadParams>(),
+            OpCode::Move => mem::size_of::<MoveParams>(),
+            OpCode::Jump => mem::size_of::<JumpParams>(),
+            OpCode::JumpIfLess => mem::size_of::<JumpIfLessParams>(),
+            OpCode::JumpIfLessEqual => mem::size_of::<JumpIfLessEqualParams>(),
+            OpCode::IncAndTestLessEqual => mem::size_of::<IncAndTestLessEqualParams>(),
+            OpCode::Add => mem::size_of::<AddParams>(),
+            OpCode::Sub => mem::size_of::<SubParams>(),
+            OpCode::Push => mem::size_of::<PushParams>(),
+            OpCode::Pop => mem::size_of::<PopParams>(),
+            OpCode::Call => mem::size_of::<CallParams>(),
+            OpCode::Return => mem::size_of::<ReturnParams>(),
         }
     }
 }
 
-#[inline]
-unsafe fn read_opcode(ptr: &mut *const u8) -> OpCode {
-    mem::transmute(read_u8(ptr))
-}
-
-#[inline]
-fn write_opcode(buf: &mut Vec<u8>, val: OpCode) {
-    write_u8(buf, val as u8);
-}
-
-trait OpParams {
-    const LEN: usize;
-
-    unsafe fn read(ptr: &mut *const u8) -> Self;
-    fn write(self, buf: &mut Vec<u8>);
-}
-
+#[repr(packed)]
 struct LoadParams {
     constant: ConstIdx,
     dest: RegIdx,
 }
 
-impl OpParams for LoadParams {
-    const LEN: usize = 3;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let constant = read_u16(ptr);
-            let dest = read_u8(ptr);
-            Self { constant, dest }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u16(buf, self.constant);
-        write_u8(buf, self.dest);
-    }
-}
-
+#[repr(packed)]
 struct MoveParams {
     source: RegIdx,
     dest: RegIdx,
 }
 
-impl OpParams for MoveParams {
-    const LEN: usize = 2;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let source = read_u8(ptr);
-            let dest = read_u8(ptr);
-            Self { source, dest }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.source);
-        write_u8(buf, self.dest);
-    }
-}
-
+#[repr(packed)]
 struct JumpParams {
     offset: i16,
 }
 
-impl OpParams for JumpParams {
-    const LEN: usize = 2;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let offset = read_i16(ptr);
-            Self { offset }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_i16(buf, self.offset);
-    }
-}
-
+#[repr(packed)]
 struct JumpIfLessParams {
     arg1: RegIdx,
     arg2: RegIdx,
     offset: i16,
 }
 
-impl OpParams for JumpIfLessParams {
-    const LEN: usize = 4;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let arg1 = read_u8(ptr);
-            let arg2 = read_u8(ptr);
-            let offset = read_i16(ptr);
-            Self { arg1, arg2, offset }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.arg1);
-        write_u8(buf, self.arg2);
-        write_i16(buf, self.offset);
-    }
-}
-
+#[repr(packed)]
 struct JumpIfLessEqualParams {
     arg1: RegIdx,
     arg2: RegIdx,
     offset: i16,
 }
 
-impl OpParams for JumpIfLessEqualParams {
-    const LEN: usize = 4;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let arg1 = read_u8(ptr);
-            let arg2 = read_u8(ptr);
-            let offset = read_i16(ptr);
-            Self { arg1, arg2, offset }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.arg1);
-        write_u8(buf, self.arg2);
-        write_i16(buf, self.offset);
-    }
-}
-
+#[repr(packed)]
 struct IncAndTestLessEqualParams {
     inc: RegIdx,
     test: RegIdx,
     offset: i16,
 }
 
-impl OpParams for IncAndTestLessEqualParams {
-    const LEN: usize = 4;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let inc = read_u8(ptr);
-            let test = read_u8(ptr);
-            let offset = read_i16(ptr);
-            Self { inc, test, offset }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.inc);
-        write_u8(buf, self.test);
-        write_i16(buf, self.offset);
-    }
-}
-
+#[repr(packed)]
 struct AddParams {
     arg1: RegIdx,
     arg2: RegIdx,
     dest: RegIdx,
 }
 
-impl OpParams for AddParams {
-    const LEN: usize = 3;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let arg1 = read_u8(ptr);
-            let arg2 = read_u8(ptr);
-            let dest = read_u8(ptr);
-            Self { arg1, arg2, dest }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.arg1);
-        write_u8(buf, self.arg2);
-        write_u8(buf, self.dest);
-    }
-}
-
+#[repr(packed)]
 struct SubParams {
     arg1: RegIdx,
     arg2: RegIdx,
     dest: RegIdx,
 }
 
-impl OpParams for SubParams {
-    const LEN: usize = 3;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let arg1 = read_u8(ptr);
-            let arg2 = read_u8(ptr);
-            let dest = read_u8(ptr);
-            Self { arg1, arg2, dest }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.arg1);
-        write_u8(buf, self.arg2);
-        write_u8(buf, self.dest);
-    }
-}
-
+#[repr(packed)]
 struct PushParams {
     source: RegIdx,
     len: u8,
 }
 
-impl OpParams for PushParams {
-    const LEN: usize = 2;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let source = read_u8(ptr);
-            let len = read_u8(ptr);
-            Self { source, len }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.source);
-        write_u8(buf, self.len);
-    }
-}
-
+#[repr(packed)]
 struct PopParams {
     dest: RegIdx,
     len: u8,
 }
 
-impl OpParams for PopParams {
-    const LEN: usize = 2;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let dest = read_u8(ptr);
-            let len = read_u8(ptr);
-            Self { dest, len }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.dest);
-        write_u8(buf, self.len);
-    }
-}
-
+#[repr(packed)]
 struct CallParams {
     func: RegIdx,
     args: u8,
     returns: u8,
 }
 
-impl OpParams for CallParams {
-    const LEN: usize = 3;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let func = read_u8(ptr);
-            let args = read_u8(ptr);
-            let returns = read_u8(ptr);
-            Self {
-                func,
-                args,
-                returns,
-            }
-        }
-    }
-
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.func);
-        write_u8(buf, self.args);
-        write_u8(buf, self.returns);
-    }
-}
-
+#[repr(packed)]
 struct ReturnParams {
     returns: u8,
 }
 
-impl OpParams for ReturnParams {
-    const LEN: usize = 1;
-
-    #[inline]
-    unsafe fn read(ptr: &mut *const u8) -> Self {
-        unsafe {
-            let returns = read_u8(ptr);
-            Self { returns }
-        }
+#[inline]
+fn bytecode_write<T>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
+    unsafe {
+        let len = buf.len();
+        buf.reserve(mem::size_of::<T>());
+        let p = buf[len..].as_mut_ptr() as *mut T;
+        p.write_unaligned(val);
+        buf.set_len(len + mem::size_of::<T>());
     }
+}
 
-    #[inline]
-    fn write(self, buf: &mut Vec<u8>) {
-        write_u8(buf, self.returns);
+#[inline]
+unsafe fn bytecode_read<T>(ptr: &mut *const MaybeUninit<u8>) -> T {
+    unsafe {
+        let p = *ptr as *const T;
+
+        // I am not sure why this is not optimized automatically, but it's not.
+        let v = if mem::align_of::<T>() == 1 {
+            p.read()
+        } else {
+            p.read_unaligned()
+        };
+
+        *ptr = ptr.add(mem::size_of::<T>());
+        v
     }
 }
 
@@ -828,40 +624,6 @@ impl BoolVec {
         let off = i % 8;
         self.0[base] & (1 << off) != 0
     }
-}
-
-#[inline]
-unsafe fn read_u8(ptr: &mut *const u8) -> u8 {
-    let v = unsafe { ptr.read() };
-    *ptr = ptr.offset(1);
-    v
-}
-
-#[inline]
-unsafe fn read_u16(ptr: &mut *const u8) -> u16 {
-    let v = unsafe { (*ptr as *const u16).read() };
-    *ptr = ptr.offset(2);
-    v
-}
-
-#[inline]
-unsafe fn read_i16(ptr: &mut *const u8) -> i16 {
-    unsafe { read_u16(ptr) as i16 }
-}
-
-#[inline]
-fn write_u8(buf: &mut Vec<u8>, val: u8) {
-    buf.push(val);
-}
-
-#[inline]
-fn write_u16(buf: &mut Vec<u8>, val: u16) {
-    buf.extend(val.to_ne_bytes());
-}
-
-#[inline]
-fn write_i16(buf: &mut Vec<u8>, val: i16) {
-    buf.extend(val.to_ne_bytes());
 }
 
 #[cfg(test)]
