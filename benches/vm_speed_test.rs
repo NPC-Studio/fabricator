@@ -19,23 +19,22 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let mut arena: Arena<Rootable![Root<'_>]> = Arena::new(|mc| {
         let proto = Prototype {
-            fixed_params: 0,
             constants: vec![
                 Constant::Integer(0),
                 Constant::Integer(1),
-                Constant::Integer(10000000),
+                Constant::Integer(1000000),
             ]
             .into_boxed_slice(),
             bytecode: ByteCode::encode(&[
-                Instruction::Load {
+                Instruction::LoadConstant {
                     constant: 0,
                     dest: 0,
                 },
-                Instruction::Load {
+                Instruction::LoadConstant {
                     constant: 1,
                     dest: 1,
                 },
-                Instruction::Load {
+                Instruction::LoadConstant {
                     constant: 2,
                     dest: 2,
                 },
@@ -65,6 +64,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 Instruction::Return { returns: 1 },
             ])
             .unwrap(),
+            used_registers: 6,
+            used_heap: 0,
         };
 
         Root {
@@ -77,10 +78,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let arena = black_box(&mut arena);
             arena.mutate_root(|mc, root| {
-                let closure = Closure::new(root.proto);
+                let closure = Closure::new(mc, root.proto);
                 assert_eq!(
                     root.thread.exec(mc, closure).unwrap()[0],
-                    Value::Integer(50000005000000)
+                    Value::Integer(500000500000)
                 );
             });
         })

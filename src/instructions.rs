@@ -1,11 +1,20 @@
 pub type RegIdx = u8;
+pub type HeapIdx = u8;
 pub type ConstIdx = u16;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Instruction {
-    Load {
+    LoadConstant {
         constant: ConstIdx,
         dest: RegIdx,
+    },
+    GetHeap {
+        heap: HeapIdx,
+        dest: RegIdx,
+    },
+    SetHeap {
+        source: RegIdx,
+        heap: HeapIdx,
     },
     Move {
         source: RegIdx,

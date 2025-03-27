@@ -6,12 +6,10 @@ use std::{
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::instructions::{ConstIdx, Instruction, RegIdx};
+use crate::instructions::{ConstIdx, HeapIdx, Instruction, RegIdx};
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
-    #[error("register out of range")]
-    RegisterOutOfRange,
     #[error("jump out of range")]
     JumpOutOfRange,
     #[error("no return or jump as last instruction")]
@@ -26,34 +24,11 @@ pub enum ByteCodeEncodingError {
 pub struct ByteCode {
     bytes: Box<[MaybeUninit<u8>]>,
     inst_boundaries: BoolVec,
-    max_register: RegIdx,
-    max_constant: ConstIdx,
 }
 
 impl ByteCode {
     /// Encode a list of instructions as bytecode.
     pub fn encode(insts: &[Instruction]) -> Result<Self, ByteCodeEncodingError> {
-        let mut max_register = 0;
-        let mut max_constant = 0;
-
-        let mut check_register = |r: RegIdx, len: u8| {
-            if len > 0 {
-                match r.checked_add(len - 1) {
-                    Some(r) => {
-                        max_register = max_register.max(r);
-                        Ok(())
-                    }
-                    None => Err(ByteCodeEncodingError::RegisterOutOfRange),
-                }
-            } else {
-                Ok(())
-            }
-        };
-
-        let mut check_constant = |c: ConstIdx| {
-            max_constant = max_constant.max(c);
-        };
-
         let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
             Some(i) if i < insts.len() => Ok(()),
             _ => {
@@ -64,67 +39,13 @@ impl ByteCode {
 
         for (i, &inst) in insts.iter().enumerate() {
             match inst {
-                Instruction::Load { constant, dest } => {
-                    check_constant(constant);
-                    check_register(dest, 1)?;
-                }
-                Instruction::Move { source, dest } => {
-                    check_register(source, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::Not { arg, dest } => {
-                    check_register(arg, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::Add { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::Sub { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::TestEqual { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::TestNotEqual { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::TestLess { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
-                Instruction::TestLessEqual { arg1, arg2, dest } => {
-                    check_register(arg1, 1)?;
-                    check_register(arg2, 1)?;
-                    check_register(dest, 1)?;
-                }
                 Instruction::Jump { offset } => {
                     check_jump(i, offset)?;
                 }
-                Instruction::JumpIf {
-                    arg: test, offset, ..
-                } => {
-                    check_register(test, 1)?;
+                Instruction::JumpIf { offset, .. } => {
                     check_jump(i, offset)?;
                 }
-                Instruction::Push { source, len } => {
-                    check_register(source, len)?;
-                }
-                Instruction::Pop { dest, len } => {
-                    check_register(dest, len)?;
-                }
-                Instruction::Call { func, .. } => {
-                    check_register(func, 1)?;
-                }
-                Instruction::Return { .. } => {}
+                _ => {}
             }
         }
 
@@ -161,8 +82,14 @@ impl ByteCode {
             bytecode_write(&mut bytes, OpCode::for_inst(inst));
 
             match inst {
-                Instruction::Load { constant, dest } => {
-                    bytecode_write(&mut bytes, LoadParams { constant, dest });
+                Instruction::LoadConstant { constant, dest } => {
+                    bytecode_write(&mut bytes, LoadConstantParams { constant, dest });
+                }
+                Instruction::GetHeap { heap, dest } => {
+                    bytecode_write(&mut bytes, GetHeapParams { heap, dest });
+                }
+                Instruction::SetHeap { source, heap } => {
+                    bytecode_write(&mut bytes, SetHeapParams { source, heap });
                 }
                 Instruction::Move { source, dest } => {
                     bytecode_write(&mut bytes, MoveParams { source, dest });
@@ -239,19 +166,7 @@ impl ByteCode {
         Ok(Self {
             bytes: bytes.into_boxed_slice(),
             inst_boundaries,
-            max_register,
-            max_constant,
         })
-    }
-
-    #[inline]
-    pub fn max_register(&self) -> RegIdx {
-        self.max_register
-    }
-
-    #[inline]
-    pub fn max_constant(&self) -> ConstIdx {
-        self.max_constant
     }
 }
 
@@ -306,9 +221,19 @@ impl<'a> Dispatcher<'a> {
             let opcode: OpCode = bytecode_read(&mut self.ptr);
 
             Ok(match opcode {
-                OpCode::Load => {
-                    let LoadParams { constant, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.load(constant, dest);
+                OpCode::LoadConstant => {
+                    let LoadConstantParams { constant, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.load_constant(constant, dest);
+                    ControlFlow::Continue(())
+                }
+                OpCode::GetHeap => {
+                    let GetHeapParams { heap, dest } = bytecode_read(&mut self.ptr);
+                    dispatch.get_heap(heap, dest);
+                    ControlFlow::Continue(())
+                }
+                OpCode::SetHeap => {
+                    let SetHeapParams { source, heap } = bytecode_read(&mut self.ptr);
+                    dispatch.set_heap(source, heap);
                     ControlFlow::Continue(())
                 }
                 OpCode::Move => {
@@ -398,7 +323,9 @@ pub trait Dispatch {
     type Break;
     type Error;
 
-    fn load(self, constant: ConstIdx, dest: RegIdx);
+    fn load_constant(self, constant: ConstIdx, dest: RegIdx);
+    fn get_heap(self, source: HeapIdx, dest: RegIdx);
+    fn set_heap(self, source: RegIdx, dest: HeapIdx);
     fn move_(self, source: RegIdx, dest: RegIdx);
     fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
     fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
@@ -422,7 +349,9 @@ pub trait Dispatch {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[repr(u8)]
 enum OpCode {
-    Load,
+    LoadConstant,
+    GetHeap,
+    SetHeap,
     Move,
     Not,
     Add,
@@ -443,7 +372,9 @@ impl OpCode {
     #[inline]
     fn for_inst(inst: Instruction) -> Self {
         match inst {
-            Instruction::Load { .. } => OpCode::Load,
+            Instruction::LoadConstant { .. } => OpCode::LoadConstant,
+            Instruction::GetHeap { .. } => OpCode::GetHeap,
+            Instruction::SetHeap { .. } => OpCode::SetHeap,
             Instruction::Move { .. } => OpCode::Move,
             Instruction::Not { .. } => OpCode::Not,
             Instruction::Add { .. } => OpCode::Add,
@@ -464,7 +395,9 @@ impl OpCode {
     #[inline]
     fn param_len(self) -> usize {
         match self {
-            OpCode::Load => mem::size_of::<LoadParams>(),
+            OpCode::LoadConstant => mem::size_of::<LoadConstantParams>(),
+            OpCode::GetHeap => mem::size_of::<GetHeapParams>(),
+            OpCode::SetHeap => mem::size_of::<SetHeapParams>(),
             OpCode::Move => mem::size_of::<MoveParams>(),
             OpCode::Not => mem::size_of::<NotParams>(),
             OpCode::Add => mem::size_of::<AddParams>(),
@@ -484,9 +417,21 @@ impl OpCode {
 }
 
 #[repr(packed)]
-struct LoadParams {
+struct LoadConstantParams {
     constant: ConstIdx,
     dest: RegIdx,
+}
+
+#[repr(packed)]
+struct GetHeapParams {
+    heap: HeapIdx,
+    dest: RegIdx,
+}
+
+#[repr(packed)]
+struct SetHeapParams {
+    source: RegIdx,
+    heap: HeapIdx,
 }
 
 #[repr(packed)]
@@ -666,11 +611,16 @@ mod tests {
                 type Break = ();
                 type Error = ();
 
-                fn load(self, c: ConstIdx, d: RegIdx) {
-                    assert!(matches!(self.inst, Instruction::Load {
-                        constant,
-                        dest,
-                    } if constant == c && dest == d));
+                fn load_constant(self, constant: ConstIdx, dest: RegIdx) {
+                    assert!(self.inst == Instruction::LoadConstant { constant, dest });
+                }
+
+                fn get_heap(self, heap: HeapIdx, dest: RegIdx) {
+                    assert!(self.inst == Instruction::GetHeap { heap, dest });
+                }
+
+                fn set_heap(self, source: HeapIdx, heap: RegIdx) {
+                    assert!(self.inst == Instruction::SetHeap { source, heap });
                 }
 
                 fn move_(self, s: RegIdx, d: RegIdx) {
@@ -799,7 +749,7 @@ mod tests {
         }
 
         check(&[
-            Instruction::Load {
+            Instruction::LoadConstant {
                 constant: 12,
                 dest: 3,
             },
@@ -854,6 +804,11 @@ mod tests {
                 func: 3,
                 args: 2,
                 returns: 1,
+            },
+            Instruction::GetHeap { heap: 9, dest: 10 },
+            Instruction::SetHeap {
+                source: 11,
+                heap: 12,
             },
             Instruction::Return { returns: 0 },
         ]);

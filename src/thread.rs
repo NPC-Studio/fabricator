@@ -5,9 +5,9 @@ use thiserror::Error;
 
 use crate::{
     bytecode::{self, ByteCode},
-    closure::Closure,
+    closure::{Closure, HeapVar},
     constant::Constant,
-    instructions::{ConstIdx, RegIdx},
+    instructions::{ConstIdx, HeapIdx, RegIdx},
     stack::Stack,
     value::{Function, String, Value},
 };
@@ -27,6 +27,7 @@ pub enum VmError {
 pub struct Thread<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
+    heap: Vec<HeapVar<'gc>>,
 }
 
 impl<'gc> Thread<'gc> {
@@ -49,12 +50,18 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         stack_bottom: usize,
     ) -> Result<(), VmError> {
-        let proto = &closure.0;
+        let proto = closure.prototype();
+
+        assert!(proto.used_registers <= 256);
 
         let register_bottom = self.registers.len();
-        let used_registers = proto.bytecode.max_register() as usize + 1;
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
+
+        let heap_bottom = self.heap.len();
+        self.heap.resize_with(heap_bottom + proto.used_heap, || {
+            HeapVar::new(mc, Value::Undefined)
+        });
 
         let mut pc: usize = 0;
 
@@ -68,6 +75,7 @@ impl<'gc> Thread<'gc> {
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
                     .unwrap(),
+                &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
             )? {
                 Next::Call {
@@ -82,7 +90,7 @@ impl<'gc> Thread<'gc> {
                         .resize(arg_bottom + args as usize, Value::Undefined);
 
                     // We only preserve the registers that are intended to be used,
-                    self.stack.truncate(register_bottom + used_registers);
+                    self.stack.truncate(register_bottom + proto.used_registers);
                     self.call(mc, closure, arg_bottom)?;
                     // Resize the register slice to be 256 wide.
                     self.stack.resize(register_bottom + 256, Value::Undefined);
@@ -96,8 +104,9 @@ impl<'gc> Thread<'gc> {
                     self.stack
                         .resize(stack_bottom + returns as usize, Value::Undefined);
 
-                    // Clear the registers for this frame.
+                    // Clear the registers and heap vars for this frame.
                     self.registers.truncate(register_bottom);
+                    self.heap.truncate(heap_bottom);
 
                     return Ok(());
                 }
@@ -123,12 +132,14 @@ fn dispatch<'gc>(
     constants: &[Constant<String<'gc>>],
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
+    heap: &mut [HeapVar<'gc>],
     mut stack: Stack<'gc, '_>,
 ) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
         mc: &'a Mutation<'gc>,
         constants: &'a [Constant<String<'gc>>],
         registers: &'a mut [Value<'gc>],
+        heap: &'a mut [HeapVar<'gc>],
         stack: Stack<'gc, 'a>,
     }
 
@@ -137,8 +148,16 @@ fn dispatch<'gc>(
         type Error = VmError;
 
         #[inline]
-        fn load(self, constant: ConstIdx, dest: RegIdx) {
+        fn load_constant(self, constant: ConstIdx, dest: RegIdx) {
             self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
+        }
+
+        fn get_heap(self, heap: HeapIdx, dest: RegIdx) {
+            self.registers[dest as usize] = self.heap[heap as usize].get();
+        }
+
+        fn set_heap(self, source: RegIdx, heap: HeapIdx) {
+            self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
         }
 
         #[inline]
@@ -278,6 +297,7 @@ fn dispatch<'gc>(
             mc,
             constants,
             registers,
+            heap,
             stack: stack.reborrow(),
         })? {
             *pc = dispatcher.pc();
