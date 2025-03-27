@@ -6,7 +6,10 @@ use std::{
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::instructions::{ConstIdx, HeapIdx, Instruction, RegIdx};
+use crate::{
+    instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
+    util::bitvec::BitVec,
+};
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
@@ -23,7 +26,7 @@ pub enum ByteCodeEncodingError {
 #[collect(require_static)]
 pub struct ByteCode {
     bytes: Box<[MaybeUninit<u8>]>,
-    inst_boundaries: BoolVec,
+    inst_boundaries: BitVec,
 }
 
 impl ByteCode {
@@ -62,7 +65,8 @@ impl ByteCode {
             inst_positions.push(pos);
             pos += 1 + OpCode::for_inst(inst).param_len();
         }
-        let mut inst_boundaries = BoolVec::new(pos);
+        let mut inst_boundaries = BitVec::new();
+        inst_boundaries.resize(pos, false);
 
         let calc_jump = |cur: usize, offset: i16| {
             // Encode jumps from the end of the current instruction
@@ -552,53 +556,9 @@ unsafe fn bytecode_read<T>(ptr: &mut *const MaybeUninit<u8>) -> T {
     }
 }
 
-#[derive(Debug)]
-struct BoolVec(Box<[u8]>);
-
-impl BoolVec {
-    fn new(min_len: usize) -> Self {
-        Self(vec![0; min_len.div_ceil(8)].into_boxed_slice())
-    }
-
-    #[inline]
-    fn set(&mut self, i: usize, val: bool) {
-        let base = i / 8;
-        let off = i % 8;
-        if val {
-            self.0[base] |= 1 << off;
-        } else {
-            self.0[base] &= !(1 << off);
-        }
-    }
-
-    #[inline]
-    fn get(&self, i: usize) -> bool {
-        let base = i / 8;
-        let off = i % 8;
-        self.0[base] & (1 << off) != 0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_bool_vec() {
-        let mut bv = BoolVec::new(17);
-
-        bv.set(0, true);
-        bv.set(7, true);
-        bv.set(16, true);
-
-        assert!(bv.get(0));
-        assert!(bv.get(7));
-        assert!(bv.get(16));
-        assert!(!bv.get(1));
-        assert!(!bv.get(6));
-        assert!(!bv.get(8));
-        assert!(!bv.get(15));
-    }
 
     #[test]
     fn test_bytecode_dispatch() {
