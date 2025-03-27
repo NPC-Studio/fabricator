@@ -152,10 +152,12 @@ fn dispatch<'gc>(
             self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
         }
 
+        #[inline]
         fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) {
             self.registers[dest as usize] = self.heap[heap as usize].get();
         }
 
+        #[inline]
         fn set_heap(&mut self, source: RegIdx, heap: HeapIdx) {
             self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
         }
