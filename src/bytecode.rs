@@ -7,8 +7,8 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
+    bit_vec::BitVec,
     instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
-    util::bitvec::BitVec,
 };
 
 #[derive(Debug, Error)]
@@ -32,6 +32,50 @@ pub struct ByteCode {
 impl ByteCode {
     /// Encode a list of instructions as bytecode.
     pub fn encode(insts: &[Instruction]) -> Result<Self, ByteCodeEncodingError> {
+        fn opcode_for_inst(inst: Instruction) -> OpCode {
+            match inst {
+                Instruction::LoadConstant { .. } => OpCode::LoadConstant,
+                Instruction::GetHeap { .. } => OpCode::GetHeap,
+                Instruction::SetHeap { .. } => OpCode::SetHeap,
+                Instruction::Move { .. } => OpCode::Move,
+                Instruction::Not { .. } => OpCode::Not,
+                Instruction::Add { .. } => OpCode::Add,
+                Instruction::Sub { .. } => OpCode::Sub,
+                Instruction::TestEqual { .. } => OpCode::TestEqual,
+                Instruction::TestNotEqual { .. } => OpCode::TestNotEqual,
+                Instruction::TestLess { .. } => OpCode::TestLess,
+                Instruction::TestLessEqual { .. } => OpCode::TestLessEqual,
+                Instruction::Jump { .. } => OpCode::Jump,
+                Instruction::JumpIf { .. } => OpCode::JumpIf,
+                Instruction::Push { .. } => OpCode::Push,
+                Instruction::Pop { .. } => OpCode::Pop,
+                Instruction::Call { .. } => OpCode::Call,
+                Instruction::Return { .. } => OpCode::Return,
+            }
+        }
+
+        fn op_param_len(opcode: OpCode) -> usize {
+            match opcode {
+                OpCode::LoadConstant => mem::size_of::<LoadConstantParams>(),
+                OpCode::GetHeap => mem::size_of::<GetHeapParams>(),
+                OpCode::SetHeap => mem::size_of::<SetHeapParams>(),
+                OpCode::Move => mem::size_of::<MoveParams>(),
+                OpCode::Not => mem::size_of::<NotParams>(),
+                OpCode::Add => mem::size_of::<AddParams>(),
+                OpCode::Sub => mem::size_of::<SubParams>(),
+                OpCode::TestEqual => mem::size_of::<TestEqualParams>(),
+                OpCode::TestNotEqual => mem::size_of::<TestNotEqualParams>(),
+                OpCode::TestLess => mem::size_of::<TestLessParams>(),
+                OpCode::TestLessEqual => mem::size_of::<TestLessEqualParams>(),
+                OpCode::Jump => mem::size_of::<JumpParams>(),
+                OpCode::JumpIf => mem::size_of::<JumpIfParams>(),
+                OpCode::Push => mem::size_of::<PushParams>(),
+                OpCode::Pop => mem::size_of::<PopParams>(),
+                OpCode::Call => mem::size_of::<CallParams>(),
+                OpCode::Return => mem::size_of::<ReturnParams>(),
+            }
+        }
+
         let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
             Some(i) if i < insts.len() => Ok(()),
             _ => {
@@ -63,7 +107,7 @@ impl ByteCode {
         let mut pos = 0;
         for &inst in insts {
             inst_positions.push(pos);
-            pos += 1 + OpCode::for_inst(inst).param_len();
+            pos += 1 + op_param_len(opcode_for_inst(inst));
         }
         let mut inst_boundaries = BitVec::new();
         inst_boundaries.resize(pos, false);
@@ -83,7 +127,7 @@ impl ByteCode {
             assert_eq!(inst_positions[i], bytes.len());
             inst_boundaries.set(bytes.len(), true);
 
-            bytecode_write(&mut bytes, OpCode::for_inst(inst));
+            bytecode_write(&mut bytes, opcode_for_inst(inst));
 
             match inst {
                 Instruction::LoadConstant { constant, dest } => {
@@ -213,112 +257,98 @@ impl<'a> Dispatcher<'a> {
         unsafe { self.ptr.offset_from(self.bytecode.bytes.as_ptr()) as usize }
     }
 
-    /// Dispatch a single instruction to the given [`Dispatch`] impl.
+    /// Dispatch instructions to the given [`Dispatch`] impl.
     #[inline]
-    pub fn dispatch<D: Dispatch>(
-        &mut self,
-        dispatch: D,
-    ) -> Result<ControlFlow<D::Break>, D::Error> {
-        debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
+    pub fn dispatch_loop<D: Dispatch>(&mut self, dispatch: &mut D) -> Result<D::Break, D::Error> {
+        loop {
+            debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
 
-        unsafe {
-            let opcode: OpCode = bytecode_read(&mut self.ptr);
+            unsafe {
+                let opcode: OpCode = bytecode_read(&mut self.ptr);
 
-            Ok(match opcode {
-                OpCode::LoadConstant => {
-                    let LoadConstantParams { constant, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.load_constant(constant, dest);
-                    ControlFlow::Continue(())
-                }
-                OpCode::GetHeap => {
-                    let GetHeapParams { heap, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.get_heap(heap, dest);
-                    ControlFlow::Continue(())
-                }
-                OpCode::SetHeap => {
-                    let SetHeapParams { source, heap } = bytecode_read(&mut self.ptr);
-                    dispatch.set_heap(source, heap);
-                    ControlFlow::Continue(())
-                }
-                OpCode::Move => {
-                    let MoveParams { source, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.move_(source, dest);
-                    ControlFlow::Continue(())
-                }
-                OpCode::Not => {
-                    let NotParams { arg, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.not(arg, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::Add => {
-                    let AddParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.add(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::Sub => {
-                    let SubParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.sub(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::TestEqual => {
-                    let TestEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.test_equal(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::TestNotEqual => {
-                    let TestNotEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.test_not_equal(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::TestLess => {
-                    let TestLessParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.test_less(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::TestLessEqual => {
-                    let TestLessEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
-                    dispatch.test_less_equal(arg1, arg2, dest)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::Jump => {
-                    let JumpParams { offset } = bytecode_read(&mut self.ptr);
-                    self.ptr = self.ptr.offset(offset as isize);
-                    ControlFlow::Continue(())
-                }
-                OpCode::JumpIf => {
-                    let JumpIfParams {
-                        arg,
-                        is_true,
-                        offset,
-                    } = bytecode_read(&mut self.ptr);
-                    if dispatch.check(arg, is_true)? {
+                match opcode {
+                    OpCode::LoadConstant => {
+                        let LoadConstantParams { constant, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.load_constant(constant, dest);
+                    }
+                    OpCode::GetHeap => {
+                        let GetHeapParams { heap, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.get_heap(heap, dest);
+                    }
+                    OpCode::SetHeap => {
+                        let SetHeapParams { source, heap } = bytecode_read(&mut self.ptr);
+                        dispatch.set_heap(source, heap);
+                    }
+                    OpCode::Move => {
+                        let MoveParams { source, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.move_(source, dest);
+                    }
+                    OpCode::Not => {
+                        let NotParams { arg, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.not(arg, dest)?;
+                    }
+                    OpCode::Add => {
+                        let AddParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.add(arg1, arg2, dest)?;
+                    }
+                    OpCode::Sub => {
+                        let SubParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.sub(arg1, arg2, dest)?;
+                    }
+                    OpCode::TestEqual => {
+                        let TestEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.test_equal(arg1, arg2, dest)?;
+                    }
+                    OpCode::TestNotEqual => {
+                        let TestNotEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.test_not_equal(arg1, arg2, dest)?;
+                    }
+                    OpCode::TestLess => {
+                        let TestLessParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.test_less(arg1, arg2, dest)?;
+                    }
+                    OpCode::TestLessEqual => {
+                        let TestLessEqualParams { arg1, arg2, dest } = bytecode_read(&mut self.ptr);
+                        dispatch.test_less_equal(arg1, arg2, dest)?;
+                    }
+                    OpCode::Jump => {
+                        let JumpParams { offset } = bytecode_read(&mut self.ptr);
                         self.ptr = self.ptr.offset(offset as isize);
                     }
-                    ControlFlow::Continue(())
+                    OpCode::JumpIf => {
+                        let JumpIfParams {
+                            arg,
+                            is_true,
+                            offset,
+                        } = bytecode_read(&mut self.ptr);
+                        if dispatch.check(arg, is_true)? {
+                            self.ptr = self.ptr.offset(offset as isize);
+                        }
+                    }
+                    OpCode::Push => {
+                        let PushParams { source, len } = bytecode_read(&mut self.ptr);
+                        dispatch.push(source, len)?;
+                    }
+                    OpCode::Pop => {
+                        let PopParams { dest, len } = bytecode_read(&mut self.ptr);
+                        dispatch.pop(dest, len)?;
+                    }
+                    OpCode::Call => {
+                        let CallParams {
+                            func,
+                            args,
+                            returns,
+                        } = bytecode_read(&mut self.ptr);
+                        if let ControlFlow::Break(b) = dispatch.call(func, args, returns)? {
+                            return Ok(b);
+                        }
+                    }
+                    OpCode::Return => {
+                        let ReturnParams { returns } = bytecode_read(&mut self.ptr);
+                        return dispatch.return_(returns);
+                    }
                 }
-                OpCode::Push => {
-                    let PushParams { source, len } = bytecode_read(&mut self.ptr);
-                    dispatch.push(source, len)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::Pop => {
-                    let PopParams { dest, len } = bytecode_read(&mut self.ptr);
-                    dispatch.pop(dest, len)?;
-                    ControlFlow::Continue(())
-                }
-                OpCode::Call => {
-                    let CallParams {
-                        func,
-                        args,
-                        returns,
-                    } = bytecode_read(&mut self.ptr);
-                    dispatch.call(func, args, returns)?
-                }
-                OpCode::Return => {
-                    let ReturnParams { returns } = bytecode_read(&mut self.ptr);
-                    ControlFlow::Break(dispatch.return_(returns)?)
-                }
-            })
+            }
         }
     }
 }
@@ -327,27 +357,37 @@ pub trait Dispatch {
     type Break;
     type Error;
 
-    fn load_constant(self, constant: ConstIdx, dest: RegIdx);
-    fn get_heap(self, source: HeapIdx, dest: RegIdx);
-    fn set_heap(self, source: RegIdx, dest: HeapIdx);
-    fn move_(self, source: RegIdx, dest: RegIdx);
-    fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn test_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn test_not_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn test_less(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn test_less_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
-    fn check(self, arg: RegIdx, is_true: bool) -> Result<bool, Self::Error>;
-    fn push(self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
-    fn pop(self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx);
+    fn get_heap(&mut self, source: HeapIdx, dest: RegIdx);
+    fn set_heap(&mut self, source: RegIdx, dest: HeapIdx);
+    fn move_(&mut self, source: RegIdx, dest: RegIdx);
+    fn not(&mut self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn add(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn sub(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_equal(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_not_equal(
+        &mut self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<(), Self::Error>;
+    fn test_less(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error>;
+    fn test_less_equal(
+        &mut self,
+        arg1: RegIdx,
+        arg2: RegIdx,
+        dest: RegIdx,
+    ) -> Result<(), Self::Error>;
+    fn check(&mut self, arg: RegIdx, is_true: bool) -> Result<bool, Self::Error>;
+    fn push(&mut self, source: RegIdx, len: u8) -> Result<(), Self::Error>;
+    fn pop(&mut self, dest: RegIdx, len: u8) -> Result<(), Self::Error>;
     fn call(
-        self,
+        &mut self,
         func: RegIdx,
         args: u8,
         returns: u8,
     ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-    fn return_(self, returns: u8) -> Result<Self::Break, Self::Error>;
+    fn return_(&mut self, returns: u8) -> Result<Self::Break, Self::Error>;
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -370,54 +410,6 @@ enum OpCode {
     Pop,
     Call,
     Return,
-}
-
-impl OpCode {
-    #[inline]
-    fn for_inst(inst: Instruction) -> Self {
-        match inst {
-            Instruction::LoadConstant { .. } => OpCode::LoadConstant,
-            Instruction::GetHeap { .. } => OpCode::GetHeap,
-            Instruction::SetHeap { .. } => OpCode::SetHeap,
-            Instruction::Move { .. } => OpCode::Move,
-            Instruction::Not { .. } => OpCode::Not,
-            Instruction::Add { .. } => OpCode::Add,
-            Instruction::Sub { .. } => OpCode::Sub,
-            Instruction::TestEqual { .. } => OpCode::TestEqual,
-            Instruction::TestNotEqual { .. } => OpCode::TestNotEqual,
-            Instruction::TestLess { .. } => OpCode::TestLess,
-            Instruction::TestLessEqual { .. } => OpCode::TestLessEqual,
-            Instruction::Jump { .. } => OpCode::Jump,
-            Instruction::JumpIf { .. } => OpCode::JumpIf,
-            Instruction::Push { .. } => OpCode::Push,
-            Instruction::Pop { .. } => OpCode::Pop,
-            Instruction::Call { .. } => OpCode::Call,
-            Instruction::Return { .. } => OpCode::Return,
-        }
-    }
-
-    #[inline]
-    fn param_len(self) -> usize {
-        match self {
-            OpCode::LoadConstant => mem::size_of::<LoadConstantParams>(),
-            OpCode::GetHeap => mem::size_of::<GetHeapParams>(),
-            OpCode::SetHeap => mem::size_of::<SetHeapParams>(),
-            OpCode::Move => mem::size_of::<MoveParams>(),
-            OpCode::Not => mem::size_of::<NotParams>(),
-            OpCode::Add => mem::size_of::<AddParams>(),
-            OpCode::Sub => mem::size_of::<SubParams>(),
-            OpCode::TestEqual => mem::size_of::<TestEqualParams>(),
-            OpCode::TestNotEqual => mem::size_of::<TestNotEqualParams>(),
-            OpCode::TestLess => mem::size_of::<TestLessParams>(),
-            OpCode::TestLessEqual => mem::size_of::<TestLessEqualParams>(),
-            OpCode::Jump => mem::size_of::<JumpParams>(),
-            OpCode::JumpIf => mem::size_of::<JumpIfParams>(),
-            OpCode::Push => mem::size_of::<PushParams>(),
-            OpCode::Pop => mem::size_of::<PopParams>(),
-            OpCode::Call => mem::size_of::<CallParams>(),
-            OpCode::Return => mem::size_of::<ReturnParams>(),
-        }
-    }
 }
 
 #[repr(packed)]
@@ -563,149 +555,170 @@ mod tests {
     #[test]
     fn test_bytecode_dispatch() {
         fn check(insts: &[Instruction]) {
-            struct Checker {
-                inst: Instruction,
+            struct Checker<'a> {
+                insts: &'a [Instruction],
+                pos: usize,
             }
 
-            impl Dispatch for Checker {
+            impl<'a> Dispatch for Checker<'a> {
                 type Break = ();
                 type Error = ();
 
-                fn load_constant(self, constant: ConstIdx, dest: RegIdx) {
-                    assert!(self.inst == Instruction::LoadConstant { constant, dest });
+                fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) {
+                    assert!(self.insts[self.pos] == Instruction::LoadConstant { constant, dest });
+                    self.pos += 1;
                 }
 
-                fn get_heap(self, heap: HeapIdx, dest: RegIdx) {
-                    assert!(self.inst == Instruction::GetHeap { heap, dest });
+                fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) {
+                    assert!(self.insts[self.pos] == Instruction::GetHeap { heap, dest });
+                    self.pos += 1;
                 }
 
-                fn set_heap(self, source: HeapIdx, heap: RegIdx) {
-                    assert!(self.inst == Instruction::SetHeap { source, heap });
+                fn set_heap(&mut self, source: HeapIdx, heap: RegIdx) {
+                    assert!(self.insts[self.pos] == Instruction::SetHeap { source, heap });
+                    self.pos += 1;
                 }
 
-                fn move_(self, s: RegIdx, d: RegIdx) {
+                fn move_(&mut self, s: RegIdx, d: RegIdx) {
                     assert!(
-                        matches!(self.inst, Instruction::Move { source, dest } if source == s && dest == d)
+                        matches!(self.insts[self.pos], Instruction::Move { source, dest } if source == s && dest == d)
                     );
+                    self.pos += 1;
                 }
 
-                fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::Not { arg, dest });
+                fn not(&mut self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+                    assert!(self.insts[self.pos] == Instruction::Not { arg, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
-                fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::Add { arg1, arg2, dest });
+                fn add(
+                    &mut self,
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.insts[self.pos] == Instruction::Add { arg1, arg2, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
-                fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::Sub { arg1, arg2, dest });
+                fn sub(
+                    &mut self,
+                    arg1: RegIdx,
+                    arg2: RegIdx,
+                    dest: RegIdx,
+                ) -> Result<(), Self::Error> {
+                    assert!(self.insts[self.pos] == Instruction::Sub { arg1, arg2, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
                 fn test_equal(
-                    self,
+                    &mut self,
                     arg1: RegIdx,
                     arg2: RegIdx,
                     dest: RegIdx,
                 ) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::TestEqual { arg1, arg2, dest });
+                    assert!(self.insts[self.pos] == Instruction::TestEqual { arg1, arg2, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
                 fn test_not_equal(
-                    self,
+                    &mut self,
                     arg1: RegIdx,
                     arg2: RegIdx,
                     dest: RegIdx,
                 ) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::TestNotEqual { arg1, arg2, dest });
+                    assert!(self.insts[self.pos] == Instruction::TestNotEqual { arg1, arg2, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
                 fn test_less(
-                    self,
+                    &mut self,
                     arg1: RegIdx,
                     arg2: RegIdx,
                     dest: RegIdx,
                 ) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::TestLess { arg1, arg2, dest });
+                    assert!(self.insts[self.pos] == Instruction::TestLess { arg1, arg2, dest });
+                    self.pos += 1;
                     Ok(())
                 }
 
                 fn test_less_equal(
-                    self,
+                    &mut self,
                     arg1: RegIdx,
                     arg2: RegIdx,
                     dest: RegIdx,
                 ) -> Result<(), Self::Error> {
-                    assert!(self.inst == Instruction::TestLessEqual { arg1, arg2, dest });
+                    assert!(
+                        self.insts[self.pos] == Instruction::TestLessEqual { arg1, arg2, dest }
+                    );
+                    self.pos += 1;
                     Ok(())
                 }
 
-                fn check(self, a: RegIdx, it: bool) -> Result<bool, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::JumpIf {
+                fn check(&mut self, a: RegIdx, it: bool) -> Result<bool, Self::Error> {
+                    assert!(matches!(self.insts[self.pos], Instruction::JumpIf {
                         arg,
                         is_true,
                         ..
                     } if arg == a && is_true == it));
+                    self.pos += 1;
                     Ok(false)
                 }
 
-                fn push(self, s: RegIdx, l: u8) -> Result<(), Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Push {
+                fn push(&mut self, s: RegIdx, l: u8) -> Result<(), Self::Error> {
+                    assert!(matches!(self.insts[self.pos], Instruction::Push {
                         source,
                         len,
                     } if source == s && len == l));
+                    self.pos += 1;
                     Ok(())
                 }
 
-                fn pop(self, d: RegIdx, l: u8) -> Result<(), Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Pop {
+                fn pop(&mut self, d: RegIdx, l: u8) -> Result<(), Self::Error> {
+                    assert!(matches!(self.insts[self.pos], Instruction::Pop {
                         dest,
                         len,
                     } if dest == d && len == l));
+                    self.pos += 1;
                     Ok(())
                 }
 
                 fn call(
-                    self,
+                    &mut self,
                     f: RegIdx,
                     a: u8,
                     r: u8,
                 ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Call {
+                    assert!(matches!(self.insts[self.pos], Instruction::Call {
                         func,
                         args,
                         returns,
                     } if func == f && args == a && returns == r));
+                    self.pos += 1;
                     Ok(ControlFlow::Continue(()))
                 }
 
-                fn return_(self, r: u8) -> Result<Self::Break, Self::Error> {
-                    assert!(matches!(self.inst, Instruction::Return {
+                fn return_(&mut self, r: u8) -> Result<Self::Break, Self::Error> {
+                    assert!(matches!(self.insts[self.pos], Instruction::Return {
                         returns,
                     } if returns == r));
+                    self.pos += 1;
                     Ok(())
                 }
             }
 
+            let mut checker = Checker { insts, pos: 0 };
+
             let bytecode = ByteCode::encode(&insts).unwrap();
-            let mut dispatcher = Dispatcher::new(&bytecode, 0);
 
-            let mut pos = 0;
-            loop {
-                if dispatcher
-                    .dispatch(Checker { inst: insts[pos] })
-                    .unwrap()
-                    .is_break()
-                {
-                    break;
-                }
-
-                pos += 1;
-            }
+            Dispatcher::new(&bytecode, 0)
+                .dispatch_loop(&mut checker)
+                .unwrap();
         }
 
         check(&[
@@ -752,7 +765,6 @@ mod tests {
                 arg2: 8,
                 dest: 9,
             },
-            Instruction::Jump { offset: 1 },
             Instruction::JumpIf {
                 arg: 11,
                 is_true: true,

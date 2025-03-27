@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bit-vec = "0.8"
 gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "b775ac539c46d2788367e062c034c0e82d582468", features = ["allocator-api2", "hashbrown"] }
 thiserror = "1.0"
 

@@ -27,6 +27,12 @@ impl BitVec {
     }
 
     #[inline]
+    pub fn clear(&mut self) {
+        self.bits.clear();
+        self.len = 0;
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
@@ -51,6 +57,8 @@ impl BitVec {
 
     #[inline]
     pub fn get(&self, i: usize) -> bool {
+        assert!(i < self.len, "index out of range");
+
         let base = i / 8;
         let off = i % 8;
 

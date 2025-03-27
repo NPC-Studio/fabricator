@@ -148,31 +148,31 @@ fn dispatch<'gc>(
         type Error = VmError;
 
         #[inline]
-        fn load_constant(self, constant: ConstIdx, dest: RegIdx) {
+        fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) {
             self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
         }
 
-        fn get_heap(self, heap: HeapIdx, dest: RegIdx) {
+        fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) {
             self.registers[dest as usize] = self.heap[heap as usize].get();
         }
 
-        fn set_heap(self, source: RegIdx, heap: HeapIdx) {
+        fn set_heap(&mut self, source: RegIdx, heap: HeapIdx) {
             self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
         }
 
         #[inline]
-        fn move_(self, source: RegIdx, dest: RegIdx) {
+        fn move_(&mut self, source: RegIdx, dest: RegIdx) {
             self.registers[dest as usize] = self.registers[source as usize];
         }
 
         #[inline]
-        fn not(self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn not(&mut self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Boolean(self.registers[arg as usize].to_bool());
             Ok(())
         }
 
         #[inline]
-        fn add(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn add(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
@@ -181,7 +181,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn sub(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn sub(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
@@ -190,7 +190,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_equal(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn test_equal(
+            &mut self,
+            arg1: RegIdx,
+            arg2: RegIdx,
+            dest: RegIdx,
+        ) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
@@ -200,7 +205,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn test_not_equal(
-            self,
+            &mut self,
             arg1: RegIdx,
             arg2: RegIdx,
             dest: RegIdx,
@@ -213,7 +218,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_less(self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn test_less(
+            &mut self,
+            arg1: RegIdx,
+            arg2: RegIdx,
+            dest: RegIdx,
+        ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Boolean(
                 self.registers[arg1 as usize]
                     .less_than(self.registers[arg2 as usize])
@@ -224,7 +234,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn test_less_equal(
-            self,
+            &mut self,
             arg1: RegIdx,
             arg2: RegIdx,
             dest: RegIdx,
@@ -238,12 +248,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn check(self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
+        fn check(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
             Ok(self.registers[test as usize].to_bool() == is_true)
         }
 
         #[inline]
-        fn push(mut self, source: RegIdx, len: u8) -> Result<(), Self::Error> {
+        fn push(&mut self, source: RegIdx, len: u8) -> Result<(), Self::Error> {
             for i in 0..len {
                 self.stack
                     .push_back(self.registers[source as usize + i as usize]);
@@ -252,7 +262,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn pop(mut self, dest: RegIdx, len: u8) -> Result<(), Self::Error> {
+        fn pop(&mut self, dest: RegIdx, len: u8) -> Result<(), Self::Error> {
             for i in (0..len).rev() {
                 self.registers[dest as usize + i as usize] =
                     self.stack.pop_back().ok_or(VmError::StackUnderflow)?;
@@ -262,7 +272,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn call(
-            mut self,
+            &mut self,
             func: RegIdx,
             args: u8,
             returns: u8,
@@ -285,23 +295,19 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn return_(self, returns: u8) -> Result<Self::Break, Self::Error> {
+        fn return_(&mut self, returns: u8) -> Result<Self::Break, Self::Error> {
             Ok(Next::Return { returns })
         }
     }
 
     let mut dispatcher = bytecode::Dispatcher::new(bytecode, *pc);
-
-    loop {
-        if let ControlFlow::Break(ret) = dispatcher.dispatch(Dispatch {
-            mc,
-            constants,
-            registers,
-            heap,
-            stack: stack.reborrow(),
-        })? {
-            *pc = dispatcher.pc();
-            return Ok(ret);
-        }
-    }
+    let ret = dispatcher.dispatch_loop(&mut Dispatch {
+        mc,
+        constants,
+        registers,
+        heap,
+        stack: stack.reborrow(),
+    });
+    *pc = dispatcher.pc();
+    ret
 }
