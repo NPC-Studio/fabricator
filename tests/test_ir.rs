@@ -30,7 +30,7 @@ fn test_ir_codegen() {
             .insert(ir::Instruction::Constant(Constant::Integer(100000)));
         start_block.instructions.push(const_100000);
 
-        start_block.branch = ir::Branch::Jump(loop_block_id);
+        start_block.exit = ir::Exit::Jump(loop_block_id);
 
         let loop_block = func.blocks.get_mut(loop_block_id).unwrap();
 
@@ -79,7 +79,7 @@ fn test_ir_codegen() {
         });
         loop_block.instructions.push(i_le_100000);
 
-        loop_block.branch = ir::Branch::Branch {
+        loop_block.exit = ir::Exit::Branch {
             cond: i_le_100000,
             if_true: loop_block_id,
             if_false: end_block_id,
@@ -92,6 +92,6 @@ fn test_ir_codegen() {
                 .insert(ir::Instruction::Push { source: sum_plus_i }),
         );
 
-        end_block.branch = ir::Branch::Return { returns: 1 };
+        end_block.exit = ir::Exit::Return { returns: 1 };
     });
 }

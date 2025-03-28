@@ -3,11 +3,11 @@ use crate::{
     util::typed_id_map::{new_id_type, IdMap},
 };
 
-new_id_type!(
+new_id_type! {
     pub struct VarId;
     pub struct BlockId;
     pub struct InstId;
-);
+}
 
 pub type Offset = i32;
 pub type ArgCount = u8;
@@ -66,7 +66,7 @@ pub enum Instruction<S> {
     },
 }
 
-pub enum Branch {
+pub enum Exit {
     Return {
         returns: ArgCount,
     },
@@ -80,14 +80,14 @@ pub enum Branch {
 
 pub struct Block {
     pub instructions: Vec<InstId>,
-    pub branch: Branch,
+    pub exit: Exit,
 }
 
 impl Default for Block {
     fn default() -> Self {
         Self {
             instructions: Vec::new(),
-            branch: Branch::Return { returns: 0 },
+            exit: Exit::Return { returns: 0 },
         }
     }
 }
