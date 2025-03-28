@@ -3,13 +3,11 @@ use std::{
     ops::ControlFlow,
 };
 
+use bit_vec::BitVec;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{
-    bit_vec::BitVec,
-    instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
-};
+use crate::instructions::{ConstIdx, HeapIdx, Instruction, RegIdx};
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
@@ -110,7 +108,7 @@ impl ByteCode {
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
         let mut inst_boundaries = BitVec::new();
-        inst_boundaries.resize(pos, false);
+        inst_boundaries.grow(pos, false);
 
         let calc_jump = |cur: usize, offset: i16| {
             // Encode jumps from the end of the current instruction
@@ -238,7 +236,7 @@ impl<'a> Dispatcher<'a> {
     /// always a valid program counter for the starting instruction.
     #[inline]
     pub fn new(bytecode: &'a ByteCode, pc: usize) -> Self {
-        assert!(bytecode.inst_boundaries.get(pc));
+        assert!(bytecode.inst_boundaries[pc]);
         Self {
             bytecode,
             ptr: unsafe { bytecode.bytes.as_ptr().offset(pc as isize) },
@@ -261,7 +259,7 @@ impl<'a> Dispatcher<'a> {
     #[inline]
     pub fn dispatch_loop<D: Dispatch>(&mut self, dispatch: &mut D) -> Result<D::Break, D::Error> {
         loop {
-            debug_assert!(self.bytecode.inst_boundaries.get(self.pc()));
+            debug_assert!(self.bytecode.inst_boundaries[self.pc()]);
 
             unsafe {
                 let opcode: OpCode = bytecode_read(&mut self.ptr);

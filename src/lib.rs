@@ -1,4 +1,3 @@
-pub mod bit_vec;
 pub mod bytecode;
 pub mod callback;
 pub mod closure;
