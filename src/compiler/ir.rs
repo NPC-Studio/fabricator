@@ -1,13 +1,13 @@
-use crate::constant::Constant;
+use crate::{
+    constant::Constant,
+    util::typed_id_map::{new_id_type, IdMap},
+};
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct VarId(pub usize);
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct BlockId(pub usize);
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct InstId(pub usize);
+new_id_type!(
+    pub struct VarId;
+    pub struct BlockId;
+    pub struct InstId;
+);
 
 pub type Offset = i32;
 pub type ArgCount = u8;
@@ -34,10 +34,13 @@ pub enum BinComp {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum IrInst<S> {
+pub enum Instruction<S> {
     Constant(Constant<S>),
     GetVariable(VarId),
-    SetVariable(VarId),
+    SetVariable {
+        source: InstId,
+        dest: VarId,
+    },
     UnOp {
         source: InstId,
         op: BinOp,
@@ -63,7 +66,7 @@ pub enum IrInst<S> {
     },
 }
 
-pub enum IrBranch {
+pub enum Branch {
     Return {
         returns: ArgCount,
     },
@@ -73,4 +76,34 @@ pub enum IrBranch {
         if_true: BlockId,
         if_false: BlockId,
     },
+}
+
+pub struct Block {
+    pub instructions: Vec<InstId>,
+    pub branch: Branch,
+}
+
+impl Default for Block {
+    fn default() -> Self {
+        Self {
+            instructions: Vec::new(),
+            branch: Branch::Return { returns: 0 },
+        }
+    }
+}
+
+pub struct Function<S> {
+    pub instructions: IdMap<InstId, Instruction<S>>,
+    pub blocks: IdMap<BlockId, Block>,
+    pub heap_vars: IdMap<VarId, ()>,
+}
+
+impl<S> Default for Function<S> {
+    fn default() -> Self {
+        Self {
+            instructions: IdMap::new(),
+            blocks: IdMap::new(),
+            heap_vars: IdMap::new(),
+        }
+    }
 }
