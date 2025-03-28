@@ -24,7 +24,6 @@
           packages = [
             rust
             cargo-edit
-            lua
           ];
         };
       }
