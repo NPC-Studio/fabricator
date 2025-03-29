@@ -1,6 +1,4 @@
-use std::mem;
-
-use bit_vec::BitVec;
+use crate::util::index_containers::{IndexMap, IndexSet};
 
 pub trait Node: Copy + Eq {
     /// Must be a unique, low-valued array index, algorithms may use memory proportional to the
@@ -11,87 +9,97 @@ pub trait Node: Copy + Eq {
 pub trait Graph {
     type Node: Node;
 
-    type Edges<'a>: IntoIterator<Item = Self::Node> + 'a
-    where
-        Self: 'a;
-
     /// Return all edges from this node to others in the directed graph.
-    fn edges<'a>(&'a self, node: Self::Node) -> Self::Edges<'a>;
+    fn edges<'a>(&'a self, node: Self::Node) -> impl IntoIterator<Item = Self::Node> + 'a;
 }
 
 #[derive(Debug)]
 pub struct DominatorTree<N> {
     postorder: Vec<N>,
+    postorder_indexes: IndexMap<usize>,
     dominators: Vec<usize>,
+    dominance_ranges: Vec<(usize, usize)>,
 }
 
-impl<N: Node> DominatorTree<N> {
+impl<N: Node + std::fmt::Debug> DominatorTree<N> {
     pub fn compute<G>(graph: &G, start: N) -> Self
     where
         G: Graph<Node = N>,
     {
-        let mut postorder = Vec::new();
+        let postorder = {
+            let mut postorder = Vec::new();
 
-        let mut visited = IndexSet::new();
-        let mut stack = Vec::new();
-        stack.push(start);
+            let mut stack = Vec::new();
+            let mut visited = IndexSet::new();
+            stack.push(start);
+            visited.insert(start.index());
 
-        while let Some(node) = stack.last().copied() {
-            visited.insert(node.index());
+            while let Some(node) = stack.last().copied() {
+                let mut leaf = true;
+                for en in graph.edges(node) {
+                    if !visited.contains(en.index()) {
+                        visited.insert(en.index());
+                        leaf = false;
+                        stack.push(en);
+                    }
+                }
 
-            let mut leaf = true;
-            for en in graph.edges(node) {
-                if !visited.contains(en.index()) {
-                    leaf = false;
-                    stack.push(en);
+                if leaf {
+                    postorder.push(node);
+                    stack.pop();
                 }
             }
 
-            if leaf {
-                postorder.push(node);
-                stack.pop();
+            postorder
+        };
+
+        let postorder_indexes = {
+            let mut postorder_indexes = IndexMap::new();
+            for i in 0..postorder.len() {
+                postorder_indexes.insert(postorder[i].index(), i);
             }
-        }
+            postorder_indexes
+        };
 
-        let mut postorder_indexes = IndexMap::new();
-        for i in 0..postorder.len() {
-            postorder_indexes.insert(postorder[i].index(), i);
-        }
-        let postorder_index = |n: N| postorder_indexes.get(n.index()).copied().unwrap();
-
-        let mut predecessors = Vec::new();
-        for _ in 0..postorder.len() {
-            predecessors.push(IndexSet::new());
-        }
-
-        for &node in &postorder {
-            for en in graph.edges(node) {
-                predecessors
-                    .get_mut(postorder_index(en))
-                    .unwrap()
-                    .insert(postorder_index(node));
+        let predecessors = {
+            let mut predecessors = Vec::new();
+            for _ in 0..postorder.len() {
+                predecessors.push(IndexSet::new());
             }
-        }
 
-        let mut dominators = vec![None; postorder.len()];
-        dominators[postorder_index(start)] = Some(postorder_index(start));
+            for &node in &postorder {
+                for en in graph.edges(node) {
+                    predecessors
+                        .get_mut(postorder_indexes[en.index()])
+                        .unwrap()
+                        .insert(postorder_indexes[node.index()]);
+                }
+            }
+            predecessors
+        };
 
         // Dominance algorithm is sourced from:
         //
         // A Simple, Fast Dominance Algorithm, Cooper et al.
-        // https://www.clear.rice.edu/comp512/Lectures/apers/TR06-33870-Dom.pdf
+        // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
 
-        let intersect = |doms: &[Option<usize>], mut f1: usize, mut f2: usize| -> usize {
+        let intersect = |dominators: &IndexMap<usize>, mut f1: usize, mut f2: usize| -> usize {
             while f1 != f2 {
                 while f1 < f2 {
-                    f1 = doms[f1].unwrap();
+                    f1 = dominators[f1];
                 }
                 while f2 < f1 {
-                    f2 = doms[f2].unwrap();
+                    f2 = dominators[f2];
                 }
             }
             f1
         };
+
+        let mut dominators = IndexMap::new();
+        dominators.insert(
+            postorder_indexes[start.index()],
+            postorder_indexes[start.index()],
+        );
 
         let mut changed = true;
         while changed {
@@ -102,10 +110,10 @@ impl<N: Node> DominatorTree<N> {
                     continue;
                 }
 
-                let ni = postorder_index(node);
+                let ni = postorder_indexes[node.index()];
                 let mut new_idom = None;
                 for p in predecessors.get(ni).unwrap().iter() {
-                    if dominators[p].is_some() {
+                    if dominators.contains(p) {
                         new_idom = Some(match new_idom {
                             Some(idom) => intersect(&dominators, p, idom),
                             None => p,
@@ -113,99 +121,64 @@ impl<N: Node> DominatorTree<N> {
                     }
                 }
 
-                if dominators[ni] != new_idom {
-                    dominators[ni] = new_idom;
+                // We should be iterating in an order where every node will have at least one
+                // predecessor with a computed dominator.
+                let new_idom = new_idom
+                    .expect("all nodes should have a predecessor with a computed dominator");
+                if dominators.get(ni).copied() != Some(new_idom) {
+                    dominators.insert(ni, new_idom);
                     changed = true;
                 }
             }
         }
 
+        // Every dominator should be computed at this point
+        let dominators = (0..postorder.len())
+            .map(|i| dominators[i])
+            .collect::<Vec<_>>();
+
+        // Find ranges that represent all nodes (in post-order index) that a given node dominates.
+        //
+        // Makes "does A dominate B?" queries O(1).
+        let dominance_ranges = {
+            // Start with every node dominating itself.
+            let mut dominance_ranges = (0..postorder.len()).map(|i| (i, i)).collect::<Vec<_>>();
+
+            // Then, since we walk the node list in DFS post-order, we just need to unify a given
+            // node's range with its immediate dominator and this only takes one pass.
+            for i in 0..postorder.len() {
+                let (start, end) = dominance_ranges[i];
+                let (idom_start, idom_end) = &mut dominance_ranges[dominators[i]];
+                *idom_start = (*idom_start).min(start);
+                *idom_end = (*idom_end).max(end);
+            }
+
+            dominance_ranges
+        };
+
         DominatorTree {
             postorder,
-            dominators: dominators.into_iter().map(|i| i.unwrap()).collect(),
+            postorder_indexes,
+            dominators,
+            dominance_ranges,
         }
     }
-}
 
-#[derive(Debug)]
-struct IndexMap<V> {
-    vec: Vec<Option<V>>,
-}
-
-impl<V> Default for IndexMap<V> {
-    fn default() -> Self {
-        Self { vec: Vec::new() }
-    }
-}
-
-impl<V> IndexMap<V> {
-    fn new() -> Self {
-        Self::default()
+    pub fn idom(&self, node: N) -> N {
+        self.postorder[self.dominators[self.postorder_indexes[node.index()]]]
     }
 
-    fn get(&self, i: usize) -> Option<&V> {
-        self.vec.get(i)?.as_ref()
-    }
-
-    fn get_mut(&mut self, i: usize) -> Option<&mut V> {
-        self.vec.get_mut(i)?.as_mut()
-    }
-
-    fn contains(&self, i: usize) -> bool {
-        self.get(i).is_some()
-    }
-
-    fn insert(&mut self, i: usize, v: V) -> Option<V> {
-        if i >= self.vec.len() {
-            self.vec.resize_with(i.checked_add(1).unwrap(), || None);
-        }
-        mem::replace(&mut self.vec[i], Some(v))
-    }
-}
-
-#[derive(Default)]
-struct IndexSet {
-    vec: BitVec,
-}
-
-impl IndexSet {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn contains(&mut self, i: usize) -> bool {
-        self.vec.get(i).unwrap_or(false)
-    }
-
-    fn insert(&mut self, i: usize) -> bool {
-        self.set(i, true)
-    }
-
-    fn remove(&mut self, i: usize) -> bool {
-        self.set(i, false)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.vec
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| if b { Some(i) } else { None })
-    }
-
-    fn set(&mut self, i: usize, val: bool) -> bool {
-        if i >= self.vec.len() {
-            self.vec
-                .grow(i.checked_add(1).unwrap() - self.vec.len(), false);
-        }
-
-        let old = self.vec[i];
-        self.vec.set(i, val);
-        old
+    pub fn dominates(&self, a: N, b: N) -> bool {
+        let (a_start, a_end) = self.dominance_ranges[self.postorder_indexes[a.index()]];
+        let (b_start, b_end) = self.dominance_ranges[self.postorder_indexes[b.index()]];
+        a_start <= b_start && a_end >= b_end
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::util::index_containers::IndexMap;
+
     use super::*;
 
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -225,9 +198,8 @@ mod tests {
 
     impl Graph for TestGraph {
         type Node = TestNode;
-        type Edges<'a> = Vec<TestNode>;
 
-        fn edges(&self, node: Self::Node) -> Vec<TestNode> {
+        fn edges(&self, node: Self::Node) -> impl IntoIterator<Item = TestNode> {
             self.edges.get(node.index()).unwrap().clone()
         }
     }
@@ -251,16 +223,14 @@ mod tests {
     fn test_dominator_tree() {
         let mut graph = TestGraph::default();
 
-        //      [A]
-        //       |
-        //       |
-        //      [B]
-        //      / \
-        //     /   \
-        //    [C]  [D]
-        //    / \
-        //   /   \
-        //  [E]  [F]
+        // [A]-->[B]--+
+        //       /    |
+        //      /     |
+        //     V      V
+        //   [C]<----[D]
+        //   / \      |
+        //  V   V     |
+        // [E]  [F]<--+
 
         let a = graph.create_node("A");
         let b = graph.create_node("B");
@@ -274,7 +244,41 @@ mod tests {
         graph.add_edge(b, d);
         graph.add_edge(c, e);
         graph.add_edge(c, f);
+        graph.add_edge(d, c);
+        graph.add_edge(d, f);
 
-        dbg!(DominatorTree::compute(&graph, a));
+        let tree = DominatorTree::compute(&graph, a);
+
+        assert_eq!(tree.idom(a), a);
+        assert_eq!(tree.idom(b), a);
+        assert_eq!(tree.idom(c), b);
+        assert_eq!(tree.idom(d), b);
+        assert_eq!(tree.idom(e), c);
+        assert_eq!(tree.idom(f), b);
+
+        let dominating_pairs = [
+            (a, a),
+            (a, b),
+            (a, c),
+            (a, d),
+            (a, e),
+            (a, f),
+            (b, b),
+            (b, c),
+            (b, d),
+            (b, e),
+            (b, f),
+            (c, c),
+            (c, e),
+            (d, d),
+            (e, e),
+            (f, f),
+        ];
+
+        for na in [a, b, c, d, e, f] {
+            for nb in [a, b, c, d, e, f] {
+                assert!(tree.dominates(na, nb) == dominating_pairs.contains(&(na, nb)));
+            }
+        }
     }
 }
