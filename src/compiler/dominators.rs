@@ -6,11 +6,10 @@ pub trait Node: Copy + Eq {
     fn index(&self) -> usize;
 }
 
-pub trait Graph {
-    type Node: Node;
-
-    /// Return all edges from this node to others in the directed graph.
-    fn edges<'a>(&'a self, node: Self::Node) -> impl IntoIterator<Item = Self::Node> + 'a;
+impl Node for usize {
+    fn index(&self) -> usize {
+        *self
+    }
 }
 
 /// Calculate dominators and dominance frontiers for every node in a directed graph.
@@ -26,14 +25,17 @@ pub struct Dominators<N> {
     dominance_frontiers: Vec<IndexSet>,
 }
 
-impl<N: Node + std::fmt::Debug> Dominators<N> {
-    /// Calculate the dominator tree and dominance frontiers for every reachable node in the given
-    /// directed graph, starting with node `start`.
+impl<N: Node> Dominators<N> {
+    /// Calculate the dominator tree and dominance frontiers for every reachable node a directed
+    /// graph, starting with node `start`.
+    ///
+    /// The `edges` function should return all nodes which are reachable from the given node
+    /// parameter in the directed graph.
     ///
     /// The `start` node is always considered to dominate every other node.
-    pub fn compute<G>(graph: &G, start: N) -> Self
+    pub fn compute<I>(start: N, edges: impl Fn(N) -> I) -> Self
     where
-        G: Graph<Node = N>,
+        I: IntoIterator<Item = N>,
     {
         let postorder = {
             let mut postorder = Vec::new();
@@ -45,7 +47,7 @@ impl<N: Node + std::fmt::Debug> Dominators<N> {
 
             while let Some(node) = stack.last().copied() {
                 let mut leaf = true;
-                for en in graph.edges(node) {
+                for en in edges(node) {
                     if !visited.contains(en.index()) {
                         visited.insert(en.index());
                         leaf = false;
@@ -77,7 +79,7 @@ impl<N: Node + std::fmt::Debug> Dominators<N> {
             }
 
             for &node in &postorder {
-                for en in graph.edges(node) {
+                for en in edges(node) {
                     predecessors
                         .get_mut(postorder_indexes[en.index()])
                         .unwrap()
@@ -260,14 +262,6 @@ mod tests {
         }
     }
 
-    impl Graph for TestGraph {
-        type Node = TestNode;
-
-        fn edges(&self, node: Self::Node) -> impl IntoIterator<Item = TestNode> {
-            self.edges.get(node.index()).unwrap().clone()
-        }
-    }
-
     impl TestGraph {
         pub fn create_node(&mut self, name: &'static str) -> TestNode {
             let i = self.next_node;
@@ -280,6 +274,10 @@ mod tests {
 
         pub fn add_edge(&mut self, from: TestNode, to: TestNode) {
             self.edges.get_mut(from.index()).unwrap().push(to);
+        }
+
+        fn edges_from(&self, node: TestNode) -> impl Iterator<Item = TestNode> + '_ {
+            self.edges.get(node.index()).unwrap().iter().copied()
         }
     }
 
@@ -319,7 +317,7 @@ mod tests {
 
         graph.add_edge(g, e);
 
-        let tree = Dominators::compute(&graph, a);
+        let tree = Dominators::compute(a, |n| graph.edges_from(n));
 
         assert_eq!(tree.idom(a).unwrap(), a);
         assert_eq!(tree.idom(b).unwrap(), a);
