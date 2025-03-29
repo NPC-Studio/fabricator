@@ -17,8 +17,10 @@ pub trait Graph {
 pub struct DominatorTree<N> {
     postorder: Vec<N>,
     postorder_indexes: IndexMap<usize>,
+
     dominators: Vec<usize>,
     dominance_ranges: Vec<(usize, usize)>,
+    dominance_frontiers: Vec<IndexSet>,
 }
 
 impl<N: Node + std::fmt::Debug> DominatorTree<N> {
@@ -83,17 +85,18 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
         // A Simple, Fast Dominance Algorithm, Cooper et al.
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
 
-        let intersect = |dominators: &IndexMap<usize>, mut f1: usize, mut f2: usize| -> usize {
-            while f1 != f2 {
-                while f1 < f2 {
-                    f1 = dominators[f1];
+        let intersect =
+            |dominators: &IndexMap<usize>, mut finger1: usize, mut finger2: usize| -> usize {
+                while finger1 != finger2 {
+                    while finger1 < finger2 {
+                        finger1 = dominators[finger1];
+                    }
+                    while finger2 < finger1 {
+                        finger2 = dominators[finger2];
+                    }
                 }
-                while f2 < f1 {
-                    f2 = dominators[f2];
-                }
-            }
-            f1
-        };
+                finger1
+            };
 
         let mut dominators = IndexMap::new();
         dominators.insert(
@@ -144,16 +147,44 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
             // Start with every node dominating itself.
             let mut dominance_ranges = (0..postorder.len()).map(|i| (i, i)).collect::<Vec<_>>();
 
-            // Then, since we walk the node list in DFS post-order, we just need to unify a given
-            // node's range with its immediate dominator and this only takes one pass.
+            // We walk the nodes here in DFS post-order. Since a node's immediate dominator MUST
+            // come after it in DFS post-order, we just need to unify a every node's range with
+            // its immediate dominator in this loop and all dominance ranges will be unified in
+            // one pass.
             for i in 0..postorder.len() {
-                let (start, end) = dominance_ranges[i];
-                let (idom_start, idom_end) = &mut dominance_ranges[dominators[i]];
-                *idom_start = (*idom_start).min(start);
-                *idom_end = (*idom_end).max(end);
+                assert!(i <= dominators[i]);
+                if i != dominators[i] {
+                    let (start, end) = dominance_ranges[i];
+                    let (idom_start, idom_end) = &mut dominance_ranges[dominators[i]];
+                    *idom_start = (*idom_start).min(start);
+                    *idom_end = (*idom_end).max(end);
+                }
             }
 
             dominance_ranges
+        };
+
+        // Dominance frontier algorithm is also sourced from:
+        //
+        // A Simple, Fast Dominance Algorithm, Cooper et al.
+        // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
+
+        let dominance_frontiers = {
+            let mut dominance_frontiers = vec![IndexSet::new(); postorder.len()];
+
+            for i in 0..postorder.len() {
+                if predecessors[i].len() >= 2 {
+                    for p in predecessors[i].iter() {
+                        let mut runner = p;
+                        while runner != dominators[i] {
+                            dominance_frontiers[runner].insert(i);
+                            runner = dominators[runner];
+                        }
+                    }
+                }
+            }
+
+            dominance_frontiers
         };
 
         DominatorTree {
@@ -161,17 +192,24 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
             postorder_indexes,
             dominators,
             dominance_ranges,
+            dominance_frontiers,
         }
     }
 
-    pub fn idom(&self, node: N) -> N {
-        self.postorder[self.dominators[self.postorder_indexes[node.index()]]]
+    pub fn idom(&self, n: N) -> N {
+        self.postorder[self.dominators[self.postorder_indexes[n.index()]]]
     }
 
     pub fn dominates(&self, a: N, b: N) -> bool {
         let (a_start, a_end) = self.dominance_ranges[self.postorder_indexes[a.index()]];
         let (b_start, b_end) = self.dominance_ranges[self.postorder_indexes[b.index()]];
         a_start <= b_start && a_end >= b_end
+    }
+
+    pub fn dominance_frontier(&self, n: N) -> impl Iterator<Item = N> + '_ {
+        self.dominance_frontiers[self.postorder_indexes[n.index()]]
+            .iter()
+            .map(|n| self.postorder[n])
     }
 }
 
@@ -278,6 +316,25 @@ mod tests {
         for na in [a, b, c, d, e, f] {
             for nb in [a, b, c, d, e, f] {
                 assert!(tree.dominates(na, nb) == dominating_pairs.contains(&(na, nb)));
+            }
+        }
+
+        let dominance_frontiers = [
+            (a, vec![]),
+            (b, vec![]),
+            (c, vec![f]),
+            (d, vec![c, f]),
+            (e, vec![]),
+            (f, vec![]),
+        ];
+
+        for (n, domf) in dominance_frontiers {
+            let observed_domf = tree.dominance_frontier(n).collect::<Vec<_>>();
+            for f in &observed_domf {
+                assert!(domf.contains(f));
+            }
+            for f in &domf {
+                assert!(observed_domf.contains(f));
             }
         }
     }

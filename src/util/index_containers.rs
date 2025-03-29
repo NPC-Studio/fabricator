@@ -2,7 +2,7 @@ use std::{mem, ops};
 
 use bit_vec::BitVec;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexMap<V> {
     vec: Vec<Option<V>>,
 }
@@ -75,9 +75,10 @@ impl<V> ops::Index<usize> for IndexMap<V> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct IndexSet {
     vec: BitVec,
+    len: usize,
 }
 
 impl IndexSet {
@@ -104,6 +105,10 @@ impl IndexSet {
             .filter_map(|(i, b)| if b { Some(i) } else { None })
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     fn set(&mut self, i: usize, val: bool) -> bool {
         if i >= self.vec.len() {
             self.vec
@@ -112,6 +117,13 @@ impl IndexSet {
 
         let old = self.vec[i];
         self.vec.set(i, val);
+
+        if !old && val {
+            self.len += 1;
+        } else if old && !val {
+            self.len -= 1;
+        }
+
         old
     }
 }
