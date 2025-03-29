@@ -13,8 +13,11 @@ pub trait Graph {
     fn edges<'a>(&'a self, node: Self::Node) -> impl IntoIterator<Item = Self::Node> + 'a;
 }
 
+/// Calculate dominators and dominance frontiers for every node in a directed graph.
 #[derive(Debug)]
-pub struct DominatorTree<N> {
+pub struct Dominators<N> {
+    // We reference all nodes internally by DFS post-order index, and we keep dictionaries to go
+    // from post-order index <-> node.
     postorder: Vec<N>,
     postorder_indexes: IndexMap<usize>,
 
@@ -23,7 +26,11 @@ pub struct DominatorTree<N> {
     dominance_frontiers: Vec<IndexSet>,
 }
 
-impl<N: Node + std::fmt::Debug> DominatorTree<N> {
+impl<N: Node + std::fmt::Debug> Dominators<N> {
+    /// Calculate the dominator tree and dominance frontiers for every reachable node in the given
+    /// directed graph, starting with node `start`.
+    ///
+    /// The `start` node is always considered to dominate every other node.
     pub fn compute<G>(graph: &G, start: N) -> Self
     where
         G: Graph<Node = N>,
@@ -84,61 +91,62 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
         //
         // A Simple, Fast Dominance Algorithm, Cooper et al.
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
-
-        let intersect =
-            |dominators: &IndexMap<usize>, mut finger1: usize, mut finger2: usize| -> usize {
-                while finger1 != finger2 {
-                    while finger1 < finger2 {
-                        finger1 = dominators[finger1];
+        let dominators = {
+            let intersect =
+                |dominators: &IndexMap<usize>, mut finger1: usize, mut finger2: usize| -> usize {
+                    while finger1 != finger2 {
+                        while finger1 < finger2 {
+                            finger1 = dominators[finger1];
+                        }
+                        while finger2 < finger1 {
+                            finger2 = dominators[finger2];
+                        }
                     }
-                    while finger2 < finger1 {
-                        finger2 = dominators[finger2];
+                    finger1
+                };
+
+            let mut dominators = IndexMap::new();
+            dominators.insert(
+                postorder_indexes[start.index()],
+                postorder_indexes[start.index()],
+            );
+
+            let mut changed = true;
+            while changed {
+                changed = false;
+
+                for node in postorder.iter().rev().copied() {
+                    if node == start {
+                        continue;
                     }
-                }
-                finger1
-            };
 
-        let mut dominators = IndexMap::new();
-        dominators.insert(
-            postorder_indexes[start.index()],
-            postorder_indexes[start.index()],
-        );
-
-        let mut changed = true;
-        while changed {
-            changed = false;
-
-            for node in postorder.iter().rev().copied() {
-                if node == start {
-                    continue;
-                }
-
-                let ni = postorder_indexes[node.index()];
-                let mut new_idom = None;
-                for p in predecessors.get(ni).unwrap().iter() {
-                    if dominators.contains(p) {
-                        new_idom = Some(match new_idom {
-                            Some(idom) => intersect(&dominators, p, idom),
-                            None => p,
-                        });
+                    let ni = postorder_indexes[node.index()];
+                    let mut new_idom = None;
+                    for p in predecessors.get(ni).unwrap().iter() {
+                        if dominators.contains(p) {
+                            new_idom = Some(match new_idom {
+                                Some(idom) => intersect(&dominators, p, idom),
+                                None => p,
+                            });
+                        }
                     }
-                }
 
-                // We should be iterating in an order where every node will have at least one
-                // predecessor with a computed dominator.
-                let new_idom = new_idom
-                    .expect("all nodes should have a predecessor with a computed dominator");
-                if dominators.get(ni).copied() != Some(new_idom) {
-                    dominators.insert(ni, new_idom);
-                    changed = true;
+                    // We should be iterating in an order where every node will have at least one
+                    // predecessor with a computed dominator.
+                    let new_idom = new_idom
+                        .expect("all nodes should have a predecessor with a computed dominator");
+                    if dominators.get(ni).copied() != Some(new_idom) {
+                        dominators.insert(ni, new_idom);
+                        changed = true;
+                    }
                 }
             }
-        }
 
-        // Every dominator should be computed at this point
-        let dominators = (0..postorder.len())
-            .map(|i| dominators[i])
-            .collect::<Vec<_>>();
+            // Every dominator should be computed at this point
+            (0..postorder.len())
+                .map(|i| dominators[i])
+                .collect::<Vec<_>>()
+        };
 
         // Find ranges that represent all nodes (in post-order index) that a given node dominates.
         //
@@ -168,7 +176,6 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
         //
         // A Simple, Fast Dominance Algorithm, Cooper et al.
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
-
         let dominance_frontiers = {
             let mut dominance_frontiers = vec![IndexSet::new(); postorder.len()];
 
@@ -187,7 +194,7 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
             dominance_frontiers
         };
 
-        DominatorTree {
+        Dominators {
             postorder,
             postorder_indexes,
             dominators,
@@ -196,20 +203,39 @@ impl<N: Node + std::fmt::Debug> DominatorTree<N> {
         }
     }
 
-    pub fn idom(&self, n: N) -> N {
-        self.postorder[self.dominators[self.postorder_indexes[n.index()]]]
+    /// Return the immediate dominator ("idom") of the given node.
+    ///
+    /// Returns `None` if the given node `n` was not reachable when `Dominators` was constructed and
+    /// thus has no dominance information.
+    pub fn idom(&self, n: N) -> Option<N> {
+        Some(self.postorder[self.dominators[self.postorder_indexes.get(n.index()).copied()?]])
     }
 
-    pub fn dominates(&self, a: N, b: N) -> bool {
-        let (a_start, a_end) = self.dominance_ranges[self.postorder_indexes[a.index()]];
-        let (b_start, b_end) = self.dominance_ranges[self.postorder_indexes[b.index()]];
-        a_start <= b_start && a_end >= b_end
+    /// Queries whether node `a` dominates node `b`.
+    ///
+    /// Post-order index ranges are calculated during `Dominators` construction that make this query
+    /// O(1).
+    ///
+    /// Returns `None` if the either of the given nodes `a` or `b` was not reachable when
+    /// `Dominators` was constructed and thus no dominance can be determined.
+    pub fn dominates(&self, a: N, b: N) -> Option<bool> {
+        let (a_start, a_end) =
+            self.dominance_ranges[self.postorder_indexes.get(a.index()).copied()?];
+        let (b_start, b_end) =
+            self.dominance_ranges[self.postorder_indexes.get(b.index()).copied()?];
+        Some(a_start <= b_start && a_end >= b_end)
     }
 
-    pub fn dominance_frontier(&self, n: N) -> impl Iterator<Item = N> + '_ {
-        self.dominance_frontiers[self.postorder_indexes[n.index()]]
-            .iter()
-            .map(|n| self.postorder[n])
+    /// Return the (precalculated) dominance frontier of the given node.
+    ///
+    /// Returns `None` if the given node `n` was not reachable when `Dominators` was constructed and
+    /// thus has no dominance information.
+    pub fn dominance_frontier(&self, n: N) -> Option<impl Iterator<Item = N> + '_> {
+        Some(
+            self.dominance_frontiers[self.postorder_indexes.get(n.index()).copied()?]
+                .iter()
+                .map(|n| self.postorder[n]),
+        )
     }
 }
 
@@ -269,6 +295,9 @@ mod tests {
         //   / \      |
         //  V   V     |
         // [E]  [F]<--+
+        //  ^
+        //  |
+        // [G] # Not reachable
 
         let a = graph.create_node("A");
         let b = graph.create_node("B");
@@ -276,6 +305,9 @@ mod tests {
         let d = graph.create_node("D");
         let e = graph.create_node("E");
         let f = graph.create_node("F");
+
+        // `G` should not be reachable and should have no dominance information
+        let g = graph.create_node("G");
 
         graph.add_edge(a, b);
         graph.add_edge(b, c);
@@ -285,14 +317,17 @@ mod tests {
         graph.add_edge(d, c);
         graph.add_edge(d, f);
 
-        let tree = DominatorTree::compute(&graph, a);
+        graph.add_edge(g, e);
 
-        assert_eq!(tree.idom(a), a);
-        assert_eq!(tree.idom(b), a);
-        assert_eq!(tree.idom(c), b);
-        assert_eq!(tree.idom(d), b);
-        assert_eq!(tree.idom(e), c);
-        assert_eq!(tree.idom(f), b);
+        let tree = Dominators::compute(&graph, a);
+
+        assert_eq!(tree.idom(a).unwrap(), a);
+        assert_eq!(tree.idom(b).unwrap(), a);
+        assert_eq!(tree.idom(c).unwrap(), b);
+        assert_eq!(tree.idom(d).unwrap(), b);
+        assert_eq!(tree.idom(e).unwrap(), c);
+        assert_eq!(tree.idom(f).unwrap(), b);
+        assert!(tree.idom(g).is_none());
 
         let dominating_pairs = [
             (a, a),
@@ -315,8 +350,10 @@ mod tests {
 
         for na in [a, b, c, d, e, f] {
             for nb in [a, b, c, d, e, f] {
-                assert!(tree.dominates(na, nb) == dominating_pairs.contains(&(na, nb)));
+                assert!(tree.dominates(na, nb).unwrap() == dominating_pairs.contains(&(na, nb)));
             }
+
+            assert!(tree.dominates(na, g).is_none());
         }
 
         let dominance_frontiers = [
@@ -329,7 +366,7 @@ mod tests {
         ];
 
         for (n, domf) in dominance_frontiers {
-            let observed_domf = tree.dominance_frontier(n).collect::<Vec<_>>();
+            let observed_domf = tree.dominance_frontier(n).unwrap().collect::<Vec<_>>();
             for f in &observed_domf {
                 assert!(domf.contains(f));
             }
@@ -337,5 +374,7 @@ mod tests {
                 assert!(observed_domf.contains(f));
             }
         }
+
+        assert!(tree.dominance_frontier(g).is_none());
     }
 }
