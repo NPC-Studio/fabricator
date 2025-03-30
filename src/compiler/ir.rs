@@ -44,7 +44,7 @@ pub enum Instruction<S> {
     },
     UnOp {
         source: InstId,
-        op: BinOp,
+        op: UnOp,
     },
     BinOp {
         left: InstId,
@@ -101,8 +101,23 @@ impl<S> Instruction<S> {
 
         sources
     }
+
+    pub fn has_value(&self) -> bool {
+        match self {
+            Instruction::Constant(_) => true,
+            Instruction::GetVariable(_) => true,
+            Instruction::SetVariable { .. } => false,
+            Instruction::UnOp { .. } => true,
+            Instruction::BinOp { .. } => true,
+            Instruction::BinComp { .. } => true,
+            Instruction::Push { .. } => false,
+            Instruction::Pop => true,
+            Instruction::Call { .. } => false,
+        }
+    }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Exit {
     Return {
         returns: ArgCount,
@@ -138,6 +153,7 @@ impl Exit {
     }
 }
 
+#[derive(Debug)]
 pub struct Block {
     pub instructions: Vec<InstId>,
     pub exit: Exit,

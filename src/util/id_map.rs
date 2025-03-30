@@ -259,12 +259,14 @@ impl<V> Drop for Slot<V> {
 impl<V> ops::Index<Id> for IdMap<V> {
     type Output = V;
 
+    #[inline]
     fn index(&self, id: Id) -> &V {
         self.get(id).expect("no such id in `IdMap`")
     }
 }
 
 impl<V> ops::IndexMut<Id> for IdMap<V> {
+    #[inline]
     fn index_mut(&mut self, id: Id) -> &mut Self::Output {
         self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
@@ -341,6 +343,7 @@ impl<V> SecondaryMap<V> {
                     value: val,
                     generation: key.generation(),
                 };
+                self.occupancy += 1;
                 None
             }
         }
@@ -358,12 +361,17 @@ impl<V> SecondaryMap<V> {
                 else {
                     unreachable!()
                 };
+                self.occupancy = self
+                    .occupancy
+                    .checked_sub(1)
+                    .expect("occupancy count desync");
                 Some(value)
             }
             _ => None,
         }
     }
 
+    #[inline]
     pub fn get(&self, key: Id) -> Option<&V> {
         match self.slots.get(key.index() as usize) {
             Some(SecondarySlot::Occupied { value, generation })
@@ -375,6 +383,7 @@ impl<V> SecondaryMap<V> {
         }
     }
 
+    #[inline]
     pub fn get_mut(&mut self, key: Id) -> Option<&mut V> {
         match self.slots.get_mut(key.index() as usize) {
             Some(SecondarySlot::Occupied { value, generation })
@@ -384,6 +393,11 @@ impl<V> SecondaryMap<V> {
             }
             _ => None,
         }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.occupancy as usize
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
@@ -450,14 +464,9 @@ impl<V> SecondaryMap<V> {
 impl<V> ops::Index<Id> for SecondaryMap<V> {
     type Output = V;
 
+    #[inline]
     fn index(&self, id: Id) -> &V {
         self.get(id).expect("no such id in `SecondaryMap`")
-    }
-}
-
-impl<V> ops::IndexMut<Id> for SecondaryMap<V> {
-    fn index_mut(&mut self, id: Id) -> &mut Self::Output {
-        self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
 }
 

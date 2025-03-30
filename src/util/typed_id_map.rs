@@ -56,6 +56,7 @@ pub struct IdMap<I, V> {
 }
 
 impl<I, V> Default for IdMap<I, V> {
+    #[inline]
     fn default() -> Self {
         Self {
             map: Default::default(),
@@ -65,6 +66,7 @@ impl<I, V> Default for IdMap<I, V> {
 }
 
 impl<I: Id, V> IdMap<I, V> {
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -104,22 +106,27 @@ impl<I: Id, V> IdMap<I, V> {
         self.map.index_upper_bound()
     }
 
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
         self.map.iter().map(|(id, v)| (I::from_id(id), v))
     }
 
+    #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (I, &mut V)> + '_ {
         self.map.iter_mut().map(|(id, v)| (I::from_id(id), v))
     }
 
+    #[inline]
     pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
         self.map.ids().map(I::from_id)
     }
 
+    #[inline]
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.map.values()
     }
 
+    #[inline]
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.map.values_mut()
     }
@@ -128,12 +135,14 @@ impl<I: Id, V> IdMap<I, V> {
 impl<I: Id, V> ops::Index<I> for IdMap<I, V> {
     type Output = V;
 
+    #[inline]
     fn index(&self, id: I) -> &V {
         self.get(id).expect("no such id in `SecondaryMap`")
     }
 }
 
 impl<I: Id, V> ops::IndexMut<I> for IdMap<I, V> {
+    #[inline]
     fn index_mut(&mut self, id: I) -> &mut Self::Output {
         self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
@@ -145,6 +154,7 @@ pub struct SecondaryMap<I: Id, V> {
 }
 
 impl<I: Id, V> Default for SecondaryMap<I, V> {
+    #[inline]
     fn default() -> Self {
         Self {
             map: Default::default(),
@@ -154,52 +164,69 @@ impl<I: Id, V> Default for SecondaryMap<I, V> {
 }
 
 impl<I: Id, V> SecondaryMap<I, V> {
+    #[inline]
     pub fn new() -> Self {
         Default::default()
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.map.clear();
     }
 
+    #[inline]
     pub fn insert(&mut self, key: I, val: V) -> Option<(I, V)> {
         self.map
             .insert(key.into_id(), val)
             .map(|(i, v)| (I::from_id(i), v))
     }
 
+    #[inline]
     pub fn remove(&mut self, key: I) -> Option<V> {
         self.map.remove(key.into_id())
     }
 
+    #[inline]
     pub fn get(&self, key: I) -> Option<&V> {
         self.map.get(key.into_id())
     }
 
+    #[inline]
     pub fn get_mut(&mut self, key: I) -> Option<&mut V> {
         self.map.get_mut(key.into_id())
     }
 
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
         self.map.iter().map(|(id, v)| (I::from_id(id), v))
     }
 
+    #[inline]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (I, &mut V)> + '_ {
         self.map.iter_mut().map(|(id, v)| (I::from_id(id), v))
     }
 
+    #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = (I, V)> {
         self.map.into_iter().map(|(id, v)| (I::from_id(id), v))
     }
 
+    #[inline]
     pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
         self.iter().map(|(id, _)| id)
     }
 
+    #[inline]
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.iter().map(|(_, v)| v)
     }
 
+    #[inline]
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.iter_mut().map(|(_, v)| v)
     }
@@ -208,13 +235,8 @@ impl<I: Id, V> SecondaryMap<I, V> {
 impl<I: Id, V> ops::Index<I> for SecondaryMap<I, V> {
     type Output = V;
 
+    #[inline]
     fn index(&self, id: I) -> &V {
         self.get(id).expect("no such id in `SecondaryMap`")
-    }
-}
-
-impl<I: Id, V> ops::IndexMut<I> for SecondaryMap<I, V> {
-    fn index_mut(&mut self, id: I) -> &mut Self::Output {
-        self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
 }

@@ -1,5 +1,5 @@
 use fabricator::{
-    compiler::{constant::Constant, ir, optimization},
+    compiler::{codegen, constant::Constant, ir, optimization},
     value::String,
 };
 use gc_arena::arena;
@@ -103,6 +103,6 @@ fn test_ir_codegen() {
             start_block: start_block_id,
         };
 
-        optimization::verify::verify_ir(&function).unwrap();
+        let _prototype = codegen::generate(function).unwrap();
     });
 }

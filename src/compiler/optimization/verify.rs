@@ -11,6 +11,8 @@ pub enum VerificationError {
     InstructionReused,
     #[error("instruction does not dominate its uses")]
     UseNotDominated,
+    #[error("instruction sourc is of type Void")]
+    SourceIsVoid,
 }
 
 pub fn verify_ir<S>(function: &ir::Function<S>) -> Result<(), VerificationError> {
@@ -29,25 +31,30 @@ pub fn verify_ir<S>(function: &ir::Function<S>) -> Result<(), VerificationError>
 
     for (inst_id, inst) in function.parts.instructions.iter() {
         let (user_block, user_index) = inst_positions[inst_id];
-        let check_use = |source_inst| -> Result<(), VerificationError> {
+        for source_inst in inst.sources() {
+            if !function.parts.instructions[source_inst].has_value() {
+                return Err(VerificationError::SourceIsVoid);
+            }
+
             let (source_block, source_index) = inst_positions[source_inst];
             if user_block == source_block {
-                if source_index < user_index {
-                    Ok(())
-                } else {
-                    Err(VerificationError::UseNotDominated)
+                if source_index >= user_index {
+                    return Err(VerificationError::UseNotDominated);
                 }
             } else {
-                if block_dominance.dominates(source_block, user_block).unwrap() {
-                    Ok(())
-                } else {
-                    Err(VerificationError::UseNotDominated)
+                if !block_dominance.dominates(source_block, user_block).unwrap() {
+                    return Err(VerificationError::UseNotDominated);
                 }
             }
-        };
+        }
+    }
 
-        for source in inst.sources() {
-            check_use(source)?;
+    for (block_id, block) in function.parts.blocks.iter() {
+        if let ir::Exit::Branch { cond, .. } = block.exit {
+            let (cond_block, _) = inst_positions[cond];
+            if !block_dominance.dominates(cond_block, block_id).unwrap() {
+                return Err(VerificationError::UseNotDominated);
+            }
         }
     }
 
