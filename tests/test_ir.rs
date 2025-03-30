@@ -1,16 +1,18 @@
 use fabricator::{
+    closure::Closure,
     compiler::{codegen, constant::Constant, ir, optimization},
-    value::String,
+    thread::Thread,
+    value::{String, Value},
 };
-use gc_arena::arena;
+use gc_arena::{arena, Gc};
 
 #[test]
 fn test_ir_codegen() {
-    arena::rootless_mutate(|_mc| {
+    arena::rootless_mutate(|mc| {
         let mut parts = ir::FunctionParts::<String<'_>>::default();
 
-        let var_i = parts.heap_vars.insert(());
         let var_sum = parts.heap_vars.insert(());
+        let var_i = parts.heap_vars.insert(());
 
         let start_block_id = parts.blocks.insert(ir::Block::default());
         let loop_block_id = parts.blocks.insert(ir::Block::default());
@@ -33,6 +35,20 @@ fn test_ir_codegen() {
             .insert(ir::Instruction::Constant(Constant::Integer(100000)));
         start_block.instructions.push(const_100000);
 
+        start_block
+            .instructions
+            .push(parts.instructions.insert(ir::Instruction::SetVariable {
+                source: const_0,
+                dest: var_sum,
+            }));
+
+        start_block
+            .instructions
+            .push(parts.instructions.insert(ir::Instruction::SetVariable {
+                source: const_1,
+                dest: var_i,
+            }));
+
         start_block.exit = ir::Exit::Jump(loop_block_id);
 
         let loop_block = parts.blocks.get_mut(loop_block_id).unwrap();
@@ -47,19 +63,19 @@ fn test_ir_codegen() {
             .insert(ir::Instruction::GetVariable(var_i));
         loop_block.instructions.push(i);
 
-        let i_plus_one = parts.instructions.insert(ir::Instruction::BinOp {
-            left: i,
-            right: const_1,
-            op: ir::BinOp::Add,
-        });
-        loop_block.instructions.push(i_plus_one);
-
         let sum_plus_i = parts.instructions.insert(ir::Instruction::BinOp {
             left: sum,
             right: i,
             op: ir::BinOp::Add,
         });
         loop_block.instructions.push(sum_plus_i);
+
+        let i_plus_one = parts.instructions.insert(ir::Instruction::BinOp {
+            left: i,
+            right: const_1,
+            op: ir::BinOp::Add,
+        });
+        loop_block.instructions.push(i_plus_one);
 
         loop_block
             .instructions
@@ -76,7 +92,7 @@ fn test_ir_codegen() {
             }));
 
         let i_le_100000 = parts.instructions.insert(ir::Instruction::BinComp {
-            left: i,
+            left: i_plus_one,
             right: const_100000,
             comp: ir::BinComp::LessEqual,
         });
@@ -103,6 +119,14 @@ fn test_ir_codegen() {
             start_block: start_block_id,
         };
 
-        let _prototype = codegen::generate(function).unwrap();
+        let prototype = Gc::new(mc, codegen::generate(function).unwrap());
+        let mut thread = Thread::default();
+
+        let closure = Closure::new(mc, prototype);
+
+        assert_eq!(
+            thread.exec(mc, closure).unwrap()[0],
+            Value::Integer(5000050000)
+        );
     });
 }
