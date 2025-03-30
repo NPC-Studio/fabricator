@@ -148,23 +148,27 @@ fn dispatch<'gc>(
         type Error = VmError;
 
         #[inline]
-        fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) {
+        fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
+            Ok(())
         }
 
         #[inline]
-        fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) {
+        fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.heap[heap as usize].get();
+            Ok(())
         }
 
         #[inline]
-        fn set_heap(&mut self, source: RegIdx, heap: HeapIdx) {
+        fn set_heap(&mut self, source: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
             self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
+            Ok(())
         }
 
         #[inline]
-        fn move_(&mut self, source: RegIdx, dest: RegIdx) {
+        fn move_(&mut self, source: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[source as usize];
+            Ok(())
         }
 
         #[inline]

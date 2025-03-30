@@ -117,11 +117,9 @@ impl<N: Node> Dominators<N> {
             while changed {
                 changed = false;
 
-                for node in postorder.iter().rev().copied() {
-                    if node == start {
-                        continue;
-                    }
-
+                // We skip the start node, which should always be the final postorder node.
+                assert!(postorder_indexes[start.index()] == postorder.len() - 1);
+                for node in postorder.iter().rev().copied().skip(1) {
                     let ni = postorder_indexes[node.index()];
                     let mut new_idom = None;
                     for p in predecessors.get(ni).unwrap().iter() {
