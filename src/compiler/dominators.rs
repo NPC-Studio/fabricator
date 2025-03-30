@@ -124,7 +124,7 @@ impl<N: Node> Dominators<N> {
                 for node in post_order.iter().rev().copied().skip(1) {
                     let ni = post_order_indexes[node.index()];
                     let mut new_idom = None;
-                    for p in predecessors.get(ni).unwrap().iter() {
+                    for p in predecessors[ni].iter() {
                         if dominators.contains(p) {
                             new_idom = Some(match new_idom {
                                 Some(idom) => intersect(&dominators, p, idom),
@@ -295,7 +295,7 @@ mod tests {
         }
 
         fn edges_from(&self, node: TestNode) -> impl Iterator<Item = TestNode> + '_ {
-            self.edges.get(node.index()).unwrap().iter().copied()
+            self.edges[node.index()].iter().copied()
         }
     }
 

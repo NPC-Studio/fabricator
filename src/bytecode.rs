@@ -58,10 +58,7 @@ impl ByteCode {
 
         let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
             Some(i) if i < insts.len() => Ok(()),
-            _ => {
-                dbg!(i, i.checked_add_signed(offset as isize), insts.len());
-                Err(ByteCodeEncodingError::JumpOutOfRange)
-            }
+            _ => Err(ByteCodeEncodingError::JumpOutOfRange),
         };
 
         for (i, &inst) in insts.iter().enumerate() {

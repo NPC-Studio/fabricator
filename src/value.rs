@@ -2,7 +2,7 @@ use std::string::String as StdString;
 
 use gc_arena::{Collect, Gc};
 
-use crate::{callback::Callback, closure::Closure, constant::Constant};
+use crate::{callback::Callback, closure::Closure};
 
 pub type String<'gc> = Gc<'gc, StdString>;
 
@@ -40,29 +40,6 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => i > 0,
             Value::Float(f) => f > 0.5,
             _ => true,
-        }
-    }
-
-    #[inline]
-    pub fn from_constant(c: Constant<String<'gc>>) -> Self {
-        match c {
-            Constant::Undefined => Value::Undefined,
-            Constant::Boolean(b) => Value::Boolean(b),
-            Constant::Integer(i) => Value::Integer(i),
-            Constant::Float(f) => Value::Float(f),
-            Constant::String(s) => Value::String(s),
-        }
-    }
-
-    #[inline]
-    pub fn to_constant(self) -> Option<Constant<String<'gc>>> {
-        match self {
-            Value::Undefined => Some(Constant::Undefined),
-            Value::Boolean(b) => Some(Constant::Boolean(b)),
-            Value::Integer(i) => Some(Constant::Integer(i)),
-            Value::Float(f) => Some(Constant::Float(f)),
-            Value::String(s) => Some(Constant::String(s)),
-            _ => None,
         }
     }
 

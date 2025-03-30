@@ -5,11 +5,10 @@ use thiserror::Error;
 
 use crate::{
     bytecode::{self, ByteCode},
-    closure::{Closure, HeapVar},
-    constant::Constant,
+    closure::{Closure, Constant, HeapVar},
     instructions::{ConstIdx, HeapIdx, RegIdx},
     stack::Stack,
-    value::{Function, String, Value},
+    value::{Function, Value},
 };
 
 #[derive(Debug, Error)]
@@ -129,7 +128,7 @@ enum Next<'gc> {
 fn dispatch<'gc>(
     mc: &Mutation<'gc>,
     bytecode: &ByteCode,
-    constants: &[Constant<String<'gc>>],
+    constants: &[Constant<'gc>],
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
     heap: &mut [HeapVar<'gc>],
@@ -137,7 +136,7 @@ fn dispatch<'gc>(
 ) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
         mc: &'a Mutation<'gc>,
-        constants: &'a [Constant<String<'gc>>],
+        constants: &'a [Constant<'gc>],
         registers: &'a mut [Value<'gc>],
         heap: &'a mut [HeapVar<'gc>],
         stack: Stack<'gc, 'a>,
@@ -149,7 +148,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::from_constant(self.constants[constant as usize]);
+            self.registers[dest as usize] = self.constants[constant as usize].to_value();
             Ok(())
         }
 

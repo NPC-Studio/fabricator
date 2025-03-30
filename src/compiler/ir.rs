@@ -1,7 +1,8 @@
-use crate::{
-    constant::Constant,
-    util::typed_id_map::{new_id_type, IdMap},
-};
+use arrayvec::ArrayVec;
+
+use crate::util::typed_id_map::{new_id_type, IdMap};
+
+use super::constant::Constant;
 
 new_id_type! {
     pub struct VarId;
@@ -66,6 +67,42 @@ pub enum Instruction<S> {
     },
 }
 
+pub const MAX_INSTRUCTION_SOURCES: usize = 2;
+
+impl<S> Instruction<S> {
+    pub fn sources(&self) -> ArrayVec<InstId, MAX_INSTRUCTION_SOURCES> {
+        let mut sources = ArrayVec::new();
+
+        match self {
+            Instruction::Constant(_) => {}
+            Instruction::GetVariable(_) => {}
+            Instruction::SetVariable { source, .. } => {
+                sources.push(*source);
+            }
+            Instruction::UnOp { source, .. } => {
+                sources.push(*source);
+            }
+            Instruction::BinOp { left, right, .. } => {
+                sources.push(*left);
+                sources.push(*right);
+            }
+            Instruction::BinComp { left, right, .. } => {
+                sources.push(*left);
+                sources.push(*right);
+            }
+            Instruction::Push { source } => {
+                sources.push(*source);
+            }
+            Instruction::Pop => {}
+            Instruction::Call { source, .. } => {
+                sources.push(*source);
+            }
+        }
+
+        sources
+    }
+}
+
 pub enum Exit {
     Return {
         returns: ArgCount,
@@ -76,6 +113,29 @@ pub enum Exit {
         if_true: BlockId,
         if_false: BlockId,
     },
+}
+
+pub const MAX_BLOCK_SUCCESSORS: usize = 2;
+
+impl Exit {
+    pub fn successors(&self) -> ArrayVec<BlockId, MAX_BLOCK_SUCCESSORS> {
+        let mut successors = ArrayVec::<_, 2>::new();
+
+        match self {
+            Exit::Return { .. } => {}
+            Exit::Jump(block_id) => {
+                successors.push(*block_id);
+            }
+            Exit::Branch {
+                if_true, if_false, ..
+            } => {
+                successors.push(*if_true);
+                successors.push(*if_false);
+            }
+        }
+
+        successors
+    }
 }
 
 pub struct Block {

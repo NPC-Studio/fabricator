@@ -1,7 +1,6 @@
 use fabricator::{
     bytecode::ByteCode,
-    closure::{Closure, Prototype},
-    constant::Constant,
+    closure::{Closure, Constant, Prototype},
     instructions::Instruction,
     thread::Thread,
     value::Value,

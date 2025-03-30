@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops};
 
 use super::id_map;
 
@@ -125,6 +125,20 @@ impl<I: Id, V> IdMap<I, V> {
     }
 }
 
+impl<I: Id, V> ops::Index<I> for IdMap<I, V> {
+    type Output = V;
+
+    fn index(&self, id: I) -> &V {
+        self.get(id).expect("no such id in `SecondaryMap`")
+    }
+}
+
+impl<I: Id, V> ops::IndexMut<I> for IdMap<I, V> {
+    fn index_mut(&mut self, id: I) -> &mut Self::Output {
+        self.get_mut(id).expect("no such id in `SecondaryMap`")
+    }
+}
+
 pub struct SecondaryMap<I: Id, V> {
     map: id_map::SecondaryMap<V>,
     _marker: PhantomData<I>,
@@ -164,5 +178,43 @@ impl<I: Id, V> SecondaryMap<I, V> {
 
     pub fn get_mut(&mut self, key: I) -> Option<&mut V> {
         self.map.get_mut(key.into_id())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
+        self.map.iter().map(|(id, v)| (I::from_id(id), v))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (I, &mut V)> + '_ {
+        self.map.iter_mut().map(|(id, v)| (I::from_id(id), v))
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = (I, V)> {
+        self.map.into_iter().map(|(id, v)| (I::from_id(id), v))
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
+        self.iter().map(|(id, _)| id)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
+        self.iter_mut().map(|(_, v)| v)
+    }
+}
+
+impl<I: Id, V> ops::Index<I> for SecondaryMap<I, V> {
+    type Output = V;
+
+    fn index(&self, id: I) -> &V {
+        self.get(id).expect("no such id in `SecondaryMap`")
+    }
+}
+
+impl<I: Id, V> ops::IndexMut<I> for SecondaryMap<I, V> {
+    fn index_mut(&mut self, id: I) -> &mut Self::Output {
+        self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
 }

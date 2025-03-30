@@ -1,6 +1,7 @@
 use std::{
     mem::{self, ManuallyDrop},
     num::NonZero,
+    ops,
 };
 
 pub type Index = u32;
@@ -201,37 +202,35 @@ impl<V> IdMap<V> {
 
     pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
         self.slots.iter().enumerate().flat_map(|(index, slot)| {
-            let index: Index = index.try_into().unwrap();
             if slot.is_vacant() {
-                None
-            } else {
-                let id = Id {
-                    index,
-                    // Occupied slots always have non-zero generation
-                    generation: NonZero::new(slot.generation).unwrap(),
-                };
-                // SAFETY: We just checked that the slot was occupied
-                let value = unsafe { &*slot.u.value };
-                Some((id, value))
+                return None;
             }
+
+            let id = Id {
+                index: index.try_into().unwrap(),
+                // Occupied slots always have non-zero generation
+                generation: NonZero::new(slot.generation).unwrap(),
+            };
+            // SAFETY: We just checked that the slot was occupied
+            let value = unsafe { &*slot.u.value };
+            Some((id, value))
         })
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id, &mut V)> + '_ {
         self.slots.iter_mut().enumerate().flat_map(|(index, slot)| {
-            let index: Index = index.try_into().unwrap();
             if slot.is_vacant() {
-                None
-            } else {
-                let id = Id {
-                    index,
-                    // Occupied slots always have non-zero generation
-                    generation: NonZero::new(slot.generation).unwrap(),
-                };
-                // SAFETY: We just checked that the slot was occupied
-                let value = unsafe { &mut *slot.u.value };
-                Some((id, value))
+                return None;
             }
+
+            let id = Id {
+                index: index.try_into().unwrap(),
+                // Occupied slots always have non-zero generation
+                generation: NonZero::new(slot.generation).unwrap(),
+            };
+            // SAFETY: We just checked that the slot was occupied
+            let value = unsafe { &mut *slot.u.value };
+            Some((id, value))
         })
     }
 
@@ -254,6 +253,20 @@ impl<V> Drop for Slot<V> {
             // SAFETY: We just checked that the slot is occupied
             unsafe { ManuallyDrop::drop(&mut self.u.value) };
         }
+    }
+}
+
+impl<V> ops::Index<Id> for IdMap<V> {
+    type Output = V;
+
+    fn index(&self, id: Id) -> &V {
+        self.get(id).expect("no such id in `IdMap`")
+    }
+}
+
+impl<V> ops::IndexMut<Id> for IdMap<V> {
+    fn index_mut(&mut self, id: Id) -> &mut Self::Output {
+        self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
 }
 
@@ -371,6 +384,80 @@ impl<V> SecondaryMap<V> {
             }
             _ => None,
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
+        self.slots.iter().enumerate().flat_map(|(index, slot)| {
+            let SecondarySlot::Occupied { value, generation } = slot else {
+                return None;
+            };
+
+            let id = Id {
+                index: index.try_into().unwrap(),
+                // Occupied slots always have non-zero generation
+                generation: *generation,
+            };
+            Some((id, value))
+        })
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id, &mut V)> + '_ {
+        self.slots.iter_mut().enumerate().flat_map(|(index, slot)| {
+            let SecondarySlot::Occupied { value, generation } = slot else {
+                return None;
+            };
+
+            let id = Id {
+                index: index.try_into().unwrap(),
+                // Occupied slots always have non-zero generation
+                generation: *generation,
+            };
+            Some((id, value))
+        })
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = (Id, V)> {
+        self.slots
+            .into_iter()
+            .enumerate()
+            .flat_map(|(index, slot)| {
+                let SecondarySlot::Occupied { value, generation } = slot else {
+                    return None;
+                };
+
+                let id = Id {
+                    index: index.try_into().unwrap(),
+                    // Occupied slots always have non-zero generation
+                    generation,
+                };
+                Some((id, value))
+            })
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = Id> + '_ {
+        self.iter().map(|(id, _)| id)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
+        self.iter_mut().map(|(_, v)| v)
+    }
+}
+
+impl<V> ops::Index<Id> for SecondaryMap<V> {
+    type Output = V;
+
+    fn index(&self, id: Id) -> &V {
+        self.get(id).expect("no such id in `SecondaryMap`")
+    }
+}
+
+impl<V> ops::IndexMut<Id> for SecondaryMap<V> {
+    fn index_mut(&mut self, id: Id) -> &mut Self::Output {
+        self.get_mut(id).expect("no such id in `SecondaryMap`")
     }
 }
 

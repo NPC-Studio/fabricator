@@ -12,12 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -28,6 +22,12 @@ name = "anstyle"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "autocfg"
@@ -188,6 +188,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 name = "fabricator"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "bit-vec",
  "criterion",
  "gc-arena",
@@ -197,18 +198,15 @@ dependencies = [
 [[package]]
 name = "gc-arena"
 version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=b775ac539c46d2788367e062c034c0e82d582468#b775ac539c46d2788367e062c034c0e82d582468"
+source = "git+https://github.com/kyren/gc-arena?rev=d651e3b4363d525a2d502c2305bc73e291835c84#d651e3b4363d525a2d502c2305bc73e291835c84"
 dependencies = [
- "allocator-api2",
  "gc-arena-derive",
- "hashbrown",
- "sptr",
 ]
 
 [[package]]
 name = "gc-arena-derive"
 version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=b775ac539c46d2788367e062c034c0e82d582468#b775ac539c46d2788367e062c034c0e82d582468"
+source = "git+https://github.com/kyren/gc-arena?rev=d651e3b4363d525a2d502c2305bc73e291835c84#d651e3b4363d525a2d502c2305bc73e291835c84"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -224,15 +222,6 @@ checksum = "7db2ff139bba50379da6aa0766b52fdcb62cb5b263009b09ed58ba604e14bbd1"
 dependencies = [
  "cfg-if",
  "crunchy",
-]
-
-[[package]]
-name = "hashbrown"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
-dependencies = [
- "allocator-api2",
 ]
 
 [[package]]
@@ -463,12 +452,6 @@ dependencies = [
  "ryu",
  "serde",
 ]
-
-[[package]]
-name = "sptr"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b9b39299b249ad65f3b7e96443bad61c02ca5cd3589f46cb6d610a0fd6c0d6a"
 
 [[package]]
 name = "syn"
