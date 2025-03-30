@@ -15,10 +15,10 @@ impl Node for usize {
 /// Calculate dominators and dominance frontiers for every node in a directed graph.
 #[derive(Debug)]
 pub struct Dominators<N> {
-    // We reference all nodes internally by DFS post-order index, and we keep dictionaries to go
-    // from post-order index <-> node.
-    postorder: Vec<N>,
-    postorder_indexes: IndexMap<usize>,
+    // We reference all nodes internally by depth-first post-order index, and we keep dictionaries
+    // to go from post-order index <-> node.
+    post_order: Vec<N>,
+    post_order_indexes: IndexMap<usize>,
 
     dominators: Vec<usize>,
     dominance_ranges: Vec<(usize, usize)>,
@@ -37,8 +37,8 @@ impl<N: Node> Dominators<N> {
     where
         I: IntoIterator<Item = N>,
     {
-        let postorder = {
-            let mut postorder = Vec::new();
+        let post_order = {
+            let mut post_order = Vec::new();
 
             let mut stack = Vec::new();
             let mut visited = IndexSet::new();
@@ -56,34 +56,37 @@ impl<N: Node> Dominators<N> {
                 }
 
                 if leaf {
-                    postorder.push(node);
+                    post_order.push(node);
                     stack.pop();
                 }
             }
 
-            postorder
+            // The start node should be at the end of the post-order.
+            assert!(post_order.last().copied() == Some(start));
+
+            post_order
         };
 
-        let postorder_indexes = {
-            let mut postorder_indexes = IndexMap::new();
-            for i in 0..postorder.len() {
-                postorder_indexes.insert(postorder[i].index(), i);
+        let post_order_indexes = {
+            let mut post_order_indexes = IndexMap::new();
+            for i in 0..post_order.len() {
+                post_order_indexes.insert(post_order[i].index(), i);
             }
-            postorder_indexes
+            post_order_indexes
         };
 
         let predecessors = {
             let mut predecessors = Vec::new();
-            for _ in 0..postorder.len() {
+            for _ in 0..post_order.len() {
                 predecessors.push(IndexSet::new());
             }
 
-            for &node in &postorder {
+            for &node in &post_order {
                 for en in edges(node) {
                     predecessors
-                        .get_mut(postorder_indexes[en.index()])
+                        .get_mut(post_order_indexes[en.index()])
                         .unwrap()
-                        .insert(postorder_indexes[node.index()]);
+                        .insert(post_order_indexes[node.index()]);
                 }
             }
             predecessors
@@ -109,18 +112,17 @@ impl<N: Node> Dominators<N> {
 
             let mut dominators = IndexMap::new();
             dominators.insert(
-                postorder_indexes[start.index()],
-                postorder_indexes[start.index()],
+                post_order_indexes[start.index()],
+                post_order_indexes[start.index()],
             );
 
             let mut changed = true;
             while changed {
                 changed = false;
 
-                // We skip the start node, which should always be the final postorder node.
-                assert!(postorder_indexes[start.index()] == postorder.len() - 1);
-                for node in postorder.iter().rev().copied().skip(1) {
-                    let ni = postorder_indexes[node.index()];
+                // We skip the start node, which will always be the final post-order node.
+                for node in post_order.iter().rev().copied().skip(1) {
+                    let ni = post_order_indexes[node.index()];
                     let mut new_idom = None;
                     for p in predecessors.get(ni).unwrap().iter() {
                         if dominators.contains(p) {
@@ -143,7 +145,7 @@ impl<N: Node> Dominators<N> {
             }
 
             // Every dominator should be computed at this point
-            (0..postorder.len())
+            (0..post_order.len())
                 .map(|i| dominators[i])
                 .collect::<Vec<_>>()
         };
@@ -153,13 +155,13 @@ impl<N: Node> Dominators<N> {
         // Makes "does A dominate B?" queries O(1).
         let dominance_ranges = {
             // Start with every node dominating itself.
-            let mut dominance_ranges = (0..postorder.len()).map(|i| (i, i)).collect::<Vec<_>>();
+            let mut dominance_ranges = (0..post_order.len()).map(|i| (i, i)).collect::<Vec<_>>();
 
-            // We walk the nodes here in DFS post-order. Since a node's immediate dominator MUST
-            // come after it in DFS post-order, we just need to unify a every node's range with
-            // its immediate dominator in this loop and all dominance ranges will be unified in
-            // one pass.
-            for i in 0..postorder.len() {
+            // We walk the nodes here in depth-first post-order. Since a node's immediate dominator
+            // MUST come after it in depth-first post-order, we just need to unify a every node's
+            // range with its immediate dominator in this loop and all dominance ranges will be
+            // unified in one pass.
+            for i in 0..post_order.len() {
                 assert!(i <= dominators[i]);
                 if i != dominators[i] {
                     let (start, end) = dominance_ranges[i];
@@ -177,9 +179,9 @@ impl<N: Node> Dominators<N> {
         // A Simple, Fast Dominance Algorithm, Cooper et al.
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
         let dominance_frontiers = {
-            let mut dominance_frontiers = vec![IndexSet::new(); postorder.len()];
+            let mut dominance_frontiers = vec![IndexSet::new(); post_order.len()];
 
-            for i in 0..postorder.len() {
+            for i in 0..post_order.len() {
                 if predecessors[i].len() >= 2 {
                     for p in predecessors[i].iter() {
                         let mut runner = p;
@@ -195,12 +197,30 @@ impl<N: Node> Dominators<N> {
         };
 
         Dominators {
-            postorder,
-            postorder_indexes,
+            post_order,
+            post_order_indexes,
             dominators,
             dominance_ranges,
             dominance_frontiers,
         }
+    }
+
+    /// Return all reachable nodes in depth-first pre-order, starting with the provided `start` node.
+    ///
+    /// The specific order in which child nodes visited first in depth-first fashion is unspecified,
+    /// but every node in this list will come before any other nodes that it dominates.
+    pub fn dfs_pre_order(&self) -> impl Iterator<Item = N> + '_ {
+        self.post_order.iter().copied().rev()
+    }
+
+    /// Return all reachable nodes in depth-first post-order, ending with the provided `start` node.
+    ///
+    /// The specific order in which child nodes visited first in depth-first fashion is unspecified,
+    /// but every node in this list will come before any other nodes that dominate it.
+    ///
+    /// This is the reverse of `Self::dfs_pre_order`.
+    pub fn dfs_post_order(&self) -> impl Iterator<Item = N> + '_ {
+        self.post_order.iter().copied()
     }
 
     /// Return the immediate dominator ("idom") of the given node.
@@ -208,7 +228,7 @@ impl<N: Node> Dominators<N> {
     /// Returns `None` if the given node `n` was not reachable when `Dominators` was constructed and
     /// thus has no dominance information.
     pub fn idom(&self, n: N) -> Option<N> {
-        Some(self.postorder[self.dominators[self.postorder_indexes.get(n.index()).copied()?]])
+        Some(self.post_order[self.dominators[self.post_order_indexes.get(n.index()).copied()?]])
     }
 
     /// Queries whether node `a` dominates node `b`.
@@ -220,9 +240,9 @@ impl<N: Node> Dominators<N> {
     /// `Dominators` was constructed and thus no dominance can be determined.
     pub fn dominates(&self, a: N, b: N) -> Option<bool> {
         let (a_start, a_end) =
-            self.dominance_ranges[self.postorder_indexes.get(a.index()).copied()?];
+            self.dominance_ranges[self.post_order_indexes.get(a.index()).copied()?];
         let (b_start, b_end) =
-            self.dominance_ranges[self.postorder_indexes.get(b.index()).copied()?];
+            self.dominance_ranges[self.post_order_indexes.get(b.index()).copied()?];
         Some(a_start <= b_start && a_end >= b_end)
     }
 
@@ -232,9 +252,9 @@ impl<N: Node> Dominators<N> {
     /// thus has no dominance information.
     pub fn dominance_frontier(&self, n: N) -> Option<impl Iterator<Item = N> + '_> {
         Some(
-            self.dominance_frontiers[self.postorder_indexes.get(n.index()).copied()?]
+            self.dominance_frontiers[self.post_order_indexes.get(n.index()).copied()?]
                 .iter()
-                .map(|n| self.postorder[n]),
+                .map(|n| self.post_order[n]),
         )
     }
 }

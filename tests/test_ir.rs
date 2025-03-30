@@ -1,57 +1,61 @@
-use fabricator::{compiler::ir, constant::Constant, value::String};
+use fabricator::{
+    compiler::{codegen, ir},
+    constant::Constant,
+    value::String,
+};
 use gc_arena::arena;
 
 #[test]
 fn test_ir_codegen() {
     arena::rootless_mutate(|_mc| {
-        let mut func = ir::Function::<String<'_>>::default();
+        let mut parts = ir::FunctionParts::<String<'_>>::default();
 
-        let var_i = func.heap_vars.insert(());
-        let var_sum = func.heap_vars.insert(());
+        let var_i = parts.heap_vars.insert(());
+        let var_sum = parts.heap_vars.insert(());
 
-        let start_block_id = func.blocks.insert(ir::Block::default());
-        let loop_block_id = func.blocks.insert(ir::Block::default());
-        let end_block_id = func.blocks.insert(ir::Block::default());
+        let start_block_id = parts.blocks.insert(ir::Block::default());
+        let loop_block_id = parts.blocks.insert(ir::Block::default());
+        let end_block_id = parts.blocks.insert(ir::Block::default());
 
-        let start_block = func.blocks.get_mut(start_block_id).unwrap();
+        let start_block = parts.blocks.get_mut(start_block_id).unwrap();
 
-        let const_0 = func
+        let const_0 = parts
             .instructions
             .insert(ir::Instruction::Constant(Constant::Integer(0)));
         start_block.instructions.push(const_0);
 
-        let const_1 = func
+        let const_1 = parts
             .instructions
             .insert(ir::Instruction::Constant(Constant::Integer(1)));
         start_block.instructions.push(const_1);
 
-        let const_100000 = func
+        let const_100000 = parts
             .instructions
             .insert(ir::Instruction::Constant(Constant::Integer(100000)));
         start_block.instructions.push(const_100000);
 
         start_block.exit = ir::Exit::Jump(loop_block_id);
 
-        let loop_block = func.blocks.get_mut(loop_block_id).unwrap();
+        let loop_block = parts.blocks.get_mut(loop_block_id).unwrap();
 
-        let sum = func
+        let sum = parts
             .instructions
             .insert(ir::Instruction::GetVariable(var_sum));
-        loop_block.instructions.push(const_100000);
+        loop_block.instructions.push(sum);
 
-        let i = func
+        let i = parts
             .instructions
             .insert(ir::Instruction::GetVariable(var_i));
         loop_block.instructions.push(i);
 
-        let i_plus_one = func.instructions.insert(ir::Instruction::BinOp {
+        let i_plus_one = parts.instructions.insert(ir::Instruction::BinOp {
             left: i,
             right: const_1,
             op: ir::BinOp::Add,
         });
         loop_block.instructions.push(i_plus_one);
 
-        let sum_plus_i = func.instructions.insert(ir::Instruction::BinOp {
+        let sum_plus_i = parts.instructions.insert(ir::Instruction::BinOp {
             left: sum,
             right: i,
             op: ir::BinOp::Add,
@@ -60,19 +64,19 @@ fn test_ir_codegen() {
 
         loop_block
             .instructions
-            .push(func.instructions.insert(ir::Instruction::SetVariable {
+            .push(parts.instructions.insert(ir::Instruction::SetVariable {
                 source: sum_plus_i,
                 dest: var_sum,
             }));
 
         loop_block
             .instructions
-            .push(func.instructions.insert(ir::Instruction::SetVariable {
+            .push(parts.instructions.insert(ir::Instruction::SetVariable {
                 source: i_plus_one,
                 dest: var_i,
             }));
 
-        let i_le_100000 = func.instructions.insert(ir::Instruction::BinComp {
+        let i_le_100000 = parts.instructions.insert(ir::Instruction::BinComp {
             left: i,
             right: const_100000,
             comp: ir::BinComp::LessEqual,
@@ -85,13 +89,21 @@ fn test_ir_codegen() {
             if_false: end_block_id,
         };
 
-        let end_block = func.blocks.get_mut(end_block_id).unwrap();
+        let end_block = parts.blocks.get_mut(end_block_id).unwrap();
 
         end_block.instructions.push(
-            func.instructions
+            parts
+                .instructions
                 .insert(ir::Instruction::Push { source: sum_plus_i }),
         );
 
         end_block.exit = ir::Exit::Return { returns: 1 };
+
+        let function = ir::Function {
+            parts,
+            start_block: start_block_id,
+        };
+
+        codegen::verify_ir(&function).unwrap();
     });
 }

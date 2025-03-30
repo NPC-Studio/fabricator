@@ -69,32 +69,59 @@ impl<I: Id, V> IdMap<I, V> {
         Self::default()
     }
 
+    #[inline]
     pub fn insert(&mut self, value: V) -> I {
         I::from_id(self.map.insert(value))
     }
 
+    #[inline]
     pub fn remove(&mut self, id: I) -> Option<V> {
         self.map.remove(id.into_id())
     }
 
+    #[inline]
     pub fn contains(&mut self, id: I) -> bool {
         self.map.contains(id.into_id())
     }
 
+    #[inline]
     pub fn get(&self, id: I) -> Option<&V> {
         self.map.get(id.into_id())
     }
 
+    #[inline]
     pub fn get_mut(&mut self, id: I) -> Option<&mut V> {
         self.map.get_mut(id.into_id())
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    #[inline]
     pub fn index_upper_bound(&self) -> Index {
         self.map.index_upper_bound()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
+        self.map.iter().map(|(id, v)| (I::from_id(id), v))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (I, &mut V)> + '_ {
+        self.map.iter_mut().map(|(id, v)| (I::from_id(id), v))
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = I> + '_ {
+        self.map.ids().map(I::from_id)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.map.values()
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
+        self.map.values_mut()
     }
 }
 

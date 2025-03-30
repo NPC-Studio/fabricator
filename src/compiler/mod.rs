@@ -1,3 +1,4 @@
+pub mod codegen;
 pub mod dominators;
 pub mod ir;
 pub mod lexer;

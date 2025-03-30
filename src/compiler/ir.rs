@@ -92,18 +92,23 @@ impl Default for Block {
     }
 }
 
-pub struct Function<S> {
+pub struct FunctionParts<S> {
     pub instructions: IdMap<InstId, Instruction<S>>,
     pub blocks: IdMap<BlockId, Block>,
     pub heap_vars: IdMap<VarId, ()>,
 }
 
-impl<S> Default for Function<S> {
+impl<S> Default for FunctionParts<S> {
     fn default() -> Self {
         Self {
-            instructions: IdMap::new(),
-            blocks: IdMap::new(),
-            heap_vars: IdMap::new(),
+            instructions: Default::default(),
+            blocks: Default::default(),
+            heap_vars: Default::default(),
         }
     }
+}
+
+pub struct Function<S> {
+    pub parts: FunctionParts<S>,
+    pub start_block: BlockId,
 }

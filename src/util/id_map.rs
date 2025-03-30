@@ -198,6 +198,54 @@ impl<V> IdMap<V> {
         // The slots length always fits in `Index` (because `next_free` must always fit in `Index`)
         self.slots.len().try_into().unwrap()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
+        self.slots.iter().enumerate().flat_map(|(index, slot)| {
+            let index: Index = index.try_into().unwrap();
+            if slot.is_vacant() {
+                None
+            } else {
+                let id = Id {
+                    index,
+                    // Occupied slots always have non-zero generation
+                    generation: NonZero::new(slot.generation).unwrap(),
+                };
+                // SAFETY: We just checked that the slot was occupied
+                let value = unsafe { &*slot.u.value };
+                Some((id, value))
+            }
+        })
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Id, &mut V)> + '_ {
+        self.slots.iter_mut().enumerate().flat_map(|(index, slot)| {
+            let index: Index = index.try_into().unwrap();
+            if slot.is_vacant() {
+                None
+            } else {
+                let id = Id {
+                    index,
+                    // Occupied slots always have non-zero generation
+                    generation: NonZero::new(slot.generation).unwrap(),
+                };
+                // SAFETY: We just checked that the slot was occupied
+                let value = unsafe { &mut *slot.u.value };
+                Some((id, value))
+            }
+        })
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = Id> + '_ {
+        self.iter().map(|(id, _)| id)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
+        self.iter_mut().map(|(_, v)| v)
+    }
 }
 
 impl<V> Drop for Slot<V> {
