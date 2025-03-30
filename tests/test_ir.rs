@@ -1,6 +1,6 @@
 use fabricator::{
     closure::Closure,
-    compiler::{codegen, constant::Constant, ir, optimization},
+    compiler::{codegen, constant::Constant, ir},
     thread::Thread,
     value::{String, Value},
 };

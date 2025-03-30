@@ -108,6 +108,10 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
             inst_index += 1;
         }
         post_block_inst_indexes.insert(block_id, inst_index);
+
+        // There is a separate synthetic index for the end of each block to mark when instruction
+        // ranges end when the block jumps forward.
+        inst_index += 1;
     }
 
     // For all backwards jumps, we need to keep the foreign block source instructions for the jump
@@ -143,7 +147,6 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
                     .pop()
                     .ok_or(CodegenError::RegisterOverflow)?;
                 used_registers = used_registers.max(reg as usize);
-
                 assigned_registers.insert(inst_id, reg);
             }
 
@@ -153,6 +156,13 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
 
             inst_index += 1;
         }
+
+        for &end_inst in &inst_scope_ends[inst_index] {
+            available_registers.push(assigned_registers[end_inst]);
+        }
+
+        // Handle the synthetic block end
+        inst_index += 1;
     }
 
     let mut vm_instructions = Vec::new();
