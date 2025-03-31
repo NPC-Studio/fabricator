@@ -1,4 +1,5 @@
 use std::{
+    fmt, iter,
     mem::{self, MaybeUninit},
     ops::ControlFlow,
 };
@@ -136,6 +137,83 @@ impl ByteCode {
             inst_boundaries,
         })
     }
+
+    pub fn decode(&self) -> impl Iterator<Item = Instruction> + '_ {
+        // Compute a table to go from bytecode positions back to instruction positions
+        let mut inst_positions = vec![None; self.inst_boundaries.len()];
+        let mut inst_count = 0;
+        for (i, boundary) in self.inst_boundaries.iter().enumerate() {
+            if boundary {
+                inst_positions[i] = Some(inst_count);
+                inst_count += 1;
+            }
+        }
+
+        let mut pc = 0;
+        let mut inst_count = 0;
+        let bytes = &self.bytes;
+        iter::from_fn(move || {
+            if pc == bytes.len() {
+                return None;
+            }
+
+            unsafe {
+                let mut ptr = bytes.as_ptr().add(pc);
+                let opcode: OpCode = bytecode_read(&mut ptr);
+
+                macro_rules! decode {
+                    (
+                        $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+                        $(jump => $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
+                        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                    ) => {
+                        match opcode {
+                            $(OpCode::$simple_name => {
+                                let params::$simple_name { $($simple_field),* } = bytecode_read(&mut ptr);
+                                Instruction::$simple_name { $($simple_field),* }
+                            })*
+                            $(OpCode::$jump_name => {
+                                let params::$jump_name { mut offset $(, $jump_field)* } = bytecode_read(&mut ptr);
+                                let inst_pos = inst_positions[
+                                    (ptr.offset_from(bytes.as_ptr()) + offset as isize) as usize
+                                ].unwrap();
+                                offset = (inst_pos as isize - inst_count) as $jump_offset_ty;
+                                Instruction::$jump_name { offset $(, $jump_field)* }
+                            })*
+                            $(OpCode::$call_name => {
+                                let params::$call_name { $($call_field),* } = bytecode_read(&mut ptr);
+                                Instruction::$call_name { $($call_field),* }
+                            })*
+                        }
+                    };
+                }
+
+                let inst = for_each_instruction!(decode);
+                pc = ptr.offset_from(bytes.as_ptr()) as usize;
+                inst_count += 1;
+                Some(inst)
+            }
+        })
+    }
+
+    fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
+        for (i, inst) in self.decode().enumerate() {
+            write!(f, "{:indent$}", "", indent = indent as usize)?;
+            write!(f, "{}: ", i)?;
+            inst.pretty_print(f)?;
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for ByteCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ByteCode[")?;
+        self.pretty_print(f, 4)?;
+        writeln!(f, "]")?;
+        Ok(())
+    }
 }
 
 /// Read [`ByteCode`] in a optimized way and dispatch to instruction handlers.
@@ -203,7 +281,8 @@ impl<'a> Dispatcher<'a> {
                 macro_rules! dispatch {
                     (
                         $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                        $(other => $other_snake_name:ident = $other_name:ident { $( $other_field:ident : $other_field_ty:ty ),* };)*
+                        $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
+                        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
                     ) => {
                         match opcode {
                             $(
@@ -254,7 +333,8 @@ impl<'a> Dispatcher<'a> {
 macro_rules! define_dispatch {
     (
         $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-        $(other => $other_snake_name:ident = $other_name:ident { $( $other_field:ident : $other_field_ty:ty ),* };)*
+        $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
+        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
     ) => {
         pub trait Dispatch {
             type Break;
@@ -333,5 +413,38 @@ unsafe fn bytecode_read<T>(ptr: &mut *const MaybeUninit<u8>) -> T {
 
         *ptr = ptr.add(mem::size_of::<T>());
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_decode() {
+        let insts = &[
+            Instruction::LoadConstant {
+                constant: 1,
+                dest: 2,
+            },
+            Instruction::Jump { offset: 1 },
+            Instruction::TestEqual {
+                arg1: 3,
+                arg2: 4,
+                dest: 5,
+            },
+            Instruction::JumpIf {
+                offset: -2,
+                arg: 6,
+                is_true: true,
+            },
+            Instruction::Move { source: 7, dest: 8 },
+            Instruction::Return { returns: 0 },
+        ];
+
+        let bytecode = ByteCode::encode(insts).unwrap();
+        let decoded = bytecode.decode().collect::<Vec<_>>();
+
+        assert_eq!(insts, decoded.as_slice());
     }
 }

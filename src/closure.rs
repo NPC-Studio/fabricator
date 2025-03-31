@@ -29,7 +29,7 @@ impl<'gc> Constant<'gc> {
     }
 }
 
-#[derive(Collect)]
+#[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct Prototype<'gc> {
     pub bytecode: ByteCode,

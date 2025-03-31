@@ -189,59 +189,72 @@ pub struct Function<S> {
     pub start_block: BlockId,
 }
 
-impl<S: AsRef<str>> fmt::Debug for Function<S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let write_block = |f: &mut fmt::Formatter, block_id: BlockId| -> fmt::Result {
+impl<S: AsRef<str>> Function<S> {
+    pub fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
+        let base_indent = indent as usize;
+        let write_indent = |f: &mut dyn fmt::Write, indent: u8| -> fmt::Result {
+            let indent = base_indent + indent as usize;
+            write!(f, "{:indent$}", "")?;
+            Ok(())
+        };
+
+        let write_block = |f: &mut dyn fmt::Write, block_id: BlockId| -> fmt::Result {
             let block = &self.parts.blocks[block_id];
-            writeln!(f, "  block {}:", block_id.index())?;
+
+            write_indent(f, 0)?;
+            writeln!(f, "block B{}:", block_id.index())?;
+
             for &inst_id in &block.instructions {
                 let inst = &self.parts.instructions[inst_id];
-                write!(f, "    {}: ", inst_id.index())?;
+
+                write_indent(f, 4)?;
+                write!(f, "I{}: ", inst_id.index())?;
+
                 match inst {
                     Instruction::Constant(constant) => {
                         writeln!(f, "constant({:?})", constant.as_ref())?;
                     }
                     Instruction::GetVariable(var_id) => {
-                        writeln!(f, "get_var({})", var_id.index())?;
+                        writeln!(f, "get_var(V{})", var_id.index())?;
                     }
                     Instruction::SetVariable { source, dest } => {
-                        writeln!(f, "set_var({}, {})", dest.index(), source.index())?;
+                        writeln!(f, "set_var(V{}, I{})", dest.index(), source.index())?;
                     }
                     Instruction::UnOp { source, op } => match op {
                         UnOp::Not => {
-                            writeln!(f, "not({})", source.index())?;
+                            writeln!(f, "not(I{})", source.index())?;
                         }
                     },
                     Instruction::BinOp { left, right, op } => match op {
                         BinOp::Add => {
-                            writeln!(f, "add({}, {})", left.index(), right.index())?;
+                            writeln!(f, "add(I{}, I{})", left.index(), right.index())?;
                         }
                         BinOp::Sub => {
-                            writeln!(f, "sub({}, {})", left.index(), right.index())?;
+                            writeln!(f, "sub(I{}, I{})", left.index(), right.index())?;
                         }
                     },
                     Instruction::BinComp { left, right, comp } => match comp {
                         BinComp::LessThan => {
-                            writeln!(f, "less_than({}, {})", left.index(), right.index())?;
+                            writeln!(f, "less_than(I{}, I{})", left.index(), right.index())?;
                         }
                         BinComp::LessEqual => {
-                            writeln!(f, "less_equal({}, {})", left.index(), right.index())?;
+                            writeln!(f, "less_equal(I{}, I{})", left.index(), right.index())?;
                         }
                         BinComp::Equal => {
-                            writeln!(f, "equal({}, {})", left.index(), right.index())?;
+                            writeln!(f, "equal(I{}, I{})", left.index(), right.index())?;
                         }
                         BinComp::NotEqual => {
-                            writeln!(f, "not_equal({}, {})", left.index(), right.index())?;
+                            writeln!(f, "not_equal(I{}, I{})", left.index(), right.index())?;
                         }
                         BinComp::GreaterThan => {
-                            writeln!(f, "greater_than({}, {})", left.index(), right.index())?;
+                            writeln!(f, "greater_than(I{}, I{})", left.index(), right.index())?;
                         }
                         BinComp::GreaterEqual => {
-                            writeln!(f, "greater_equal({}, {})", left.index(), right.index())?;
+                            writeln!(f, "greater_equal(I{}, I{})", left.index(), right.index())?;
                         }
                     },
                     Instruction::Push(source) => {
-                        writeln!(f, "push({})", source.index())?;
+                        writeln!(f, "push(I{})", source.index())?;
                     }
                     Instruction::Pop => {
                         writeln!(f, "pop()")?;
@@ -253,7 +266,7 @@ impl<S: AsRef<str>> fmt::Debug for Function<S> {
                     } => {
                         writeln!(
                             f,
-                            "call({}, args = {}, returns = {})",
+                            "call(I{}, args = {}, returns = {})",
                             source.index(),
                             args,
                             returns
@@ -262,13 +275,13 @@ impl<S: AsRef<str>> fmt::Debug for Function<S> {
                 }
             }
 
-            write!(f, "    ")?;
+            write_indent(f, 4)?;
             match block.exit {
                 Exit::Return { returns } => {
                     writeln!(f, "return(args = {})", returns)?;
                 }
                 Exit::Jump(block_id) => {
-                    writeln!(f, "jump({})", block_id.index())?;
+                    writeln!(f, "jump(B{})", block_id.index())?;
                 }
                 Exit::Branch {
                     cond,
@@ -277,7 +290,7 @@ impl<S: AsRef<str>> fmt::Debug for Function<S> {
                 } => {
                     writeln!(
                         f,
-                        "branch({}, false = {}, true = {})",
+                        "branch(I{}, false => B{}, true => B{})",
                         cond.index(),
                         if_false.index(),
                         if_true.index()
@@ -288,14 +301,21 @@ impl<S: AsRef<str>> fmt::Debug for Function<S> {
             Ok(())
         };
 
-        writeln!(f, "Function(")?;
-
-        writeln!(f, "  start_block({})", self.start_block.index())?;
+        write_indent(f, 0)?;
+        writeln!(f, "start_block(B{})", self.start_block.index())?;
 
         for block_id in self.parts.blocks.ids() {
             write_block(f, block_id)?;
         }
 
+        Ok(())
+    }
+}
+
+impl<S: AsRef<str>> fmt::Debug for Function<S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Function(")?;
+        self.pretty_print(f, 4)?;
         writeln!(f, ")")?;
         Ok(())
     }

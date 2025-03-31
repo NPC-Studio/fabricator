@@ -1,3 +1,5 @@
+use std::fmt;
+
 pub type RegIdx = u8;
 pub type HeapIdx = u8;
 pub type ConstIdx = u16;
@@ -19,20 +21,22 @@ macro_rules! for_each_instruction {
             simple => push = Push { source: RegIdx, len: u8 };
             simple => pop = Pop { dest: RegIdx, len: u8 };
 
-            other => jump = Jump { offset: i16 };
-            other => jump_if = JumpIf { arg: RegIdx, is_true: bool, offset: i16 };
-            other => call = Call { func: RegIdx, args: u8, returns: u8 };
-            other => return_ = Return { returns: u8 };
+            jump => jump = Jump { offset: i16 };
+            jump => jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };
+
+            call => call = Call { func: RegIdx, args: u8, returns: u8 };
+            call => return_ = Return { returns: u8 };
         }
     };
 }
+
 pub(crate) use for_each_instruction;
 
 macro_rules! define_instruction {
     ($(
         $_:ident => $snake_name:ident = $name:ident { $($field:ident: $field_ty:ty),* };
     )*) => {
-        #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+        #[derive(Copy, Clone, Eq, PartialEq)]
         pub enum Instruction {
             $($name {
                 $($field: $field_ty),*
@@ -41,3 +45,60 @@ macro_rules! define_instruction {
     };
 }
 for_each_instruction!(define_instruction);
+
+impl Instruction {
+    pub fn pretty_print(self, f: &mut dyn fmt::Write) -> fmt::Result {
+        macro_rules! prefix {
+            (RegIdx) => {
+                "R"
+            };
+            (ConstIdx) => {
+                "C"
+            };
+            (HeapIdx) => {
+                "H"
+            };
+            ($other:ident) => {
+                ""
+            };
+        }
+
+        macro_rules! impl_debug {
+            ($(
+                $_:ident => $snake_name:ident = $name:ident { $($field:ident: $field_ty:ident),* };
+            )*) => {
+                match self {
+                    $(Instruction::$name { $($field),* } => {
+                        write!(f, stringify!($snake_name))?;
+                        write!(f, "(")?;
+                        let mut prev = false;
+                        $(
+                            if prev {
+                                write!(f, ", ")?;
+                            }
+                            #[allow(unused)]
+                            {
+                                prev = true;
+                            }
+
+                            write!(f, stringify!($field))?;
+                            write!(f, "=")?;
+                            write!(f, prefix!($field_ty))?;
+                            write!(f, "{}", $field)?;
+                        )*
+                        write!(f, ")")?;
+                    }),*
+                }
+            };
+        }
+
+        for_each_instruction!(impl_debug);
+        Ok(())
+    }
+}
+
+impl fmt::Debug for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.pretty_print(f)
+    }
+}
