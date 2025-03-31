@@ -56,9 +56,7 @@ pub enum Instruction<S> {
         right: InstId,
         comp: BinComp,
     },
-    Push {
-        source: InstId,
-    },
+    Push(InstId),
     Pop,
     Call {
         source: InstId,
@@ -90,7 +88,7 @@ impl<S> Instruction<S> {
                 sources.push(*left);
                 sources.push(*right);
             }
-            Instruction::Push { source } => {
+            Instruction::Push(source) => {
                 sources.push(*source);
             }
             Instruction::Pop => {}
@@ -171,7 +169,7 @@ impl Default for Block {
 pub struct FunctionParts<S> {
     pub instructions: IdMap<InstId, Instruction<S>>,
     pub blocks: IdMap<BlockId, Block>,
-    pub heap_vars: IdMap<VarId, ()>,
+    pub variables: IdMap<VarId, ()>,
 }
 
 impl<S> Default for FunctionParts<S> {
@@ -179,7 +177,7 @@ impl<S> Default for FunctionParts<S> {
         Self {
             instructions: Default::default(),
             blocks: Default::default(),
-            heap_vars: Default::default(),
+            variables: Default::default(),
         }
     }
 }

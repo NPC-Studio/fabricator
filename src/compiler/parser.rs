@@ -12,12 +12,25 @@ pub struct Block<S> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement<S> {
-    If(IfStatement<S>),
-    For(ForStatement<S>),
     Var(VarStatement<S>),
     Assignment(AssignmentStatement<S>),
+    If(IfStatement<S>),
+    For(ForStatement<S>),
     Block(Block<S>),
     Call(FunctionCall<S>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarStatement<S> {
+    pub name: S,
+    pub value: Box<Expression<S>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignmentStatement<S> {
+    pub name: S,
+    pub op: AssignmentOperator,
+    pub value: Box<Expression<S>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,19 +48,6 @@ pub struct ForStatement<S> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VarStatement<S> {
-    pub name: S,
-    pub value: Box<Expression<S>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssignmentStatement<S> {
-    pub name: S,
-    pub op: AssignmentOperator,
-    pub value: Box<Expression<S>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Expression<S> {
     Undefined,
     True,
@@ -57,15 +57,15 @@ pub enum Expression<S> {
     String(S),
     Name(S),
     Group(Box<Expression<S>>),
-    Call(FunctionCall<S>),
     Unary(UnaryOperator, Box<Expression<S>>),
     Binary(Box<Expression<S>>, BinaryOperator, Box<Expression<S>>),
+    Call(FunctionCall<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionCall<S> {
-    base: Box<Expression<S>>,
-    arguments: Vec<Expression<S>>,
+    pub base: Box<Expression<S>>,
+    pub arguments: Vec<Expression<S>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

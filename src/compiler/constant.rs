@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 pub enum Constant<S> {
     Undefined,
     Boolean(bool),
-    Integer(i64),
+    Integer(i128),
     Float(f64),
     String(S),
 }

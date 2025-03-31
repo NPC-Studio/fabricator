@@ -11,8 +11,8 @@ fn test_ir_codegen() {
     arena::rootless_mutate(|mc| {
         let mut parts = ir::FunctionParts::<String<'_>>::default();
 
-        let var_sum = parts.heap_vars.insert(());
-        let var_i = parts.heap_vars.insert(());
+        let var_sum = parts.variables.insert(());
+        let var_i = parts.variables.insert(());
 
         let start_block_id = parts.blocks.insert(ir::Block::default());
         let loop_block_id = parts.blocks.insert(ir::Block::default());
@@ -106,11 +106,9 @@ fn test_ir_codegen() {
 
         let end_block = parts.blocks.get_mut(end_block_id).unwrap();
 
-        end_block.instructions.push(
-            parts
-                .instructions
-                .insert(ir::Instruction::Push { source: sum_plus_i }),
-        );
+        end_block
+            .instructions
+            .push(parts.instructions.insert(ir::Instruction::Push(sum_plus_i)));
 
         end_block.exit = ir::Exit::Return { returns: 1 };
 

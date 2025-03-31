@@ -7,10 +7,10 @@ use crate::{
     bytecode::{self, ByteCode},
     closure::{self, Prototype},
     compiler::{
+        analysis,
         constant::Constant,
         dominators::Dominators,
         ir::{self, BlockId, InstId, VarId, MAX_INSTRUCTION_SOURCES},
-        optimization,
     },
     instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
     util::typed_id_map::SecondaryMap,
@@ -20,7 +20,7 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum CodegenError {
     #[error(transparent)]
-    IrVerification(#[from] optimization::verify::VerificationError),
+    IrVerification(#[from] analysis::verify::VerificationError),
     #[error(transparent)]
     ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
     #[error("too many heap variables used")]
@@ -34,11 +34,11 @@ pub enum CodegenError {
 }
 
 pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
-    optimization::verify::verify_ir(&function)?;
+    analysis::verify::verify_ir(&function)?;
 
     let mut heap_vars = SecondaryMap::<VarId, HeapIdx>::new();
     let mut heap_index = 0;
-    for var_id in function.parts.heap_vars.ids() {
+    for var_id in function.parts.variables.ids() {
         heap_vars.insert(var_id, heap_index);
         heap_index = heap_index
             .checked_add(1)
@@ -270,7 +270,7 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
                         }
                     }
                 }
-                ir::Instruction::Push { source } => {
+                ir::Instruction::Push(source) => {
                     vm_instructions.push(Instruction::Push {
                         source: assigned_registers[source],
                         len: 1,
@@ -347,7 +347,13 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
         .map(|c| match c {
             Constant::Undefined => closure::Constant::Undefined,
             Constant::Boolean(b) => closure::Constant::Boolean(b),
-            Constant::Integer(i) => closure::Constant::Integer(i),
+            Constant::Integer(i) => {
+                if let Some(i) = i.try_into().ok() {
+                    closure::Constant::Integer(i)
+                } else {
+                    closure::Constant::Float(i as f64)
+                }
+            }
             Constant::Float(f) => closure::Constant::Float(f),
             Constant::String(s) => closure::Constant::String(s),
         })
