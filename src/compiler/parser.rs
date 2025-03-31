@@ -196,7 +196,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (Token::Return, _) => {
                 self.advance(1);
-                let value = match self.peek(1) {
+                let value = match self.peek(0) {
                     Some((Token::SemiColon, _)) => None,
                     None => None,
                     _ => Some(self.parse_expression()?),

@@ -118,10 +118,9 @@ fn test_ir_codegen() {
         };
 
         let prototype = Gc::new(mc, codegen::generate(function).unwrap());
-        let mut thread = Thread::default();
-
         let closure = Closure::new(mc, prototype);
 
+        let mut thread = Thread::default();
         assert_eq!(
             thread.exec(mc, closure).unwrap()[0],
             Value::Integer(5000050000)

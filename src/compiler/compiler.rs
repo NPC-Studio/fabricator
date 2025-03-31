@@ -211,6 +211,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             self.pop_scope();
         }
 
+        self.current_block = successor;
+
         Ok(())
     }
 
@@ -253,23 +255,53 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.push_instruction(inst)
             }
             parser::Expression::Binary(left, op, right) => {
-                let inst = ir::Instruction::BinOp {
-                    left: self.commit_expression(left)?,
-                    right: self.commit_expression(right)?,
-                    op: match op {
-                        parser::BinaryOperator::Add => ir::BinOp::Add,
-                        parser::BinaryOperator::Sub => ir::BinOp::Sub,
-                        parser::BinaryOperator::Mult => unimplemented!(),
-                        parser::BinaryOperator::Div => unimplemented!(),
-                        parser::BinaryOperator::Equal => unimplemented!(),
-                        parser::BinaryOperator::NotEqual => unimplemented!(),
-                        parser::BinaryOperator::LessThan => unimplemented!(),
-                        parser::BinaryOperator::LessEqual => unimplemented!(),
-                        parser::BinaryOperator::GreaterThan => unimplemented!(),
-                        parser::BinaryOperator::GreaterEqual => unimplemented!(),
-                        parser::BinaryOperator::And => unimplemented!(),
-                        parser::BinaryOperator::Or => unimplemented!(),
+                let left = self.commit_expression(left)?;
+                let right = self.commit_expression(right)?;
+                let inst = match op {
+                    parser::BinaryOperator::Add => ir::Instruction::BinOp {
+                        left,
+                        right,
+                        op: ir::BinOp::Add,
                     },
+                    parser::BinaryOperator::Sub => ir::Instruction::BinOp {
+                        left,
+                        right,
+                        op: ir::BinOp::Sub,
+                    },
+                    parser::BinaryOperator::Mult => unimplemented!(),
+                    parser::BinaryOperator::Div => unimplemented!(),
+                    parser::BinaryOperator::Equal => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::Equal,
+                    },
+                    parser::BinaryOperator::NotEqual => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::NotEqual,
+                    },
+                    parser::BinaryOperator::LessThan => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::LessThan,
+                    },
+                    parser::BinaryOperator::LessEqual => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::LessEqual,
+                    },
+                    parser::BinaryOperator::GreaterThan => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::GreaterThan,
+                    },
+                    parser::BinaryOperator::GreaterEqual => ir::Instruction::BinComp {
+                        left,
+                        right,
+                        comp: ir::BinComp::GreaterEqual,
+                    },
+                    parser::BinaryOperator::And => unimplemented!(),
+                    parser::BinaryOperator::Or => unimplemented!(),
                 };
                 self.push_instruction(inst)
             }

@@ -133,10 +133,9 @@ fn test_vm_sum_loop_with_heap() {
             },
         );
 
-        let mut thread = Thread::default();
-
         let closure = Closure::new(mc, proto);
 
+        let mut thread = Thread::default();
         assert_eq!(
             thread.exec(mc, closure).unwrap()[0],
             Value::Integer(5000050000)

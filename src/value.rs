@@ -4,7 +4,15 @@ use gc_arena::{Collect, Gc};
 
 use crate::{callback::Callback, closure::Closure};
 
-pub type String<'gc> = Gc<'gc, StdString>;
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
+#[collect(no_drop)]
+pub struct String<'gc>(pub Gc<'gc, StdString>);
+
+impl<'gc> AsRef<str> for String<'gc> {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]

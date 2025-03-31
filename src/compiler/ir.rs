@@ -1,3 +1,5 @@
+use std::fmt;
+
 use arrayvec::ArrayVec;
 
 use crate::util::typed_id_map::{new_id_type, IdMap};
@@ -31,7 +33,7 @@ pub enum BinComp {
     Equal,
     NotEqual,
     GreaterThan,
-    Greater,
+    GreaterEqual,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -123,8 +125,8 @@ pub enum Exit {
     Jump(BlockId),
     Branch {
         cond: InstId,
-        if_true: BlockId,
         if_false: BlockId,
+        if_true: BlockId,
     },
 }
 
@@ -185,4 +187,116 @@ impl<S> Default for FunctionParts<S> {
 pub struct Function<S> {
     pub parts: FunctionParts<S>,
     pub start_block: BlockId,
+}
+
+impl<S: AsRef<str>> fmt::Debug for Function<S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let write_block = |f: &mut fmt::Formatter, block_id: BlockId| -> fmt::Result {
+            let block = &self.parts.blocks[block_id];
+            writeln!(f, "  block {}:", block_id.index())?;
+            for &inst_id in &block.instructions {
+                let inst = &self.parts.instructions[inst_id];
+                write!(f, "    {}: ", inst_id.index())?;
+                match inst {
+                    Instruction::Constant(constant) => {
+                        writeln!(f, "constant({:?})", constant.as_ref())?;
+                    }
+                    Instruction::GetVariable(var_id) => {
+                        writeln!(f, "get_var({})", var_id.index())?;
+                    }
+                    Instruction::SetVariable { source, dest } => {
+                        writeln!(f, "set_var({}, {})", dest.index(), source.index())?;
+                    }
+                    Instruction::UnOp { source, op } => match op {
+                        UnOp::Not => {
+                            writeln!(f, "not({})", source.index())?;
+                        }
+                    },
+                    Instruction::BinOp { left, right, op } => match op {
+                        BinOp::Add => {
+                            writeln!(f, "add({}, {})", left.index(), right.index())?;
+                        }
+                        BinOp::Sub => {
+                            writeln!(f, "sub({}, {})", left.index(), right.index())?;
+                        }
+                    },
+                    Instruction::BinComp { left, right, comp } => match comp {
+                        BinComp::LessThan => {
+                            writeln!(f, "less_than({}, {})", left.index(), right.index())?;
+                        }
+                        BinComp::LessEqual => {
+                            writeln!(f, "less_equal({}, {})", left.index(), right.index())?;
+                        }
+                        BinComp::Equal => {
+                            writeln!(f, "equal({}, {})", left.index(), right.index())?;
+                        }
+                        BinComp::NotEqual => {
+                            writeln!(f, "not_equal({}, {})", left.index(), right.index())?;
+                        }
+                        BinComp::GreaterThan => {
+                            writeln!(f, "greater_than({}, {})", left.index(), right.index())?;
+                        }
+                        BinComp::GreaterEqual => {
+                            writeln!(f, "greater_equal({}, {})", left.index(), right.index())?;
+                        }
+                    },
+                    Instruction::Push(source) => {
+                        writeln!(f, "push({})", source.index())?;
+                    }
+                    Instruction::Pop => {
+                        writeln!(f, "pop()")?;
+                    }
+                    Instruction::Call {
+                        source,
+                        args,
+                        returns,
+                    } => {
+                        writeln!(
+                            f,
+                            "call({}, args = {}, returns = {})",
+                            source.index(),
+                            args,
+                            returns
+                        )?;
+                    }
+                }
+            }
+
+            write!(f, "    ")?;
+            match block.exit {
+                Exit::Return { returns } => {
+                    writeln!(f, "return(args = {})", returns)?;
+                }
+                Exit::Jump(block_id) => {
+                    writeln!(f, "jump({})", block_id.index())?;
+                }
+                Exit::Branch {
+                    cond,
+                    if_true,
+                    if_false,
+                } => {
+                    writeln!(
+                        f,
+                        "branch({}, false = {}, true = {})",
+                        cond.index(),
+                        if_false.index(),
+                        if_true.index()
+                    )?;
+                }
+            }
+
+            Ok(())
+        };
+
+        writeln!(f, "Function(")?;
+
+        writeln!(f, "  start_block({})", self.start_block.index())?;
+
+        for block_id in self.parts.blocks.ids() {
+            write_block(f, block_id)?;
+        }
+
+        writeln!(f, ")")?;
+        Ok(())
+    }
 }

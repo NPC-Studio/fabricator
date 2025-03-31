@@ -116,7 +116,8 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
 
     // For all backwards jumps, we need to keep the foreign block source instructions for the jump
     // target alive until after this block.
-    for (block_id, block) in function.parts.blocks.iter() {
+    for &block_id in &block_order {
+        let block = &function.parts.blocks[block_id];
         let post_block_inst_index = post_block_inst_indexes[block_id];
         for successor in block.exit.successors() {
             for &source in block_foreign_sources[successor].iter() {
@@ -255,14 +256,14 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
                             });
                         }
                         ir::BinComp::GreaterThan => {
-                            vm_instructions.push(Instruction::TestLess {
+                            vm_instructions.push(Instruction::TestLessEqual {
                                 arg1: assigned_registers[right],
                                 arg2: assigned_registers[left],
                                 dest: output_reg,
                             });
                         }
-                        ir::BinComp::Greater => {
-                            vm_instructions.push(Instruction::TestLessEqual {
+                        ir::BinComp::GreaterEqual => {
+                            vm_instructions.push(Instruction::TestLess {
                                 arg1: assigned_registers[right],
                                 arg2: assigned_registers[left],
                                 dest: output_reg,

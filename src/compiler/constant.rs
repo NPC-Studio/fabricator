@@ -99,3 +99,15 @@ impl<S> Constant<S> {
         }
     }
 }
+
+impl<S: AsRef<str>> Constant<S> {
+    pub fn as_ref(&self) -> Constant<&str> {
+        match self {
+            Constant::Undefined => Constant::Undefined,
+            Constant::Boolean(b) => Constant::Boolean(*b),
+            Constant::Integer(i) => Constant::Integer(*i),
+            Constant::Float(f) => Constant::Float(*f),
+            Constant::String(s) => Constant::String(s.as_ref()),
+        }
+    }
+}
