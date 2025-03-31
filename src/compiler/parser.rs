@@ -14,6 +14,7 @@ pub struct Block<S> {
 pub enum Statement<S> {
     Var(VarStatement<S>),
     Assignment(AssignmentStatement<S>),
+    Return(ReturnStatement<S>),
     If(IfStatement<S>),
     For(ForStatement<S>),
     Block(Block<S>),
@@ -31,6 +32,11 @@ pub struct AssignmentStatement<S> {
     pub name: S,
     pub op: AssignmentOperator,
     pub value: Box<Expression<S>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStatement<S> {
+    pub value: Option<Box<Expression<S>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +184,27 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
         self.look_ahead(2)?;
         match self.peek_expected(0, "<statement>")? {
+            (Token::Var, _) => {
+                self.advance(1);
+                let name = self.parse_identifier()?;
+                self.parse_token(Token::Equal)?;
+                let value = self.parse_expression()?;
+                Ok(Statement::Var(VarStatement {
+                    name,
+                    value: Box::new(value),
+                }))
+            }
+            (Token::Return, _) => {
+                self.advance(1);
+                let value = match self.peek(1) {
+                    Some((Token::SemiColon, _)) => None,
+                    None => None,
+                    _ => Some(self.parse_expression()?),
+                };
+                Ok(Statement::Return(ReturnStatement {
+                    value: value.map(Box::new),
+                }))
+            }
             (Token::If, _) => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
@@ -206,16 +233,6 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     condition: Box::new(condition),
                     iterator: Box::new(iterator),
                     body,
-                }))
-            }
-            (Token::Var, _) => {
-                self.advance(1);
-                let name = self.parse_identifier()?;
-                self.parse_token(Token::Equal)?;
-                let value = self.parse_expression()?;
-                Ok(Statement::Var(VarStatement {
-                    name,
-                    value: Box::new(value),
                 }))
             }
             (Token::LeftBrace, _) => {
@@ -565,6 +582,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::If => "if",
         Token::For => "for",
         Token::Repeat => "repeat",
+        Token::Return => "return",
         Token::Undefined => "undefined",
         Token::True => "true",
         Token::False => "false",

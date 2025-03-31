@@ -68,6 +68,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::Statement::Assignment(assignment_statement) => {
                 self.assignment_statement(assignment_statement)
             }
+            parser::Statement::Return(return_) => self.return_statement(return_),
             parser::Statement::If(if_statement) => self.if_statement(if_statement),
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
@@ -120,6 +121,22 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             source: assign,
             dest: var,
         });
+        Ok(())
+    }
+
+    fn return_statement(
+        &mut self,
+        return_statement: &parser::ReturnStatement<S>,
+    ) -> Result<(), CompileError> {
+        let exit = if let Some(value) = &return_statement.value {
+            let val = self.commit_expression(value)?;
+            self.push_instruction(ir::Instruction::Push(val));
+            ir::Exit::Return { returns: 1 }
+        } else {
+            ir::Exit::Return { returns: 0 }
+        };
+        self.parts.blocks[self.current_block].exit = exit;
+        self.current_block = self.parts.blocks.insert(ir::Block::default());
         Ok(())
     }
 
