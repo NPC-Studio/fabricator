@@ -1,8 +1,6 @@
 use std::{marker::PhantomData, ops};
 
-use super::id_map;
-
-pub use super::id_map::{Generation, Index};
+pub use crate::util::id_map::{self, Generation, Index};
 
 #[doc(hidden)]
 pub trait Id {

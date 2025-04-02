@@ -1,16 +1,7 @@
-use crate::util::index_containers::{IndexMap, IndexSet};
-
-pub trait Node: Copy + Eq {
-    /// Must be a unique, low-valued array index, algorithms may use memory proportional to the
-    /// maximum length returned here.
-    fn index(&self) -> usize;
-}
-
-impl Node for usize {
-    fn index(&self) -> usize {
-        *self
-    }
-}
+use crate::{
+    compiler::graph::{dfs::depth_first_search, predecessors::Predecessors, Node},
+    util::index_containers::{IndexMap, IndexSet},
+};
 
 /// Calculate dominators and dominance frontiers for every node in a directed graph.
 #[derive(Debug)]
@@ -29,68 +20,34 @@ impl<N: Node> Dominators<N> {
     /// Calculate the dominator tree and dominance frontiers for every reachable node a directed
     /// graph, starting with node `start`.
     ///
-    /// The `edges` function should return all nodes which are reachable from the given node
+    /// The `successors` function should return all nodes which are reachable from the given node
     /// parameter in the directed graph.
     ///
     /// The `start` node is always considered to dominate every other node.
-    pub fn compute<I>(start: N, edges: impl Fn(N) -> I) -> Self
+    pub fn compute<I>(start: N, successors: impl Fn(N) -> I) -> Self
     where
         I: IntoIterator<Item = N>,
     {
-        let post_order = {
-            let mut post_order = Vec::new();
+        let mut post_order = Vec::new();
+        depth_first_search(
+            start,
+            &successors,
+            |_| {},
+            |n| {
+                post_order.push(n);
+            },
+        );
 
-            let mut stack = Vec::new();
-            let mut visited = IndexSet::new();
-            stack.push(start);
-            visited.insert(start.index());
+        let mut post_order_indexes = IndexMap::new();
+        for i in 0..post_order.len() {
+            post_order_indexes.insert(post_order[i].index(), i);
+        }
 
-            while let Some(node) = stack.last().copied() {
-                let mut leaf = true;
-                for en in edges(node) {
-                    if !visited.contains(en.index()) {
-                        visited.insert(en.index());
-                        leaf = false;
-                        stack.push(en);
-                    }
-                }
-
-                if leaf {
-                    post_order.push(node);
-                    stack.pop();
-                }
-            }
-
-            // The start node should be at the end of the post-order.
-            assert!(post_order.last().copied() == Some(start));
-
-            post_order
-        };
-
-        let post_order_indexes = {
-            let mut post_order_indexes = IndexMap::new();
-            for i in 0..post_order.len() {
-                post_order_indexes.insert(post_order[i].index(), i);
-            }
-            post_order_indexes
-        };
-
-        let predecessors = {
-            let mut predecessors = Vec::new();
-            for _ in 0..post_order.len() {
-                predecessors.push(IndexSet::new());
-            }
-
-            for &node in &post_order {
-                for en in edges(node) {
-                    predecessors
-                        .get_mut(post_order_indexes[en.index()])
-                        .unwrap()
-                        .insert(post_order_indexes[node.index()]);
-                }
-            }
-            predecessors
-        };
+        let predecessors = Predecessors::compute(0..post_order.len(), |ni| {
+            successors(post_order[ni])
+                .into_iter()
+                .map(|n| post_order_indexes[n.index()])
+        });
 
         // Dominance algorithm is sourced from:
         //
@@ -116,6 +73,9 @@ impl<N: Node> Dominators<N> {
                 post_order_indexes[start.index()],
             );
 
+            // The start node should be at the end of the post-order.
+            assert!(post_order.last().copied() == Some(start));
+
             let mut changed = true;
             while changed {
                 changed = false;
@@ -124,7 +84,7 @@ impl<N: Node> Dominators<N> {
                 for node in post_order.iter().rev().copied().skip(1) {
                     let ni = post_order_indexes[node.index()];
                     let mut new_idom = None;
-                    for p in predecessors[ni].iter() {
+                    for &p in predecessors[ni].iter() {
                         if dominators.contains(p) {
                             new_idom = Some(match new_idom {
                                 Some(idom) => intersect(&dominators, p, idom),
@@ -150,28 +110,34 @@ impl<N: Node> Dominators<N> {
                 .collect::<Vec<_>>()
         };
 
-        // Find ranges that represent all nodes (in post-order index) that a given node dominates.
-        //
-        // Makes "does A dominate B?" queries O(1).
+        // Find the pre and post order numbers in a DFS of the dominator tree. These represent
+        // ranges that can make "does A dominate B?" queries O(1).
         let dominance_ranges = {
-            // Start with every node dominating itself.
-            let mut dominance_ranges = (0..post_order.len()).map(|i| (i, i)).collect::<Vec<_>>();
+            let dominance_children =
+                Predecessors::compute(0..post_order.len(), |ni| [dominators[ni]]);
 
-            // We walk the nodes here in depth-first post-order. Since a node's immediate dominator
-            // MUST come after it in depth-first post-order, we just need to unify a every node's
-            // range with its immediate dominator in this loop and all dominance ranges will be
-            // unified in one pass.
-            for i in 0..post_order.len() {
-                assert!(i <= dominators[i]);
-                if i != dominators[i] {
-                    let (start, end) = dominance_ranges[i];
-                    let (idom_start, idom_end) = &mut dominance_ranges[dominators[i]];
-                    *idom_start = (*idom_start).min(start);
-                    *idom_end = (*idom_end).max(end);
-                }
-            }
+            let mut pre_order_i = 0;
+            let mut pre_order_numbers = vec![0; post_order.len()];
 
-            dominance_ranges
+            let mut post_order_i = 0;
+            let mut post_order_numbers = vec![0; post_order.len()];
+
+            depth_first_search(
+                post_order.len() - 1,
+                |i| dominance_children[i].iter().copied(),
+                |i| {
+                    pre_order_numbers[i] = pre_order_i;
+                    pre_order_i += 1;
+                },
+                |i| {
+                    post_order_numbers[i] = post_order_i;
+                    post_order_i += 1;
+                },
+            );
+
+            (0..post_order.len())
+                .map(|i| (pre_order_numbers[i], post_order_numbers[i]))
+                .collect::<Vec<_>>()
         };
 
         // Dominance frontier algorithm is also sourced from:
@@ -183,7 +149,7 @@ impl<N: Node> Dominators<N> {
 
             for i in 0..post_order.len() {
                 if predecessors[i].len() >= 2 {
-                    for p in predecessors[i].iter() {
+                    for &p in predecessors[i].iter() {
                         let mut runner = p;
                         while runner != dominators[i] {
                             dominance_frontiers[runner].insert(i);
@@ -205,22 +171,13 @@ impl<N: Node> Dominators<N> {
         }
     }
 
-    /// Return all reachable nodes in depth-first pre-order, starting with the provided `start` node.
+    /// Return all reachable nodes in topological dominance order which always starts with the
+    /// provided `start` node.
     ///
-    /// The specific order in which child nodes visited first in depth-first fashion is unspecified,
-    /// but every node in this list will come before any other nodes that it dominates.
-    pub fn dfs_pre_order(&self) -> impl Iterator<Item = N> + '_ {
+    /// The specific order is unspecified, but every node in this list will come before any other
+    /// nodes that it dominates.
+    pub fn topological_order(&self) -> impl DoubleEndedIterator<Item = N> + '_ {
         self.post_order.iter().copied().rev()
-    }
-
-    /// Return all reachable nodes in depth-first post-order, ending with the provided `start` node.
-    ///
-    /// The specific order in which child nodes visited first in depth-first fashion is unspecified,
-    /// but every node in this list will come before any other nodes that dominate it.
-    ///
-    /// This is the reverse of `Self::dfs_pre_order`.
-    pub fn dfs_post_order(&self) -> impl Iterator<Item = N> + '_ {
-        self.post_order.iter().copied()
     }
 
     /// Return the immediate dominator ("idom") of the given node.
@@ -233,8 +190,7 @@ impl<N: Node> Dominators<N> {
 
     /// Queries whether node `a` dominates node `b`.
     ///
-    /// Post-order index ranges are calculated during `Dominators` construction that make this query
-    /// O(1).
+    /// Ranges are calculated during `Dominators` construction that make this query O(1).
     ///
     /// Returns `None` if the either of the given nodes `a` or `b` was not reachable when
     /// `Dominators` was constructed and thus no dominance can be determined.
@@ -243,7 +199,7 @@ impl<N: Node> Dominators<N> {
             self.dominance_ranges[self.post_order_indexes.get(a.index()).copied()?];
         let (b_start, b_end) =
             self.dominance_ranges[self.post_order_indexes.get(b.index()).copied()?];
-        Some(a_start <= b_start && a_end >= b_end)
+        Some(a_start <= b_start && b_end <= a_end)
     }
 
     /// Return the (precalculated) dominance frontier of the given node.
@@ -303,17 +259,27 @@ mod tests {
     fn test_dominator_tree() {
         let mut graph = TestGraph::default();
 
-        // [A]-->[B]--+
-        //       /    |
-        //      /     |
-        //     V      V
-        //   [C]<----[D]
-        //   / \      |
-        //  V   V     |
-        // [E]  [F]<--+
+        //    [A] # Start
+        //     |
+        //     |
+        //     V
+        //    [B]------+
+        //     |       |
+        //     |       |
+        //     V       V
+        //    [C]<----[D]
+        //    / \      |
+        //   /   \     |
+        //  V     V    |
+        // [E]   [F]<--+
         //  ^
         //  |
+        //  |
         // [G] # Not reachable
+
+        // Make the node indexes are of a different range from the post-order indexes
+        graph.create_node("T");
+        graph.create_node("T");
 
         let a = graph.create_node("A");
         let b = graph.create_node("B");

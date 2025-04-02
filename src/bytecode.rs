@@ -4,11 +4,13 @@ use std::{
     ops::ControlFlow,
 };
 
-use bit_vec::BitVec;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::instructions::{for_each_instruction, ConstIdx, HeapIdx, Instruction, RegIdx};
+use crate::{
+    instructions::{for_each_instruction, ConstIdx, HeapIdx, Instruction, RegIdx},
+    util::bit_containers::BitVec,
+};
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
@@ -88,7 +90,7 @@ impl ByteCode {
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
         let mut inst_boundaries = BitVec::new();
-        inst_boundaries.grow(pos, false);
+        inst_boundaries.resize(pos, false);
 
         let calc_jump = |cur: usize, offset: i16| {
             // Encode jumps from the end of the current instruction

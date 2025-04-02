@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::{
-    compiler::{dominators::Dominators, ir},
+    compiler::{graph::dominators::Dominators, ir},
     util::typed_id_map::SecondaryMap,
 };
 

@@ -5,7 +5,7 @@ use std::{
 
 use thiserror::Error;
 
-use super::{constant::Constant, ir, parser};
+use crate::compiler::{constant::Constant, ir, parser};
 
 #[derive(Debug, Error)]
 pub enum CompileError {

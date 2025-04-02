@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 arrayvec = "0.7"
-bit-vec = "0.8"
 gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "d651e3b4363d525a2d502c2305bc73e291835c84" }
 thiserror = "1.0"
 

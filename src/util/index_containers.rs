@@ -1,7 +1,8 @@
 use std::{mem, ops};
 
-use bit_vec::BitVec;
+use crate::util::bit_containers::BitVec;
 
+/// A map of `usize` to `V` designed for low-value `usize` indexes and backed by a `Vec<Option<V>>`.
 #[derive(Debug, Clone)]
 pub struct IndexMap<V> {
     vec: Vec<Option<V>>,
@@ -18,6 +19,10 @@ impl<V> IndexMap<V> {
         Self::default()
     }
 
+    pub fn contains(&self, i: usize) -> bool {
+        self.get(i).is_some()
+    }
+
     pub fn get(&self, i: usize) -> Option<&V> {
         self.vec.get(i)?.as_ref()
     }
@@ -26,15 +31,15 @@ impl<V> IndexMap<V> {
         self.vec.get_mut(i)?.as_mut()
     }
 
-    pub fn contains(&self, i: usize) -> bool {
-        self.get(i).is_some()
-    }
-
-    pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
+    pub fn get_mut_option(&mut self, i: usize) -> &mut Option<V> {
         if i >= self.vec.len() {
             self.vec.resize_with(i.checked_add(1).unwrap(), || None);
         }
-        mem::replace(&mut self.vec[i], Some(v))
+        &mut self.vec[i]
+    }
+
+    pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
+        mem::replace(&mut self.get_mut_option(i), Some(v))
     }
 
     pub fn remove(&mut self, i: usize) -> Option<V> {
@@ -65,6 +70,28 @@ impl<V> IndexMap<V> {
             .enumerate()
             .filter_map(|(i, v)| Some((i, v?)))
     }
+
+    pub fn keys(&self) -> impl Iterator<Item = usize> + '_ {
+        self.iter().map(|(i, _)| i)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.iter_mut().map(|(_, v)| v)
+    }
+}
+
+impl<V> FromIterator<(usize, V)> for IndexMap<V> {
+    fn from_iter<T: IntoIterator<Item = (usize, V)>>(iter: T) -> Self {
+        let mut map = Self::new();
+        for (i, v) in iter {
+            map.insert(i, v);
+        }
+        map
+    }
 }
 
 impl<V> ops::Index<usize> for IndexMap<V> {
@@ -75,6 +102,7 @@ impl<V> ops::Index<usize> for IndexMap<V> {
     }
 }
 
+/// A `usize` set, designed for low-value `usize` indexes and backed by a `BitVec`.
 #[derive(Debug, Clone, Default)]
 pub struct IndexSet {
     vec: BitVec,
@@ -90,10 +118,12 @@ impl IndexSet {
         self.vec.get(i).unwrap_or(false)
     }
 
+    /// Returns `true` if the index `i` is newly inserted, false otherwise.
     pub fn insert(&mut self, i: usize) -> bool {
-        self.set(i, true)
+        !self.set(i, true)
     }
 
+    /// Removes the index `i` from the set, returns true if `i` was present in the set.
     pub fn remove(&mut self, i: usize) -> bool {
         self.set(i, false)
     }
@@ -111,8 +141,7 @@ impl IndexSet {
 
     fn set(&mut self, i: usize, val: bool) -> bool {
         if i >= self.vec.len() {
-            self.vec
-                .grow(i.checked_add(1).unwrap() - self.vec.len(), false);
+            self.vec.resize(i.checked_add(1).unwrap(), false);
         }
 
         let old = self.vec[i];
@@ -125,6 +154,16 @@ impl IndexSet {
         }
 
         old
+    }
+}
+
+impl FromIterator<usize> for IndexSet {
+    fn from_iter<T: IntoIterator<Item = usize>>(iter: T) -> Self {
+        let mut set = Self::new();
+        for i in iter {
+            set.insert(i);
+        }
+        set
     }
 }
 

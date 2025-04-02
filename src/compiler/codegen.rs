@@ -9,7 +9,7 @@ use crate::{
     compiler::{
         analysis,
         constant::Constant,
-        dominators::Dominators,
+        graph::dominators::Dominators,
         ir::{self, BlockId, InstId, VarId, MAX_INSTRUCTION_SOURCES},
     },
     instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
@@ -49,7 +49,7 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
         function.parts.blocks[b].exit.successors()
     });
 
-    let block_order = block_dominance.dfs_pre_order().collect::<Vec<_>>();
+    let block_order = block_dominance.topological_order().collect::<Vec<_>>();
 
     let mut inst_positions = SecondaryMap::new();
     for (block_id, block) in function.parts.blocks.iter() {

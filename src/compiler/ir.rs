@@ -2,9 +2,10 @@ use std::fmt;
 
 use arrayvec::ArrayVec;
 
-use crate::util::typed_id_map::{new_id_type, IdMap};
-
-use super::constant::Constant;
+use crate::{
+    compiler::constant::Constant,
+    util::typed_id_map::{new_id_type, IdMap},
+};
 
 new_id_type! {
     pub struct VarId;
