@@ -28,7 +28,7 @@ pub struct BlockLiveness {
     /// Or in other words, this lists every instruction whose lifetime "dies" after the given
     /// instruction position.
     ///
-    /// The special `Exit` instruction is included in this set, and will be at index
+    /// Sources to the special `Exit` instruction are included in this set, and will be at index
     /// `block.instructions.len()`.
     pub endpoints: HashMap<usize, ArrayVec<ir::InstId, { ir::MAX_INSTRUCTION_SOURCES }>>,
 }

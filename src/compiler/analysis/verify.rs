@@ -11,7 +11,7 @@ pub enum VerificationError {
     InstructionReused,
     #[error("instruction does not dominate its uses")]
     UseNotDominated,
-    #[error("instruction sourc is of type Void")]
+    #[error("instruction source is of type Void")]
     SourceIsVoid,
 }
 
