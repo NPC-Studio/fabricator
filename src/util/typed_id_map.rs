@@ -146,6 +146,7 @@ impl<I: Id, V> ops::IndexMut<I> for IdMap<I, V> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SecondaryMap<I: Id, V> {
     map: id_map::SecondaryMap<V>,
     _marker: PhantomData<I>,
@@ -158,6 +159,16 @@ impl<I: Id, V> Default for SecondaryMap<I, V> {
             map: Default::default(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<I: Id, V> FromIterator<(I, V)> for SecondaryMap<I, V> {
+    fn from_iter<T: IntoIterator<Item = (I, V)>>(iter: T) -> Self {
+        let mut map = Self::new();
+        for (i, v) in iter {
+            map.insert(i, v);
+        }
+        map
     }
 }
 

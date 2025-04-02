@@ -279,11 +279,13 @@ impl<V> ops::IndexMut<Id> for IdMap<V> {
 ///
 /// It does not generate its own `Id`s, it is designed to be used with `Id`s generated from a single
 /// paired `IdMap` (multiple `SecondaryMap`s may be used with a single `IdMap`).
+#[derive(Debug, Clone)]
 pub struct SecondaryMap<V> {
     slots: Vec<SecondarySlot<V>>,
     occupancy: usize,
 }
 
+#[derive(Debug, Clone)]
 enum SecondarySlot<V> {
     Occupied {
         value: V,
@@ -298,6 +300,16 @@ impl<V> Default for SecondaryMap<V> {
             slots: Vec::new(),
             occupancy: 0,
         }
+    }
+}
+
+impl<V> FromIterator<(Id, V)> for SecondaryMap<V> {
+    fn from_iter<T: IntoIterator<Item = (Id, V)>>(iter: T) -> Self {
+        let mut map = Self::new();
+        for (i, v) in iter {
+            map.insert(i, v);
+        }
+        map
     }
 }
 

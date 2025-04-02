@@ -134,6 +134,13 @@ pub enum Exit {
 pub const MAX_BLOCK_SUCCESSORS: usize = 2;
 
 impl Exit {
+    pub fn cond_source(&self) -> Option<InstId> {
+        match self {
+            Exit::Branch { cond, .. } => Some(*cond),
+            _ => None,
+        }
+    }
+
     pub fn successors(&self) -> ArrayVec<BlockId, MAX_BLOCK_SUCCESSORS> {
         let mut successors = ArrayVec::<_, 2>::new();
 

@@ -1,5 +1,9 @@
 use crate::{
-    compiler::graph::{dfs::depth_first_search, predecessors::Predecessors, Node},
+    compiler::graph::{
+        dfs::{depth_first_search, dfs_post_order},
+        predecessors::Predecessors,
+        Node,
+    },
     util::index_containers::{IndexMap, IndexSet},
 };
 
@@ -28,15 +32,7 @@ impl<N: Node> Dominators<N> {
     where
         I: IntoIterator<Item = N>,
     {
-        let mut post_order = Vec::new();
-        depth_first_search(
-            start,
-            &successors,
-            |_| {},
-            |n| {
-                post_order.push(n);
-            },
-        );
+        let post_order = dfs_post_order(start, &successors);
 
         let mut post_order_indexes = IndexMap::new();
         for i in 0..post_order.len() {
@@ -84,7 +80,7 @@ impl<N: Node> Dominators<N> {
                 for node in post_order.iter().rev().copied().skip(1) {
                     let ni = post_order_indexes[node.index()];
                     let mut new_idom = None;
-                    for &p in predecessors[ni].iter() {
+                    for p in predecessors.get(ni) {
                         if dominators.contains(p) {
                             new_idom = Some(match new_idom {
                                 Some(idom) => intersect(&dominators, p, idom),
@@ -124,7 +120,7 @@ impl<N: Node> Dominators<N> {
 
             depth_first_search(
                 post_order.len() - 1,
-                |i| dominance_children[i].iter().copied(),
+                |i| dominance_children.get(i),
                 |i| {
                     pre_order_numbers[i] = pre_order_i;
                     pre_order_i += 1;
@@ -148,8 +144,9 @@ impl<N: Node> Dominators<N> {
             let mut dominance_frontiers = vec![IndexSet::new(); post_order.len()];
 
             for i in 0..post_order.len() {
-                if predecessors[i].len() >= 2 {
-                    for &p in predecessors[i].iter() {
+                let preds = predecessors.get(i);
+                if preds.len() >= 2 {
+                    for p in preds {
                         let mut runner = p;
                         while runner != dominators[i] {
                             dominance_frontiers[runner].insert(i);

@@ -1,5 +1,3 @@
-use std::ops;
-
 use crate::{compiler::graph::Node, util::index_containers::IndexMap};
 
 // Calculate the inverse of a directed graph.
@@ -33,19 +31,11 @@ impl<N: Node> Predecessors<N> {
     }
 
     /// Returns the accumulated predecessors of `node`.
-    pub fn get(&self, node: N) -> &[N] {
-        if let Some(successors) = self.0.get(node.index()) {
-            successors.as_slice()
+    pub fn get(&self, node: N) -> impl ExactSizeIterator<Item = N> + '_ {
+        if let Some(preds) = self.0.get(node.index()) {
+            preds.iter().copied()
         } else {
-            &[]
+            [].iter().copied()
         }
-    }
-}
-
-impl<N: Node> ops::Index<N> for Predecessors<N> {
-    type Output = [N];
-
-    fn index(&self, index: N) -> &Self::Output {
-        self.get(index)
     }
 }
