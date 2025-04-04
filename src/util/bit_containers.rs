@@ -1,6 +1,6 @@
 use std::ops;
 
-trait BitSlice {
+pub trait BitSlice {
     fn bit_len(&self) -> usize;
     fn get_bit(&self, i: usize) -> bool;
     fn set_bit(&mut self, i: usize, val: bool);

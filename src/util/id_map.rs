@@ -384,6 +384,11 @@ impl<V> SecondaryMap<V> {
     }
 
     #[inline]
+    pub fn contains(&self, id: Id) -> bool {
+        self.get(id).is_some()
+    }
+
+    #[inline]
     pub fn get(&self, key: Id) -> Option<&V> {
         match self.slots.get(key.index() as usize) {
             Some(SecondarySlot::Occupied { value, generation })

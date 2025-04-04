@@ -1,7 +1,6 @@
 use crate::compiler::{graph, ir};
 
-pub mod block_liveness;
-pub mod verify;
+pub mod instruction_liveness;
 
 impl graph::Node for ir::BlockId {
     fn index(&self) -> usize {

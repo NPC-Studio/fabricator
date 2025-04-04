@@ -7,9 +7,8 @@ use crate::{
     bytecode::{self, ByteCode},
     closure::{self, Prototype},
     compiler::{
-        analysis,
+        analysis::instruction_liveness::{InstructionLiveness, InstructionVerificationError},
         constant::Constant,
-        graph::dominators::Dominators,
         ir::{self, BlockId, InstId, VarId, MAX_INSTRUCTION_SOURCES},
     },
     instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
@@ -17,10 +16,12 @@ use crate::{
     value::String,
 };
 
+use super::graph::dfs::dfs_post_order;
+
 #[derive(Debug, Error)]
 pub enum CodegenError {
     #[error(transparent)]
-    IrVerification(#[from] analysis::verify::VerificationError),
+    InstructionVerification(#[from] InstructionVerificationError),
     #[error(transparent)]
     ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
     #[error("too many heap variables used")]
@@ -34,7 +35,7 @@ pub enum CodegenError {
 }
 
 pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
-    analysis::verify::verify_ir(&function)?;
+    let instruction_liveness = InstructionLiveness::compute(&function)?;
 
     let mut heap_vars = SecondaryMap::<VarId, HeapIdx>::new();
     let mut heap_index = 0;
@@ -45,37 +46,12 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
             .ok_or(CodegenError::HeapVarOverflow)?;
     }
 
-    let block_dominance = Dominators::compute(function.start_block, |b| {
-        function.parts.blocks[b].exit.successors()
-    });
-
-    let block_order = block_dominance.topological_order().collect::<Vec<_>>();
-
-    let mut inst_positions = SecondaryMap::new();
-    for (block_id, block) in function.parts.blocks.iter() {
-        for (i, &inst_id) in block.instructions.iter().enumerate() {
-            inst_positions.insert(inst_id, (block_id, i));
-        }
-    }
-
-    let mut block_foreign_sources = SecondaryMap::new();
-
     let mut constants = Vec::new();
     let mut constant_indexes = HashMap::<Constant<String<'gc>>, ConstIdx>::new();
 
-    for (block_id, block) in function.parts.blocks.iter() {
-        block_foreign_sources.insert(block_id, HashSet::new());
-        let foreign_sources = block_foreign_sources.get_mut(block_id).unwrap();
-
+    for block in function.parts.blocks.values() {
         for &inst_id in &block.instructions {
-            let inst = function.parts.instructions[inst_id];
-            for source in inst.sources() {
-                if inst_positions[source].0 != block_id {
-                    foreign_sources.insert(source);
-                }
-            }
-
-            if let ir::Instruction::Constant(c) = inst {
+            if let ir::Instruction::Constant(c) = function.parts.instructions[inst_id] {
                 if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c) {
                     vacant.insert(
                         constants
@@ -89,88 +65,78 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
         }
     }
 
-    let mut inst_range_ends = SecondaryMap::new();
-    let mut post_block_inst_indexes = SecondaryMap::new();
-    let mut inst_index = 0;
+    // The reverse of DFS post-order is a topological ordering, we want to iterate from the top
+    // down.
+    let mut block_order = dfs_post_order(function.start_block, |id| {
+        function.parts.blocks[id].exit.successors()
+    });
+    block_order.reverse();
 
-    for &block_id in &block_order {
-        let block = &function.parts.blocks[block_id];
-        for &inst_id in &block.instructions {
-            let inst = function.parts.instructions[inst_id];
-            if inst.has_value() {
-                inst_range_ends.insert(inst_id, inst_index);
-            }
+    let block_order_indexes: HashMap<BlockId, usize> = block_order
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, b)| (b, i))
+        .collect();
 
-            for source in inst.sources() {
-                *inst_range_ends.get_mut(source).unwrap() = inst_index;
-            }
-
-            inst_index += 1;
-        }
-        post_block_inst_indexes.insert(block_id, inst_index);
-
-        // There is a separate synthetic index for the end of each block to mark when instruction
-        // ranges end when the block jumps forward.
-        inst_index += 1;
-    }
-
-    // For all backwards jumps, we need to keep the foreign block source instructions for the jump
-    // target alive until after this block.
-    for &block_id in &block_order {
-        let block = &function.parts.blocks[block_id];
-        let post_block_inst_index = post_block_inst_indexes[block_id];
-        for successor in block.exit.successors() {
-            for &source in block_foreign_sources[successor].iter() {
-                let range_end = inst_range_ends.get_mut(source).unwrap();
-                *range_end = (*range_end).max(post_block_inst_index);
-            }
-        }
-    }
-
-    let mut inst_scope_ends = (0..inst_index)
-        .map(|_| ArrayVec::<InstId, { MAX_INSTRUCTION_SOURCES + 1 }>::new())
-        .collect::<Vec<_>>();
-    for (inst_id, range_end) in inst_range_ends.into_iter() {
-        inst_scope_ends[range_end].push(inst_id);
-    }
-
-    let mut available_registers = (RegIdx::MIN..=RegIdx::MAX).rev().collect::<Vec<_>>();
     let mut assigned_registers = SecondaryMap::<InstId, RegIdx>::new();
-
-    let mut inst_index = 0;
     let mut used_registers = 0;
+
     for &block_id in &block_order {
         let block = &function.parts.blocks[block_id];
-        for &inst_id in &block.instructions {
-            let inst = function.parts.instructions[inst_id];
-            if inst.has_value() {
+        let block_inst_liveness = instruction_liveness.block_ranges(block_id).unwrap();
+
+        let mut live_in_registers = HashSet::new();
+
+        let mut life_starts = HashMap::new();
+        let mut life_ends = HashMap::new();
+        for inst_id in block_inst_liveness.live_instructions() {
+            let range = block_inst_liveness.range(inst_id).unwrap();
+            if let Some(start) = range.start_bound() {
+                assert!(life_starts.insert(start, inst_id).is_none());
+            } else {
+                live_in_registers.insert(*assigned_registers.get(inst_id).unwrap());
+            }
+
+            if let Some(end) = range.end_bound() {
+                let life_ends = life_ends
+                    .entry(end)
+                    .or_insert_with(|| ArrayVec::<InstId, { MAX_INSTRUCTION_SOURCES + 1 }>::new());
+                life_ends.push(inst_id);
+            }
+        }
+
+        let mut available_registers = (0u8..=255u8)
+            .rev()
+            .flat_map(|index| {
+                if live_in_registers.contains(&index) {
+                    None
+                } else {
+                    Some(index)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for inst_index in 0..=block.instructions.len() {
+            if let Some(&life_start) = life_starts.get(&inst_index) {
                 let reg = available_registers
                     .pop()
                     .ok_or(CodegenError::RegisterOverflow)?;
-                used_registers = used_registers.max(reg as usize);
-                assigned_registers.insert(inst_id, reg);
+                used_registers = used_registers.max(reg as usize + 1);
+                assert!(assigned_registers.insert(life_start, reg,).is_none());
             }
 
-            for &end_inst in &inst_scope_ends[inst_index] {
-                available_registers.push(assigned_registers[end_inst]);
+            for &life_end in life_ends.get(&inst_index).into_iter().flatten() {
+                available_registers.push(assigned_registers.get(life_end).copied().unwrap());
             }
-
-            inst_index += 1;
         }
-
-        for &end_inst in &inst_scope_ends[inst_index] {
-            available_registers.push(assigned_registers[end_inst]);
-        }
-
-        // Handle the synthetic block end
-        inst_index += 1;
     }
 
     let mut vm_instructions = Vec::new();
     let mut block_vm_starts = SecondaryMap::<BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
 
-    for &block_id in &block_order {
+    for (order_index, &block_id) in block_order.iter().enumerate() {
         let block = &function.parts.blocks[block_id];
         block_vm_starts.insert(block_id, vm_instructions.len());
 
@@ -302,26 +268,36 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
                 vm_instructions.push(Instruction::Return { returns });
             }
             ir::Exit::Jump(block_id) => {
-                block_vm_jumps.push((vm_instructions.len(), block_id));
-                vm_instructions.push(Instruction::Jump { offset: 0 });
+                // If we are the next block in output order, we don't need to add a jump
+                if *block_order_indexes.get(&block_id).unwrap() != order_index + 1 {
+                    block_vm_jumps.push((vm_instructions.len(), block_id));
+                    vm_instructions.push(Instruction::Jump { offset: 0 });
+                }
             }
             ir::Exit::Branch {
                 cond,
                 if_true,
                 if_false,
             } => {
-                block_vm_jumps.push((vm_instructions.len(), if_true));
-                vm_instructions.push(Instruction::JumpIf {
-                    arg: assigned_registers[cond],
-                    is_true: true,
-                    offset: 0,
-                });
-                block_vm_jumps.push((vm_instructions.len(), if_false));
-                vm_instructions.push(Instruction::JumpIf {
-                    arg: assigned_registers[cond],
-                    is_true: false,
-                    offset: 0,
-                });
+                // If we are the next block in output order, we don't need to add a jump.
+
+                if *block_order_indexes.get(&if_true).unwrap() != order_index + 1 {
+                    block_vm_jumps.push((vm_instructions.len(), if_true));
+                    vm_instructions.push(Instruction::JumpIf {
+                        arg: assigned_registers[cond],
+                        is_true: true,
+                        offset: 0,
+                    });
+                }
+
+                if *block_order_indexes.get(&if_false).unwrap() != order_index + 1 {
+                    block_vm_jumps.push((vm_instructions.len(), if_false));
+                    vm_instructions.push(Instruction::JumpIf {
+                        arg: assigned_registers[cond],
+                        is_true: false,
+                        offset: 0,
+                    });
+                }
             }
         }
     }

@@ -196,6 +196,11 @@ impl<I: Id, V> SecondaryMap<I, V> {
     }
 
     #[inline]
+    pub fn contains(&mut self, id: I) -> bool {
+        self.map.contains(id.into_id())
+    }
+
+    #[inline]
     pub fn get(&self, key: I) -> Option<&V> {
         self.map.get(key.into_id())
     }
