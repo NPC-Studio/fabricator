@@ -22,16 +22,16 @@ pub enum InstructionVerificationError {
 
 /// The liveness range of an instruction within a block, specified in block instruction indexes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct InstructionLivenessRange(Option<usize>, Option<usize>);
-
-impl InstructionLivenessRange {
+pub struct InstructionLivenessRange {
     /// The instruction index in the block at which the instruction becomes live.
     ///
     /// If `None`, then this instruction is defined in a predecessor to this block and is in the
     /// "live in" set.
-    pub fn start_bound(&self) -> Option<usize> {
-        self.0
-    }
+    ///
+    /// If this is `Some`, then this index will contain the instruction itself. All uses of an
+    /// instruction must come after it, so the beginning of the range is always the instruction
+    /// itself.
+    pub start: Option<usize>,
 
     /// The instruction index in the block after which the instruction becomes dead.
     ///
@@ -40,50 +40,11 @@ impl InstructionLivenessRange {
     ///
     /// This may return the index for the special `Exit` instruction, which is 1 past the end of the
     /// normal block instruction list.
-    pub fn end_bound(&self) -> Option<usize> {
-        self.1
-    }
+    pub end: Option<usize>,
 }
 
-/// The liveness range of all instructions within a block.
-#[derive(Debug, Clone, Default)]
-pub struct BlockInstructionLiveness(HashMap<ir::InstId, InstructionLivenessRange>);
-
-impl BlockInstructionLiveness {
-    /// Returns an iterator over all instructions that are live anywhere within this block.
-    pub fn live_instructions(&self) -> impl Iterator<Item = ir::InstId> + '_ {
-        self.0.keys().copied()
-    }
-
-    /// Returns all instructions which are live in predecessors to this block and must be live on
-    /// entry to this block.
-    pub fn live_in(&self) -> impl Iterator<Item = ir::InstId> + '_ {
-        self.0.iter().filter_map(|(&inst_id, range)| {
-            if range.start_bound().is_none() {
-                Some(inst_id)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Returns all instructions which are live in some successor to this block.
-    pub fn live_out(&self) -> impl Iterator<Item = ir::InstId> + '_ {
-        self.0.iter().filter_map(|(&inst_id, range)| {
-            if range.end_bound().is_none() {
-                Some(inst_id)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Returns the range of this instruction within this block, if it is live anywhere within the
-    /// block.
-    pub fn range(&self, inst: ir::InstId) -> Option<InstructionLivenessRange> {
-        self.0.get(&inst).copied()
-    }
-}
+/// If an instruction is live anywhere within a block, it will have an entry here.
+pub type BlockInstructionLiveness = HashMap<ir::InstId, InstructionLivenessRange>;
 
 #[derive(Debug, Default)]
 pub struct InstructionLiveness(SecondaryMap<ir::BlockId, BlockInstructionLiveness>);
@@ -205,7 +166,8 @@ impl InstructionLiveness {
                     }
                 }
 
-                // Every live out instruction that is not defined in this block must also be live in.
+                // Every live out instruction that is not defined in this block must also be live
+                // in.
                 for &inst_id in &*live_out {
                     if !definitions.contains(&inst_id) {
                         changed |= live_in.insert(inst_id);
@@ -214,6 +176,8 @@ impl InstructionLiveness {
             }
         }
 
+        // Find the concrete instruction ranges using the computed live-in / live-out sets.
+
         let mut block_ranges = SecondaryMap::new();
         for &block_id in &post_order {
             let block = &ir.parts.blocks[block_id];
@@ -221,12 +185,15 @@ impl InstructionLiveness {
             let live_out = &block_live_out[block_id];
 
             let mut ranges = BlockInstructionLiveness::default();
-            let mut mark_use = |inst_id, index| match ranges.0.entry(inst_id) {
+            let mut mark_use = |inst_id, index| match ranges.entry(inst_id) {
                 hash_map::Entry::Occupied(mut occupied) => {
-                    occupied.get_mut().1 = Some(index);
+                    occupied.get_mut().end = Some(index);
                 }
                 hash_map::Entry::Vacant(vacant) => {
-                    vacant.insert(InstructionLivenessRange(Some(index), Some(index)));
+                    vacant.insert(InstructionLivenessRange {
+                        start: Some(index),
+                        end: Some(index),
+                    });
                 }
             };
 
@@ -247,26 +214,28 @@ impl InstructionLiveness {
             }
 
             for &inst_id in live_in {
-                match ranges.0.entry(inst_id) {
+                match ranges.entry(inst_id) {
                     hash_map::Entry::Occupied(mut occupied) => {
-                        occupied.get_mut().0 = None;
+                        occupied.get_mut().start = None;
                     }
                     hash_map::Entry::Vacant(vacant) => {
                         assert!(
                             live_out.contains(&inst_id),
                             "unused instruction in live-in set must be in live-out set"
                         );
-                        vacant.insert(InstructionLivenessRange(None, None));
+                        vacant.insert(InstructionLivenessRange {
+                            start: None,
+                            end: None,
+                        });
                     }
                 }
             }
 
             for &inst_id in live_out {
                 ranges
-                    .0
                     .get_mut(&inst_id)
                     .expect("unused instruction in live-out set must be in live-in set")
-                    .1 = None;
+                    .end = None;
             }
 
             block_ranges.insert(block_id, ranges);
@@ -274,16 +243,24 @@ impl InstructionLiveness {
 
         // We verified that every instruction dominates is uses, so the start block should have no
         // live-in instructions.
-        assert_eq!(block_ranges[ir.start_block].live_in().count(), 0);
+        assert_eq!(
+            block_ranges[ir.start_block]
+                .values()
+                .filter(|r| r.start.is_none())
+                .count(),
+            0
+        );
 
         Ok(Self(block_ranges))
     }
 
     /// Get the instruction liveness information for the given block.
     ///
-    /// If a block is dead (unreachable from the IR start block), this will not return liveness
-    /// information for that block.
-    pub fn block_ranges(&self, block_id: ir::BlockId) -> Option<&BlockInstructionLiveness> {
+    /// If a block is dead (unreachable from the IR start block), this return `None`.
+    pub fn block_instruction_liveness(
+        &self,
+        block_id: ir::BlockId,
+    ) -> Option<&BlockInstructionLiveness> {
         self.0.get(block_id)
     }
 }

@@ -83,21 +83,22 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
 
     for &block_id in &block_order {
         let block = &ir.parts.blocks[block_id];
-        let block_inst_liveness = instruction_liveness.block_ranges(block_id).unwrap();
+        let block_inst_liveness = instruction_liveness
+            .block_instruction_liveness(block_id)
+            .unwrap();
 
         let mut live_in_registers = HashSet::new();
 
         let mut life_starts = HashMap::new();
         let mut life_ends = HashMap::new();
-        for inst_id in block_inst_liveness.live_instructions() {
-            let range = block_inst_liveness.range(inst_id).unwrap();
-            if let Some(start) = range.start_bound() {
+        for (&inst_id, &range) in block_inst_liveness {
+            if let Some(start) = range.start {
                 assert!(life_starts.insert(start, inst_id).is_none());
             } else {
                 live_in_registers.insert(*assigned_registers.get(inst_id).unwrap());
             }
 
-            if let Some(end) = range.end_bound() {
+            if let Some(end) = range.end {
                 let life_ends = life_ends
                     .entry(end)
                     .or_insert_with(|| ArrayVec::<InstId, { MAX_INSTRUCTION_SOURCES + 1 }>::new());
