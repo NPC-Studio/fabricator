@@ -92,11 +92,11 @@ impl ShadowLiveness {
     ///
     /// Certain `Upsilon` instructions may be "dead" within the IR, and this is not considered
     /// invalid. A "dead" `Upsilon` instruction will exist *outside* of the reported shadow variable
-    /// range, and this should be taken to mean that the given `Upsilon` instruction cannot
-    /// possibly have an effect on the value of a future `Phi`. Dead `Upsilon` instructions will
-    /// be post-dominated by another `Upsilon` instruction closer to the `Phi` shadow variable that
-    /// they write to.
-    pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, PhiUpsilonVerificationError> {
+    /// range, and this should be taken to mean that the given `Upsilon` instruction cannot possibly
+    /// have an effect on the value of a future `Phi`. Dead `Upsilon` instructions will either be
+    /// post-dominated by another `Upsilon` instruction closer to the `Phi` that they write to, or
+    /// there is no path in the CFG from the `Upsilon` to the `Phi` it writes to.
+    pub fn compute<S>(_ir: &ir::Function<S>) -> Result<Self, PhiUpsilonVerificationError> {
         unimplemented!()
     }
 
