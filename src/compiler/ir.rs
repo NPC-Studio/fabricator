@@ -8,9 +8,10 @@ use crate::{
 };
 
 new_id_type! {
-    pub struct VarId;
     pub struct BlockId;
     pub struct InstId;
+    pub struct VarId;
+    pub struct ShadowVarId;
 }
 
 pub type Offset = i32;
@@ -37,6 +38,58 @@ pub enum BinComp {
     GreaterEqual,
 }
 
+/// A single IR instruction.
+///
+/// Instructions are only allowed to appear in *once* across an entire IR.
+///
+/// IR instructions are always in SSA (Single Static Assignment) form and thus have an implicit
+/// "output variable". Other instructions that use the output of a previous instruction will
+/// reference that instruction directly via `InstId`.
+///
+/// In order for the IR to be well-formed, instructions are only allowed to appear *once* in an
+/// entire IR, or in other words, the same `InstId` cannot be re-used either in the same block
+/// or in different blocks. Also, all uses of an instruction must be "dominated" by its singular
+/// definition -- in other words, all paths through the CFG (Control Flow Graph) starting with
+/// `start_block` that reach any use of an instruction must always pass through its definition.
+///
+/// # SSA Form
+///
+/// SSA form requires that join points in the CFG have special instructions to select between
+/// different data definitions depending on the path in the CFG that was taken. These are normally
+/// called "phi functions" and are described by Cytron et al. here:
+///
+/// https://dl.acm.org/doi/pdf/10.1145/115372.115320
+///
+/// We use a slight modification to this system here. Instead of "phi" instructions referencing
+/// the instructions they select between, instead a separate "upsilon" instruction writes to a
+/// "shadow variable" that is present for every `Phi` instruction. The `ShadowId` type is the unique
+/// identifier for this shadow variable in a single phi instruction.
+///
+/// This phi / upsilon SSA form was invented by Filip Pizlo is more deeply explained in this
+/// document (where he calls it "pizlo-form"):
+///
+/// https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d
+///
+/// In order for the IR to be well-formed, any `ShadowId` identifier must be unique, owned by a
+/// *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used only
+/// once by a unique `Phi` instruction.
+///
+/// # Variables
+///
+/// IR "variables" represent notionally heap allocated values that are an escape hatch for SSA form.
+/// Each `VarId` references a unique variable, and `GetVariable` and `SetVariable` instructions read
+/// from and write to these variables.
+///
+/// The output of the compiler will use IR variables to represent actual variables in code, and
+/// will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
+/// `Upsilon` instructions.
+///
+/// Normally, all IR variables can be converted into SSA form in this way, however it is allowed
+/// and normal for them to still be present during codegen! IR variables are also a way to represent
+/// values shared mutably across separate closures, and they may remain after optimization if any
+/// such shared values are present. Any `VarId` that remains after optimization really will be
+/// turned into a heap allocated variable, allowing them to be mutably shared between different
+/// closures with potentially different lifetimes.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Instruction<S> {
     Constant(Constant<S>),
@@ -45,6 +98,8 @@ pub enum Instruction<S> {
         source: InstId,
         dest: VarId,
     },
+    Phi(ShadowVarId),
+    Upsilon(ShadowVarId, InstId),
     UnOp {
         source: InstId,
         op: UnOp,
@@ -80,6 +135,8 @@ impl<S> Instruction<S> {
             Instruction::SetVariable { source, .. } => {
                 sources.push(*source);
             }
+            Instruction::Phi(_) => {}
+            Instruction::Upsilon(_, source) => sources.push(*source),
             Instruction::UnOp { source, .. } => {
                 sources.push(*source);
             }
@@ -108,6 +165,8 @@ impl<S> Instruction<S> {
             Instruction::Constant(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
+            Instruction::Phi(_) => true,
+            Instruction::Upsilon(_, _) => false,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
             Instruction::BinComp { .. } => true,
@@ -227,6 +286,12 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetVariable { source, dest } => {
                         writeln!(f, "set_var(V{}, I{})", dest.index(), source.index())?;
+                    }
+                    Instruction::Phi(shadow) => {
+                        writeln!(f, "phi(S{})", shadow.index())?;
+                    }
+                    Instruction::Upsilon(shadow, source) => {
+                        writeln!(f, "upsilon(S{}, I{})", shadow.index(), source.index())?;
                     }
                     Instruction::UnOp { source, op } => match op {
                         UnOp::Not => {

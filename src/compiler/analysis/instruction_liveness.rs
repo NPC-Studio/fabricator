@@ -89,25 +89,24 @@ impl BlockInstructionLiveness {
 pub struct InstructionLiveness(SecondaryMap<ir::BlockId, BlockInstructionLiveness>);
 
 impl InstructionLiveness {
-    /// Compute instruction liveness ranges for every block in the given `ir::Function`.
+    /// Compute instruction liveness ranges for every block in the given IR.
     ///
-    /// This also verifies all instructions within the function and their use, namely that:
-    ///   1) No instruction appears in more than once within all blocks.
+    /// This also verifies all instructions within the IR and their use, namely that:
+    ///   1) No instruction appears more than once within all blocks.
     ///   2) Every instruction and branch source is dominated by its definition.
     ///   3) No instruction source is of type `Void`.
-    pub fn compute<S>(function: &ir::Function<S>) -> Result<Self, InstructionVerificationError> {
-        let block_dominance = Dominators::compute(function.start_block, |b| {
-            function.parts.blocks[b].exit.successors()
-        });
+    pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, InstructionVerificationError> {
+        let block_dominance =
+            Dominators::compute(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
 
-        let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = function
+        let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = ir
             .parts
             .blocks
             .ids()
             .map(|id| (id, HashSet::new()))
             .collect();
 
-        let mut block_uses: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = function
+        let mut block_uses: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = ir
             .parts
             .blocks
             .ids()
@@ -115,7 +114,7 @@ impl InstructionLiveness {
             .collect();
 
         let mut inst_positions = SecondaryMap::new();
-        for (block_id, block) in function.parts.blocks.iter() {
+        for (block_id, block) in ir.parts.blocks.iter() {
             let block_definitions = block_definitions.get_mut(block_id).unwrap();
             let block_uses = block_uses.get_mut(block_id).unwrap();
 
@@ -124,7 +123,7 @@ impl InstructionLiveness {
                     return Err(InstructionVerificationError::InstructionReused);
                 }
 
-                let inst = &function.parts.instructions[inst_id];
+                let inst = &ir.parts.instructions[inst_id];
 
                 if inst.has_value() {
                     block_definitions.insert(inst_id);
@@ -136,12 +135,12 @@ impl InstructionLiveness {
             }
         }
 
-        for (block_id, block) in function.parts.blocks.iter() {
+        for (block_id, block) in ir.parts.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                let inst = &function.parts.instructions[inst_id];
+                let inst = &ir.parts.instructions[inst_id];
 
                 for source_inst in inst.sources() {
-                    if !function.parts.instructions[source_inst].has_value() {
+                    if !ir.parts.instructions[source_inst].has_value() {
                         return Err(InstructionVerificationError::SourceIsVoid);
                     }
 
@@ -176,9 +175,7 @@ impl InstructionLiveness {
         // I can't find the original source for this algorithm, but it is in lecture notes here:
         // https://www.cs.mcgill.ca/~cs520/2021/slides/16-liveness.pdf
 
-        let post_order = dfs_post_order(function.start_block, |id| {
-            function.parts.blocks[id].exit.successors()
-        });
+        let post_order = dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
 
         let mut block_live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
@@ -192,7 +189,7 @@ impl InstructionLiveness {
                 let live_out = block_live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
-                for succ in function.parts.blocks[block_id].exit.successors() {
+                for succ in ir.parts.blocks[block_id].exit.successors() {
                     for &inst_id in &block_live_in[succ] {
                         changed |= live_out.insert(inst_id);
                     }
@@ -219,7 +216,7 @@ impl InstructionLiveness {
 
         let mut block_ranges = SecondaryMap::new();
         for &block_id in &post_order {
-            let block = &function.parts.blocks[block_id];
+            let block = &ir.parts.blocks[block_id];
             let live_in = &block_live_in[block_id];
             let live_out = &block_live_out[block_id];
 
@@ -234,7 +231,7 @@ impl InstructionLiveness {
             };
 
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                let inst = &function.parts.instructions[inst_id];
+                let inst = &ir.parts.instructions[inst_id];
 
                 if inst.has_value() {
                     mark_use(inst_id, inst_index);
@@ -277,15 +274,15 @@ impl InstructionLiveness {
 
         // We verified that every instruction dominates is uses, so the start block should have no
         // live-in instructions.
-        assert_eq!(block_ranges[function.start_block].live_in().count(), 0);
+        assert_eq!(block_ranges[ir.start_block].live_in().count(), 0);
 
         Ok(Self(block_ranges))
     }
 
     /// Get the instruction liveness information for the given block.
     ///
-    /// If a block is dead (unreachable from the function start block), this will not return
-    /// liveness information for that block.
+    /// If a block is dead (unreachable from the IR start block), this will not return liveness
+    /// information for that block.
     pub fn block_ranges(&self, block_id: ir::BlockId) -> Option<&BlockInstructionLiveness> {
         self.0.get(block_id)
     }

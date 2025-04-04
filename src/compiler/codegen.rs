@@ -34,12 +34,12 @@ pub enum CodegenError {
     JumpOutOfRange,
 }
 
-pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
-    let instruction_liveness = InstructionLiveness::compute(&function)?;
+pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
+    let instruction_liveness = InstructionLiveness::compute(&ir)?;
 
     let mut heap_vars = SecondaryMap::<VarId, HeapIdx>::new();
     let mut heap_index = 0;
-    for var_id in function.parts.variables.ids() {
+    for var_id in ir.parts.variables.ids() {
         heap_vars.insert(var_id, heap_index);
         heap_index = heap_index
             .checked_add(1)
@@ -49,9 +49,9 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
     let mut constants = Vec::new();
     let mut constant_indexes = HashMap::<Constant<String<'gc>>, ConstIdx>::new();
 
-    for block in function.parts.blocks.values() {
+    for block in ir.parts.blocks.values() {
         for &inst_id in &block.instructions {
-            if let ir::Instruction::Constant(c) = function.parts.instructions[inst_id] {
+            if let ir::Instruction::Constant(c) = ir.parts.instructions[inst_id] {
                 if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c) {
                     vacant.insert(
                         constants
@@ -67,9 +67,8 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
 
     // The reverse of DFS post-order is a topological ordering, we want to iterate from the top
     // down.
-    let mut block_order = dfs_post_order(function.start_block, |id| {
-        function.parts.blocks[id].exit.successors()
-    });
+    let mut block_order =
+        dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
     block_order.reverse();
 
     let block_order_indexes: HashMap<BlockId, usize> = block_order
@@ -83,7 +82,7 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
     let mut used_registers = 0;
 
     for &block_id in &block_order {
-        let block = &function.parts.blocks[block_id];
+        let block = &ir.parts.blocks[block_id];
         let block_inst_liveness = instruction_liveness.block_ranges(block_id).unwrap();
 
         let mut live_in_registers = HashSet::new();
@@ -137,11 +136,11 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
     let mut block_vm_jumps = Vec::new();
 
     for (order_index, &block_id) in block_order.iter().enumerate() {
-        let block = &function.parts.blocks[block_id];
+        let block = &ir.parts.blocks[block_id];
         block_vm_starts.insert(block_id, vm_instructions.len());
 
         for &inst_id in &block.instructions {
-            match function.parts.instructions[inst_id] {
+            match ir.parts.instructions[inst_id] {
                 ir::Instruction::Constant(c) => {
                     vm_instructions.push(Instruction::LoadConstant {
                         constant: constant_indexes[&c],
@@ -160,6 +159,8 @@ pub fn generate<'gc>(function: ir::Function<String<'gc>>) -> Result<Prototype<'g
                         heap: heap_vars[dest],
                     });
                 }
+                ir::Instruction::Phi(_) => unimplemented!(),
+                ir::Instruction::Upsilon(_, _) => unimplemented!(),
                 ir::Instruction::UnOp { source, op } => {
                     let output_reg = assigned_registers[inst_id];
                     match op {
