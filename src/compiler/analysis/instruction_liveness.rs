@@ -25,8 +25,7 @@ pub enum InstructionVerificationError {
 pub struct InstructionLivenessRange {
     /// The instruction index in the block at which the instruction becomes live.
     ///
-    /// If `None`, then this instruction is defined in a predecessor to this block and is in the
-    /// "live in" set.
+    /// If `None`, then this instruction is defined in a predecessor to this block.
     ///
     /// If this is `Some`, then this index will contain the instruction itself. All uses of an
     /// instruction must come after it, so the beginning of the range is always the instruction
@@ -35,12 +34,18 @@ pub struct InstructionLivenessRange {
 
     /// The instruction index in the block after which the instruction becomes dead.
     ///
-    /// If `None`, then this instruction is used by a successor to this block and is in the "live
-    /// out" set.
+    /// If `None`, then this instruction is used by a successor to this block.
     ///
     /// This may return the index for the special `Exit` instruction, which is 1 past the end of the
     /// normal block instruction list.
     pub end: Option<usize>,
+}
+
+impl InstructionLivenessRange {
+    pub fn is_live(&self, inst_index: usize) -> bool {
+        self.start.is_none_or(|start| inst_index >= start)
+            && self.end.is_none_or(|end| inst_index <= end)
+    }
 }
 
 /// If an instruction is live anywhere within a block, it will have an entry here.
@@ -257,10 +262,7 @@ impl InstructionLiveness {
     /// Get the instruction liveness information for the given block.
     ///
     /// If a block is dead (unreachable from the IR start block), this return `None`.
-    pub fn block_instruction_liveness(
-        &self,
-        block_id: ir::BlockId,
-    ) -> Option<&BlockInstructionLiveness> {
+    pub fn block_liveness(&self, block_id: ir::BlockId) -> Option<&BlockInstructionLiveness> {
         self.0.get(block_id)
     }
 }

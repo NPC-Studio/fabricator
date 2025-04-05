@@ -82,10 +82,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
     ) -> Result<(), CompileError> {
         let var_id = self.declare_var(var_statement.name.clone());
         let inst_id = self.commit_expression(&var_statement.value)?;
-        self.push_instruction(ir::Instruction::SetVariable {
-            source: inst_id,
-            dest: var_id,
-        });
+        self.push_instruction(ir::Instruction::SetVariable(var_id, inst_id));
         Ok(())
     }
 
@@ -117,10 +114,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::AssignmentOperator::MultEqual => unimplemented!(),
             parser::AssignmentOperator::DivEqual => unimplemented!(),
         };
-        self.push_instruction(ir::Instruction::SetVariable {
-            source: assign,
-            dest: var,
-        });
+        self.push_instruction(ir::Instruction::SetVariable(var, assign));
         Ok(())
     }
 

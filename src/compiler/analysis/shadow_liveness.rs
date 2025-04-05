@@ -25,13 +25,13 @@ pub struct ShadowIncomingRange {
     /// If this is `Some`, then this instruction is always an `Upsilon`. Since we are in the same
     /// block as the `Phi` instruction, the upsilon / phi pair are local to this block and this is
     /// the *entire* range of the shadow variable (all other `Upsilon` instructions are dead).
-    start: Option<usize>,
+    pub start: Option<usize>,
 
     /// The instruction index in the block at which the shadow variable becomes dead (if there is
     /// not an overlapping outgoing range).
     ///
     /// This is always the single `Phi` instruction containing the shadow variable.
-    end: usize,
+    pub end: usize,
 }
 
 /// The liveness range of a shadow variable within a block going from an `Upsilon` instruction out
@@ -67,6 +67,26 @@ pub struct ShadowLivenessRange {
     /// It is also possible for the incoming and outgoing ranges to *overlap*, if the closest
     /// `Upsilon` instruction is before the `Phi` instruction (or in a predecessor block).
     pub outgoing_range: Option<ShadowOutgoingRange>,
+}
+
+impl ShadowLivenessRange {
+    pub fn is_live(&self, inst_index: usize) -> bool {
+        if let Some(incoming_range) = self.incoming_range {
+            if incoming_range.start.is_none_or(|start| inst_index >= start) {
+                if inst_index <= incoming_range.end {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(outgoing_range) = self.outgoing_range {
+            if outgoing_range.start.is_none_or(|start| inst_index >= start) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 /// If a shadow variable is live anywhere within a block, it will have an entry here.
@@ -255,7 +275,10 @@ impl ShadowLiveness {
     /// Get the shadow variable liveness information for the given block.
     ///
     /// If a block is dead (unreachable from the IR start block), this return `None`.
-    pub fn block_shadow_liveness(&self, block_id: ir::BlockId) -> Option<&BlockShadowLiveness> {
+    ///
+    /// Will only return shadow liveness entries for shadow variables which are live somewhere in
+    /// the block.
+    pub fn block_liveness(&self, block_id: ir::BlockId) -> Option<&BlockShadowLiveness> {
         self.0.get(block_id)
     }
 }

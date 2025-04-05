@@ -96,10 +96,7 @@ pub enum BinComp {
 pub enum Instruction<S> {
     Constant(Constant<S>),
     GetVariable(VarId),
-    SetVariable {
-        source: InstId,
-        dest: VarId,
-    },
+    SetVariable(VarId, InstId),
     Phi(ShadowVarId),
     Upsilon(ShadowVarId, InstId),
     UnOp {
@@ -134,7 +131,7 @@ impl<S> Instruction<S> {
         match self {
             Instruction::Constant(_) => {}
             Instruction::GetVariable(_) => {}
-            Instruction::SetVariable { source, .. } => {
+            Instruction::SetVariable(_, source) => {
                 sources.push(*source);
             }
             Instruction::Phi(_) => {}
@@ -241,6 +238,7 @@ pub struct FunctionParts<S> {
     pub instructions: IdMap<InstId, Instruction<S>>,
     pub blocks: IdMap<BlockId, Block>,
     pub variables: IdMap<VarId, ()>,
+    pub shadow_vars: IdMap<ShadowVarId, ()>,
 }
 
 impl<S> Default for FunctionParts<S> {
@@ -249,6 +247,7 @@ impl<S> Default for FunctionParts<S> {
             instructions: Default::default(),
             blocks: Default::default(),
             variables: Default::default(),
+            shadow_vars: Default::default(),
         }
     }
 }
@@ -286,8 +285,8 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::GetVariable(var_id) => {
                         writeln!(f, "get_var(V{})", var_id.index())?;
                     }
-                    Instruction::SetVariable { source, dest } => {
-                        writeln!(f, "set_var(V{}, I{})", dest.index(), source.index())?;
+                    Instruction::SetVariable(var, source) => {
+                        writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
                     }
                     Instruction::Phi(shadow) => {
                         writeln!(f, "phi(S{})", shadow.index())?;
