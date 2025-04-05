@@ -138,39 +138,39 @@ impl InstructionLiveness {
 
         let post_order = dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
 
-        let mut block_live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
+        let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
-        let mut block_live_out = block_live_in.clone();
+        let mut live_out = live_in.clone();
 
         let mut changed = true;
         while changed {
             changed = false;
 
             for &block_id in &post_order {
-                let live_out = block_live_out.get_mut(block_id).unwrap();
+                let block_live_out = live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
                 for succ in ir.parts.blocks[block_id].exit.successors() {
-                    for &inst_id in &block_live_in[succ] {
-                        changed |= live_out.insert(inst_id);
+                    for &inst_id in &live_in[succ] {
+                        changed |= block_live_out.insert(inst_id);
                     }
                 }
 
-                let live_in = block_live_in.get_mut(block_id).unwrap();
+                let block_live_in = live_in.get_mut(block_id).unwrap();
                 let definitions = &block_definitions[block_id];
 
                 // Every used instruction which is not defined in this block must be live in.
                 for &inst_id in &block_uses[block_id] {
                     if !definitions.contains(&inst_id) {
-                        changed |= live_in.insert(inst_id);
+                        changed |= block_live_in.insert(inst_id);
                     }
                 }
 
                 // Every live out instruction that is not defined in this block must also be live
                 // in.
-                for &inst_id in &*live_out {
+                for &inst_id in &*block_live_out {
                     if !definitions.contains(&inst_id) {
-                        changed |= live_in.insert(inst_id);
+                        changed |= block_live_in.insert(inst_id);
                     }
                 }
             }
@@ -181,8 +181,8 @@ impl InstructionLiveness {
         let mut block_ranges = SecondaryMap::new();
         for &block_id in &post_order {
             let block = &ir.parts.blocks[block_id];
-            let live_in = &block_live_in[block_id];
-            let live_out = &block_live_out[block_id];
+            let live_in = &live_in[block_id];
+            let live_out = &live_out[block_id];
 
             let mut ranges = BlockInstructionLiveness::default();
             let mut mark_use = |inst_id, index| match ranges.entry(inst_id) {
