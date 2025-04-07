@@ -48,14 +48,15 @@ impl RegisterAllocation {
         //
         // There are many potential improvements here...
         //
-        // We're doing this coloring eagerly here because there is little risk of running out of
-        // registers, but obviously better graph coloring algorithms exists.
+        // We're doing this coloring greedily (sequentially) here because there is little risk of
+        // running out of registers, but obviously better graph coloring algorithms exists.
         //
-        // More impactful is the fact that we are coalescing registers eagerly based on no
+        // More impactful is the fact that we are coalescing registers greedily based on no
         // heuristics at all, we could look for which registers have the most potential copies and
         // start with those. Also, we could be smarter and if not enough coalesce-able registers can
         // coalesce, pick a different, "more unique" register for the shadow variable. Both of these
-        // really are extensions of the fact that we do register assignment completely eagerly.
+        // really are extensions of the fact that we do register assignment in a completely greedy
+        // fashion.
 
         let mut coalesced_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
         let mut assigned_shadow_registers = SecondaryMap::<ir::ShadowVarId, RegIdx>::new();
@@ -175,7 +176,7 @@ impl RegisterAllocation {
                                 BlockRange::all_from_shadow_range(other_shadow_range)
                             {
                                 // As a special hack, if we have a range that starts with an
-                                // `Upsilon` instruction that we know is the *same* as the
+                                // `Upsilon` instruction whose source we know is the *same* as the
                                 // instruction we are trying to coalesce, we can skip interference
                                 // checking. Assigning the coalescing variable to any shadow
                                 // variable does not prevent them from sharing the same register.
@@ -187,13 +188,15 @@ impl RegisterAllocation {
                                 // this is the only place we can be sure without further analysis
                                 // that there is only assignment from the correct instruction.
                                 //
-                                // We should be able to do this analysis more generally by marking
-                                // which `Upsilon` instructions can possibly affect different shadow
-                                // variable ranges.
+                                // We should be able to do this more generally by marking which
+                                // `Upsilon` instructions can possibly affect different shadow
+                                // variable ranges when computing shadow variable liveness. Being
+                                // able to compare instructions against the full list of possible
+                                // `Upsilon` instructions would make this check not a hack.
                                 //
                                 // Frustratingly, there is very little information about this in the
                                 // literature for register allocation that I can find, and there may
-                                // be a more principled way to do this.
+                                // be an even more principled way to do this.
                                 let can_skip = if let Some(start) = other_shadow_range.start {
                                     let ir::Instruction::Upsilon(_, source_inst_id) =
                                         ir.parts.instructions
