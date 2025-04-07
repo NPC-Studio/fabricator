@@ -39,7 +39,7 @@ impl RegisterAllocation {
         // First, we assign shadow variables and the instructions they can coalesce with via graph
         // coloring.
         //
-        // We need to check every single shadow register to see if it conflicts with any other
+        // We need to check every single shadow register to see if it interferes with any other
         // shadow register or coalesced instruction register and color it differently if it does.
         // Also, we need to check potential coalescing instruction registers for conflicts here too,
         // and we potentially won't be able to coalesce if there are conflicts.
@@ -109,7 +109,7 @@ impl RegisterAllocation {
             let assigned_reg = interfering_registers
                 .bit_iter()
                 .enumerate()
-                .find(|(_, conflicting)| !conflicting)?
+                .find(|(_, interfering)| !interfering)?
                 .0 as u8;
             assigned_shadow_registers.insert(shadow_var_id, assigned_reg);
 
@@ -143,11 +143,11 @@ impl RegisterAllocation {
                 }
             }
 
-            // For each instruction we would like to coalesce, check if it interferes with any
-            // shadow variable that shares the assigned register (this will also check for conflicts
-            // with the current shadow variable), and then also check if it interferes with any
-            // instruction we have already decided to coalesce. If there are no conflicts, then
-            // decide to coalesce this instruction.
+            // For each instruction we would like to coalesce, check if it interferes with
+            // any shadow variable that shares the assigned register (this will also check for
+            // interference with the current shadow variable), and then also check if it interferes
+            // with any instruction we have already decided to coalesce. If there are no conflicts,
+            // then decide to coalesce this instruction.
 
             let mut coalesced_instructions = Vec::new();
             for &inst_id in &coalescing_instructions {
@@ -160,6 +160,7 @@ impl RegisterAllocation {
                         for (other_shadow_var_id, &other_shadow_reg) in
                             assigned_shadow_registers.iter()
                         {
+                            // We can't possibly interfere if we aren't using the same register.
                             if other_shadow_reg != assigned_reg {
                                 continue;
                             }
@@ -177,7 +178,7 @@ impl RegisterAllocation {
                                 // `Upsilon` instruction that we know is the *same* as the
                                 // instruction we are trying to coalesce, we can skip interference
                                 // checking. Assigning the coalescing variable to any shadow
-                                // variable does not cause interference.
+                                // variable does not prevent them from sharing the same register.
                                 //
                                 // NOTE:
                                 //

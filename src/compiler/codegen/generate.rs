@@ -98,20 +98,20 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
             match ir.parts.instructions[inst_id] {
                 ir::Instruction::Constant(c) => {
                     vm_instructions.push(Instruction::LoadConstant {
-                        constant: constant_indexes[&c],
                         dest: reg_alloc.instruction_registers[inst_id],
+                        constant: constant_indexes[&c],
                     });
                 }
                 ir::Instruction::GetVariable(var_id) => {
                     vm_instructions.push(Instruction::GetHeap {
-                        heap: heap_vars[var_id],
                         dest: reg_alloc.instruction_registers[inst_id],
+                        heap: heap_vars[var_id],
                     });
                 }
                 ir::Instruction::SetVariable(dest, source) => {
                     vm_instructions.push(Instruction::SetHeap {
-                        source: reg_alloc.instruction_registers[source],
                         heap: heap_vars[dest],
+                        source: reg_alloc.instruction_registers[source],
                     });
                 }
                 ir::Instruction::Phi(shadow_id) => {
@@ -119,8 +119,8 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     let dest_reg = reg_alloc.instruction_registers[inst_id];
                     if shadow_reg != dest_reg {
                         vm_instructions.push(Instruction::Move {
-                            source: reg_alloc.shadow_registers[shadow_id],
                             dest: reg_alloc.instruction_registers[inst_id],
+                            source: reg_alloc.shadow_registers[shadow_id],
                         });
                     }
                 }
@@ -133,8 +133,8 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {
                             vm_instructions.push(Instruction::Move {
-                                source: reg_alloc.instruction_registers[source],
                                 dest: reg_alloc.shadow_registers[shadow_id],
+                                source: reg_alloc.instruction_registers[source],
                             });
                         }
                     }
@@ -144,8 +144,8 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     match op {
                         ir::UnOp::Not => {
                             vm_instructions.push(Instruction::Not {
-                                arg: reg_alloc.instruction_registers[source],
                                 dest: output_reg,
+                                arg: reg_alloc.instruction_registers[source],
                             });
                         }
                     }
@@ -155,16 +155,16 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     match op {
                         ir::BinOp::Add => {
                             vm_instructions.push(Instruction::Add {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                         ir::BinOp::Sub => {
                             vm_instructions.push(Instruction::Sub {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                     }
@@ -174,44 +174,44 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     match comp {
                         ir::BinComp::LessThan => {
                             vm_instructions.push(Instruction::TestLess {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                         ir::BinComp::LessEqual => {
                             vm_instructions.push(Instruction::TestLessEqual {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                         ir::BinComp::Equal => {
                             vm_instructions.push(Instruction::TestEqual {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                         ir::BinComp::NotEqual => {
                             vm_instructions.push(Instruction::TestNotEqual {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
-                                dest: output_reg,
                             });
                         }
                         ir::BinComp::GreaterThan => {
                             vm_instructions.push(Instruction::TestLessEqual {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],
-                                dest: output_reg,
                             });
                         }
                         ir::BinComp::GreaterEqual => {
                             vm_instructions.push(Instruction::TestLess {
+                                dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],
-                                dest: output_reg,
                             });
                         }
                     }

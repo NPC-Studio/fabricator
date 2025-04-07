@@ -147,37 +147,37 @@ fn dispatch<'gc>(
         type Error = VmError;
 
         #[inline]
-        fn load_constant(&mut self, constant: ConstIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.constants[constant as usize].to_value();
             Ok(())
         }
 
         #[inline]
-        fn get_heap(&mut self, heap: HeapIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.heap[heap as usize].get();
             Ok(())
         }
 
         #[inline]
-        fn set_heap(&mut self, source: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
+        fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
             Ok(())
         }
 
         #[inline]
-        fn move_(&mut self, source: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn move_(&mut self, dest: RegIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[source as usize];
             Ok(())
         }
 
         #[inline]
-        fn not(&mut self, arg: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Boolean(self.registers[arg as usize].to_bool());
             Ok(())
         }
 
         #[inline]
-        fn add(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn add(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
@@ -186,7 +186,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn sub(&mut self, arg1: RegIdx, arg2: RegIdx, dest: RegIdx) -> Result<(), Self::Error> {
+        fn sub(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
@@ -197,9 +197,9 @@ fn dispatch<'gc>(
         #[inline]
         fn test_equal(
             &mut self,
+            dest: RegIdx,
             arg1: RegIdx,
             arg2: RegIdx,
-            dest: RegIdx,
         ) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
@@ -211,9 +211,9 @@ fn dispatch<'gc>(
         #[inline]
         fn test_not_equal(
             &mut self,
+            dest: RegIdx,
             arg1: RegIdx,
             arg2: RegIdx,
-            dest: RegIdx,
         ) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
@@ -225,9 +225,9 @@ fn dispatch<'gc>(
         #[inline]
         fn test_less(
             &mut self,
+            dest: RegIdx,
             arg1: RegIdx,
             arg2: RegIdx,
-            dest: RegIdx,
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Boolean(
                 self.registers[arg1 as usize]
@@ -240,9 +240,9 @@ fn dispatch<'gc>(
         #[inline]
         fn test_less_equal(
             &mut self,
+            dest: RegIdx,
             arg1: RegIdx,
             arg2: RegIdx,
-            dest: RegIdx,
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Boolean(
                 self.registers[arg1 as usize]

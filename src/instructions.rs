@@ -7,17 +7,17 @@ pub type ConstIdx = u16;
 macro_rules! for_each_instruction {
     ($macro:ident) => {
         $macro! {
-            simple => load_constant = LoadConstant { constant: ConstIdx, dest: RegIdx };
-            simple => get_heap = GetHeap { heap: HeapIdx, dest: RegIdx };
-            simple => set_heap = SetHeap { source: RegIdx, heap: HeapIdx };
-            simple => move_ = Move { source: RegIdx, dest: RegIdx };
-            simple => not = Not { arg: RegIdx, dest: RegIdx };
-            simple => add = Add { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
-            simple => sub = Sub { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
-            simple => test_equal = TestEqual { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
-            simple => test_not_equal = TestNotEqual { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
-            simple => test_less = TestLess { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
-            simple => test_less_equal = TestLessEqual { arg1: RegIdx, arg2: RegIdx, dest: RegIdx };
+            simple => load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
+            simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
+            simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
+            simple => move_ = Move { dest: RegIdx, source: RegIdx };
+            simple => not = Not { dest: RegIdx, arg: RegIdx };
+            simple => add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => sub = Sub { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => test_equal = TestEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => test_not_equal = TestNotEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => test_less = TestLess { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => test_less_equal = TestLessEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => push = Push { source: RegIdx, len: u8 };
             simple => pop = Pop { dest: RegIdx, len: u8 };
 
