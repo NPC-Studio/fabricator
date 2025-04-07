@@ -60,9 +60,9 @@ pub enum BinComp {
 ///
 /// https://dl.acm.org/doi/pdf/10.1145/115372.115320
 ///
-/// We use a slight modification to this system here. Instead of "phi" instructions referencing
-/// the instructions they select between, instead a separate "upsilon" instruction writes to a
-/// "shadow variable" that is present for every `Phi` instruction. The `ShadowId` type is the unique
+/// We use a slight modification to this system here. Instead of "phi" instructions referencing the
+/// instructions they select between, instead a separate "upsilon" instruction writes to a "shadow
+/// variable" that is present for every `Phi` instruction. The `ShadowVarId` type is the unique
 /// identifier for this shadow variable in a single phi instruction.
 ///
 /// This phi / upsilon SSA form was invented by Filip Pizlo is more deeply explained in this
@@ -70,8 +70,8 @@ pub enum BinComp {
 ///
 /// https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d
 ///
-/// In order for the IR to be well-formed, any `ShadowId` identifier must be unique, owned by a
-/// *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used
+/// In order for the IR to be well-formed, any `ShadowVarId` identifier must be unique, owned by
+/// a *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used
 /// only once by a unique `Phi` instruction. Additionally, all paths through the CFG starting with
 /// `start_block` that may reach a `Phi` instruction must have an `Upsilon` that assigns to that
 /// `Phi`'s shadow variable to ensure that it has a defined value.

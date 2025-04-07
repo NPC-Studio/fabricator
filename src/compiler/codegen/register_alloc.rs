@@ -105,7 +105,7 @@ impl RegisterAllocation {
                 }
             }
 
-            // Pick a register for this shadow variable
+            // Pick a non-interfering register for this shadow variable
 
             let assigned_reg = interfering_registers
                 .bit_iter()
@@ -197,7 +197,7 @@ impl RegisterAllocation {
                                 // Frustratingly, there is very little information about this in the
                                 // literature for register allocation that I can find, and there may
                                 // be an even more principled way to do this.
-                                let can_skip = if let Some(start) = other_shadow_range.start {
+                                let can_skip = other_shadow_range.start.is_some_and(|start| {
                                     let ir::Instruction::Upsilon(_, source_inst_id) =
                                         ir.parts.instructions
                                             [ir.parts.blocks[block_id].instructions[start]]
@@ -205,9 +205,7 @@ impl RegisterAllocation {
                                         unreachable!("all `start` fields in shadow ranges should be upsilon instructions");
                                     };
                                     source_inst_id == inst_id
-                                } else {
-                                    false
-                                };
+                                });
 
                                 if !can_skip && inst_range.interferes(other_shadow_range) {
                                     return true;

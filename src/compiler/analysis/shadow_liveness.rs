@@ -210,9 +210,9 @@ impl ShadowLiveness {
         }
 
         // This is a similar algorithm to the instruction liveness algorithm, but since we are no
-        // longer dealing with SSA, `Upsilon` instructions add their shadow variables to the KILL
-        // list (the term in traditional liveness analysis for the set of assigned variables, which
-        // stops previous instructions from needing the variable's current value).
+        // longer dealing with SSA, `Upsilon` instructions notionally add their shadow variables
+        // to the KILL list (the term in traditional liveness analysis for the set of assigned
+        // variables, which stops previous instructions from needing the variable's current value).
 
         let mut changed = true;
         while changed {
