@@ -413,6 +413,35 @@ impl<V> SecondaryMap<V> {
     }
 
     #[inline]
+    pub fn get_or_insert_with(&mut self, key: Id, f: impl FnOnce() -> V) -> &mut V {
+        if self.slots.len() <= key.index() as usize {
+            self.slots
+                .resize_with(key.index() as usize + 1, || SecondarySlot::Vacant);
+        }
+
+        let slot = &mut self.slots[key.index() as usize];
+
+        match slot {
+            SecondarySlot::Occupied { generation, .. } if *generation == key.generation() => {}
+            _ => {
+                let value = f();
+                if matches!(*slot, SecondarySlot::Vacant) {
+                    self.occupancy += 1;
+                }
+                *slot = SecondarySlot::Occupied {
+                    value,
+                    generation: key.generation(),
+                };
+            }
+        }
+
+        match slot {
+            SecondarySlot::Occupied { value, .. } => value,
+            SecondarySlot::Vacant => unreachable!(),
+        }
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.occupancy as usize
     }
@@ -555,5 +584,17 @@ mod tests {
 
         // Inserting `i3` should overwrite the entry for `i1`
         assert_eq!(secondary.insert(i3, 33), Some((i1, 11)));
+
+        assert_eq!(secondary.len(), 2);
+
+        let i4 = map.insert(4);
+        secondary.get_or_insert_with(i4, || 44);
+        assert_eq!(secondary.len(), 3);
+
+        map.remove(i2);
+        let i5 = map.insert(5);
+
+        secondary.get_or_insert_with(i5, || 55);
+        assert_eq!(secondary.len(), 3);
     }
 }

@@ -90,14 +90,12 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
 
     for &block_id in &block_order {
         let block = &ir.parts.blocks[block_id];
-        let block_inst_liveness = instruction_liveness.block_liveness(block_id).unwrap();
-        let block_shadow_liveness = shadow_liveness.block_liveness(block_id).unwrap();
 
         let mut live_in_registers = HashSet::new();
 
         let mut inst_life_starts = HashMap::new();
         let mut inst_life_ends = HashMap::new();
-        for (&inst_id, &range) in block_inst_liveness {
+        for (inst_id, range) in instruction_liveness.live_instructions_for_block(block_id) {
             if let Some(start) = range.start {
                 assert!(inst_life_starts.insert(start, inst_id).is_none());
             } else {
@@ -114,7 +112,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
 
         let mut shadow_life_starts = HashMap::new();
         let mut shadow_life_ends = HashMap::new();
-        for (&shadow_id, &range) in block_shadow_liveness {
+        for (shadow_id, range) in shadow_liveness.live_shadow_vars_for_block(block_id) {
             // This is extremely confusing, but the intention here is to find the earliest start
             // range for the shadow variable when accounting for incoming and outgoing range
             // overlap.
@@ -169,17 +167,17 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
             .collect::<Vec<_>>();
 
         for inst_index in 0..=block.instructions.len() {
+            for &inst_life_end in inst_life_ends.get(&inst_index).into_iter().flatten() {
+                available_registers
+                    .push(instruction_registers.get(inst_life_end).copied().unwrap());
+            }
+
             if let Some(&inst_life_start) = inst_life_starts.get(&inst_index) {
                 let reg = available_registers
                     .pop()
                     .ok_or(CodegenError::RegisterOverflow)?;
                 used_registers = used_registers.max(reg as usize + 1);
                 assert!(instruction_registers.insert(inst_life_start, reg).is_none());
-            }
-
-            for &inst_life_end in inst_life_ends.get(&inst_index).into_iter().flatten() {
-                available_registers
-                    .push(instruction_registers.get(inst_life_end).copied().unwrap());
             }
 
             if let Some(&shadow_life_start) = shadow_life_starts.get(&inst_index) {
@@ -231,8 +229,9 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     });
                 }
                 ir::Instruction::Upsilon(shadow_id, source) => {
-                    if shadow_liveness.block_liveness(block_id).unwrap()[&shadow_id]
-                        .is_live(inst_index)
+                    if shadow_liveness
+                        .shadow_var_live_range_in_block(block_id, shadow_id)
+                        .is_some_and(|r| r.is_live(inst_index))
                     {
                         vm_instructions.push(Instruction::Move {
                             source: instruction_registers[source],

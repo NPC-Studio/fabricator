@@ -48,11 +48,11 @@ impl InstructionLivenessRange {
     }
 }
 
-/// If an instruction is live anywhere within a block, it will have an entry here.
-pub type BlockInstructionLiveness = HashMap<ir::InstId, InstructionLivenessRange>;
-
 #[derive(Debug, Default)]
-pub struct InstructionLiveness(SecondaryMap<ir::BlockId, BlockInstructionLiveness>);
+pub struct InstructionLiveness {
+    block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::InstId, InstructionLivenessRange>>,
+    live_blocks_for_instruction: SecondaryMap<ir::InstId, HashSet<ir::BlockId>>,
+}
 
 impl InstructionLiveness {
     /// Compute instruction liveness ranges for every block in the given IR.
@@ -189,7 +189,7 @@ impl InstructionLiveness {
             let live_in = &live_in[block_id];
             let live_out = &live_out[block_id];
 
-            let mut ranges = BlockInstructionLiveness::default();
+            let mut ranges: HashMap<ir::InstId, InstructionLivenessRange> = HashMap::new();
             let mut mark_use = |inst_id, index| match ranges.entry(inst_id) {
                 hash_map::Entry::Occupied(mut occupied) => {
                     occupied.get_mut().end = Some(index);
@@ -256,13 +256,51 @@ impl InstructionLiveness {
             0
         );
 
-        Ok(Self(block_ranges))
+        let mut live_blocks_for_instruction = SecondaryMap::new();
+        for (block_id, ranges) in block_ranges.iter() {
+            for &inst_id in ranges.keys() {
+                live_blocks_for_instruction
+                    .get_or_insert_with(inst_id, HashSet::new)
+                    .insert(block_id);
+            }
+        }
+
+        Ok(Self {
+            block_liveness: block_ranges,
+            live_blocks_for_instruction,
+        })
     }
 
-    /// Get the instruction liveness information for the given block.
-    ///
-    /// If a block is dead (unreachable from the IR start block), this return `None`.
-    pub fn block_liveness(&self, block_id: ir::BlockId) -> Option<&BlockInstructionLiveness> {
-        self.0.get(block_id)
+    /// Returns all blocks and ranges within that block in which an instruction is live.
+    pub fn instruction_live_ranges(
+        &self,
+        inst_id: ir::InstId,
+    ) -> impl Iterator<Item = (ir::BlockId, InstructionLivenessRange)> + '_ {
+        self.live_blocks_for_instruction
+            .get(inst_id)
+            .into_iter()
+            .flatten()
+            .map(move |&block_id| (block_id, self.block_liveness[block_id][&inst_id]))
+    }
+
+    /// Returns all instructions that are live anywhere within the given block.
+    pub fn live_instructions_for_block(
+        &self,
+        block_id: ir::BlockId,
+    ) -> impl Iterator<Item = (ir::InstId, InstructionLivenessRange)> + '_ {
+        self.block_liveness
+            .get(block_id)
+            .into_iter()
+            .flatten()
+            .map(move |(&inst_id, &range)| (inst_id, range))
+    }
+
+    /// Returns the liveness range for a single instruction in the given block, if it is live there.
+    pub fn instruction_live_range_in_block(
+        &self,
+        block_id: ir::BlockId,
+        inst_id: ir::InstId,
+    ) -> Option<InstructionLivenessRange> {
+        Some(*self.block_liveness.get(block_id)?.get(&inst_id)?)
     }
 }

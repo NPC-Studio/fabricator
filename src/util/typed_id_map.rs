@@ -211,6 +211,11 @@ impl<I: Id, V> SecondaryMap<I, V> {
     }
 
     #[inline]
+    pub fn get_or_insert_with(&mut self, key: I, f: impl FnOnce() -> V) -> &mut V {
+        self.map.get_or_insert_with(key.into_id(), f)
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
     }
