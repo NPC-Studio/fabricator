@@ -49,6 +49,10 @@ pub struct ShadowOutgoingRange {
 }
 
 /// The liveness range of a shadow variable within a block.
+///
+/// All live `Upsilon` instructions will be at the `start` field of either `incoming_range`
+/// or `outgoing_range` for in some block, and the `Phi` instruction will be at the
+/// `incoming_range.end` field in some block.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub struct ShadowLivenessRange {
     /// If an incoming range is set, this block will always contain the `Phi` instruction, and this
@@ -286,6 +290,11 @@ impl ShadowLiveness {
             block_liveness,
             live_blocks_for_shadow_var,
         })
+    }
+
+    /// Returns all shadow variables live in any block
+    pub fn live_shadow_vars(&self) -> impl Iterator<Item = ir::ShadowVarId> + '_ {
+        self.live_blocks_for_shadow_var.ids()
     }
 
     /// Returns all blocks and ranges within that block in which an shadow variable is live.

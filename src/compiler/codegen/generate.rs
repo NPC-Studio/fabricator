@@ -1,24 +1,23 @@
-use std::collections::{hash_map, HashMap, HashSet};
+use std::collections::{hash_map, HashMap};
 
-use arrayvec::ArrayVec;
 use thiserror::Error;
 
 use crate::{
     bytecode::{self, ByteCode},
     closure::{self, Prototype},
     compiler::{
-        analysis::instruction_liveness::{InstructionLiveness, InstructionVerificationError},
+        analysis::{
+            instruction_liveness::{InstructionLiveness, InstructionVerificationError},
+            shadow_liveness::{PhiUpsilonVerificationError, ShadowLiveness},
+        },
+        codegen::register_alloc::RegisterAllocation,
         constant::Constant,
+        graph::dfs::dfs_post_order,
         ir,
     },
-    instructions::{ConstIdx, HeapIdx, Instruction, RegIdx},
+    instructions::{ConstIdx, HeapIdx, Instruction},
     util::typed_id_map::SecondaryMap,
     value::String,
-};
-
-use super::{
-    analysis::shadow_liveness::{PhiUpsilonVerificationError, ShadowLiveness},
-    graph::dfs::dfs_post_order,
 };
 
 #[derive(Debug, Error)]
@@ -42,6 +41,9 @@ pub enum CodegenError {
 pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(&ir)?;
     let shadow_liveness = ShadowLiveness::compute(&ir)?;
+
+    let reg_alloc = RegisterAllocation::allocate(&ir, &instruction_liveness, &shadow_liveness)
+        .ok_or(CodegenError::RegisterOverflow)?;
 
     let mut heap_vars = SecondaryMap::<ir::VarId, HeapIdx>::new();
     let mut heap_index = 0;
@@ -84,116 +86,6 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
         .map(|(i, b)| (b, i))
         .collect();
 
-    let mut instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
-    let mut shadow_registers = SecondaryMap::<ir::ShadowVarId, RegIdx>::new();
-    let mut used_registers = 0;
-
-    for &block_id in &block_order {
-        let block = &ir.parts.blocks[block_id];
-
-        let mut live_in_registers = HashSet::new();
-
-        let mut inst_life_starts = HashMap::new();
-        let mut inst_life_ends = HashMap::new();
-        for (inst_id, range) in instruction_liveness.live_instructions_for_block(block_id) {
-            if let Some(start) = range.start {
-                assert!(inst_life_starts.insert(start, inst_id).is_none());
-            } else {
-                live_in_registers.insert(*instruction_registers.get(inst_id).unwrap());
-            }
-
-            if let Some(end) = range.end {
-                let life_ends = inst_life_ends.entry(end).or_insert_with(|| {
-                    ArrayVec::<ir::InstId, { ir::MAX_INSTRUCTION_SOURCES + 1 }>::new()
-                });
-                life_ends.push(inst_id);
-            }
-        }
-
-        let mut shadow_life_starts = HashMap::new();
-        let mut shadow_life_ends = HashMap::new();
-        for (shadow_id, range) in shadow_liveness.live_shadow_vars_for_block(block_id) {
-            // This is extremely confusing, but the intention here is to find the earliest start
-            // range for the shadow variable when accounting for incoming and outgoing range
-            // overlap.
-            let start = if let Some(incoming_range) = range.incoming_range {
-                if let Some(incoming_start) = incoming_range.start {
-                    if let Some(outgoing_range) = range.outgoing_range {
-                        if let Some(outgoing_start) = outgoing_range.start {
-                            Some(incoming_start.min(outgoing_start))
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(incoming_start)
-                    }
-                } else {
-                    None
-                }
-            } else {
-                range.outgoing_range.unwrap().start
-            };
-
-            // Find the end of the liveness range, accounting for both the incoming and outgoing
-            // ranges.
-            //
-            // We are purposefully ignoring the potential liveness gap between the incoming and
-            // outgoing ranges.
-            let end = if range.outgoing_range.is_some() {
-                None
-            } else {
-                Some(range.incoming_range.unwrap().end)
-            };
-
-            if let Some(index) = start {
-                assert!(shadow_life_starts.insert(index, shadow_id).is_none());
-            } else {
-                live_in_registers.insert(*shadow_registers.get(shadow_id).unwrap());
-            }
-            if let Some(index) = end {
-                assert!(shadow_life_ends.insert(index, shadow_id).is_none());
-            }
-        }
-
-        let mut available_registers = (0u8..=255u8)
-            .rev()
-            .flat_map(|index| {
-                if live_in_registers.contains(&index) {
-                    None
-                } else {
-                    Some(index)
-                }
-            })
-            .collect::<Vec<_>>();
-
-        for inst_index in 0..=block.instructions.len() {
-            for &inst_life_end in inst_life_ends.get(&inst_index).into_iter().flatten() {
-                available_registers
-                    .push(instruction_registers.get(inst_life_end).copied().unwrap());
-            }
-
-            if let Some(&inst_life_start) = inst_life_starts.get(&inst_index) {
-                let reg = available_registers
-                    .pop()
-                    .ok_or(CodegenError::RegisterOverflow)?;
-                used_registers = used_registers.max(reg as usize + 1);
-                assert!(instruction_registers.insert(inst_life_start, reg).is_none());
-            }
-
-            if let Some(&shadow_life_start) = shadow_life_starts.get(&inst_index) {
-                let reg = available_registers
-                    .pop()
-                    .ok_or(CodegenError::RegisterOverflow)?;
-                used_registers = used_registers.max(reg as usize + 1);
-                assert!(shadow_registers.insert(shadow_life_start, reg,).is_none());
-            }
-
-            if let Some(&shadow_life_end) = shadow_life_ends.get(&inst_index) {
-                available_registers.push(shadow_registers.get(shadow_life_end).copied().unwrap());
-            }
-        }
-    }
-
     let mut vm_instructions = Vec::new();
     let mut block_vm_starts = SecondaryMap::<ir::BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
@@ -207,110 +99,118 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                 ir::Instruction::Constant(c) => {
                     vm_instructions.push(Instruction::LoadConstant {
                         constant: constant_indexes[&c],
-                        dest: instruction_registers[inst_id],
+                        dest: reg_alloc.instruction_registers[inst_id],
                     });
                 }
                 ir::Instruction::GetVariable(var_id) => {
                     vm_instructions.push(Instruction::GetHeap {
                         heap: heap_vars[var_id],
-                        dest: instruction_registers[inst_id],
+                        dest: reg_alloc.instruction_registers[inst_id],
                     });
                 }
                 ir::Instruction::SetVariable(dest, source) => {
                     vm_instructions.push(Instruction::SetHeap {
-                        source: instruction_registers[source],
+                        source: reg_alloc.instruction_registers[source],
                         heap: heap_vars[dest],
                     });
                 }
                 ir::Instruction::Phi(shadow_id) => {
-                    vm_instructions.push(Instruction::Move {
-                        source: shadow_registers[shadow_id],
-                        dest: instruction_registers[inst_id],
-                    });
+                    let shadow_reg = reg_alloc.shadow_registers[shadow_id];
+                    let dest_reg = reg_alloc.instruction_registers[inst_id];
+                    if shadow_reg != dest_reg {
+                        vm_instructions.push(Instruction::Move {
+                            source: reg_alloc.shadow_registers[shadow_id],
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        });
+                    }
                 }
                 ir::Instruction::Upsilon(shadow_id, source) => {
                     if shadow_liveness
                         .shadow_var_live_range_in_block(block_id, shadow_id)
                         .is_some_and(|r| r.is_live(inst_index))
                     {
-                        vm_instructions.push(Instruction::Move {
-                            source: instruction_registers[source],
-                            dest: shadow_registers[shadow_id],
-                        });
+                        let shadow_reg = reg_alloc.shadow_registers[shadow_id];
+                        let source_reg = reg_alloc.instruction_registers[source];
+                        if shadow_reg != source_reg {
+                            vm_instructions.push(Instruction::Move {
+                                source: reg_alloc.instruction_registers[source],
+                                dest: reg_alloc.shadow_registers[shadow_id],
+                            });
+                        }
                     }
                 }
                 ir::Instruction::UnOp { source, op } => {
-                    let output_reg = instruction_registers[inst_id];
+                    let output_reg = reg_alloc.instruction_registers[inst_id];
                     match op {
                         ir::UnOp::Not => {
                             vm_instructions.push(Instruction::Not {
-                                arg: instruction_registers[source],
+                                arg: reg_alloc.instruction_registers[source],
                                 dest: output_reg,
                             });
                         }
                     }
                 }
                 ir::Instruction::BinOp { left, right, op } => {
-                    let output_reg = instruction_registers[inst_id];
+                    let output_reg = reg_alloc.instruction_registers[inst_id];
                     match op {
                         ir::BinOp::Add => {
                             vm_instructions.push(Instruction::Add {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                         ir::BinOp::Sub => {
                             vm_instructions.push(Instruction::Sub {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                     }
                 }
                 ir::Instruction::BinComp { left, right, comp } => {
-                    let output_reg = instruction_registers[inst_id];
+                    let output_reg = reg_alloc.instruction_registers[inst_id];
                     match comp {
                         ir::BinComp::LessThan => {
                             vm_instructions.push(Instruction::TestLess {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                         ir::BinComp::LessEqual => {
                             vm_instructions.push(Instruction::TestLessEqual {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                         ir::BinComp::Equal => {
                             vm_instructions.push(Instruction::TestEqual {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                         ir::BinComp::NotEqual => {
                             vm_instructions.push(Instruction::TestNotEqual {
-                                arg1: instruction_registers[left],
-                                arg2: instruction_registers[right],
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
                                 dest: output_reg,
                             });
                         }
                         ir::BinComp::GreaterThan => {
                             vm_instructions.push(Instruction::TestLessEqual {
-                                arg1: instruction_registers[right],
-                                arg2: instruction_registers[left],
+                                arg1: reg_alloc.instruction_registers[right],
+                                arg2: reg_alloc.instruction_registers[left],
                                 dest: output_reg,
                             });
                         }
                         ir::BinComp::GreaterEqual => {
                             vm_instructions.push(Instruction::TestLess {
-                                arg1: instruction_registers[right],
-                                arg2: instruction_registers[left],
+                                arg1: reg_alloc.instruction_registers[right],
+                                arg2: reg_alloc.instruction_registers[left],
                                 dest: output_reg,
                             });
                         }
@@ -318,13 +218,13 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                 }
                 ir::Instruction::Push(source) => {
                     vm_instructions.push(Instruction::Push {
-                        source: instruction_registers[source],
+                        source: reg_alloc.instruction_registers[source],
                         len: 1,
                     });
                 }
                 ir::Instruction::Pop => {
                     vm_instructions.push(Instruction::Pop {
-                        dest: instruction_registers[inst_id],
+                        dest: reg_alloc.instruction_registers[inst_id],
                         len: 1,
                     });
                 }
@@ -334,7 +234,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     returns,
                 } => {
                     vm_instructions.push(Instruction::Call {
-                        func: instruction_registers[source],
+                        func: reg_alloc.instruction_registers[source],
                         args,
                         returns,
                     });
@@ -363,7 +263,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                 if *block_order_indexes.get(&if_true).unwrap() != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), if_true));
                     vm_instructions.push(Instruction::JumpIf {
-                        arg: instruction_registers[cond],
+                        arg: reg_alloc.instruction_registers[cond],
                         is_true: true,
                         offset: 0,
                     });
@@ -372,7 +272,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                 if *block_order_indexes.get(&if_false).unwrap() != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), if_false));
                     vm_instructions.push(Instruction::JumpIf {
-                        arg: instruction_registers[cond],
+                        arg: reg_alloc.instruction_registers[cond],
                         is_true: false,
                         offset: 0,
                     });
@@ -418,7 +318,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
     Ok(Prototype {
         bytecode,
         constants: constants.into_boxed_slice(),
-        used_registers,
+        used_registers: reg_alloc.used_registers,
         used_heap: heap_vars.len(),
     })
 }

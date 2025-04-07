@@ -226,8 +226,10 @@ fn test_ir_phi_upsilon() {
             parts,
             start_block: start_block_id,
         };
+        dbg!(&function);
 
         let prototype = Gc::new(mc, codegen::generate(function).unwrap());
+        dbg!(&prototype);
         let closure = Closure::new(mc, prototype);
 
         let mut thread = Thread::default();

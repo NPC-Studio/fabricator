@@ -271,6 +271,11 @@ impl InstructionLiveness {
         })
     }
 
+    /// Returns all instructions live in any block
+    pub fn live_instructions(&self) -> impl Iterator<Item = ir::InstId> + '_ {
+        self.live_blocks_for_instruction.ids()
+    }
+
     /// Returns all blocks and ranges within that block in which an instruction is live.
     pub fn instruction_live_ranges(
         &self,
