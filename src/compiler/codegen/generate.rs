@@ -126,7 +126,7 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                 }
                 ir::Instruction::Upsilon(shadow_id, source) => {
                     if shadow_liveness
-                        .shadow_var_live_range_in_block(block_id, shadow_id)
+                        .live_range_in_block(block_id, shadow_id)
                         .is_some_and(|r| r.is_live(inst_index))
                     {
                         let shadow_reg = reg_alloc.shadow_registers[shadow_id];

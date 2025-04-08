@@ -17,6 +17,8 @@ use crate::{
     util::{bit_containers::BitSlice, typed_id_map::SecondaryMap},
 };
 
+use super::upsilon_reach::compute_upsilon_reach;
+
 #[derive(Debug)]
 pub struct RegisterAllocation {
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
@@ -36,6 +38,8 @@ impl RegisterAllocation {
         instruction_liveness: &InstructionLiveness,
         shadow_liveness: &ShadowLiveness,
     ) -> Option<Self> {
+        let upsilon_reach = compute_upsilon_reach(ir, shadow_liveness);
+
         // First, we assign shadow variables and the instructions they can coalesce with via graph
         // coloring.
         //
@@ -61,21 +65,22 @@ impl RegisterAllocation {
         let mut coalesced_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
         let mut assigned_shadow_registers = SecondaryMap::<ir::ShadowVarId, RegIdx>::new();
 
-        for shadow_var_id in shadow_liveness.live_shadow_vars() {
+        for shadow_var in shadow_liveness.live_shadow_vars() {
+            let upsilon_reach = &upsilon_reach[shadow_var];
             let mut interfering_registers = [0u8; 256];
 
             // For each live block for the given shadow variable, check interference with any
             // registers assigned to other shadow variables or instructions. If any such assigned
             // register interferes, set its bit in `interfering_registers`.
 
-            for (block_id, shadow_range) in shadow_liveness.shadow_var_live_ranges(shadow_var_id) {
+            for (block_id, shadow_range) in shadow_liveness.live_ranges(shadow_var) {
                 let shadow_ranges = BlockRange::all_from_shadow_range(shadow_range);
 
                 'next_var: for (other_shadow_var_id, &other_shadow_reg) in
                     assigned_shadow_registers.iter()
                 {
-                    if let Some(other_shadow_range) = shadow_liveness
-                        .shadow_var_live_range_in_block(block_id, other_shadow_var_id)
+                    if let Some(other_shadow_range) =
+                        shadow_liveness.live_range_in_block(block_id, other_shadow_var_id)
                     {
                         for other_shadow_range in
                             BlockRange::all_from_shadow_range(other_shadow_range)
@@ -92,7 +97,7 @@ impl RegisterAllocation {
 
                 'next_inst: for (inst_id, &inst_reg) in coalesced_instruction_registers.iter() {
                     if let Some(inst_range) =
-                        instruction_liveness.instruction_live_range_in_block(block_id, inst_id)
+                        instruction_liveness.live_range_in_block(block_id, inst_id)
                     {
                         let inst_range = BlockRange::from_instruction(inst_range);
                         for shadow_range in shadow_ranges.clone() {
@@ -112,13 +117,13 @@ impl RegisterAllocation {
                 .enumerate()
                 .find(|(_, interfering)| !interfering)?
                 .0 as u8;
-            assigned_shadow_registers.insert(shadow_var_id, assigned_reg);
+            assigned_shadow_registers.insert(shadow_var, assigned_reg);
 
             // Construct a list of instructions we would like to coalesce into this shadow variable
             // so that they share the same register and can avoid phi / upsilon copies.
 
             let mut coalescing_instructions = Vec::new();
-            for (block_id, range) in shadow_liveness.shadow_var_live_ranges(shadow_var_id) {
+            for (block_id, range) in shadow_liveness.live_ranges(shadow_var) {
                 if let Some(incoming) = range.incoming_range {
                     coalescing_instructions
                         .push(ir.parts.blocks[block_id].instructions[incoming.end]);
@@ -153,9 +158,7 @@ impl RegisterAllocation {
             let mut coalesced_instructions = Vec::new();
             for &inst_id in &coalescing_instructions {
                 let check_interference = || {
-                    for (block_id, inst_range) in
-                        instruction_liveness.instruction_live_ranges(inst_id)
-                    {
+                    for (block_id, inst_range) in instruction_liveness.live_ranges(inst_id) {
                         let inst_range = BlockRange::from_instruction(inst_range);
 
                         for (other_shadow_var_id, &other_shadow_reg) in
@@ -166,56 +169,65 @@ impl RegisterAllocation {
                                 continue;
                             }
 
-                            let Some(other_shadow_range) = shadow_liveness
-                                .shadow_var_live_range_in_block(block_id, other_shadow_var_id)
+                            // Nor can we interfere if the other variable is not live in this block.
+                            let Some(other_shadow_range) =
+                                shadow_liveness.live_range_in_block(block_id, other_shadow_var_id)
                             else {
                                 continue;
                             };
 
-                            for other_shadow_range in
-                                BlockRange::all_from_shadow_range(other_shadow_range)
-                            {
-                                // As a special hack, if we have a range that starts with an
-                                // `Upsilon` instruction whose source we know is the *same* as the
-                                // instruction we are trying to coalesce, we can skip interference
-                                // checking. Assigning the coalescing variable to any shadow
-                                // variable does not prevent them from sharing the same register.
-                                //
-                                // NOTE:
-                                //
-                                // This analysis is weak in the sense that we only check this for
-                                // ranges that actually *contain* the `Upsilon` in question, because
-                                // this is the only place we can be sure without further analysis
-                                // that there is only assignment from the correct instruction.
-                                //
-                                // We should be able to do this more generally by marking which
-                                // `Upsilon` instructions can possibly affect different shadow
-                                // variable ranges when computing shadow variable liveness. Being
-                                // able to compare instructions against the full list of possible
-                                // `Upsilon` instructions would make this check not a hack.
-                                //
-                                // Frustratingly, there is very little information about this in the
-                                // literature for register allocation that I can find, and there may
-                                // be an even more principled way to do this.
-                                let can_skip = other_shadow_range.start.is_some_and(|start| {
-                                    let ir::Instruction::Upsilon(_, source_inst_id) =
-                                        ir.parts.instructions
-                                            [ir.parts.blocks[block_id].instructions[start]]
-                                    else {
-                                        unreachable!("all `start` fields in shadow ranges should be upsilon instructions");
-                                    };
-                                    source_inst_id == inst_id
-                                });
+                            // Return true if the source instruction for the given upsilon is any
+                            // instruction other than the one we are trying to coalesce.
+                            let upsilon_source_conflict = |(block_id, index)| {
+                                let ir::Instruction::Upsilon(_, source_inst_id) = ir
+                                    .parts
+                                    .instructions[ir.parts.blocks[block_id].instructions[index]]
+                                else {
+                                    unreachable!();
+                                };
+                                source_inst_id != inst_id
+                            };
 
-                                if !can_skip && inst_range.interferes(other_shadow_range) {
-                                    return true;
+                            // If we know that every `Upsilon` instruction that could have written
+                            // to the shadow variable in this block range (since the last execution
+                            // of the `Phi` function) is the same source instruction that we are
+                            // trying to coalesce, then we can skip interference checking. Assigning
+                            // the coalescing variable to any shadow variable does not prevent them
+                            // from sharing the same register.
+
+                            if let Some(incoming) = other_shadow_range.incoming_range {
+                                if upsilon_reach
+                                    .live_upsilons
+                                    .iter()
+                                    .copied()
+                                    .any(upsilon_source_conflict)
+                                {
+                                    if inst_range
+                                        .interferes(BlockRange::from_shadow_incoming(incoming))
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
+
+                            if let Some(outgoing) = other_shadow_range.outgoing_range {
+                                if upsilon_reach.outgoing_reach[&block_id]
+                                    .iter()
+                                    .copied()
+                                    .any(upsilon_source_conflict)
+                                {
+                                    if inst_range
+                                        .interferes(BlockRange::from_shadow_outgoing(outgoing))
+                                    {
+                                        return true;
+                                    }
                                 }
                             }
                         }
 
                         for &coalesced_inst_id in &coalesced_instructions {
                             if let Some(coalesced_inst_range) = instruction_liveness
-                                .instruction_live_range_in_block(block_id, coalesced_inst_id)
+                                .live_range_in_block(block_id, coalesced_inst_id)
                             {
                                 if inst_range
                                     .interferes(BlockRange::from_instruction(coalesced_inst_range))
@@ -284,7 +296,7 @@ impl RegisterAllocation {
 
             let mut inst_life_starts = HashMap::new();
             let mut inst_life_ends = HashMap::new();
-            for (inst_id, range) in instruction_liveness.live_instructions_for_block(block_id) {
+            for (inst_id, range) in instruction_liveness.live_for_block(block_id) {
                 if !coalesced_instruction_registers.contains(inst_id) {
                     if let Some(start) = range.start {
                         assert!(inst_life_starts.insert(start, inst_id).is_none());

@@ -277,7 +277,7 @@ impl InstructionLiveness {
     }
 
     /// Returns all blocks and ranges within that block in which an instruction is live.
-    pub fn instruction_live_ranges(
+    pub fn live_ranges(
         &self,
         inst_id: ir::InstId,
     ) -> impl Iterator<Item = (ir::BlockId, InstructionLivenessRange)> + '_ {
@@ -289,7 +289,7 @@ impl InstructionLiveness {
     }
 
     /// Returns all instructions that are live anywhere within the given block.
-    pub fn live_instructions_for_block(
+    pub fn live_for_block(
         &self,
         block_id: ir::BlockId,
     ) -> impl Iterator<Item = (ir::InstId, InstructionLivenessRange)> + '_ {
@@ -301,7 +301,7 @@ impl InstructionLiveness {
     }
 
     /// Returns the liveness range for a single instruction in the given block, if it is live there.
-    pub fn instruction_live_range_in_block(
+    pub fn live_range_in_block(
         &self,
         block_id: ir::BlockId,
         inst_id: ir::InstId,

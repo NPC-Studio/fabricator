@@ -15,7 +15,7 @@ pub enum PhiUpsilonVerificationError {
     ShadowUndef,
 }
 
-/// The liveness range of a shadow variable within a block leading up to a `Phi` instruction.
+/// The liveness range of a shadow variable leading up to a `Phi` instruction.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct ShadowIncomingRange {
     /// The instruction index in the block at which the shadow variable becomes live.
@@ -50,13 +50,17 @@ pub struct ShadowOutgoingRange {
 
 /// The liveness range of a shadow variable within a block.
 ///
-/// All live `Upsilon` instructions will be at the `start` field of either `incoming_range`
-/// or `outgoing_range` for in some block, and the `Phi` instruction will be at the
-/// `incoming_range.end` field in some block.
+/// For each `Phi` instruction in well-formed IR, there will be exactly one incoming range and at
+/// least one outgoing range.
+///
+/// All live `Upsilon` instructions will be at the `start` field of either `incoming_range` or
+/// `outgoing_range`, and the `Phi` instruction will be at the `incoming_range.end` field in the one
+/// block containing the `Phi` instruction..
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub struct ShadowLivenessRange {
-    /// If an incoming range is set, this block will always contain the `Phi` instruction, and this
-    /// describes the `Phi` instruction liveness range leading backwards from the `Phi` instruction.
+    /// If an incoming range is set, this block will always contain the single `Phi` instruction for
+    /// this shadow variable, and this describes the `Phi` instruction liveness range leading to the
+    /// `Phi` instruction.
     pub incoming_range: Option<ShadowIncomingRange>,
 
     /// If an outgoing range is set, then a successor block contains the `Phi` instruction and its
@@ -212,7 +216,7 @@ impl ShadowLiveness {
         // This is a similar algorithm to the instruction liveness algorithm, but since we are no
         // longer dealing with SSA, `Upsilon` instructions notionally add their shadow variables
         // to the KILL list (the term in traditional liveness analysis for the set of assigned
-        // variables, which stops previous instructions from needing the variable's current value).
+        // variables, which stops future instructions from needing the variable's old value).
 
         let mut changed = true;
         while changed {
@@ -298,7 +302,7 @@ impl ShadowLiveness {
     }
 
     /// Returns all blocks and ranges within that block in which an shadow variable is live.
-    pub fn shadow_var_live_ranges(
+    pub fn live_ranges(
         &self,
         shadow_var_id: ir::ShadowVarId,
     ) -> impl Iterator<Item = (ir::BlockId, ShadowLivenessRange)> + '_ {
@@ -310,7 +314,7 @@ impl ShadowLiveness {
     }
 
     /// Returns all shadow variables that are live anywhere within the given block.
-    pub fn live_shadow_vars_for_block(
+    pub fn live_for_block(
         &self,
         block_id: ir::BlockId,
     ) -> impl Iterator<Item = (ir::ShadowVarId, ShadowLivenessRange)> + '_ {
@@ -323,7 +327,7 @@ impl ShadowLiveness {
 
     /// Returns the liveness range for a single shadow variable in the given block, if it is live
     /// there.
-    pub fn shadow_var_live_range_in_block(
+    pub fn live_range_in_block(
         &self,
         block_id: ir::BlockId,
         shadow_var_id: ir::ShadowVarId,
