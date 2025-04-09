@@ -31,7 +31,7 @@ struct Compiler<S> {
     start_block: ir::BlockId,
 
     current_block: ir::BlockId,
-    variables: HashMap<S, Vec<ir::VarId>>,
+    variables: HashMap<S, Vec<ir::Variable>>,
     scopes: Vec<HashSet<S>>,
 }
 
@@ -80,9 +80,9 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         var_statement: &parser::VarStatement<S>,
     ) -> Result<(), CompileError> {
-        let var_id = self.declare_var(var_statement.name.clone());
+        let var = self.declare_var(var_statement.name.clone());
         let inst_id = self.commit_expression(&var_statement.value)?;
-        self.push_instruction(ir::Instruction::SetVariable(var_id, inst_id));
+        self.push_instruction(ir::Instruction::SetVariable(var, inst_id));
         Ok(())
     }
 
@@ -358,7 +358,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         }
     }
 
-    fn declare_var(&mut self, vname: S) -> ir::VarId {
+    fn declare_var(&mut self, vname: S) -> ir::Variable {
         let in_scope = self.scopes.last().unwrap().contains(&vname);
         let variable_stack = self.variables.entry(vname).or_default();
 
@@ -370,7 +370,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         var
     }
 
-    fn get_var(&mut self, vname: &S) -> Option<ir::VarId> {
+    fn get_var(&mut self, vname: &S) -> Option<ir::Variable> {
         self.variables.get(vname).and_then(|v| v.last().copied())
     }
 }

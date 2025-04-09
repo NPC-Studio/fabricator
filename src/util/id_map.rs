@@ -442,6 +442,14 @@ impl<V> SecondaryMap<V> {
     }
 
     #[inline]
+    pub fn get_or_insert_default(&mut self, key: Id) -> &mut V
+    where
+        V: Default,
+    {
+        self.get_or_insert_with(key, Default::default)
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.occupancy as usize
     }

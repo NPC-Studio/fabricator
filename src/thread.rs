@@ -147,6 +147,12 @@ fn dispatch<'gc>(
         type Error = VmError;
 
         #[inline]
+        fn undefined(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Undefined;
+            Ok(())
+        }
+
+        #[inline]
         fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.constants[constant as usize].to_value();
             Ok(())

@@ -7,6 +7,7 @@ pub type ConstIdx = u16;
 macro_rules! for_each_instruction {
     ($macro:ident) => {
         $macro! {
+            simple => undefined = Undefined { dest: RegIdx };
             simple => load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };

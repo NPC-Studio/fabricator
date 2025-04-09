@@ -5,18 +5,18 @@ use crate::{
     util::typed_id_map::SecondaryMap,
 };
 
-pub type UpsilonReachMap = SecondaryMap<ir::ShadowVarId, UpsilonReach>;
+pub type UpsilonReachabilityMap = SecondaryMap<ir::ShadowVar, UpsilonReach>;
 
 /// Analyze `ShadowLiveness` to determine, for each live region of the shadow variable, which
 /// `Upsilon` instructions may have written to it.
 ///
 /// Any `Upsilon` that could have affected the value of the shadow variable *since the last
 /// execution of the `Phi` instruction* is considered to "reach" that region.
-pub fn compute_upsilon_reach<S>(
+pub fn compute_upsilon_reachability<S>(
     ir: &ir::Function<S>,
     shadow_liveness: &ShadowLiveness,
-) -> UpsilonReachMap {
-    let mut reach_map = UpsilonReachMap::default();
+) -> UpsilonReachabilityMap {
+    let mut reach_map = UpsilonReachabilityMap::default();
 
     for shadow_var in shadow_liveness.live_shadow_vars() {
         let mut live_blocks = HashSet::new();
@@ -156,7 +156,7 @@ mod tests {
         };
 
         let shadow_liveness = ShadowLiveness::compute(&ir).unwrap();
-        let upsilon_reach = compute_upsilon_reach(&ir, &shadow_liveness);
+        let upsilon_reach = compute_upsilon_reachability(&ir, &shadow_liveness);
 
         assert!(shadow_liveness
             .live_range_in_block(block_b_id, shadow_var)
@@ -210,7 +210,7 @@ mod tests {
         };
 
         let shadow_liveness = ShadowLiveness::compute(&ir).unwrap();
-        let upsilon_reach = compute_upsilon_reach(&ir, &shadow_liveness);
+        let upsilon_reach = compute_upsilon_reachability(&ir, &shadow_liveness);
 
         assert!(shadow_liveness
             .live_range_in_block(block_b_id, shadow_var)

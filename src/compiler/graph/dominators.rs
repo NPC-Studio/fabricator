@@ -47,7 +47,7 @@ impl<N: Node> Dominators<N> {
 
         // Dominance algorithm is sourced from:
         //
-        // A Simple, Fast Dominance Algorithm, Cooper et al.
+        // A Simple, Fast Dominance Algorithm, Cooper et al. (2006)
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
         let dominators = {
             let intersect =
@@ -136,9 +136,7 @@ impl<N: Node> Dominators<N> {
                 .collect::<Vec<_>>()
         };
 
-        // Dominance frontier algorithm is also sourced from:
-        //
-        // A Simple, Fast Dominance Algorithm, Cooper et al.
+        // Dominance frontier algorithm is also sourced from Cooper et al. (2006).
         // https://www.clear.rice.edu/comp512/Lectures/Papers/TR06-33870-Dom.pdf
         let dominance_frontiers = {
             let mut dominance_frontiers = vec![IndexSet::new(); post_order.len()];
@@ -298,15 +296,15 @@ mod tests {
 
         graph.add_edge(g, e);
 
-        let tree = Dominators::compute(a, |n| graph.edges_from(n));
+        let dominators = Dominators::compute(a, |n| graph.edges_from(n));
 
-        assert_eq!(tree.idom(a).unwrap(), a);
-        assert_eq!(tree.idom(b).unwrap(), a);
-        assert_eq!(tree.idom(c).unwrap(), b);
-        assert_eq!(tree.idom(d).unwrap(), b);
-        assert_eq!(tree.idom(e).unwrap(), c);
-        assert_eq!(tree.idom(f).unwrap(), b);
-        assert!(tree.idom(g).is_none());
+        assert_eq!(dominators.idom(a).unwrap(), a);
+        assert_eq!(dominators.idom(b).unwrap(), a);
+        assert_eq!(dominators.idom(c).unwrap(), b);
+        assert_eq!(dominators.idom(d).unwrap(), b);
+        assert_eq!(dominators.idom(e).unwrap(), c);
+        assert_eq!(dominators.idom(f).unwrap(), b);
+        assert!(dominators.idom(g).is_none());
 
         let dominating_pairs = [
             (a, a),
@@ -329,10 +327,12 @@ mod tests {
 
         for na in [a, b, c, d, e, f] {
             for nb in [a, b, c, d, e, f] {
-                assert!(tree.dominates(na, nb).unwrap() == dominating_pairs.contains(&(na, nb)));
+                assert!(
+                    dominators.dominates(na, nb).unwrap() == dominating_pairs.contains(&(na, nb))
+                );
             }
 
-            assert!(tree.dominates(na, g).is_none());
+            assert!(dominators.dominates(na, g).is_none());
         }
 
         let dominance_frontiers = [
@@ -345,7 +345,10 @@ mod tests {
         ];
 
         for (n, domf) in dominance_frontiers {
-            let observed_domf = tree.dominance_frontier(n).unwrap().collect::<Vec<_>>();
+            let observed_domf = dominators
+                .dominance_frontier(n)
+                .unwrap()
+                .collect::<Vec<_>>();
             for f in &observed_domf {
                 assert!(domf.contains(f));
             }
@@ -354,6 +357,6 @@ mod tests {
             }
         }
 
-        assert!(tree.dominance_frontier(g).is_none());
+        assert!(dominators.dominance_frontier(g).is_none());
     }
 }

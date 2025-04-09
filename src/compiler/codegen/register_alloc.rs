@@ -17,12 +17,12 @@ use crate::{
     util::{bit_containers::BitSlice, typed_id_map::SecondaryMap},
 };
 
-use super::upsilon_reach::compute_upsilon_reach;
+use super::upsilon_reachability::compute_upsilon_reachability;
 
 #[derive(Debug)]
 pub struct RegisterAllocation {
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
-    pub shadow_registers: SecondaryMap<ir::ShadowVarId, RegIdx>,
+    pub shadow_registers: SecondaryMap<ir::ShadowVar, RegIdx>,
     pub used_registers: usize,
 }
 
@@ -38,7 +38,7 @@ impl RegisterAllocation {
         instruction_liveness: &InstructionLiveness,
         shadow_liveness: &ShadowLiveness,
     ) -> Option<Self> {
-        let upsilon_reach = compute_upsilon_reach(ir, shadow_liveness);
+        let upsilon_reach = compute_upsilon_reachability(ir, shadow_liveness);
 
         // First, we assign shadow variables and the instructions they can coalesce with via graph
         // coloring.
@@ -63,7 +63,7 @@ impl RegisterAllocation {
         // fashion.
 
         let mut coalesced_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
-        let mut assigned_shadow_registers = SecondaryMap::<ir::ShadowVarId, RegIdx>::new();
+        let mut assigned_shadow_registers = SecondaryMap::<ir::ShadowVar, RegIdx>::new();
 
         for shadow_var in shadow_liveness.live_shadow_vars() {
             let upsilon_reach = &upsilon_reach[shadow_var];
@@ -76,11 +76,11 @@ impl RegisterAllocation {
             for (block_id, shadow_range) in shadow_liveness.live_ranges(shadow_var) {
                 let shadow_ranges = BlockRange::all_from_shadow_range(shadow_range);
 
-                'next_var: for (other_shadow_var_id, &other_shadow_reg) in
+                'next_var: for (other_shadow_var, &other_shadow_reg) in
                     assigned_shadow_registers.iter()
                 {
                     if let Some(other_shadow_range) =
-                        shadow_liveness.live_range_in_block(block_id, other_shadow_var_id)
+                        shadow_liveness.live_range_in_block(block_id, other_shadow_var)
                     {
                         for other_shadow_range in
                             BlockRange::all_from_shadow_range(other_shadow_range)
@@ -161,7 +161,7 @@ impl RegisterAllocation {
                     for (block_id, inst_range) in instruction_liveness.live_ranges(inst_id) {
                         let inst_range = BlockRange::from_instruction(inst_range);
 
-                        for (other_shadow_var_id, &other_shadow_reg) in
+                        for (other_shadow_var, &other_shadow_reg) in
                             assigned_shadow_registers.iter()
                         {
                             // We can't possibly interfere if we aren't using the same register.
@@ -171,7 +171,7 @@ impl RegisterAllocation {
 
                             // Nor can we interfere if the other variable is not live in this block.
                             let Some(other_shadow_range) =
-                                shadow_liveness.live_range_in_block(block_id, other_shadow_var_id)
+                                shadow_liveness.live_range_in_block(block_id, other_shadow_var)
                             else {
                                 continue;
                             };

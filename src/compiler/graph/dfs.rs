@@ -20,20 +20,44 @@ pub fn depth_first_search<N, I>(
     N: Node,
     I: IntoIterator<Item = N>,
 {
+    depth_first_search_with(
+        &mut (),
+        start,
+        move |_, n| successors(n),
+        move |_, n| pre(n),
+        move |_, n| post(n),
+    );
+}
+
+/// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
+/// each node.
+///
+/// This is a version of `depth_first_search` that accepts a mutable state parameter and passes it
+/// to each callback.
+pub fn depth_first_search_with<S, N, I>(
+    state: &mut S,
+    start: N,
+    successors: impl Fn(&mut S, N) -> I,
+    mut pre: impl FnMut(&mut S, N),
+    mut post: impl FnMut(&mut S, N),
+) where
+    N: Node,
+    I: IntoIterator<Item = N>,
+{
     let mut stack = Vec::new();
     let mut visited = IndexSet::new();
     visited.insert(start.index());
-    stack.push((start, successors(start).into_iter()));
-    pre(start);
+    stack.push((start, successors(state, start).into_iter()));
+    pre(state, start);
 
     while let Some((node, iter)) = stack.last_mut() {
         if let Some(next) = iter.next() {
             if visited.insert(next.index()) {
-                pre(next);
-                stack.push((next, successors(next).into_iter()))
+                pre(state, next);
+                stack.push((next, successors(state, next).into_iter()))
             }
         } else {
-            post(*node);
+            post(state, *node);
             stack.pop();
         }
     }

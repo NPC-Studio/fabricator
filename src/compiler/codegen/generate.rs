@@ -45,10 +45,10 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
     let reg_alloc = RegisterAllocation::allocate(&ir, &instruction_liveness, &shadow_liveness)
         .ok_or(CodegenError::RegisterOverflow)?;
 
-    let mut heap_vars = SecondaryMap::<ir::VarId, HeapIdx>::new();
+    let mut heap_vars = SecondaryMap::<ir::Variable, HeapIdx>::new();
     let mut heap_index = 0;
-    for var_id in ir.parts.variables.ids() {
-        heap_vars.insert(var_id, heap_index);
+    for var in ir.parts.variables.ids() {
+        heap_vars.insert(var, heap_index);
         heap_index = heap_index
             .checked_add(1)
             .ok_or(CodegenError::HeapVarOverflow)?;
@@ -96,16 +96,22 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
 
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
             match ir.parts.instructions[inst_id] {
+                ir::Instruction::NoOp => {}
+                ir::Instruction::Undefined => {
+                    vm_instructions.push(Instruction::Undefined {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                    });
+                }
                 ir::Instruction::Constant(c) => {
                     vm_instructions.push(Instruction::LoadConstant {
                         dest: reg_alloc.instruction_registers[inst_id],
                         constant: constant_indexes[&c],
                     });
                 }
-                ir::Instruction::GetVariable(var_id) => {
+                ir::Instruction::GetVariable(var) => {
                     vm_instructions.push(Instruction::GetHeap {
                         dest: reg_alloc.instruction_registers[inst_id],
-                        heap: heap_vars[var_id],
+                        heap: heap_vars[var],
                     });
                 }
                 ir::Instruction::SetVariable(dest, source) => {

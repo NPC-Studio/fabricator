@@ -10,8 +10,8 @@ use crate::{
 new_id_type! {
     pub struct BlockId;
     pub struct InstId;
-    pub struct VarId;
-    pub struct ShadowVarId;
+    pub struct Variable;
+    pub struct ShadowVar;
 }
 
 pub type Offset = i32;
@@ -94,11 +94,13 @@ pub enum BinComp {
 /// closures with potentially different lifetimes.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Instruction<S> {
+    NoOp,
+    Undefined,
     Constant(Constant<S>),
-    GetVariable(VarId),
-    SetVariable(VarId, InstId),
-    Phi(ShadowVarId),
-    Upsilon(ShadowVarId, InstId),
+    GetVariable(Variable),
+    SetVariable(Variable, InstId),
+    Phi(ShadowVar),
+    Upsilon(ShadowVar, InstId),
     UnOp {
         source: InstId,
         op: UnOp,
@@ -129,6 +131,8 @@ impl<S> Instruction<S> {
         let mut sources = ArrayVec::new();
 
         match self {
+            Instruction::NoOp => {}
+            Instruction::Undefined => {}
             Instruction::Constant(_) => {}
             Instruction::GetVariable(_) => {}
             Instruction::SetVariable(_, source) => {
@@ -159,8 +163,46 @@ impl<S> Instruction<S> {
         sources
     }
 
+    pub fn sources_mut(&mut self) -> ArrayVec<&mut InstId, MAX_INSTRUCTION_SOURCES> {
+        let mut sources = ArrayVec::new();
+
+        match self {
+            Instruction::NoOp => {}
+            Instruction::Undefined => {}
+            Instruction::Constant(_) => {}
+            Instruction::GetVariable(_) => {}
+            Instruction::SetVariable(_, source) => {
+                sources.push(source);
+            }
+            Instruction::Phi(_) => {}
+            Instruction::Upsilon(_, source) => sources.push(source),
+            Instruction::UnOp { source, .. } => {
+                sources.push(source);
+            }
+            Instruction::BinOp { left, right, .. } => {
+                sources.push(left);
+                sources.push(right);
+            }
+            Instruction::BinComp { left, right, .. } => {
+                sources.push(left);
+                sources.push(right);
+            }
+            Instruction::Push(source) => {
+                sources.push(source);
+            }
+            Instruction::Pop => {}
+            Instruction::Call { source, .. } => {
+                sources.push(source);
+            }
+        }
+
+        sources
+    }
+
     pub fn has_value(&self) -> bool {
         match self {
+            Instruction::NoOp => false,
+            Instruction::Undefined => true,
             Instruction::Constant(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
@@ -237,8 +279,8 @@ impl Default for Block {
 pub struct FunctionParts<S> {
     pub instructions: IdMap<InstId, Instruction<S>>,
     pub blocks: IdMap<BlockId, Block>,
-    pub variables: IdMap<VarId, ()>,
-    pub shadow_vars: IdMap<ShadowVarId, ()>,
+    pub variables: IdMap<Variable, ()>,
+    pub shadow_vars: IdMap<ShadowVar, ()>,
 }
 
 impl<S> Default for FunctionParts<S> {
@@ -279,11 +321,17 @@ impl<S: AsRef<str>> Function<S> {
                 write!(f, "I{}: ", inst_id.index())?;
 
                 match inst {
+                    Instruction::NoOp => {
+                        writeln!(f, "no_op()")?;
+                    }
+                    Instruction::Undefined => {
+                        writeln!(f, "undefined()")?;
+                    }
                     Instruction::Constant(constant) => {
                         writeln!(f, "constant({:?})", constant.as_ref())?;
                     }
-                    Instruction::GetVariable(var_id) => {
-                        writeln!(f, "get_var(V{})", var_id.index())?;
+                    Instruction::GetVariable(var) => {
+                        writeln!(f, "get_var(V{})", var.index())?;
                     }
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;

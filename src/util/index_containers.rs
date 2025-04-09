@@ -19,6 +19,10 @@ impl<V> IndexMap<V> {
         Self::default()
     }
 
+    pub fn clear(&mut self) {
+        self.vec.clear();
+    }
+
     pub fn contains(&self, i: usize) -> bool {
         self.get(i).is_some()
     }
@@ -112,6 +116,11 @@ pub struct IndexSet {
 impl IndexSet {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.vec.clear();
+        self.len = 0;
     }
 
     pub fn contains(&self, i: usize) -> bool {

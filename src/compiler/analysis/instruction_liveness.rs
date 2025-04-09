@@ -62,7 +62,7 @@ impl InstructionLiveness {
     ///   2) Every instruction and branch source is dominated by its definition.
     ///   3) No instruction source is of type `Void`.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, InstructionVerificationError> {
-        let block_dominance =
+        let dominators =
             Dominators::compute(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
 
         let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = ir
@@ -116,10 +116,7 @@ impl InstructionLiveness {
                             return Err(InstructionVerificationError::UseNotDominated);
                         }
                     } else {
-                        if !block_dominance
-                            .dominates(source_block_id, block_id)
-                            .unwrap()
-                        {
+                        if !dominators.dominates(source_block_id, block_id).unwrap() {
                             return Err(InstructionVerificationError::UseNotDominated);
                         }
                     }
@@ -128,7 +125,7 @@ impl InstructionLiveness {
 
             if let Some(cond) = block.exit.cond_source() {
                 let (cond_block, _) = inst_positions[cond];
-                if !block_dominance.dominates(cond_block, block_id).unwrap() {
+                if !dominators.dominates(cond_block, block_id).unwrap() {
                     return Err(InstructionVerificationError::UseNotDominated);
                 }
             }

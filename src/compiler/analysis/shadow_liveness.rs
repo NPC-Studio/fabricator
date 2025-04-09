@@ -99,8 +99,8 @@ impl ShadowLivenessRange {
 
 #[derive(Debug, Default)]
 pub struct ShadowLiveness {
-    block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::ShadowVarId, ShadowLivenessRange>>,
-    live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVarId, HashSet<ir::BlockId>>,
+    block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::ShadowVar, ShadowLivenessRange>>,
+    live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, HashSet<ir::BlockId>>,
 }
 
 impl ShadowLiveness {
@@ -124,7 +124,7 @@ impl ShadowLiveness {
 
         let mut upsilon_instructions: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVarId, Vec<usize>>,
+            HashMap<ir::ShadowVar, Vec<usize>>,
         > = ir
             .parts
             .blocks
@@ -135,9 +135,8 @@ impl ShadowLiveness {
         for (block_id, block) in ir.parts.blocks.iter() {
             let upsilon_map = upsilon_instructions.get_mut(block_id).unwrap();
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                if let &ir::Instruction::Upsilon(shadow_var_id, _) = &ir.parts.instructions[inst_id]
-                {
-                    let upsilon_list = upsilon_map.entry(shadow_var_id).or_default();
+                if let &ir::Instruction::Upsilon(shadow_var, _) = &ir.parts.instructions[inst_id] {
+                    let upsilon_list = upsilon_map.entry(shadow_var).or_default();
                     upsilon_list.push(inst_index);
                 }
             }
@@ -145,10 +144,10 @@ impl ShadowLiveness {
 
         // Compute the incoming ranges for the blocks containing phi instructions
 
-        let mut shadow_vars: SecondaryMap<ir::ShadowVarId, ()> = SecondaryMap::new();
+        let mut shadow_vars: SecondaryMap<ir::ShadowVar, ()> = SecondaryMap::new();
         let mut incoming_ranges: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVarId, ShadowIncomingRange>,
+            HashMap<ir::ShadowVar, ShadowIncomingRange>,
         > = ir
             .parts
             .blocks
@@ -158,8 +157,8 @@ impl ShadowLiveness {
 
         for (block_id, block) in ir.parts.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                if let &ir::Instruction::Phi(shadow_var_id) = &ir.parts.instructions[inst_id] {
-                    if shadow_vars.insert(shadow_var_id, ()).is_some() {
+                if let &ir::Instruction::Phi(shadow_var) = &ir.parts.instructions[inst_id] {
+                    if shadow_vars.insert(shadow_var, ()).is_some() {
                         return Err(PhiUpsilonVerificationError::ShadowReused);
                     }
 
@@ -172,7 +171,7 @@ impl ShadowLiveness {
                     // block that is earlier than the `Phi` instruction. If one exists, that is the
                     // incoming range start.
                     for &i in upsilon_instructions[block_id]
-                        .get(&shadow_var_id)
+                        .get(&shadow_var)
                         .into_iter()
                         .flatten()
                     {
@@ -184,14 +183,14 @@ impl ShadowLiveness {
                     incoming_ranges
                         .get_mut(block_id)
                         .unwrap()
-                        .insert(shadow_var_id, range);
+                        .insert(shadow_var, range);
                 }
             }
         }
 
         let mut outgoing_ranges: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVarId, ShadowOutgoingRange>,
+            HashMap<ir::ShadowVar, ShadowOutgoingRange>,
         > = ir
             .parts
             .blocks
@@ -201,14 +200,14 @@ impl ShadowLiveness {
 
         let post_order = dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
 
-        let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::ShadowVarId>> =
+        let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::ShadowVar>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
         let mut live_out = live_in.clone();
 
         for (block_id, shadow_vars) in incoming_ranges.iter() {
-            for (&shadow_var_id, range) in shadow_vars.iter() {
+            for (&shadow_var, range) in shadow_vars.iter() {
                 if range.start.is_none() {
-                    live_in.get_mut(block_id).unwrap().insert(shadow_var_id);
+                    live_in.get_mut(block_id).unwrap().insert(shadow_var);
                 }
             }
         }
@@ -227,29 +226,29 @@ impl ShadowLiveness {
 
                 // Every variable that is live in in a successor must be live out in this block.
                 for succ in ir.parts.blocks[block_id].exit.successors() {
-                    for &shadow_var_id in &live_in[succ] {
-                        changed |= block_live_out.insert(shadow_var_id);
+                    for &shadow_var in &live_in[succ] {
+                        changed |= block_live_out.insert(shadow_var);
                     }
                 }
 
                 let block_live_in = live_in.get_mut(block_id).unwrap();
                 let block_outgoing_ranges = outgoing_ranges.get_mut(block_id).unwrap();
 
-                for &shadow_var_id in &*block_live_out {
-                    if !block_outgoing_ranges.contains_key(&shadow_var_id) {
+                for &shadow_var in &*block_live_out {
+                    if !block_outgoing_ranges.contains_key(&shadow_var) {
                         // The outgoing range for this shadow variable starts at the last `Upsilon`
                         // instruction in this block that sets it, if it exists.
                         let range = ShadowOutgoingRange {
                             start: upsilon_instructions[block_id]
-                                .get(&shadow_var_id)
+                                .get(&shadow_var)
                                 .and_then(|l| l.last().copied()),
                         };
-                        block_outgoing_ranges.insert(shadow_var_id, range);
+                        block_outgoing_ranges.insert(shadow_var, range);
 
                         // If there was no upsilon for this shadow variable in this block, then it
                         // must be in a predecessor block.
                         if range.start.is_none() {
-                            changed |= block_live_in.insert(shadow_var_id);
+                            changed |= block_live_in.insert(shadow_var);
                         }
                     }
                 }
@@ -262,30 +261,24 @@ impl ShadowLiveness {
 
         let mut block_liveness: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVarId, ShadowLivenessRange>,
+            HashMap<ir::ShadowVar, ShadowLivenessRange>,
         > = SecondaryMap::new();
-        let mut live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVarId, HashSet<ir::BlockId>> =
+        let mut live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, HashSet<ir::BlockId>> =
             SecondaryMap::new();
 
         for &block_id in &post_order {
-            let block_liveness = block_liveness.get_or_insert_with(block_id, HashMap::new);
+            let block_liveness = block_liveness.get_or_insert_default(block_id);
 
-            for (&shadow_var_id, &incoming_range) in incoming_ranges[block_id].iter() {
-                block_liveness
-                    .entry(shadow_var_id)
-                    .or_default()
-                    .incoming_range = Some(incoming_range);
+            for (&shadow_var, &incoming_range) in incoming_ranges[block_id].iter() {
+                block_liveness.entry(shadow_var).or_default().incoming_range = Some(incoming_range);
                 live_blocks_for_shadow_var
-                    .get_or_insert_with(shadow_var_id, HashSet::new)
+                    .get_or_insert_default(shadow_var)
                     .insert(block_id);
             }
-            for (&shadow_var_id, &outgoing_range) in outgoing_ranges[block_id].iter() {
-                block_liveness
-                    .entry(shadow_var_id)
-                    .or_default()
-                    .outgoing_range = Some(outgoing_range);
+            for (&shadow_var, &outgoing_range) in outgoing_ranges[block_id].iter() {
+                block_liveness.entry(shadow_var).or_default().outgoing_range = Some(outgoing_range);
                 live_blocks_for_shadow_var
-                    .get_or_insert_with(shadow_var_id, HashSet::new)
+                    .get_or_insert_default(shadow_var)
                     .insert(block_id);
             }
         }
@@ -297,32 +290,32 @@ impl ShadowLiveness {
     }
 
     /// Returns all shadow variables live in any block
-    pub fn live_shadow_vars(&self) -> impl Iterator<Item = ir::ShadowVarId> + '_ {
+    pub fn live_shadow_vars(&self) -> impl Iterator<Item = ir::ShadowVar> + '_ {
         self.live_blocks_for_shadow_var.ids()
     }
 
     /// Returns all blocks and ranges within that block in which an shadow variable is live.
     pub fn live_ranges(
         &self,
-        shadow_var_id: ir::ShadowVarId,
+        shadow_var: ir::ShadowVar,
     ) -> impl Iterator<Item = (ir::BlockId, ShadowLivenessRange)> + '_ {
         self.live_blocks_for_shadow_var
-            .get(shadow_var_id)
+            .get(shadow_var)
             .into_iter()
             .flatten()
-            .map(move |&block_id| (block_id, self.block_liveness[block_id][&shadow_var_id]))
+            .map(move |&block_id| (block_id, self.block_liveness[block_id][&shadow_var]))
     }
 
     /// Returns all shadow variables that are live anywhere within the given block.
     pub fn live_for_block(
         &self,
         block_id: ir::BlockId,
-    ) -> impl Iterator<Item = (ir::ShadowVarId, ShadowLivenessRange)> + '_ {
+    ) -> impl Iterator<Item = (ir::ShadowVar, ShadowLivenessRange)> + '_ {
         self.block_liveness
             .get(block_id)
             .into_iter()
             .flatten()
-            .map(move |(&shadow_var_id, &range)| (shadow_var_id, range))
+            .map(move |(&shadow_var, &range)| (shadow_var, range))
     }
 
     /// Returns the liveness range for a single shadow variable in the given block, if it is live
@@ -330,8 +323,8 @@ impl ShadowLiveness {
     pub fn live_range_in_block(
         &self,
         block_id: ir::BlockId,
-        shadow_var_id: ir::ShadowVarId,
+        shadow_var: ir::ShadowVar,
     ) -> Option<ShadowLivenessRange> {
-        Some(*self.block_liveness.get(block_id)?.get(&shadow_var_id)?)
+        Some(*self.block_liveness.get(block_id)?.get(&shadow_var)?)
     }
 }

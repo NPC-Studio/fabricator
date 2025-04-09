@@ -216,6 +216,14 @@ impl<I: Id, V> SecondaryMap<I, V> {
     }
 
     #[inline]
+    pub fn get_or_insert_default(&mut self, key: I) -> &mut V
+    where
+        V: Default,
+    {
+        self.map.get_or_insert_default(key.into_id())
+    }
+
+    #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
     }
