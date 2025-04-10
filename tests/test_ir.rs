@@ -1,6 +1,6 @@
 use fabricator::{
     closure::Closure,
-    compiler::{codegen, constant::Constant, ir},
+    compiler::{codegen::codegen, constant::Constant, ir},
     thread::Thread,
     value::{String, Value},
 };
@@ -113,7 +113,7 @@ fn test_ir_codegen() {
             start_block: start_block_id,
         };
 
-        let prototype = Gc::new(mc, codegen::generate(function).unwrap());
+        let prototype = Gc::new(mc, codegen(function).unwrap());
         let closure = Closure::new(mc, prototype);
 
         let mut thread = Thread::default();
@@ -227,7 +227,7 @@ fn test_ir_phi_upsilon() {
             start_block: start_block_id,
         };
 
-        let prototype = Gc::new(mc, codegen::generate(function).unwrap());
+        let prototype = Gc::new(mc, codegen(function).unwrap());
         let closure = Closure::new(mc, prototype);
 
         let mut thread = Thread::default();

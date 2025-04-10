@@ -38,7 +38,7 @@ pub enum CodegenError {
     JumpOutOfRange,
 }
 
-pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
+pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(&ir)?;
     let shadow_liveness = ShadowLiveness::compute(&ir)?;
 
