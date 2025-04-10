@@ -99,6 +99,17 @@ where
     post_order
 }
 
+/// The reverse of `dfs_post_order`, which is a topological sorting of the given graph.
+pub fn topological_order<N, I>(start: N, successors: impl Fn(N) -> I) -> Vec<N>
+where
+    N: Node,
+    I: IntoIterator<Item = N>,
+{
+    let mut v = dfs_post_order(start, successors);
+    v.reverse();
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use crate::util::index_containers::IndexMap;

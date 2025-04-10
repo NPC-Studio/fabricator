@@ -8,7 +8,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum PhiUpsilonVerificationError {
+pub enum ShadowVerificationError {
     #[error("shadow variable used by multiple phi instructions")]
     ShadowReused,
     #[error("not all paths to a phi instruction contain an upsilon to define the shadow variable")]
@@ -118,7 +118,7 @@ impl ShadowLiveness {
     /// have an effect on the value of a future `Phi`. Dead `Upsilon` instructions will either be
     /// post-dominated by another `Upsilon` instruction closer to the `Phi` that they write to, or
     /// there is no path in the CFG from the `Upsilon` to the `Phi` it writes to.
-    pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, PhiUpsilonVerificationError> {
+    pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, ShadowVerificationError> {
         // Collect the location of all `Upsilon` instructions per block in ascending instruction
         // position order.
 
@@ -159,7 +159,7 @@ impl ShadowLiveness {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 if let &ir::Instruction::Phi(shadow_var) = &ir.parts.instructions[inst_id] {
                     if shadow_vars.insert(shadow_var, ()).is_some() {
-                        return Err(PhiUpsilonVerificationError::ShadowReused);
+                        return Err(ShadowVerificationError::ShadowReused);
                     }
 
                     let mut range = ShadowIncomingRange {
@@ -256,7 +256,7 @@ impl ShadowLiveness {
         }
 
         if !live_in[ir.start_block].is_empty() {
-            return Err(PhiUpsilonVerificationError::ShadowUndef);
+            return Err(ShadowVerificationError::ShadowUndef);
         }
 
         let mut block_liveness: SecondaryMap<

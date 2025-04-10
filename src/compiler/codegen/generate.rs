@@ -8,11 +8,11 @@ use crate::{
     compiler::{
         analysis::{
             instruction_liveness::{InstructionLiveness, InstructionVerificationError},
-            shadow_liveness::{PhiUpsilonVerificationError, ShadowLiveness},
+            shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         },
         codegen::register_alloc::RegisterAllocation,
         constant::Constant,
-        graph::dfs::dfs_post_order,
+        graph::dfs::topological_order,
         ir,
     },
     instructions::{ConstIdx, HeapIdx, Instruction},
@@ -25,7 +25,7 @@ pub enum CodegenError {
     #[error(transparent)]
     InstructionVerification(#[from] InstructionVerificationError),
     #[error(transparent)]
-    PhiUpsilonVerification(#[from] PhiUpsilonVerificationError),
+    PhiUpsilonVerification(#[from] ShadowVerificationError),
     #[error(transparent)]
     ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
     #[error("too many heap variables used")]
@@ -73,11 +73,7 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
         }
     }
 
-    // The reverse of DFS post-order is a topological ordering, we want to iterate from the top
-    // down.
-    let mut block_order =
-        dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
-    block_order.reverse();
+    let block_order = topological_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
 
     let block_order_indexes: HashMap<ir::BlockId, usize> = block_order
         .iter()

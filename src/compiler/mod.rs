@@ -1,6 +1,6 @@
 pub mod analysis;
 pub mod codegen;
-pub mod compiler;
+pub mod compile;
 pub mod constant;
 pub mod frontend;
 pub mod graph;
@@ -9,4 +9,4 @@ pub mod lexer;
 pub mod parser;
 pub mod string_interner;
 
-pub use compiler::{compile, CompilerError};
+pub use compile::{compile, CompilerError};

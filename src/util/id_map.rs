@@ -200,6 +200,21 @@ impl<V> IdMap<V> {
         self.slots.len().try_into().unwrap()
     }
 
+    /// Returns the current live `Id` for the given index, if there is an live entry with this
+    /// index.
+    #[inline]
+    pub fn id_for_index(&self, index: Index) -> Option<Id> {
+        let slot = self.slots.get(index as usize)?;
+        if !slot.is_vacant() {
+            Some(Id {
+                index,
+                generation: NonZero::new(slot.generation).unwrap(),
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
         self.slots.iter().enumerate().flat_map(|(index, slot)| {
             if slot.is_vacant() {

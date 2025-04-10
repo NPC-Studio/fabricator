@@ -105,6 +105,11 @@ impl<I: Id, V> IdMap<I, V> {
     }
 
     #[inline]
+    pub fn id_for_index(&self, index: Index) -> Option<I> {
+        Some(I::from_id(self.map.id_for_index(index)?))
+    }
+
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
         self.map.iter().map(|(id, v)| (I::from_id(id), v))
     }

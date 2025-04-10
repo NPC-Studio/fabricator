@@ -224,6 +224,25 @@ impl<S> Instruction<S> {
             Instruction::Call { .. } => false,
         }
     }
+
+    pub fn has_effect(&self) -> bool {
+        match self {
+            Instruction::NoOp => false,
+            Instruction::Copy(_) => false,
+            Instruction::Undefined => false,
+            Instruction::Constant(_) => false,
+            Instruction::GetVariable(_) => false,
+            Instruction::SetVariable { .. } => true,
+            Instruction::Phi(_) => false,
+            Instruction::Upsilon(_, _) => true,
+            Instruction::UnOp { .. } => false,
+            Instruction::BinOp { .. } => false,
+            Instruction::BinComp { .. } => false,
+            Instruction::Push { .. } => true,
+            Instruction::Pop => true,
+            Instruction::Call { .. } => true,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

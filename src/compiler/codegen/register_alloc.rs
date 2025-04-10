@@ -10,7 +10,7 @@ use crate::{
                 ShadowIncomingRange, ShadowLiveness, ShadowLivenessRange, ShadowOutgoingRange,
             },
         },
-        graph::dfs::dfs_post_order,
+        graph::dfs::topological_order,
         ir,
     },
     instructions::RegIdx,
@@ -276,11 +276,8 @@ impl RegisterAllocation {
 
         let mut assigned_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
 
-        // The reverse of DFS post-order is a topological ordering, we want to iterate from the
-        // top down.
-        let mut block_order =
-            dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
-        block_order.reverse();
+        let block_order =
+            topological_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
 
         for &block_id in &block_order {
             let block = &ir.parts.blocks[block_id];
