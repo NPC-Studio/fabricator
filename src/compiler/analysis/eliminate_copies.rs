@@ -12,7 +12,7 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
     // Since every instruction is in SSA form and every use must be dominated by a definition, it
     // should be enough to do this in one pass, as long as we iterate in topological order.
     for &block_id in &reachable_blocks {
-        let block = &mut ir.parts.blocks[block_id];
+        let block = &ir.parts.blocks[block_id];
         for &inst_id in &block.instructions {
             let inst = &mut ir.parts.instructions[inst_id];
             if let &ir::Instruction::Copy(source) = &*inst {
@@ -30,6 +30,9 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
                 assert!(!copies.contains_key(&real_source));
 
                 copies.insert(inst_id, real_source);
+
+                // We're removing every copy, so the existing copy instruction should be unused.
+                *inst = ir::Instruction::NoOp;
             }
 
             for source in inst.sources_mut() {

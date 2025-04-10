@@ -323,22 +323,36 @@ impl RegisterAllocation {
                 .collect::<Vec<_>>();
 
             for inst_index in 0..=block.instructions.len() {
+                // We add any instructions that die here back to the availability pool *before*
+                // we assign a register to the result of this instruction. We do this because no
+                // instruction currently writes to a register that is not its output, and this way
+                // we can readily assign the result to a register that is used as an instruction
+                // parameter (if that parameter is not used again after this point).
+
+                let inst_life_start = inst_life_starts.get(&inst_index).copied();
+
+                // Because we add the registers for dead instructions to the availability pool
+                // before acquiring registers for live instructions, we need to handle the case
+                // where an instruction dies at the same time that it is born (an instruction has an
+                // output that is not used by any subsequent instruction).
+                let mut stillborn = false;
+
                 for &inst_life_end in inst_life_ends.get(&inst_index).into_iter().flatten() {
-                    available_registers.push(assigned_instruction_registers[inst_life_end]);
+                    if inst_life_start == Some(inst_life_end) {
+                        stillborn = true;
+                    } else {
+                        available_registers.push(assigned_instruction_registers[inst_life_end]);
+                    }
                 }
 
                 if let Some(&inst_life_start) = inst_life_starts.get(&inst_index) {
-                    // A `Copy` instruction can always share a register with its source (if that
-                    // source is not coalesced with a non-SSA register).
-                    let reg = match ir.parts.instructions[inst_life_start] {
-                        ir::Instruction::Copy(source)
-                            if assigned_instruction_registers.contains(source) =>
-                        {
-                            assigned_instruction_registers[source]
-                        }
-                        _ => available_registers.pop()?,
+                    let reg = if stillborn {
+                        // We just need any free register to put the output which won't be used in
+                        // the future.
+                        available_registers.last().copied()?
+                    } else {
+                        available_registers.pop()?
                     };
-
                     assert!(assigned_instruction_registers
                         .insert(inst_life_start, reg)
                         .is_none());

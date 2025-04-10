@@ -104,7 +104,9 @@ pub struct ShadowLiveness {
 }
 
 impl ShadowLiveness {
-    /// Compute shadow variable liveness ranges for every block in the given IR.
+    /// Compute shadow variable liveness ranges for every block in the given IR. A shadow variable
+    /// is considered "live" when a `Phi` instruction may in the future read a value that has been
+    /// written by an `Upsilon`.
     ///
     /// This also verifies all phi and upsilon instructions within the IR and their use, namely
     /// that:
@@ -289,7 +291,7 @@ impl ShadowLiveness {
         })
     }
 
-    /// Returns all shadow variables live in any block
+    /// Returns all shadow variables used by any phi instruction in any block.
     pub fn live_shadow_vars(&self) -> impl Iterator<Item = ir::ShadowVar> + '_ {
         self.live_blocks_for_shadow_var.ids()
     }

@@ -52,6 +52,17 @@ impl<S: Hash> Hash for Constant<S> {
 
 impl<S> Constant<S> {
     #[inline]
+    pub fn to_bool(&self) -> bool {
+        match *self {
+            Constant::Undefined => false,
+            Constant::Boolean(b) => b,
+            Constant::Integer(i) => i > 0,
+            Constant::Float(f) => f > 0.5,
+            _ => true,
+        }
+    }
+
+    #[inline]
     pub fn add(self, other: Constant<S>) -> Option<Constant<S>> {
         match (self, other) {
             (Constant::Integer(a), Constant::Integer(b)) => {
@@ -73,6 +84,17 @@ impl<S> Constant<S> {
             (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 - b)),
             (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a - b as f64)),
             (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a - b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn equal(self, other: Constant<S>) -> Option<bool> {
+        match (self, other) {
+            (Constant::Integer(a), Constant::Integer(b)) => Some(a == b),
+            (Constant::Integer(a), Constant::Float(b)) => Some((a as f64) == b),
+            (Constant::Float(a), Constant::Integer(b)) => Some(a == b as f64),
+            (Constant::Float(a), Constant::Float(b)) => Some(a == b),
             _ => None,
         }
     }

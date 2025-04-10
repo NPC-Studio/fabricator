@@ -55,7 +55,8 @@ pub struct InstructionLiveness {
 }
 
 impl InstructionLiveness {
-    /// Compute instruction liveness ranges for every block in the given IR.
+    /// Compute instruction liveness ranges for every block in the given IR. An instruction is
+    /// considered "live" when it has produced a value that may be read by a future instruction.
     ///
     /// This also verifies all instructions within the IR and their use, namely that:
     ///   1) No instruction appears more than once within all blocks.
@@ -268,7 +269,9 @@ impl InstructionLiveness {
         })
     }
 
-    /// Returns all instructions live in any block
+    /// Returns all instructions that are live in any block.
+    ///
+    /// This will return any instruction present in any block that produces a value.
     pub fn live_instructions(&self) -> impl Iterator<Item = ir::InstId> + '_ {
         self.live_blocks_for_instruction.ids()
     }

@@ -6,7 +6,7 @@ use crate::{
     compiler::{
         analysis::{
             dead_code_elim::eliminate_dead_code, eliminate_copies::eliminate_copies,
-            remove_dead_upsilons::remove_dead_upsilons, shadow_liveness::ShadowVerificationError,
+            shadow_liveness::ShadowVerificationError, shadow_reduction::reduce_shadows,
             ssa_conversion::convert_to_ssa,
         },
         codegen::codegen,
@@ -18,7 +18,10 @@ use crate::{
     value::String,
 };
 
-use super::analysis::cleanup::{clean_instructions, clean_unreachable_blocks};
+use super::analysis::{
+    cleanup::{clean_instructions, clean_unreachable_blocks},
+    constant_folding::fold_constants,
+};
 
 #[derive(Debug, Error)]
 pub enum CompilerError {
@@ -48,16 +51,18 @@ pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, Com
 }
 
 #[derive(Debug, Error)]
-pub enum IrError {
+pub enum OptimizationError {
     #[error(transparent)]
     ShadowVariables(#[from] ShadowVerificationError),
 }
 
-pub fn optimize_ir<S: AsRef<str>>(ir: &mut ir::Function<S>) -> Result<(), IrError> {
+pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), OptimizationError> {
     convert_to_ssa(ir);
+    fold_constants(ir);
+    eliminate_dead_code(ir);
+    reduce_shadows(ir)?;
     eliminate_copies(ir);
     eliminate_dead_code(ir);
-    remove_dead_upsilons(ir)?;
     clean_instructions(ir);
     clean_unreachable_blocks(ir);
     Ok(())
