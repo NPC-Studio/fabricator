@@ -18,6 +18,7 @@ pub struct Dominators<N> {
     dominators: Vec<usize>,
     dominance_ranges: Vec<(usize, usize)>,
     dominance_frontiers: Vec<IndexSet>,
+    dominance_tree: IndexMap<IndexSet>,
 }
 
 impl<N: Node> Dominators<N> {
@@ -157,12 +158,22 @@ impl<N: Node> Dominators<N> {
             dominance_frontiers
         };
 
+        let mut dominance_tree = IndexMap::new();
+        for index in 0..post_order.len() {
+            if let Some(&idom) = dominators.get(index) {
+                dominance_tree
+                    .get_or_insert_with(idom, IndexSet::new)
+                    .insert(index);
+            }
+        }
+
         Dominators {
             post_order,
             post_order_indexes,
             dominators,
             dominance_ranges,
             dominance_frontiers,
+            dominance_tree,
         }
     }
 
@@ -205,8 +216,39 @@ impl<N: Node> Dominators<N> {
         Some(
             self.dominance_frontiers[self.post_order_indexes.get(n.index()).copied()?]
                 .iter()
-                .map(|n| self.post_order[n]),
+                .map(move |n| self.post_order[n]),
         )
+    }
+
+    /// Return the (precalculated) immediate children of the given node in the dominator tree.
+    ///
+    /// Every returned node will have the parameter `n` as its immediate dominator.
+    ///
+    /// Returns `None` if the given node `n` was not reachable when `Dominators` was constructed and
+    /// thus has no dominance information.
+    pub fn dominance_children(&self, n: N) -> Option<impl Iterator<Item = N> + '_> {
+        Some(
+            self.dominance_tree
+                .get(self.post_order_indexes.get(n.index()).copied()?)
+                .into_iter()
+                .flat_map(|is| is.iter())
+                .map(move |index| self.post_order[index]),
+        )
+    }
+}
+
+pub struct DominatorTree<N> {
+    children: IndexMap<Vec<N>>,
+}
+
+impl<N: Node> DominatorTree<N> {
+    /// Return an iterator over every node that has the given `node` as its immediate dominator.
+    pub fn children(&self, node: N) -> impl Iterator<Item = N> + '_ {
+        if let Some(succs) = self.children.get(node.index()) {
+            succs.iter().copied()
+        } else {
+            [].iter().copied()
+        }
     }
 }
 

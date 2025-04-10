@@ -301,10 +301,8 @@ impl RegisterAllocation {
                     if let Some(start) = range.start {
                         assert!(inst_life_starts.insert(start, inst_id).is_none());
                     } else {
-                        live_in_registers.set_bit(
-                            *assigned_instruction_registers.get(inst_id).unwrap() as usize,
-                            true,
-                        );
+                        live_in_registers
+                            .set_bit(assigned_instruction_registers[inst_id] as usize, true);
                     }
 
                     if let Some(end) = range.end {
@@ -329,16 +327,21 @@ impl RegisterAllocation {
 
             for inst_index in 0..=block.instructions.len() {
                 for &inst_life_end in inst_life_ends.get(&inst_index).into_iter().flatten() {
-                    available_registers.push(
-                        assigned_instruction_registers
-                            .get(inst_life_end)
-                            .copied()
-                            .unwrap(),
-                    );
+                    available_registers.push(assigned_instruction_registers[inst_life_end]);
                 }
 
                 if let Some(&inst_life_start) = inst_life_starts.get(&inst_index) {
-                    let reg = available_registers.pop()?;
+                    // A `Copy` instruction can always share a register with its source (if that
+                    // source is not coalesced with a non-SSA register).
+                    let reg = match ir.parts.instructions[inst_life_start] {
+                        ir::Instruction::Copy(source)
+                            if assigned_instruction_registers.contains(source) =>
+                        {
+                            assigned_instruction_registers[source]
+                        }
+                        _ => available_registers.pop()?,
+                    };
+
                     assert!(assigned_instruction_registers
                         .insert(inst_life_start, reg)
                         .is_none());

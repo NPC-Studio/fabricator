@@ -20,10 +20,7 @@ impl<N: Node> Predecessors<N> {
 
         for p in nodes {
             for s in successors(p) {
-                let pred_list = predecessors
-                    .get_mut_option(s.index())
-                    .get_or_insert_with(Vec::new);
-                pred_list.push(p);
+                predecessors.get_or_insert_with(s.index(), Vec::new).push(p);
             }
         }
 

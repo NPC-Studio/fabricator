@@ -97,6 +97,16 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
             match ir.parts.instructions[inst_id] {
                 ir::Instruction::NoOp => {}
+                ir::Instruction::Copy(source) => {
+                    let dest_reg = reg_alloc.instruction_registers[inst_id];
+                    let source_reg = reg_alloc.instruction_registers[source];
+                    if dest_reg != source_reg {
+                        vm_instructions.push(Instruction::Move {
+                            dest: dest_reg,
+                            source: source_reg,
+                        });
+                    }
+                }
                 ir::Instruction::Undefined => {
                     vm_instructions.push(Instruction::Undefined {
                         dest: reg_alloc.instruction_registers[inst_id],
@@ -125,8 +135,8 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                     let dest_reg = reg_alloc.instruction_registers[inst_id];
                     if shadow_reg != dest_reg {
                         vm_instructions.push(Instruction::Move {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                            source: reg_alloc.shadow_registers[shadow_id],
+                            dest: dest_reg,
+                            source: shadow_reg,
                         });
                     }
                 }
@@ -139,8 +149,8 @@ pub fn generate<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Co
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {
                             vm_instructions.push(Instruction::Move {
-                                dest: reg_alloc.shadow_registers[shadow_id],
-                                source: reg_alloc.instruction_registers[source],
+                                dest: shadow_reg,
+                                source: source_reg,
                             });
                         }
                     }

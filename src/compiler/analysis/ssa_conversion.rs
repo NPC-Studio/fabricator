@@ -8,6 +8,8 @@ use crate::{
     util::{index_containers::IndexSet, typed_id_map::SecondaryMap},
 };
 
+use super::vec_change_set::VecChangeSet;
+
 /// Convert uses of IR variables into SSA, possibly by inserting Phi and Upsilon instructions.
 ///
 /// This will convert uses of variables in reachable blocks, blocks that are never executed will
@@ -75,20 +77,19 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
 
     // Actually insert `Phi` instructions for every variable at the beginning of every block that we
     // have determined needs them.
-    //
-    // Push them all at once and rotate them to the beginning of the instructions array as a group
-    // to save having to do this once per phi.
+    let mut inst_change_set = VecChangeSet::new();
     for block_id in dominators.topological_order() {
         let block = &mut ir.parts.blocks[block_id];
         if let Some(phi_functions) = phi_functions.get(block_id) {
             for &shadow_var in phi_functions.values() {
-                block.instructions.push(
+                inst_change_set.insert(
+                    0,
                     ir.parts
                         .instructions
                         .insert(ir::Instruction::Phi(shadow_var)),
                 );
             }
-            block.instructions.rotate_right(phi_functions.len());
+            inst_change_set.apply(&mut block.instructions);
         }
     }
 
@@ -97,27 +98,17 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // This algorithm is also from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    // First, we need to take dominance information and turn it into the dominator tree.
-    //
-    // We encode it as a map of successors.
-    let mut dominator_tree: SecondaryMap<ir::BlockId, Vec<ir::BlockId>> = SecondaryMap::new();
-    for block_id in dominators.topological_order() {
-        if let Some(idom) = dominators.idom(block_id) {
-            dominator_tree.get_or_insert_default(idom).push(block_id);
-        }
-    }
-
     let mut current_vars: SecondaryMap<ir::Variable, Vec<ir::InstId>> =
         SecondaryMap::from_iter(assigning_blocks.ids().map(|var| (var, Vec::new())));
     let mut var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::Variable, usize>> =
         SecondaryMap::new();
-    let mut inst_replacements: HashMap<ir::InstId, ir::InstId> = HashMap::new();
 
+    // We turn the recursive algorithm from Cytron et al. into an explicit DFS of the dominator tree.
     let start_block = ir.start_block;
     depth_first_search_with(
         &mut (&mut *ir, &mut current_vars, &mut var_stack_bottom),
         start_block,
-        |(_, _, _), block_id| dominator_tree.get(block_id).into_iter().flatten().copied(),
+        |(_, _, _), block_id| dominators.dominance_children(block_id).unwrap(),
         |(ir, current_vars, var_stack_bottom), block_id| {
             let var_stack_bottom = var_stack_bottom.get_or_insert_default(block_id);
             for (var, stack) in current_vars.iter() {
@@ -132,8 +123,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                         if let Some(top) =
                             current_vars.get(variable).and_then(|s| s.last().copied())
                         {
-                            inst_replacements.insert(inst_id, top);
-                            *inst = ir::Instruction::NoOp;
+                            *inst = ir::Instruction::Copy(top);
                         } else {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
@@ -187,12 +177,4 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             }
         },
     );
-
-    for inst in ir.parts.instructions.values_mut() {
-        for source in inst.sources_mut() {
-            if let Some(&replacement) = inst_replacements.get(source) {
-                *source = replacement;
-            }
-        }
-    }
 }

@@ -42,6 +42,19 @@ impl<V> IndexMap<V> {
         &mut self.vec[i]
     }
 
+    #[inline]
+    pub fn get_or_insert_with(&mut self, i: usize, f: impl FnOnce() -> V) -> &mut V {
+        self.get_mut_option(i).get_or_insert_with(f)
+    }
+
+    #[inline]
+    pub fn get_or_insert_default(&mut self, i: usize) -> &mut V
+    where
+        V: Default,
+    {
+        self.get_mut_option(i).get_or_insert_default()
+    }
+
     pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
         mem::replace(&mut self.get_mut_option(i), Some(v))
     }

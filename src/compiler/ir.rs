@@ -95,6 +95,7 @@ pub enum BinComp {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,
+    Copy(InstId),
     Undefined,
     Constant(Constant<S>),
     GetVariable(Variable),
@@ -132,6 +133,9 @@ impl<S> Instruction<S> {
 
         match self {
             Instruction::NoOp => {}
+            Instruction::Copy(source) => {
+                sources.push(*source);
+            }
             Instruction::Undefined => {}
             Instruction::Constant(_) => {}
             Instruction::GetVariable(_) => {}
@@ -168,6 +172,9 @@ impl<S> Instruction<S> {
 
         match self {
             Instruction::NoOp => {}
+            Instruction::Copy(source) => {
+                sources.push(source);
+            }
             Instruction::Undefined => {}
             Instruction::Constant(_) => {}
             Instruction::GetVariable(_) => {}
@@ -202,6 +209,7 @@ impl<S> Instruction<S> {
     pub fn has_value(&self) -> bool {
         match self {
             Instruction::NoOp => false,
+            Instruction::Copy(_) => true,
             Instruction::Undefined => true,
             Instruction::Constant(_) => true,
             Instruction::GetVariable(_) => true,
@@ -323,6 +331,9 @@ impl<S: AsRef<str>> Function<S> {
                 match inst {
                     Instruction::NoOp => {
                         writeln!(f, "no_op()")?;
+                    }
+                    Instruction::Copy(source) => {
+                        writeln!(f, "copy(I{})", source.index())?;
                     }
                     Instruction::Undefined => {
                         writeln!(f, "undefined()")?;
