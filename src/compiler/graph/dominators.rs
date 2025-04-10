@@ -161,9 +161,11 @@ impl<N: Node> Dominators<N> {
         let mut dominance_tree = IndexMap::new();
         for index in 0..post_order.len() {
             if let Some(&idom) = dominators.get(index) {
-                dominance_tree
-                    .get_or_insert_with(idom, IndexSet::new)
-                    .insert(index);
+                if idom != index {
+                    dominance_tree
+                        .get_or_insert_with(idom, IndexSet::new)
+                        .insert(index);
+                }
             }
         }
 
@@ -400,5 +402,27 @@ mod tests {
         }
 
         assert!(dominators.dominance_frontier(g).is_none());
+
+        let dominance_children = [
+            (a, vec![b]),
+            (b, vec![f, c, d]),
+            (c, vec![e]),
+            (d, vec![]),
+            (e, vec![]),
+            (f, vec![]),
+        ];
+
+        for (n, children) in dominance_children {
+            let observed_children = dominators
+                .dominance_children(n)
+                .unwrap()
+                .collect::<Vec<_>>();
+            for f in &observed_children {
+                assert!(children.contains(f));
+            }
+            for f in &children {
+                assert!(observed_children.contains(f));
+            }
+        }
     }
 }

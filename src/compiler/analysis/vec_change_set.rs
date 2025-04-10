@@ -51,7 +51,7 @@ impl<T> VecChangeSet<T> {
 
     /// Apply all changes to the given vector.
     ///
-    /// Implicitly clears the `IndexChangeSet`.
+    /// Implicitly clears the `VecChangeSet`.
     ///
     /// # Panics
     ///
