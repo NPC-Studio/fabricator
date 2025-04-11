@@ -5,6 +5,7 @@ use fabricator::{
     bytecode::ByteCode,
     closure::{Closure, Constant, Prototype},
     instructions::Instruction,
+    object::Object,
     thread::Thread,
     value::Value,
 };
@@ -77,7 +78,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let arena = black_box(&mut arena);
             arena.mutate_root(|mc, root| {
-                let closure = Closure::new(mc, root.proto);
+                let closure = Closure::new(mc, root.proto, Object::new(mc));
                 assert_eq!(
                     root.thread.exec(mc, closure).unwrap()[0],
                     Value::Integer(500000500000)

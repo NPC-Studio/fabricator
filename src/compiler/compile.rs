@@ -1,4 +1,4 @@
-use gc_arena::{Gc, Mutation};
+use gc_arena::Mutation;
 use thiserror::Error;
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         parser::{parse, ParseError},
         string_interner::StringInterner,
     },
-    value::String,
+    string::String,
 };
 
 use super::analysis::{
@@ -38,7 +38,7 @@ pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, Com
         type String = String<'gc>;
 
         fn intern(&mut self, s: &str) -> String<'gc> {
-            String(Gc::new(self.0, s.to_string()))
+            String::new(self.0, s)
         }
     }
 

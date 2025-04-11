@@ -2,10 +2,10 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::stack::Stack;
+use crate::{error::Error, stack::Stack};
 
 pub trait CallbackFn<'gc>: Collect<'gc> {
-    fn call(&self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>);
+    fn call(&self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error>;
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -14,7 +14,7 @@ pub struct Callback<'gc>(Gc<'gc, CallbackInner<'gc>>);
 
 // We represent a callback as a single pointer with an inline VTable header.
 pub struct CallbackInner<'gc> {
-    call: unsafe fn(*const CallbackInner<'gc>, &Mutation<'gc>, Stack<'gc, '_>),
+    call: unsafe fn(*const CallbackInner<'gc>, &Mutation<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
 }
 
 impl<'gc> Callback<'gc> {
@@ -51,7 +51,7 @@ impl<'gc> Callback<'gc> {
         Self(unsafe { Gc::cast::<CallbackInner>(hc) })
     }
 
-    pub fn call(self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>) {
+    pub fn call(self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error> {
         unsafe { (self.0.call)(Gc::as_ptr(self.0), mc, stack) }
     }
 
@@ -61,7 +61,7 @@ impl<'gc> Callback<'gc> {
     /// to associate GC data with this function, use [`Callback::from_fn_with`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
-        F: 'static + Fn(&Mutation<'gc>, Stack<'gc, '_>),
+        F: 'static + Fn(&Mutation<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
     {
         Self::from_fn_with(mc, (), move |_, mc, stack| call(mc, stack))
     }
@@ -70,7 +70,7 @@ impl<'gc> Callback<'gc> {
     pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect<'gc>,
-        F: 'static + Fn(&R, &Mutation<'gc>, Stack<'gc, '_>),
+        F: 'static + Fn(&R, &Mutation<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
@@ -83,9 +83,9 @@ impl<'gc> Callback<'gc> {
         impl<'gc, R, F> CallbackFn<'gc> for RootCallback<R, F>
         where
             R: 'gc + Collect<'gc>,
-            F: 'static + Fn(&R, &Mutation<'gc>, Stack<'gc, '_>),
+            F: 'static + Fn(&R, &Mutation<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
         {
-            fn call(&self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>) {
+            fn call(&self, mc: &Mutation<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error> {
                 (self.call)(&self.root, mc, stack)
             }
         }

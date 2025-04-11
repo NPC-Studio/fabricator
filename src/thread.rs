@@ -6,7 +6,9 @@ use thiserror::Error;
 use crate::{
     bytecode::{self, ByteCode},
     closure::{Closure, Constant, HeapVar},
+    error::Error,
     instructions::{ConstIdx, HeapIdx, RegIdx},
+    object::Object,
     stack::Stack,
     value::{Function, Value},
 };
@@ -34,7 +36,7 @@ impl<'gc> Thread<'gc> {
         &mut self,
         mc: &Mutation<'gc>,
         closure: Closure<'gc>,
-    ) -> Result<Vec<Value<'gc>>, VmError> {
+    ) -> Result<Vec<Value<'gc>>, Error> {
         self.registers.clear();
         self.stack.clear();
 
@@ -48,7 +50,7 @@ impl<'gc> Thread<'gc> {
         mc: &Mutation<'gc>,
         closure: Closure<'gc>,
         stack_bottom: usize,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), Error> {
         let proto = closure.prototype();
 
         assert!(proto.used_registers <= 256);
@@ -76,6 +78,7 @@ impl<'gc> Thread<'gc> {
                     .unwrap(),
                 &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
+                closure.this(),
             )? {
                 Next::Call {
                     closure,
@@ -133,18 +136,20 @@ fn dispatch<'gc>(
     registers: &mut [Value<'gc>; 256],
     heap: &mut [HeapVar<'gc>],
     mut stack: Stack<'gc, '_>,
-) -> Result<Next<'gc>, VmError> {
+    this: Object<'gc>,
+) -> Result<Next<'gc>, Error> {
     struct Dispatch<'gc, 'a> {
         mc: &'a Mutation<'gc>,
         constants: &'a [Constant<'gc>],
         registers: &'a mut [Value<'gc>],
         heap: &'a mut [HeapVar<'gc>],
         stack: Stack<'gc, 'a>,
+        this: Object<'gc>,
     }
 
     impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
         type Break = Next<'gc>;
-        type Error = VmError;
+        type Error = Error;
 
         #[inline]
         fn undefined(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
@@ -167,6 +172,24 @@ fn dispatch<'gc>(
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
+            Ok(())
+        }
+
+        #[inline]
+        fn get_this(&mut self, dest: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
+            let Value::String(key) = self.registers[key as usize] else {
+                return Err(VmError::BadOp.into());
+            };
+            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
+            Ok(())
+        }
+
+        #[inline]
+        fn set_this(&mut self, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
+            let Value::String(key) = self.registers[key as usize] else {
+                return Err(VmError::BadOp.into());
+            };
+            self.this.set(self.mc, key, self.registers[value as usize]);
             Ok(())
         }
 
@@ -299,7 +322,7 @@ fn dispatch<'gc>(
                     returns,
                 }),
                 Function::Callback(callback) => {
-                    callback.call(self.mc, self.stack.reborrow());
+                    callback.call(self.mc, self.stack.reborrow())?;
                     ControlFlow::Continue(())
                 }
             })
@@ -318,6 +341,7 @@ fn dispatch<'gc>(
         registers,
         heap,
         stack: stack.reborrow(),
+        this,
     });
     *pc = dispatcher.pc();
     ret

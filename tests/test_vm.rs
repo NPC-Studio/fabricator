@@ -2,6 +2,7 @@ use fabricator::{
     bytecode::ByteCode,
     closure::{Closure, Constant, Prototype},
     instructions::Instruction,
+    object::Object,
     thread::Thread,
     value::Value,
 };
@@ -65,7 +66,7 @@ fn test_vm_sum_loop() {
 
         let mut thread = Thread::default();
 
-        let closure = Closure::new(mc, proto);
+        let closure = Closure::new(mc, proto, Object::new(mc));
 
         assert_eq!(
             thread.exec(mc, closure).unwrap()[0],
@@ -133,7 +134,7 @@ fn test_vm_sum_loop_with_heap() {
             },
         );
 
-        let closure = Closure::new(mc, proto);
+        let closure = Closure::new(mc, proto, Object::new(mc));
 
         let mut thread = Thread::default();
         assert_eq!(

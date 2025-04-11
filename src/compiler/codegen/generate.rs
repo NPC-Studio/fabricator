@@ -16,8 +16,8 @@ use crate::{
         ir,
     },
     instructions::{ConstIdx, HeapIdx, Instruction},
+    string::String,
     util::typed_id_map::SecondaryMap,
-    value::String,
 };
 
 #[derive(Debug, Error)]
@@ -124,6 +124,18 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
                     vm_instructions.push(Instruction::SetHeap {
                         heap: heap_vars[dest],
                         source: reg_alloc.instruction_registers[source],
+                    });
+                }
+                ir::Instruction::GetThis(key) => {
+                    vm_instructions.push(Instruction::GetThis {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        key: reg_alloc.instruction_registers[key],
+                    });
+                }
+                ir::Instruction::SetThis { key, value } => {
+                    vm_instructions.push(Instruction::SetThis {
+                        key: reg_alloc.instruction_registers[key],
+                        value: reg_alloc.instruction_registers[value],
                     });
                 }
                 ir::Instruction::Phi(shadow_id) => {

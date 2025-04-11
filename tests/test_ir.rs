@@ -1,8 +1,10 @@
 use fabricator::{
     closure::Closure,
     compiler::{codegen::codegen, constant::Constant, ir},
+    object::Object,
+    string::String,
     thread::Thread,
-    value::{String, Value},
+    value::Value,
 };
 use gc_arena::{arena, Gc};
 
@@ -114,7 +116,7 @@ fn test_ir_codegen() {
         };
 
         let prototype = Gc::new(mc, codegen(function).unwrap());
-        let closure = Closure::new(mc, prototype);
+        let closure = Closure::new(mc, prototype, Object::new(mc));
 
         let mut thread = Thread::default();
         assert_eq!(
@@ -228,7 +230,7 @@ fn test_ir_phi_upsilon() {
         };
 
         let prototype = Gc::new(mc, codegen(function).unwrap());
-        let closure = Closure::new(mc, prototype);
+        let closure = Closure::new(mc, prototype, Object::new(mc));
 
         let mut thread = Thread::default();
         assert_eq!(

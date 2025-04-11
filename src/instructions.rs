@@ -11,6 +11,8 @@ macro_rules! for_each_instruction {
             simple => load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
+            simple => get_this = GetThis { dest: RegIdx, key: RegIdx };
+            simple => set_this = SetThis  { key: RegIdx, value: RegIdx };
             simple => move_ = Move { dest: RegIdx, source: RegIdx };
             simple => not = Not { dest: RegIdx, arg: RegIdx };
             simple => add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };

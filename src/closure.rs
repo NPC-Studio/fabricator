@@ -2,10 +2,7 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Lock, Mutation};
 
-use crate::{
-    bytecode::ByteCode,
-    value::{String, Value},
-};
+use crate::{bytecode::ByteCode, object::Object, string::String, value::Value};
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
@@ -60,6 +57,7 @@ impl<'gc> HeapVar<'gc> {
 #[collect(no_drop)]
 struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
+    this: Object<'gc>,
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -67,12 +65,16 @@ struct ClosureInner<'gc> {
 pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 
 impl<'gc> Closure<'gc> {
-    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>) -> Self {
-        Self(Gc::new(mc, ClosureInner { proto }))
+    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>, this: Object<'gc>) -> Self {
+        Self(Gc::new(mc, ClosureInner { proto, this }))
     }
 
     pub fn prototype(self) -> Gc<'gc, Prototype<'gc>> {
         self.0.proto
+    }
+
+    pub fn this(self) -> Object<'gc> {
+        self.0.this
     }
 }
 

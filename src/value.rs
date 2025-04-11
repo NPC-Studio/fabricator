@@ -1,18 +1,6 @@
-use std::string::String as StdString;
+use gc_arena::Collect;
 
-use gc_arena::{Collect, Gc};
-
-use crate::{callback::Callback, closure::Closure};
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
-#[collect(no_drop)]
-pub struct String<'gc>(pub Gc<'gc, StdString>);
-
-impl<'gc> AsRef<str> for String<'gc> {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
+use crate::{callback::Callback, closure::Closure, object::Object, string::String};
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -29,6 +17,7 @@ pub enum Value<'gc> {
     Integer(i64),
     Float(f64),
     String(String<'gc>),
+    Object(Object<'gc>),
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
 }

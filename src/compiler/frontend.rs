@@ -9,8 +9,6 @@ use crate::compiler::{constant::Constant, ir, parser};
 
 #[derive(Debug, Error)]
 pub enum FrontendError {
-    #[error("no such variable declared")]
-    NoSuchVar,
     #[error("too many parameters")]
     ParameterOverflow,
 }
@@ -90,10 +88,22 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         assignment_statement: &parser::AssignmentStatement<S>,
     ) -> Result<(), FrontendError> {
-        let var = self
-            .get_var(&assignment_statement.name)
-            .ok_or(FrontendError::NoSuchVar)?;
-        let old = self.push_instruction(ir::Instruction::GetVariable(var));
+        enum VarOrThis {
+            Var(ir::Variable),
+            This(ir::InstId),
+        }
+
+        let (target, old) = if let Some(var) = self.get_var(&assignment_statement.name) {
+            let old = self.push_instruction(ir::Instruction::GetVariable(var));
+            (VarOrThis::Var(var), old)
+        } else {
+            let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
+                assignment_statement.name.clone(),
+            )));
+            let old = self.push_instruction(ir::Instruction::GetThis(key));
+            (VarOrThis::This(key), old)
+        };
+
         let val = self.commit_expression(&assignment_statement.value)?;
         let assign = match assignment_statement.op {
             parser::AssignmentOperator::Equal => val,
@@ -114,7 +124,16 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::AssignmentOperator::MultEqual => unimplemented!(),
             parser::AssignmentOperator::DivEqual => unimplemented!(),
         };
-        self.push_instruction(ir::Instruction::SetVariable(var, assign));
+
+        match target {
+            VarOrThis::Var(var) => {
+                self.push_instruction(ir::Instruction::SetVariable(var, assign));
+            }
+            VarOrThis::This(key) => {
+                self.push_instruction(ir::Instruction::SetThis { key, value: assign });
+            }
+        }
+
         Ok(())
     }
 
@@ -234,8 +253,13 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.push_instruction(ir::Instruction::Constant(Constant::String(s.clone())))
             }
             parser::Expression::Name(s) => {
-                let var = self.get_var(s).ok_or(FrontendError::NoSuchVar)?;
-                self.push_instruction(ir::Instruction::GetVariable(var))
+                if let Some(var) = self.get_var(s) {
+                    self.push_instruction(ir::Instruction::GetVariable(var))
+                } else {
+                    let key = self
+                        .push_instruction(ir::Instruction::Constant(Constant::String(s.clone())));
+                    self.push_instruction(ir::Instruction::GetThis(key))
+                }
             }
             parser::Expression::Group(expr) => self.commit_expression(expr)?,
             parser::Expression::Unary(op, expr) => {

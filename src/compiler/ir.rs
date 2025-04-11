@@ -100,6 +100,11 @@ pub enum Instruction<S> {
     Constant(Constant<S>),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
+    GetThis(InstId),
+    SetThis {
+        key: InstId,
+        value: InstId,
+    },
     Phi(ShadowVar),
     Upsilon(ShadowVar, InstId),
     UnOp {
@@ -142,6 +147,13 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(*source);
             }
+            Instruction::GetThis(key) => {
+                sources.push(*key);
+            }
+            Instruction::SetThis { key, value } => {
+                sources.push(*key);
+                sources.push(*value);
+            }
             Instruction::Phi(_) => {}
             Instruction::Upsilon(_, source) => sources.push(*source),
             Instruction::UnOp { source, .. } => {
@@ -181,8 +193,17 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(source);
             }
+            Instruction::GetThis(key) => {
+                sources.push(key);
+            }
+            Instruction::SetThis { key, value } => {
+                sources.push(key);
+                sources.push(value);
+            }
             Instruction::Phi(_) => {}
-            Instruction::Upsilon(_, source) => sources.push(source),
+            Instruction::Upsilon(_, source) => {
+                sources.push(source);
+            }
             Instruction::UnOp { source, .. } => {
                 sources.push(source);
             }
@@ -214,6 +235,8 @@ impl<S> Instruction<S> {
             Instruction::Constant(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
+            Instruction::GetThis(_) => true,
+            Instruction::SetThis { .. } => false,
             Instruction::Phi(_) => true,
             Instruction::Upsilon(_, _) => false,
             Instruction::UnOp { .. } => true,
@@ -233,6 +256,8 @@ impl<S> Instruction<S> {
             Instruction::Constant(_) => false,
             Instruction::GetVariable(_) => false,
             Instruction::SetVariable { .. } => true,
+            Instruction::GetThis(_) => false,
+            Instruction::SetThis { .. } => true,
             Instruction::Phi(_) => false,
             Instruction::Upsilon(_, _) => true,
             Instruction::UnOp { .. } => false,
@@ -365,6 +390,12 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
+                    }
+                    Instruction::GetThis(key) => {
+                        writeln!(f, "get_self(I{})", key.index())?;
+                    }
+                    Instruction::SetThis { key, value } => {
+                        writeln!(f, "set_self(I{}, I{})", key.index(), value.index())?;
                     }
                     Instruction::Phi(shadow) => {
                         writeln!(f, "phi(S{})", shadow.index())?;
