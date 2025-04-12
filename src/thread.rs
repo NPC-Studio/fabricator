@@ -327,7 +327,7 @@ fn dispatch<'gc>(
                     // Pad stack with undefined values to match the requested args len.
                     self.stack.resize(arg_bottom + args as usize);
 
-                    callback.call(self.mc, self.stack.reborrow())?;
+                    callback.call(self.mc, self.stack.sub_stack(arg_bottom))?;
 
                     // Pad stack with undefined values to match the expected return len.
                     self.stack.resize(arg_bottom + returns as usize);
