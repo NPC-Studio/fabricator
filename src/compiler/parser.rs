@@ -325,12 +325,17 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             match self.peek(0) {
                 Some((Token::LeftParen, _)) => {
                     self.advance(1);
-                    let arguments = self.parse_expression_list()?;
+                    self.look_ahead(1)?;
+                    let arguments = if !matches!(self.peek(0), Some((Token::RightParen, _))) {
+                        self.parse_expression_list()?
+                    } else {
+                        Vec::new()
+                    };
+                    self.parse_token(Token::RightParen)?;
                     expr = Expression::Call(FunctionCall {
                         base: Box::new(expr),
                         arguments,
                     });
-                    self.parse_token(Token::RightParen)?;
                 }
                 _ => break,
             }

@@ -322,7 +322,16 @@ fn dispatch<'gc>(
                     returns,
                 }),
                 Function::Callback(callback) => {
+                    let arg_bottom = self.stack.len() - args as usize;
+
+                    // Pad stack with undefined values to match the requested args len.
+                    self.stack.resize(arg_bottom + args as usize);
+
                     callback.call(self.mc, self.stack.reborrow())?;
+
+                    // Pad stack with undefined values to match the expected return len.
+                    self.stack.resize(arg_bottom + returns as usize);
+
                     ControlFlow::Continue(())
                 }
             })
