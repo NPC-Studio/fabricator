@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use either::Either;
 
 use crate::{
@@ -73,22 +75,50 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     }
 
     let mut worklist = Vec::new();
+    let mut upsilon_instructions: HashMap<ir::ShadowVar, Vec<ir::InstId>> = HashMap::new();
 
-    // First, mark each instruction that has an effect as live.
+    // First, do two things:
+    //
+    // 1) For every instruction with an effect that is not an `Upsilon`, mark it as live.
+    // 2) For each `Upsilon` instruction, add it and its source to the `upsilon_instructions` map.
+    //    When we encounter a live `Phi` instruction, every instruction in this map for that shadow
+    //    variable will become live. This way, an `Upsilon` and its sources are only live when the
+    //    `Phi` is live.
     for (inst_id, _) in inst_blocks.iter() {
         let inst = &ir.parts.instructions[inst_id];
-        if inst.has_effect() {
-            live_instructions.insert(inst_id.index() as usize);
-            worklist.push(Work::Instruction(inst_id));
+        match inst {
+            &ir::Instruction::Upsilon(shadow_var, source) => {
+                upsilon_instructions
+                    .entry(shadow_var)
+                    .or_default()
+                    .extend([inst_id, source]);
+            }
+            inst if inst.has_effect() => {
+                live_instructions.insert(inst_id.index() as usize);
+                worklist.push(Work::Instruction(inst_id));
+            }
+            _ => {}
         }
     }
 
     while let Some(work) = worklist.pop() {
         match work {
             Work::Instruction(inst_id) => {
-                for source in ir.parts.instructions[inst_id].sources() {
-                    if live_instructions.insert(source.index() as usize) {
-                        worklist.push(Work::Instruction(source));
+                match &ir.parts.instructions[inst_id] {
+                    &ir::Instruction::Phi(shadow_var) => {
+                        for &inst_id in upsilon_instructions.get(&shadow_var).into_iter().flatten()
+                        {
+                            if live_instructions.insert(inst_id.index() as usize) {
+                                worklist.push(Work::Instruction(inst_id));
+                            }
+                        }
+                    }
+                    inst => {
+                        for source in inst.sources() {
+                            if live_instructions.insert(source.index() as usize) {
+                                worklist.push(Work::Instruction(source));
+                            }
+                        }
                     }
                 }
 
