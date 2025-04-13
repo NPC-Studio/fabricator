@@ -55,31 +55,16 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             for &block_id in &merges {
                 merged_block
                     .instructions
-                    .extend(&ir.parts.blocks[block_id].instructions)
+                    .extend(ir.parts.blocks[block_id].instructions.drain(..));
             }
 
             let &first = merges.first().unwrap();
             let &last = merges.last().unwrap();
-            let merged_block_id = ir.parts.blocks.insert(merged_block);
 
-            for pred in predecessors.get(first) {
-                for succ in ir.parts.blocks[pred].exit.successors_mut() {
-                    if *succ == first {
-                        *succ = merged_block_id;
-                    }
-                }
-            }
-
-            if ir.start_block == first {
-                ir.start_block = merged_block_id;
-            }
+            ir.parts.blocks[first] = merged_block;
 
             let exit = ir.parts.blocks[last].exit;
-            ir.parts.blocks[merged_block_id].exit = exit;
-
-            for &block_id in &merges {
-                ir.parts.blocks.remove(block_id);
-            }
+            ir.parts.blocks[first].exit = exit;
         }
     }
 }
