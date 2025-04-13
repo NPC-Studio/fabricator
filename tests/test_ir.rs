@@ -118,7 +118,7 @@ fn test_ir_codegen() {
         let prototype = Gc::new(mc, codegen(function).unwrap());
         let closure = Closure::new(mc, prototype, Object::new(mc));
 
-        let mut thread = Thread::default();
+        let thread = Thread::new(mc);
         assert_eq!(
             thread.exec(mc, closure).unwrap()[0],
             Value::Integer(5000050000)
@@ -232,7 +232,7 @@ fn test_ir_phi_upsilon() {
         let prototype = Gc::new(mc, codegen(function).unwrap());
         let closure = Closure::new(mc, prototype, Object::new(mc));
 
-        let mut thread = Thread::default();
+        let thread = Thread::new(mc);
         assert_eq!(
             thread.exec(mc, closure).unwrap()[0],
             Value::Integer(5000050000)

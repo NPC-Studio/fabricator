@@ -70,7 +70,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
         Root {
             proto: Gc::new(mc, proto),
-            thread: Thread::default(),
+            thread: Thread::new(mc),
         }
     });
 

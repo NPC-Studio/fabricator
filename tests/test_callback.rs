@@ -28,7 +28,7 @@ fn test_code_callback() {
         let prototype = compile(mc, CODE).unwrap();
         let closure = Closure::new(mc, Gc::new(mc, prototype), this);
 
-        let mut thread = Thread::default();
+        let thread = Thread::new(mc);
         thread.exec(mc, closure).unwrap();
     });
 }

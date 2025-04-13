@@ -53,29 +53,15 @@ impl<'gc> HeapVar<'gc> {
     }
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
-struct ClosureInner<'gc> {
-    proto: Gc<'gc, Prototype<'gc>>,
-    this: Object<'gc>,
-}
-
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 
-impl<'gc> Closure<'gc> {
-    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>, this: Object<'gc>) -> Self {
-        Self(Gc::new(mc, ClosureInner { proto, this }))
-    }
-
-    pub fn prototype(self) -> Gc<'gc, Prototype<'gc>> {
-        self.0.proto
-    }
-
-    pub fn this(self) -> Object<'gc> {
-        self.0.this
-    }
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct ClosureInner<'gc> {
+    proto: Gc<'gc, Prototype<'gc>>,
+    this: Object<'gc>,
 }
 
 impl<'gc> fmt::Debug for Closure<'gc> {
@@ -93,3 +79,25 @@ impl<'gc> PartialEq for Closure<'gc> {
 }
 
 impl<'gc> Eq for Closure<'gc> {}
+
+impl<'gc> Closure<'gc> {
+    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>, this: Object<'gc>) -> Self {
+        Self(Gc::new(mc, ClosureInner { proto, this }))
+    }
+
+    pub fn from_inner(inner: Gc<'gc, ClosureInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, ClosureInner<'gc>> {
+        self.0
+    }
+
+    pub fn prototype(self) -> Gc<'gc, Prototype<'gc>> {
+        self.0.proto
+    }
+
+    pub fn this(self) -> Object<'gc> {
+        self.0.this
+    }
+}

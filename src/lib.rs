@@ -1,11 +1,15 @@
+pub mod any;
 pub mod bytecode;
 pub mod callback;
 pub mod closure;
 pub mod compiler;
+pub mod context;
 pub mod error;
 pub mod instructions;
 pub mod object;
+pub mod registry;
 pub mod stack;
+pub mod stash;
 pub mod string;
 pub mod thread;
 pub mod util;

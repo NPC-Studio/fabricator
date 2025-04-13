@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use gc_arena::{Collect, Mutation};
+use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
@@ -23,28 +23,52 @@ pub enum VmError {
     StackUnderflow,
 }
 
-#[derive(Default, Collect)]
+#[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Thread<'gc> {
+pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
+
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct ThreadState<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
     heap: Vec<HeapVar<'gc>>,
 }
 
+pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
+
 impl<'gc> Thread<'gc> {
-    pub fn exec(
-        &mut self,
-        mc: &Mutation<'gc>,
-        closure: Closure<'gc>,
-    ) -> Result<Vec<Value<'gc>>, Error> {
-        self.registers.clear();
-        self.stack.clear();
-
-        self.call(mc, closure, 0)?;
-
-        Ok(self.stack.drain(..).collect())
+    pub fn new(ctx: &Mutation<'gc>) -> Thread<'gc> {
+        Thread(Gc::new(
+            &ctx,
+            RefLock::new(ThreadState {
+                registers: Vec::new(),
+                stack: Vec::new(),
+                heap: Vec::new(),
+            }),
+        ))
     }
 
+    pub fn from_inner(inner: Gc<'gc, ThreadInner<'gc>>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, ThreadInner<'gc>> {
+        self.0
+    }
+
+    pub fn exec(self, mc: &Mutation<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
+        let mut this = self.0.try_borrow_mut(mc).expect("thread locked");
+        this.registers.clear();
+        this.stack.clear();
+
+        this.call(mc, closure, 0)?;
+
+        Ok(this.stack.drain(..).collect())
+    }
+}
+
+impl<'gc> ThreadState<'gc> {
     fn call(
         &mut self,
         mc: &Mutation<'gc>,
