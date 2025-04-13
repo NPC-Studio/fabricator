@@ -59,13 +59,16 @@ pub enum OptimizationError {
 
 pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), OptimizationError> {
     convert_to_ssa(ir);
+
     fold_constants(ir);
     eliminate_dead_code(ir);
     reduce_shadows(ir)?;
+
     eliminate_copies(ir);
     fold_constants(ir);
     eliminate_dead_code(ir);
     merge_blocks(ir);
+
     clean_instructions(ir);
     clean_unreachable_blocks(ir);
     Ok(())

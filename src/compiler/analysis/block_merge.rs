@@ -17,9 +17,9 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             let mut preds = predecessors.get(target);
             if preds.len() == 1 {
                 assert_eq!(preds.next().unwrap(), block_id);
+                merge_next.insert(block_id, target);
+                merge_tails.insert(target);
             }
-            merge_next.insert(block_id, target);
-            merge_tails.insert(target);
         };
 
         match block.exit {
@@ -76,6 +76,10 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
 
             let exit = ir.parts.blocks[last].exit;
             ir.parts.blocks[merged_block_id].exit = exit;
+
+            for &block_id in &merges {
+                ir.parts.blocks.remove(block_id);
+            }
         }
     }
 }
