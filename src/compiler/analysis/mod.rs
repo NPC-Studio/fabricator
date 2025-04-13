@@ -1,5 +1,6 @@
 use crate::compiler::{graph, ir};
 
+pub mod block_merge;
 pub mod cleanup;
 pub mod constant_folding;
 pub mod dead_code_elim;

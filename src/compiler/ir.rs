@@ -311,6 +311,25 @@ impl Exit {
 
         successors
     }
+
+    pub fn successors_mut(&mut self) -> ArrayVec<&mut BlockId, MAX_BLOCK_SUCCESSORS> {
+        let mut successors = ArrayVec::<_, 2>::new();
+
+        match self {
+            Exit::Return { .. } => {}
+            Exit::Jump(block_id) => {
+                successors.push(block_id);
+            }
+            Exit::Branch {
+                if_true, if_false, ..
+            } => {
+                successors.push(if_true);
+                successors.push(if_false);
+            }
+        }
+
+        successors
+    }
 }
 
 #[derive(Debug)]

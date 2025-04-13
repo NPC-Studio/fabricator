@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::analysis::{
+    block_merge::merge_blocks,
     cleanup::{clean_instructions, clean_unreachable_blocks},
     constant_folding::fold_constants,
 };
@@ -62,7 +63,9 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), Optimizatio
     eliminate_dead_code(ir);
     reduce_shadows(ir)?;
     eliminate_copies(ir);
+    fold_constants(ir);
     eliminate_dead_code(ir);
+    merge_blocks(ir);
     clean_instructions(ir);
     clean_unreachable_blocks(ir);
     Ok(())
