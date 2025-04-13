@@ -1,0 +1,5 @@
+var sum = 0;
+for (var i = 1; i <= 1000000; i += 1) {
+    sum += i;
+}
+assert(sum == 500000500000);

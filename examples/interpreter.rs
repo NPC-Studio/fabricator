@@ -58,11 +58,11 @@ fn main() {
 
             let parsed = parse(&code, Interner(&ctx)).unwrap();
             let mut ir = compile_ir(&parsed).unwrap();
-            println!("Compiled IR: {ir:?}");
+            println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
-            println!("Optimized IR: {ir:?}");
+            println!("Optimized IR: {ir:#?}");
             let prototype = codegen(ir).unwrap();
-            println!("Bytecode: {prototype:?}");
+            println!("Bytecode: {prototype:#?}");
         }
     });
 }
