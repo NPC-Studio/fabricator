@@ -1,6 +1,7 @@
 use std::fmt;
 
 use gc_arena::{Collect, Gc, Lock, Mutation};
+use thiserror::Error;
 
 use crate::{bytecode::ByteCode, object::Object, string::String, value::Value};
 
@@ -26,13 +27,11 @@ impl<'gc> Constant<'gc> {
     }
 }
 
-#[derive(Debug, Collect)]
-#[collect(no_drop)]
-pub struct Prototype<'gc> {
-    pub bytecode: ByteCode,
-    pub constants: Box<[Constant<'gc>]>,
-    pub used_registers: usize,
-    pub used_heap: usize,
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
+#[collect(require_static)]
+pub enum HeapVarDescriptor {
+    Owned,
+    UpValue(usize),
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -53,6 +52,20 @@ impl<'gc> HeapVar<'gc> {
     }
 }
 
+#[derive(Debug, Collect)]
+#[collect(no_drop)]
+pub struct Prototype<'gc> {
+    pub bytecode: ByteCode,
+    pub constants: Box<[Constant<'gc>]>,
+    pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
+    pub used_registers: usize,
+    pub heap_vars: Box<[HeapVarDescriptor]>,
+}
+
+#[derive(Debug, Error)]
+#[error("missing upvalue")]
+pub struct MissingUpValue;
+
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
@@ -62,6 +75,7 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
     this: Object<'gc>,
+    heap: Box<[HeapVar<'gc>]>,
 }
 
 impl<'gc> fmt::Debug for Closure<'gc> {
@@ -81,23 +95,68 @@ impl<'gc> PartialEq for Closure<'gc> {
 impl<'gc> Eq for Closure<'gc> {}
 
 impl<'gc> Closure<'gc> {
-    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>, this: Object<'gc>) -> Self {
-        Self(Gc::new(mc, ClosureInner { proto, this }))
+    /// Create a new top-level closure.
+    ///
+    /// Given prototype must not have any upvalues.
+    pub fn new(
+        mc: &Mutation<'gc>,
+        proto: Gc<'gc, Prototype<'gc>>,
+        this: Object<'gc>,
+    ) -> Result<Self, MissingUpValue> {
+        Self::with_upvalues(mc, proto, this, &[])
     }
 
+    /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
+    pub fn with_upvalues(
+        mc: &Mutation<'gc>,
+        proto: Gc<'gc, Prototype<'gc>>,
+        this: Object<'gc>,
+        upvalues: &[HeapVar<'gc>],
+    ) -> Result<Self, MissingUpValue> {
+        let mut heap = Vec::new();
+        for &heap_desc in &proto.heap_vars {
+            match heap_desc {
+                HeapVarDescriptor::Owned => {
+                    heap.push(HeapVar::new(mc, Value::Undefined));
+                }
+                HeapVarDescriptor::UpValue(index) => {
+                    heap.push(*upvalues.get(index).ok_or(MissingUpValue)?);
+                }
+            }
+        }
+
+        Ok(Self(Gc::new(
+            mc,
+            ClosureInner {
+                proto,
+                this,
+                heap: heap.into_boxed_slice(),
+            },
+        )))
+    }
+
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, ClosureInner<'gc>>) -> Self {
         Self(inner)
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, ClosureInner<'gc>> {
         self.0
     }
 
+    #[inline]
     pub fn prototype(self) -> Gc<'gc, Prototype<'gc>> {
         self.0.proto
     }
 
+    #[inline]
     pub fn this(self) -> Object<'gc> {
         self.0.this
+    }
+
+    #[inline]
+    pub fn heap(self) -> &'gc [HeapVar<'gc>] {
+        &self.0.as_ref().heap
     }
 }

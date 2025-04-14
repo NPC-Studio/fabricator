@@ -4,11 +4,10 @@ use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
-    bytecode::{self, ByteCode},
-    closure::{Closure, Constant, HeapVar},
+    bytecode,
+    closure::Closure,
     error::Error,
-    instructions::{ConstIdx, HeapIdx, RegIdx},
-    object::Object,
+    instructions::{ConstIdx, HeapIdx, ProtoIdx, RegIdx},
     stack::Stack,
     value::{Function, Value},
 };
@@ -19,6 +18,8 @@ pub enum VmError {
     BadOp,
     #[error("bad call")]
     BadCall,
+    #[error("bad closure")]
+    BadClosure,
     #[error("stack underflow")]
     StackUnderflow,
 }
@@ -32,7 +33,6 @@ pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
 pub struct ThreadState<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
-    heap: Vec<HeapVar<'gc>>,
 }
 
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
@@ -44,15 +44,16 @@ impl<'gc> Thread<'gc> {
             RefLock::new(ThreadState {
                 registers: Vec::new(),
                 stack: Vec::new(),
-                heap: Vec::new(),
             }),
         ))
     }
 
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, ThreadInner<'gc>>) -> Self {
         Self(inner)
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, ThreadInner<'gc>> {
         self.0
     }
@@ -76,17 +77,11 @@ impl<'gc> ThreadState<'gc> {
         stack_bottom: usize,
     ) -> Result<(), Error> {
         let proto = closure.prototype();
-
         assert!(proto.used_registers <= 256);
 
         let register_bottom = self.registers.len();
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
-
-        let heap_bottom = self.heap.len();
-        self.heap.resize_with(heap_bottom + proto.used_heap, || {
-            HeapVar::new(mc, Value::Undefined)
-        });
 
         let mut pc: usize = 0;
 
@@ -94,15 +89,12 @@ impl<'gc> ThreadState<'gc> {
             // We pass in a 256 slice of registers to avoid register bounds checks.
             match dispatch(
                 mc,
-                &proto.bytecode,
-                &proto.constants,
+                closure,
                 &mut pc,
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
                     .unwrap(),
-                &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
-                closure.this(),
             )? {
                 Next::Call {
                     closure,
@@ -132,7 +124,6 @@ impl<'gc> ThreadState<'gc> {
 
                     // Clear the registers and heap vars for this frame.
                     self.registers.truncate(register_bottom);
-                    self.heap.truncate(heap_bottom);
 
                     return Ok(());
                 }
@@ -154,21 +145,16 @@ enum Next<'gc> {
 
 fn dispatch<'gc>(
     mc: &Mutation<'gc>,
-    bytecode: &ByteCode,
-    constants: &[Constant<'gc>],
+    closure: Closure<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
-    heap: &mut [HeapVar<'gc>],
     mut stack: Stack<'gc, '_>,
-    this: Object<'gc>,
 ) -> Result<Next<'gc>, Error> {
     struct Dispatch<'gc, 'a> {
         mc: &'a Mutation<'gc>,
-        constants: &'a [Constant<'gc>],
+        closure: Closure<'gc>,
         registers: &'a mut [Value<'gc>],
-        heap: &'a mut [HeapVar<'gc>],
         stack: Stack<'gc, 'a>,
-        this: Object<'gc>,
     }
 
     impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
@@ -183,19 +169,36 @@ fn dispatch<'gc>(
 
         #[inline]
         fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.constants[constant as usize].to_value();
+            self.registers[dest as usize] =
+                self.closure.prototype().constants[constant as usize].to_value();
+            Ok(())
+        }
+
+        fn closure(&mut self, dest: RegIdx, proto: ProtoIdx) -> Result<(), Self::Error> {
+            let proto = *self
+                .closure
+                .prototype()
+                .prototypes
+                .get(proto as usize)
+                .ok_or(VmError::BadClosure)?;
+            self.registers[dest as usize] = Value::Closure(Closure::with_upvalues(
+                self.mc,
+                proto,
+                self.closure.this(),
+                self.closure.heap(),
+            )?);
             Ok(())
         }
 
         #[inline]
         fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.heap[heap as usize].get();
+            self.registers[dest as usize] = self.closure.heap()[heap as usize].get();
             Ok(())
         }
 
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
-            self.heap[heap as usize].set(self.mc, self.registers[source as usize]);
+            self.closure.heap()[heap as usize].set(self.mc, self.registers[source as usize]);
             Ok(())
         }
 
@@ -204,7 +207,7 @@ fn dispatch<'gc>(
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadOp.into());
             };
-            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
+            self.registers[dest as usize] = self.closure.this().get(key).unwrap_or_default();
             Ok(())
         }
 
@@ -213,7 +216,9 @@ fn dispatch<'gc>(
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadOp.into());
             };
-            self.this.set(self.mc, key, self.registers[value as usize]);
+            self.closure
+                .this()
+                .set(self.mc, key, self.registers[value as usize]);
             Ok(())
         }
 
@@ -367,14 +372,12 @@ fn dispatch<'gc>(
         }
     }
 
-    let mut dispatcher = bytecode::Dispatcher::new(bytecode, *pc);
+    let mut dispatcher = bytecode::Dispatcher::new(&closure.prototype().as_ref().bytecode, *pc);
     let ret = dispatcher.dispatch_loop(&mut Dispatch {
         mc,
-        constants,
+        closure,
         registers,
-        heap,
         stack: stack.reborrow(),
-        this,
     });
     *pc = dispatcher.pc();
     ret

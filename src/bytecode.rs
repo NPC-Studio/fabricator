@@ -8,7 +8,7 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
-    instructions::{for_each_instruction, ConstIdx, HeapIdx, Instruction, RegIdx},
+    instructions::{for_each_instruction, ConstIdx, HeapIdx, Instruction, ProtoIdx, RegIdx},
     util::bit_containers::BitVec,
 };
 

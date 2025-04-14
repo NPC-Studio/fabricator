@@ -37,7 +37,7 @@ fn main() {
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
             let prototype = compile(&ctx, &code).unwrap();
-            let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), ctx.globals());
+            let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), ctx.globals()).unwrap();
 
             let thread = Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(&ctx, closure).unwrap());

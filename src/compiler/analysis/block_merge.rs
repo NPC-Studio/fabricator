@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::{graph::predecessors::Predecessors, ir};
 
-/// Merge blocks where a block A unconditionally jumps to block B and A only has a successor and
-/// block B only has a single predecessor.
+/// Merge blocks where a block A unconditionally jumps to block B and A only has B as its single
+/// successor and block B only has A as its single predecessor.
 pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
     let predecessors = Predecessors::compute(ir.parts.blocks.ids(), |b| {
         ir.parts.blocks[b].exit.successors()
@@ -61,10 +61,9 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             let &first = merges.first().unwrap();
             let &last = merges.last().unwrap();
 
-            ir.parts.blocks[first] = merged_block;
+            merged_block.exit = ir.parts.blocks[last].exit;
 
-            let exit = ir.parts.blocks[last].exit;
-            ir.parts.blocks[first].exit = exit;
+            ir.parts.blocks[first] = merged_block;
         }
     }
 }

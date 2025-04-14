@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     bytecode::{self, ByteCode},
-    closure::{self, Prototype},
+    closure::{self, HeapVarDescriptor, Prototype},
     compiler::{
         analysis::{
             instruction_liveness::{InstructionLiveness, InstructionVerificationError},
@@ -342,7 +342,10 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
     Ok(Prototype {
         bytecode,
         constants: constants.into_boxed_slice(),
+        prototypes: vec![].into_boxed_slice(),
         used_registers: reg_alloc.used_registers,
-        used_heap: heap_vars.len(),
+        heap_vars: [HeapVarDescriptor::Owned]
+            .repeat(heap_vars.len())
+            .into_boxed_slice(),
     })
 }

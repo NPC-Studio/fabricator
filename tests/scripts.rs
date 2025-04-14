@@ -13,7 +13,7 @@ fn run_code(code: &str) -> Result<(), Error> {
 
     interpreter.enter(|ctx| {
         let prototype = compile(&ctx, &code)?;
-        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), ctx.globals());
+        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), ctx.globals()).unwrap();
 
         let thread = Thread::new(&ctx);
         thread.exec(&ctx, closure)?;

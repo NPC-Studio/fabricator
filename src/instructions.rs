@@ -1,14 +1,16 @@
 use std::fmt;
 
 pub type RegIdx = u8;
-pub type HeapIdx = u8;
 pub type ConstIdx = u16;
+pub type HeapIdx = u8;
+pub type ProtoIdx = u8;
 
 macro_rules! for_each_instruction {
     ($macro:ident) => {
         $macro! {
             simple => undefined = Undefined { dest: RegIdx };
             simple => load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
+            simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
             simple => get_this = GetThis { dest: RegIdx, key: RegIdx };
