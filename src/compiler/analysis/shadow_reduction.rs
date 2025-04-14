@@ -9,9 +9,9 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
 
     // Replace dead upsilon instructions with `ir::Instruction::NoOp`.
 
-    for (block_id, block) in ir.parts.blocks.iter() {
+    for (block_id, block) in ir.blocks.iter() {
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-            let inst = &mut ir.parts.instructions[inst_id];
+            let inst = &mut ir.instructions[inst_id];
             if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst {
                 let is_live = shadow_liveness
                     .live_range_in_block(block_id, shadow_var)
@@ -37,7 +37,7 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         let mut upsilons = Vec::new();
 
         for (block_id, range) in shadow_liveness.live_ranges(shadow_var) {
-            let block = &ir.parts.blocks[block_id];
+            let block = &ir.blocks[block_id];
             if let Some(incoming) = range.incoming_range {
                 phi = Some(block.instructions[incoming.end]);
 
@@ -56,7 +56,7 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         let phi = phi.unwrap();
 
         let get_upsilon_source = |inst_id| {
-            if let ir::Instruction::Upsilon(_, source) = ir.parts.instructions[inst_id] {
+            if let ir::Instruction::Upsilon(_, source) = ir.instructions[inst_id] {
                 source
             } else {
                 unreachable!();
@@ -73,9 +73,9 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         }
 
         if trivial {
-            ir.parts.instructions[phi] = ir::Instruction::Copy(first_source);
+            ir.instructions[phi] = ir::Instruction::Copy(first_source);
             for &inst_id in &upsilons {
-                ir.parts.instructions[inst_id] = ir::Instruction::NoOp;
+                ir.instructions[inst_id] = ir::Instruction::NoOp;
             }
         }
     }

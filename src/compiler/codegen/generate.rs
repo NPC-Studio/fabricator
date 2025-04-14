@@ -15,7 +15,7 @@ use crate::{
         graph::dfs::topological_order,
         ir,
     },
-    instructions::{ConstIdx, HeapIdx, Instruction},
+    instructions::{ConstIdx, HeapIdx, Instruction, ProtoIdx},
     string::String,
     util::typed_id_map::SecondaryMap,
 };
@@ -34,32 +34,66 @@ pub enum CodegenError {
     RegisterOverflow,
     #[error("too many constants used")]
     ConstantOverflow,
+    #[error("too many sub-functions")]
+    PrototypeOverflow,
     #[error("jump out of range")]
     JumpOutOfRange,
 }
 
-pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
+pub fn codegen<'gc>(ir: &ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
+    codegen_function(ir, &SecondaryMap::new())
+}
+
+fn codegen_function<'gc>(
+    ir: &ir::Function<String<'gc>>,
+    parent_heap_indexe: &SecondaryMap<ir::Variable, HeapIdx>,
+) -> Result<Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(&ir)?;
     let shadow_liveness = ShadowLiveness::compute(&ir)?;
 
     let reg_alloc = RegisterAllocation::allocate(&ir, &instruction_liveness, &shadow_liveness)
         .ok_or(CodegenError::RegisterOverflow)?;
 
-    let mut heap_vars = SecondaryMap::<ir::Variable, HeapIdx>::new();
-    let mut heap_index = 0;
-    for var in ir.parts.variables.ids() {
-        heap_vars.insert(var, heap_index);
-        heap_index = heap_index
-            .checked_add(1)
-            .ok_or(CodegenError::HeapVarOverflow)?;
+    let mut heap_vars = Vec::new();
+    let mut heap_indexes: SecondaryMap<ir::Variable, HeapIdx> = SecondaryMap::new();
+    for (index, var) in ir.variables.ids().enumerate() {
+        heap_vars.push(if let Some(&upvalue) = ir.upvalues.get(&var) {
+            HeapVarDescriptor::UpValue(
+                *parent_heap_indexe
+                    .get(upvalue)
+                    .expect("upvalue not present in parent"),
+            )
+        } else {
+            HeapVarDescriptor::Owned
+        });
+
+        heap_indexes.insert(
+            var,
+            index
+                .try_into()
+                .map_err(|_| CodegenError::HeapVarOverflow)?,
+        );
+    }
+
+    let mut prototypes = Vec::new();
+    let mut prototype_indexes: SecondaryMap<ir::FuncId, ProtoIdx> = SecondaryMap::new();
+    for (func_id, func) in ir.functions.iter() {
+        prototype_indexes.insert(
+            func_id,
+            prototypes
+                .len()
+                .try_into()
+                .map_err(|_| CodegenError::PrototypeOverflow)?,
+        );
+        prototypes.push(codegen_function(func, &heap_indexes)?);
     }
 
     let mut constants = Vec::new();
     let mut constant_indexes = HashMap::<Constant<String<'gc>>, ConstIdx>::new();
 
-    for block in ir.parts.blocks.values() {
+    for block in ir.blocks.values() {
         for &inst_id in &block.instructions {
-            if let ir::Instruction::Constant(c) = ir.parts.instructions[inst_id] {
+            if let ir::Instruction::Constant(c) = ir.instructions[inst_id] {
                 if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c) {
                     vacant.insert(
                         constants
@@ -73,7 +107,7 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
         }
     }
 
-    let block_order = topological_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
+    let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
     let block_order_indexes: HashMap<ir::BlockId, usize> = block_order
         .iter()
@@ -87,11 +121,11 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
     let mut block_vm_jumps = Vec::new();
 
     for (order_index, &block_id) in block_order.iter().enumerate() {
-        let block = &ir.parts.blocks[block_id];
+        let block = &ir.blocks[block_id];
         block_vm_starts.insert(block_id, vm_instructions.len());
 
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-            match ir.parts.instructions[inst_id] {
+            match ir.instructions[inst_id] {
                 ir::Instruction::NoOp => {}
                 ir::Instruction::Copy(source) => {
                     let dest_reg = reg_alloc.instruction_registers[inst_id];
@@ -114,15 +148,21 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
                         constant: constant_indexes[&c],
                     });
                 }
+                ir::Instruction::Closure(func_id) => {
+                    vm_instructions.push(Instruction::Closure {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        proto: prototype_indexes[func_id],
+                    });
+                }
                 ir::Instruction::GetVariable(var) => {
                     vm_instructions.push(Instruction::GetHeap {
                         dest: reg_alloc.instruction_registers[inst_id],
-                        heap: heap_vars[var],
+                        heap: heap_indexes[var],
                     });
                 }
                 ir::Instruction::SetVariable(dest, source) => {
                     vm_instructions.push(Instruction::SetHeap {
-                        heap: heap_vars[dest],
+                        heap: heap_indexes[dest],
                         source: reg_alloc.instruction_registers[source],
                     });
                 }
@@ -344,8 +384,6 @@ pub fn codegen<'gc>(ir: ir::Function<String<'gc>>) -> Result<Prototype<'gc>, Cod
         constants: constants.into_boxed_slice(),
         prototypes: vec![].into_boxed_slice(),
         used_registers: reg_alloc.used_registers,
-        heap_vars: [HeapVarDescriptor::Owned]
-            .repeat(heap_vars.len())
-            .into_boxed_slice(),
+        heap_vars: heap_vars.into_boxed_slice(),
     })
 }

@@ -18,16 +18,11 @@ pub fn compile_ir<S: Eq + Hash + Clone>(
 ) -> Result<ir::Function<S>, FrontendError> {
     let mut compiler = Compiler::new();
     compiler.block(block)?;
-    Ok(ir::Function {
-        parts: compiler.parts,
-        start_block: compiler.start_block,
-    })
+    Ok(compiler.function)
 }
 
 struct Compiler<S> {
-    parts: ir::FunctionParts<S>,
-    start_block: ir::BlockId,
-
+    function: ir::Function<S>,
     current_block: ir::BlockId,
     variables: HashMap<S, Vec<ir::Variable>>,
     scopes: Vec<HashSet<S>>,
@@ -35,12 +30,25 @@ struct Compiler<S> {
 
 impl<S: Eq + Hash + Clone> Compiler<S> {
     fn new() -> Self {
-        let mut parts = ir::FunctionParts::default();
-        let start_block = parts.blocks.insert(ir::Block::default());
+        let instructions = ir::InstructionMap::new();
+        let mut blocks = ir::BlockMap::new();
+        let variables = ir::VariableSet::new();
+        let shadow_vars = ir::ShadowVarSet::new();
+        let sub_functions = ir::FunctionMap::new();
+        let upvalues = ir::UpValueMap::new();
+
+        let start_block = blocks.insert(ir::Block::default());
 
         Self {
-            parts,
-            start_block,
+            function: ir::Function {
+                instructions,
+                blocks,
+                variables,
+                shadow_vars,
+                functions: sub_functions,
+                upvalues,
+                start_block,
+            },
             current_block: start_block,
             variables: Default::default(),
             scopes: Default::default(),
@@ -148,17 +156,17 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         } else {
             ir::Exit::Return { returns: 0 }
         };
-        self.parts.blocks[self.current_block].exit = exit;
-        self.current_block = self.parts.blocks.insert(ir::Block::default());
+        self.function.blocks[self.current_block].exit = exit;
+        self.current_block = self.function.blocks.insert(ir::Block::default());
         Ok(())
     }
 
     fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), FrontendError> {
         let cond = self.commit_expression(&if_statement.condition)?;
-        let body = self.parts.blocks.insert(ir::Block::default());
-        let successor = self.parts.blocks.insert(ir::Block::default());
+        let body = self.function.blocks.insert(ir::Block::default());
+        let successor = self.function.blocks.insert(ir::Block::default());
 
-        self.parts.blocks[self.current_block].exit = ir::Exit::Branch {
+        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
             cond,
             if_true: body,
             if_false: successor,
@@ -171,7 +179,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             self.pop_scope();
         }
 
-        self.parts.blocks[body].exit = ir::Exit::Jump(successor);
+        self.function.blocks[body].exit = ir::Exit::Jump(successor);
         self.current_block = successor;
         Ok(())
     }
@@ -180,8 +188,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         for_statement: &parser::ForStatement<S>,
     ) -> Result<(), FrontendError> {
-        let body = self.parts.blocks.insert(ir::Block::default());
-        let successor = self.parts.blocks.insert(ir::Block::default());
+        let body = self.function.blocks.insert(ir::Block::default());
+        let successor = self.function.blocks.insert(ir::Block::default());
 
         {
             self.push_scope();
@@ -194,7 +202,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             {
                 self.push_scope();
 
-                self.parts.blocks[self.current_block].exit = ir::Exit::Branch {
+                self.function.blocks[self.current_block].exit = ir::Exit::Branch {
                     cond,
                     if_true: body,
                     if_false: successor,
@@ -215,7 +223,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             }
 
             let cond = self.commit_expression(&for_statement.condition)?;
-            self.parts.blocks[body].exit = ir::Exit::Branch {
+            self.function.blocks[body].exit = ir::Exit::Branch {
                 cond,
                 if_true: body,
                 if_false: successor,
@@ -357,8 +365,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
     }
 
     fn push_instruction(&mut self, inst: ir::Instruction<S>) -> ir::InstId {
-        let inst_id = self.parts.instructions.insert(inst);
-        self.parts.blocks[self.current_block]
+        let inst_id = self.function.instructions.insert(inst);
+        self.function.blocks[self.current_block]
             .instructions
             .push(inst_id);
         inst_id
@@ -386,7 +394,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         let in_scope = self.scopes.last().unwrap().contains(&vname);
         let variable_stack = self.variables.entry(vname).or_default();
 
-        let var = self.parts.variables.insert(());
+        let var = self.function.variables.insert(());
         if in_scope {
             variable_stack.pop().unwrap();
         }

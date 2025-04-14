@@ -61,7 +61,7 @@ fn main() {
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = codegen(ir).unwrap();
+            let prototype = codegen(&ir).unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

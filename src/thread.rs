@@ -174,6 +174,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn closure(&mut self, dest: RegIdx, proto: ProtoIdx) -> Result<(), Self::Error> {
             let proto = *self
                 .closure

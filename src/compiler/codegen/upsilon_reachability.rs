@@ -59,7 +59,7 @@ pub fn compute_upsilon_reachability<S>(
                     // In the case where there is also an overlapping outgoing range in the phi
                     // block that contains an `Upsilon` instruction, we start iterating on that
                     // block so it won't be skipped.
-                    ir.parts.blocks[block_id]
+                    ir.blocks[block_id]
                         .exit
                         .successors()
                         .into_iter()
@@ -111,47 +111,46 @@ mod tests {
 
     #[test]
     fn test_upsilon_reach() {
-        let mut parts = ir::FunctionParts::<&'static str>::default();
+        let mut instructions = ir::InstructionMap::<&'static str>::new();
+        let mut blocks = ir::BlockMap::new();
+        let mut shadow_vars = ir::ShadowVarSet::new();
 
-        let shadow_var = parts.shadow_vars.insert(());
+        let shadow_var = shadow_vars.insert(());
 
-        let block_a_id = parts.blocks.insert(ir::Block::default());
-        let block_b_id = parts.blocks.insert(ir::Block::default());
+        let block_a_id = blocks.insert(ir::Block::default());
+        let block_b_id = blocks.insert(ir::Block::default());
 
-        let block_a = &mut parts.blocks[block_a_id];
+        let block_a = &mut blocks[block_a_id];
 
-        let one = parts
-            .instructions
-            .insert(ir::Instruction::Constant(Constant::Integer(1)));
+        let one = instructions.insert(ir::Instruction::Constant(Constant::Integer(1)));
         block_a.instructions.push(one);
-        block_a.instructions.push(
-            parts
-                .instructions
-                .insert(ir::Instruction::Upsilon(shadow_var, one)),
-        );
+        block_a
+            .instructions
+            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, one)));
 
         block_a.exit = ir::Exit::Jump(block_b_id);
 
-        let block_b = &mut parts.blocks[block_b_id];
+        let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(parts.instructions.insert(ir::Instruction::Phi(shadow_var)));
+            .push(instructions.insert(ir::Instruction::Phi(shadow_var)));
 
-        let two = parts
-            .instructions
-            .insert(ir::Instruction::Constant(Constant::Integer(2)));
+        let two = instructions.insert(ir::Instruction::Constant(Constant::Integer(2)));
         block_b.instructions.push(two);
-        block_b.instructions.push(
-            parts
-                .instructions
-                .insert(ir::Instruction::Upsilon(shadow_var, two)),
-        );
+        block_b
+            .instructions
+            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, two)));
 
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
-            parts,
+            instructions,
+            blocks,
+            variables: Default::default(),
+            shadow_vars,
+            functions: Default::default(),
+            upvalues: Default::default(),
             start_block: block_a_id,
         };
 
@@ -175,37 +174,40 @@ mod tests {
 
     #[test]
     fn test_upsilon_reach_overlap() {
-        let mut parts = ir::FunctionParts::<&'static str>::default();
+        let mut instructions = ir::InstructionMap::<&'static str>::new();
+        let mut blocks = ir::BlockMap::new();
+        let mut shadow_vars = ir::ShadowVarSet::new();
 
-        let shadow_var = parts.shadow_vars.insert(());
+        let shadow_var = shadow_vars.insert(());
 
-        let block_a_id = parts.blocks.insert(ir::Block::default());
-        let block_b_id = parts.blocks.insert(ir::Block::default());
+        let block_a_id = blocks.insert(ir::Block::default());
+        let block_b_id = blocks.insert(ir::Block::default());
 
-        let block_a = &mut parts.blocks[block_a_id];
+        let block_a = &mut blocks[block_a_id];
 
-        let one = parts
-            .instructions
-            .insert(ir::Instruction::Constant(Constant::Integer(1)));
+        let one = instructions.insert(ir::Instruction::Constant(Constant::Integer(1)));
         block_a.instructions.push(one);
-        block_a.instructions.push(
-            parts
-                .instructions
-                .insert(ir::Instruction::Upsilon(shadow_var, one)),
-        );
+        block_a
+            .instructions
+            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, one)));
 
         block_a.exit = ir::Exit::Jump(block_b_id);
 
-        let block_b = &mut parts.blocks[block_b_id];
+        let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(parts.instructions.insert(ir::Instruction::Phi(shadow_var)));
+            .push(instructions.insert(ir::Instruction::Phi(shadow_var)));
 
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
-            parts,
+            instructions,
+            blocks,
+            variables: Default::default(),
+            shadow_vars,
+            functions: Default::default(),
+            upvalues: Default::default(),
             start_block: block_a_id,
         };
 

@@ -260,6 +260,16 @@ impl<V> IdMap<V> {
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.iter_mut().map(|(_, v)| v)
     }
+
+    pub fn retain(&mut self, mut f: impl FnMut(Id, &mut V) -> bool) {
+        for index in 0..self.index_upper_bound() {
+            if let Some(id) = self.id_for_index(index) {
+                if !f(id, self.get_mut(id).unwrap()) {
+                    self.remove(id);
+                }
+            }
+        }
+    }
 }
 
 impl<V> Drop for Slot<V> {

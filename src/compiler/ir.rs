@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use arrayvec::ArrayVec;
 
@@ -12,6 +12,7 @@ new_id_type! {
     pub struct InstId;
     pub struct Variable;
     pub struct ShadowVar;
+    pub struct FuncId;
 }
 
 pub type Offset = i32;
@@ -82,8 +83,8 @@ pub enum BinComp {
 /// Each `VarId` references a unique variable, and `GetVariable` and `SetVariable` instructions read
 /// from and write to these variables.
 ///
-/// The output of the compiler will use IR variables to represent actual variables in code, and
-/// will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
+/// The output of the compiler will use these IR variables to represent actual variables in code,
+/// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
 /// `Upsilon` instructions.
 ///
 /// Normally, all IR variables can be converted into SSA form in this way, however it is allowed
@@ -98,6 +99,7 @@ pub enum Instruction<S> {
     Copy(InstId),
     Undefined,
     Constant(Constant<S>),
+    Closure(FuncId),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
     GetThis(InstId),
@@ -143,6 +145,7 @@ impl<S> Instruction<S> {
             }
             Instruction::Undefined => {}
             Instruction::Constant(_) => {}
+            Instruction::Closure(_) => {}
             Instruction::GetVariable(_) => {}
             Instruction::SetVariable(_, source) => {
                 sources.push(*source);
@@ -189,6 +192,7 @@ impl<S> Instruction<S> {
             }
             Instruction::Undefined => {}
             Instruction::Constant(_) => {}
+            Instruction::Closure(_) => {}
             Instruction::GetVariable(_) => {}
             Instruction::SetVariable(_, source) => {
                 sources.push(source);
@@ -233,6 +237,7 @@ impl<S> Instruction<S> {
             Instruction::Copy(_) => true,
             Instruction::Undefined => true,
             Instruction::Constant(_) => true,
+            Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
             Instruction::GetThis(_) => true,
@@ -254,6 +259,7 @@ impl<S> Instruction<S> {
             Instruction::Copy(_) => false,
             Instruction::Undefined => false,
             Instruction::Constant(_) => false,
+            Instruction::Closure(_) => false,
             Instruction::GetVariable(_) => false,
             Instruction::SetVariable { .. } => true,
             Instruction::GetThis(_) => false,
@@ -347,26 +353,28 @@ impl Default for Block {
     }
 }
 
-pub struct FunctionParts<S> {
-    pub instructions: IdMap<InstId, Instruction<S>>,
-    pub blocks: IdMap<BlockId, Block>,
-    pub variables: IdMap<Variable, ()>,
-    pub shadow_vars: IdMap<ShadowVar, ()>,
-}
-
-impl<S> Default for FunctionParts<S> {
-    fn default() -> Self {
-        Self {
-            instructions: Default::default(),
-            blocks: Default::default(),
-            variables: Default::default(),
-            shadow_vars: Default::default(),
-        }
-    }
-}
+pub type InstructionMap<S> = IdMap<InstId, Instruction<S>>;
+pub type BlockMap = IdMap<BlockId, Block>;
+pub type VariableSet = IdMap<Variable, ()>;
+pub type ShadowVarSet = IdMap<ShadowVar, ()>;
+pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
+pub type UpValueMap = HashMap<Variable, Variable>;
 
 pub struct Function<S> {
-    pub parts: FunctionParts<S>,
+    pub instructions: InstructionMap<S>,
+    pub blocks: BlockMap,
+    pub variables: VariableSet,
+    pub shadow_vars: ShadowVarSet,
+
+    /// Inner functions declared within this function.
+    pub functions: FunctionMap<S>,
+
+    /// If this is a sub-function, this maps *this* function's variables to the upper function's
+    /// variables for any "upvalues" (variables shared from the parent function).
+    ///
+    /// For the top-level function, this will be empty.
+    pub upvalues: UpValueMap,
+
     pub start_block: BlockId,
 }
 
@@ -380,13 +388,13 @@ impl<S: AsRef<str>> Function<S> {
         };
 
         let write_block = |f: &mut dyn fmt::Write, block_id: BlockId| -> fmt::Result {
-            let block = &self.parts.blocks[block_id];
+            let block = &self.blocks[block_id];
 
             write_indent(f, 0)?;
             writeln!(f, "block B{}:", block_id.index())?;
 
             for &inst_id in &block.instructions {
-                let inst = &self.parts.instructions[inst_id];
+                let inst = &self.instructions[inst_id];
 
                 write_indent(f, 4)?;
                 write!(f, "I{}: ", inst_id.index())?;
@@ -403,6 +411,9 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::Constant(constant) => {
                         writeln!(f, "constant({:?})", constant.as_ref())?;
+                    }
+                    Instruction::Closure(closure) => {
+                        writeln!(f, "closure(F{:?})", closure.index())?;
                     }
                     Instruction::GetVariable(var) => {
                         writeln!(f, "get_var(V{})", var.index())?;
@@ -506,8 +517,14 @@ impl<S: AsRef<str>> Function<S> {
         write_indent(f, 0)?;
         writeln!(f, "start_block(B{})", self.start_block.index())?;
 
-        for block_id in self.parts.blocks.ids() {
+        for block_id in self.blocks.ids() {
             write_block(f, block_id)?;
+        }
+
+        for (func_id, function) in self.functions.iter() {
+            write_indent(f, 0)?;
+            writeln!(f, "sub_function F{}", func_id.index())?;
+            function.pretty_print(f, indent + 4)?;
         }
 
         Ok(())

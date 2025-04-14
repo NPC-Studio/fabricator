@@ -14,12 +14,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // Dead code elimination algorithm from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    let predecessors = Predecessors::compute(ir.parts.blocks.ids(), |b| {
-        ir.parts.blocks[b].exit.successors()
-    });
+    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.successors());
 
     let exit_blocks = ir
-        .parts
         .blocks
         .iter()
         .filter_map(|(block_id, block)| {
@@ -55,12 +52,11 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     });
 
-    let reachable_blocks =
-        topological_order(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
+    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
 
     let mut inst_blocks = SecondaryMap::new();
     for &block_id in &reachable_blocks {
-        let block = &ir.parts.blocks[block_id];
+        let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
             inst_blocks.insert(inst_id, block_id);
         }
@@ -85,7 +81,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     //    variable will become live. This way, an `Upsilon` and its sources are only live when the
     //    `Phi` is live.
     for (inst_id, _) in inst_blocks.iter() {
-        let inst = &ir.parts.instructions[inst_id];
+        let inst = &ir.instructions[inst_id];
         match inst {
             &ir::Instruction::Upsilon(shadow_var, source) => {
                 upsilon_instructions
@@ -104,7 +100,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     while let Some(work) = worklist.pop() {
         match work {
             Work::Instruction(inst_id) => {
-                match &ir.parts.instructions[inst_id] {
+                match &ir.instructions[inst_id] {
                     &ir::Instruction::Phi(shadow_var) => {
                         for &inst_id in upsilon_instructions.get(&shadow_var).into_iter().flatten()
                         {
@@ -135,7 +131,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                 }
             }
             Work::Branch(block_id) => {
-                let block = &ir.parts.blocks[block_id];
+                let block = &ir.blocks[block_id];
                 match block.exit {
                     ir::Exit::Return { .. } => unreachable!(),
                     ir::Exit::Jump(_) => unreachable!(),
@@ -149,10 +145,10 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    for (block_id, block) in ir.parts.blocks.iter_mut() {
+    for (block_id, block) in ir.blocks.iter_mut() {
         for &inst_id in &block.instructions {
             if !live_instructions.contains(inst_id.index() as usize) {
-                ir.parts.instructions[inst_id] = ir::Instruction::NoOp;
+                ir.instructions[inst_id] = ir::Instruction::NoOp;
             }
         }
 

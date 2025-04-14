@@ -21,16 +21,16 @@ use super::vec_change_set::VecChangeSet;
 ///
 /// The resulting phi placement will be *minimal* but not *pruned*.
 pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
-    let dominators = Dominators::compute(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
+    let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
     let mut assigning_blocks: SecondaryMap<ir::Variable, HashSet<ir::BlockId>> =
         SecondaryMap::new();
 
     // We don't do any SSA conversion of unreachable blocks.
     for block_id in dominators.topological_order() {
-        let block = &ir.parts.blocks[block_id];
+        let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
-            if let &ir::Instruction::SetVariable(variable, _) = &ir.parts.instructions[inst_id] {
+            if let &ir::Instruction::SetVariable(variable, _) = &ir.instructions[inst_id] {
                 let blocks = assigning_blocks.get_or_insert_default(variable);
                 blocks.insert(block_id);
             }
@@ -64,7 +64,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     .get_or_insert_default(frontier_block_id)
                     .entry(variable)
                 {
-                    let shadow_var = ir.parts.shadow_vars.insert(());
+                    let shadow_var = ir.shadow_vars.insert(());
                     vacant.insert(shadow_var);
                     shadow_map.insert(shadow_var, variable);
                     if work_added.insert(frontier_block_id.index() as usize) {
@@ -79,15 +79,10 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // have determined needs them.
     let mut inst_change_set = VecChangeSet::new();
     for block_id in dominators.topological_order() {
-        let block = &mut ir.parts.blocks[block_id];
+        let block = &mut ir.blocks[block_id];
         if let Some(phi_functions) = phi_functions.get(block_id) {
             for &shadow_var in phi_functions.values() {
-                inst_change_set.insert(
-                    0,
-                    ir.parts
-                        .instructions
-                        .insert(ir::Instruction::Phi(shadow_var)),
-                );
+                inst_change_set.insert(0, ir.instructions.insert(ir::Instruction::Phi(shadow_var)));
             }
             inst_change_set.apply(&mut block.instructions);
         }
@@ -116,9 +111,9 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                 var_stack_bottom.insert(var, stack.len());
             }
 
-            let block = &mut ir.parts.blocks[block_id];
+            let block = &mut ir.blocks[block_id];
             for &inst_id in &block.instructions {
-                let inst = &mut ir.parts.instructions[inst_id];
+                let inst = &mut ir.instructions[inst_id];
                 match &*inst {
                     &ir::Instruction::GetVariable(variable) => {
                         if let Some(top) =
@@ -159,13 +154,12 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             // If we don't have a value to add to an `Upsilon`, then we have to
                             // make one to keep the IR well-formed. This was use of a value that was
                             // undefined on this code path, so we set the value to undefined.
-                            var_inst = ir.parts.instructions.insert(ir::Instruction::Undefined);
+                            var_inst = ir.instructions.insert(ir::Instruction::Undefined);
                             block.instructions.push(var_inst);
                         }
 
                         block.instructions.push(
-                            ir.parts
-                                .instructions
+                            ir.instructions
                                 .insert(ir::Instruction::Upsilon(shadow_var, var_inst)),
                         );
                     }

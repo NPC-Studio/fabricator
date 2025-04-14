@@ -1,17 +1,16 @@
 use crate::compiler::{constant::Constant, graph::dfs::topological_order, ir};
 
 pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
-    let reachable_blocks =
-        topological_order(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
+    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
 
     // Since every instruction is in SSA form and in well-formed IR every use must be dominated by a
     // definition, iterating in topological order should fold everything possible in one pass.
     for &block_id in &reachable_blocks {
-        let block = &mut ir.parts.blocks[block_id];
+        let block = &mut ir.blocks[block_id];
 
         for &inst_id in &block.instructions {
             let get_constant = |inst_id| {
-                if let ir::Instruction::Constant(c) = ir.parts.instructions[inst_id].clone() {
+                if let ir::Instruction::Constant(c) = ir.instructions[inst_id].clone() {
                     Some(c)
                 } else {
                     None
@@ -19,7 +18,7 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
             };
 
             let mut const_val = None;
-            match ir.parts.instructions[inst_id].clone() {
+            match ir.instructions[inst_id].clone() {
                 ir::Instruction::Copy(source) => {
                     const_val = get_constant(source);
                 }
@@ -59,7 +58,7 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
             }
 
             if let Some(const_val) = const_val {
-                ir.parts.instructions[inst_id] = ir::Instruction::Constant(const_val);
+                ir.instructions[inst_id] = ir::Instruction::Constant(const_val);
             }
         }
 
@@ -71,7 +70,7 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                 if_false,
                 if_true,
             } => {
-                if let ir::Instruction::Constant(c) = ir.parts.instructions[cond].clone() {
+                if let ir::Instruction::Constant(c) = ir.instructions[cond].clone() {
                     let target = if c.to_bool() { if_true } else { if_false };
                     block.exit = ir::Exit::Jump(target);
                 }

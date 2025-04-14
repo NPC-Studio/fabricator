@@ -3,7 +3,9 @@ use std::fmt;
 use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
-use crate::{bytecode::ByteCode, object::Object, string::String, value::Value};
+use crate::{
+    bytecode::ByteCode, instructions::HeapIdx, object::Object, string::String, value::Value,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
@@ -31,7 +33,7 @@ impl<'gc> Constant<'gc> {
 #[collect(require_static)]
 pub enum HeapVarDescriptor {
     Owned,
-    UpValue(usize),
+    UpValue(HeapIdx),
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -120,7 +122,7 @@ impl<'gc> Closure<'gc> {
                     heap.push(HeapVar::new(mc, Value::Undefined));
                 }
                 HeapVarDescriptor::UpValue(index) => {
-                    heap.push(*upvalues.get(index).ok_or(MissingUpValue)?);
+                    heap.push(*upvalues.get(index as usize).ok_or(MissingUpValue)?);
                 }
             }
         }

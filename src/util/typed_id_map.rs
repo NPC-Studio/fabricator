@@ -133,6 +133,11 @@ impl<I: Id, V> IdMap<I, V> {
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.map.values_mut()
     }
+
+    #[inline]
+    pub fn retain(&mut self, mut f: impl FnMut(I, &mut V) -> bool) {
+        self.map.retain(move |id, val| f(I::from_id(id), val))
+    }
 }
 
 impl<I: Id, V> ops::Index<I> for IdMap<I, V> {

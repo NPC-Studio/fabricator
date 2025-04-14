@@ -20,7 +20,7 @@ use crate::{
 
 use super::analysis::{
     block_merge::merge_blocks,
-    cleanup::{clean_instructions, clean_unreachable_blocks},
+    cleanup::{clean_instructions, clean_unreachable_blocks, clean_unused_functions},
     constant_folding::fold_constants,
 };
 
@@ -46,7 +46,7 @@ pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, Com
     let parsed = parse(src, Interner(mc)).unwrap();
     let mut ir = compile_ir(&parsed).unwrap();
     optimize_ir(&mut ir).expect("Internal Compiler Error");
-    let prototype = codegen(ir).unwrap();
+    let prototype = codegen(&ir).unwrap();
 
     Ok(prototype)
 }
@@ -71,5 +71,11 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), Optimizatio
 
     clean_instructions(ir);
     clean_unreachable_blocks(ir);
+    clean_unused_functions(ir);
+
+    for func in ir.functions.values_mut() {
+        optimize_ir(func)?;
+    }
+
     Ok(())
 }

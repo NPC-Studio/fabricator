@@ -125,11 +125,10 @@ impl RegisterAllocation {
             let mut coalescing_instructions = Vec::new();
             for (block_id, range) in shadow_liveness.live_ranges(shadow_var) {
                 if let Some(incoming) = range.incoming_range {
-                    coalescing_instructions
-                        .push(ir.parts.blocks[block_id].instructions[incoming.end]);
+                    coalescing_instructions.push(ir.blocks[block_id].instructions[incoming.end]);
                     if let Some(start) = incoming.start {
                         let ir::Instruction::Upsilon(_, source_inst_id) =
-                            ir.parts.instructions[ir.parts.blocks[block_id].instructions[start]]
+                            ir.instructions[ir.blocks[block_id].instructions[start]]
                         else {
                             unreachable!("all `start` fields in shadow ranges should be upsilon instructions");
                         };
@@ -140,7 +139,7 @@ impl RegisterAllocation {
                 if let Some(outgoing) = range.outgoing_range {
                     if let Some(start) = outgoing.start {
                         let ir::Instruction::Upsilon(_, source_inst_id) =
-                            ir.parts.instructions[ir.parts.blocks[block_id].instructions[start]]
+                            ir.instructions[ir.blocks[block_id].instructions[start]]
                         else {
                             unreachable!("all `start` fields in shadow ranges should be upsilon instructions");
                         };
@@ -179,9 +178,8 @@ impl RegisterAllocation {
                             // Return true if the source instruction for the given upsilon is any
                             // instruction other than the one we are trying to coalesce.
                             let upsilon_source_conflict = |(block_id, index)| {
-                                let ir::Instruction::Upsilon(_, source_inst_id) = ir
-                                    .parts
-                                    .instructions[ir.parts.blocks[block_id].instructions[index]]
+                                let ir::Instruction::Upsilon(_, source_inst_id) =
+                                    ir.instructions[ir.blocks[block_id].instructions[index]]
                                 else {
                                     unreachable!();
                                 };
@@ -276,11 +274,10 @@ impl RegisterAllocation {
 
         let mut assigned_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
 
-        let block_order =
-            topological_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
+        let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
         for &block_id in &block_order {
-            let block = &ir.parts.blocks[block_id];
+            let block = &ir.blocks[block_id];
 
             // The set of registers that are used at the start of this block.
             //

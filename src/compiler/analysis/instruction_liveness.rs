@@ -63,25 +63,16 @@ impl InstructionLiveness {
     ///   2) Every instruction and branch source is dominated by its definition.
     ///   3) No instruction source is of type `Void`.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, InstructionVerificationError> {
-        let dominators =
-            Dominators::compute(ir.start_block, |b| ir.parts.blocks[b].exit.successors());
+        let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
-        let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = ir
-            .parts
-            .blocks
-            .ids()
-            .map(|id| (id, HashSet::new()))
-            .collect();
+        let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
+            ir.blocks.ids().map(|id| (id, HashSet::new())).collect();
 
-        let mut block_uses: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> = ir
-            .parts
-            .blocks
-            .ids()
-            .map(|id| (id, HashSet::new()))
-            .collect();
+        let mut block_uses: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
+            ir.blocks.ids().map(|id| (id, HashSet::new())).collect();
 
         let mut inst_positions = SecondaryMap::new();
-        for (block_id, block) in ir.parts.blocks.iter() {
+        for (block_id, block) in ir.blocks.iter() {
             let block_definitions = block_definitions.get_mut(block_id).unwrap();
             let block_uses = block_uses.get_mut(block_id).unwrap();
 
@@ -90,7 +81,7 @@ impl InstructionLiveness {
                     return Err(InstructionVerificationError::InstructionReused);
                 }
 
-                let inst = &ir.parts.instructions[inst_id];
+                let inst = &ir.instructions[inst_id];
 
                 if inst.has_value() {
                     block_definitions.insert(inst_id);
@@ -102,12 +93,12 @@ impl InstructionLiveness {
             }
         }
 
-        for (block_id, block) in ir.parts.blocks.iter() {
+        for (block_id, block) in ir.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                let inst = &ir.parts.instructions[inst_id];
+                let inst = &ir.instructions[inst_id];
 
                 for source_inst in inst.sources() {
-                    if !ir.parts.instructions[source_inst].has_value() {
+                    if !ir.instructions[source_inst].has_value() {
                         return Err(InstructionVerificationError::SourceIsVoid);
                     }
 
@@ -139,7 +130,7 @@ impl InstructionLiveness {
         // I can't find the original source for this algorithm, but it is in lecture notes here:
         // https://www.cs.mcgill.ca/~cs520/2021/slides/16-liveness.pdf
 
-        let post_order = dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
+        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
         let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
@@ -153,7 +144,7 @@ impl InstructionLiveness {
                 let block_live_out = live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
-                for succ in ir.parts.blocks[block_id].exit.successors() {
+                for succ in ir.blocks[block_id].exit.successors() {
                     for &inst_id in &live_in[succ] {
                         changed |= block_live_out.insert(inst_id);
                     }
@@ -183,7 +174,7 @@ impl InstructionLiveness {
 
         let mut block_ranges = SecondaryMap::new();
         for &block_id in &post_order {
-            let block = &ir.parts.blocks[block_id];
+            let block = &ir.blocks[block_id];
             let live_in = &live_in[block_id];
             let live_out = &live_out[block_id];
 
@@ -201,7 +192,7 @@ impl InstructionLiveness {
             };
 
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                let inst = &ir.parts.instructions[inst_id];
+                let inst = &ir.instructions[inst_id];
 
                 if inst.has_value() {
                     mark_use(inst_id, inst_index);

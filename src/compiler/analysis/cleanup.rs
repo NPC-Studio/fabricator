@@ -7,27 +7,19 @@ use crate::{
 pub fn clean_instructions<S>(ir: &mut ir::Function<S>) {
     let mut used_instructions = IndexSet::new();
 
-    for index in 0..ir.parts.blocks.index_upper_bound() {
-        if let Some(block_id) = ir.parts.blocks.id_for_index(index) {
-            let block = &mut ir.parts.blocks[block_id];
-            block.instructions.retain(|&inst_id| {
-                if let ir::Instruction::NoOp = &ir.parts.instructions[inst_id] {
-                    false
-                } else {
-                    used_instructions.insert(inst_id.index() as usize);
-                    true
-                }
-            });
-        }
+    for block in ir.blocks.values_mut() {
+        block.instructions.retain(|&inst_id| {
+            if let ir::Instruction::NoOp = &ir.instructions[inst_id] {
+                false
+            } else {
+                used_instructions.insert(inst_id.index() as usize);
+                true
+            }
+        });
     }
 
-    for index in 0..ir.parts.instructions.index_upper_bound() {
-        if let Some(id) = ir.parts.instructions.id_for_index(index) {
-            if !used_instructions.contains(index as usize) {
-                ir.parts.instructions.remove(id);
-            }
-        }
-    }
+    ir.instructions
+        .retain(|id, _| used_instructions.contains(id.index() as usize));
 }
 
 /// Remove any blocks that are not reachable from the `start_block`.
@@ -35,18 +27,26 @@ pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
     let mut reachable_blocks = IndexSet::new();
     depth_first_search(
         ir.start_block,
-        |b| ir.parts.blocks[b].exit.successors(),
+        |b| ir.blocks[b].exit.successors(),
         |b| {
             reachable_blocks.insert(b.index() as usize);
         },
         |_| {},
     );
 
-    for index in 0..ir.parts.blocks.index_upper_bound() {
-        if let Some(id) = ir.parts.blocks.id_for_index(index) {
-            if !reachable_blocks.contains(index as usize) {
-                ir.parts.blocks.remove(id);
-            }
+    ir.blocks
+        .retain(|id, _| reachable_blocks.contains(id.index() as usize));
+}
+
+pub fn clean_unused_functions<S>(ir: &mut ir::Function<S>) {
+    let mut used_functions = IndexSet::new();
+
+    for inst in ir.instructions.values() {
+        if let &ir::Instruction::Closure(func_id) = inst {
+            used_functions.insert(func_id.index() as usize);
         }
     }
+
+    ir.functions
+        .retain(|id, _| used_functions.contains(id.index() as usize));
 }

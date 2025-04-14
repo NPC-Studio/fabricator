@@ -127,17 +127,12 @@ impl ShadowLiveness {
         let mut upsilon_instructions: SecondaryMap<
             ir::BlockId,
             HashMap<ir::ShadowVar, Vec<usize>>,
-        > = ir
-            .parts
-            .blocks
-            .ids()
-            .map(|id| (id, HashMap::new()))
-            .collect();
+        > = ir.blocks.ids().map(|id| (id, HashMap::new())).collect();
 
-        for (block_id, block) in ir.parts.blocks.iter() {
+        for (block_id, block) in ir.blocks.iter() {
             let upsilon_map = upsilon_instructions.get_mut(block_id).unwrap();
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                if let &ir::Instruction::Upsilon(shadow_var, _) = &ir.parts.instructions[inst_id] {
+                if let &ir::Instruction::Upsilon(shadow_var, _) = &ir.instructions[inst_id] {
                     let upsilon_list = upsilon_map.entry(shadow_var).or_default();
                     upsilon_list.push(inst_index);
                 }
@@ -150,16 +145,11 @@ impl ShadowLiveness {
         let mut incoming_ranges: SecondaryMap<
             ir::BlockId,
             HashMap<ir::ShadowVar, ShadowIncomingRange>,
-        > = ir
-            .parts
-            .blocks
-            .ids()
-            .map(|id| (id, HashMap::new()))
-            .collect();
+        > = ir.blocks.ids().map(|id| (id, HashMap::new())).collect();
 
-        for (block_id, block) in ir.parts.blocks.iter() {
+        for (block_id, block) in ir.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-                if let &ir::Instruction::Phi(shadow_var) = &ir.parts.instructions[inst_id] {
+                if let &ir::Instruction::Phi(shadow_var) = &ir.instructions[inst_id] {
                     if shadow_vars.insert(shadow_var, ()).is_some() {
                         return Err(ShadowVerificationError::ShadowReused);
                     }
@@ -193,14 +183,9 @@ impl ShadowLiveness {
         let mut outgoing_ranges: SecondaryMap<
             ir::BlockId,
             HashMap<ir::ShadowVar, ShadowOutgoingRange>,
-        > = ir
-            .parts
-            .blocks
-            .ids()
-            .map(|id| (id, HashMap::new()))
-            .collect();
+        > = ir.blocks.ids().map(|id| (id, HashMap::new())).collect();
 
-        let post_order = dfs_post_order(ir.start_block, |id| ir.parts.blocks[id].exit.successors());
+        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
         let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::ShadowVar>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
@@ -227,7 +212,7 @@ impl ShadowLiveness {
                 let block_live_out = live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
-                for succ in ir.parts.blocks[block_id].exit.successors() {
+                for succ in ir.blocks[block_id].exit.successors() {
                     for &shadow_var in &live_in[succ] {
                         changed |= block_live_out.insert(shadow_var);
                     }

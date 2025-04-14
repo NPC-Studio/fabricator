@@ -5,14 +5,12 @@ use crate::compiler::{graph::predecessors::Predecessors, ir};
 /// Merge blocks where a block A unconditionally jumps to block B and A only has B as its single
 /// successor and block B only has A as its single predecessor.
 pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
-    let predecessors = Predecessors::compute(ir.parts.blocks.ids(), |b| {
-        ir.parts.blocks[b].exit.successors()
-    });
+    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.successors());
 
     let mut merge_next: HashMap<ir::BlockId, ir::BlockId> = HashMap::new();
     let mut merge_tails: HashSet<ir::BlockId> = HashSet::new();
 
-    for (block_id, block) in ir.parts.blocks.iter() {
+    for (block_id, block) in ir.blocks.iter() {
         let mut merge = |target: ir::BlockId| {
             let mut preds = predecessors.get(target);
             if preds.len() == 1 {
@@ -55,15 +53,15 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             for &block_id in &merges {
                 merged_block
                     .instructions
-                    .extend(ir.parts.blocks[block_id].instructions.drain(..));
+                    .extend(ir.blocks[block_id].instructions.drain(..));
             }
 
             let &first = merges.first().unwrap();
             let &last = merges.last().unwrap();
 
-            merged_block.exit = ir.parts.blocks[last].exit;
+            merged_block.exit = ir.blocks[last].exit;
 
-            ir.parts.blocks[first] = merged_block;
+            ir.blocks[first] = merged_block;
         }
     }
 }
