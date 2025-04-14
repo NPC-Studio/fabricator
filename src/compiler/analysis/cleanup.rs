@@ -38,6 +38,30 @@ pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
         .retain(|id, _| reachable_blocks.contains(id.index() as usize));
 }
 
+pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
+    let mut used_variables = IndexSet::new();
+
+    for inst in ir.instructions.values() {
+        match inst {
+            ir::Instruction::GetVariable(variable) | ir::Instruction::SetVariable(variable, _) => {
+                used_variables.insert(variable.index() as usize);
+            }
+            _ => {}
+        }
+    }
+
+    for func in ir.functions.values() {
+        for &parent_var in func.upvalues.values() {
+            used_variables.insert(parent_var.index() as usize);
+        }
+    }
+
+    ir.variables
+        .retain(|id, _| used_variables.contains(id.index() as usize));
+    ir.upvalues
+        .retain(|id, _| used_variables.contains(id.index() as usize));
+}
+
 pub fn clean_unused_functions<S>(ir: &mut ir::Function<S>) {
     let mut used_functions = IndexSet::new();
 

@@ -1,5 +1,6 @@
 use std::collections::{hash_map, HashMap};
 
+use gc_arena::{Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
@@ -40,11 +41,15 @@ pub enum CodegenError {
     JumpOutOfRange,
 }
 
-pub fn codegen<'gc>(ir: &ir::Function<String<'gc>>) -> Result<Prototype<'gc>, CodegenError> {
-    codegen_function(ir, &SecondaryMap::new())
+pub fn codegen<'gc>(
+    mc: &Mutation<'gc>,
+    ir: &ir::Function<String<'gc>>,
+) -> Result<Prototype<'gc>, CodegenError> {
+    codegen_function(mc, ir, &SecondaryMap::new())
 }
 
 fn codegen_function<'gc>(
+    mc: &Mutation<'gc>,
     ir: &ir::Function<String<'gc>>,
     parent_heap_indexe: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
@@ -85,7 +90,7 @@ fn codegen_function<'gc>(
                 .try_into()
                 .map_err(|_| CodegenError::PrototypeOverflow)?,
         );
-        prototypes.push(codegen_function(func, &heap_indexes)?);
+        prototypes.push(Gc::new(mc, codegen_function(mc, func, &heap_indexes)?));
     }
 
     let mut constants = Vec::new();
@@ -382,7 +387,7 @@ fn codegen_function<'gc>(
     Ok(Prototype {
         bytecode,
         constants: constants.into_boxed_slice(),
-        prototypes: vec![].into_boxed_slice(),
+        prototypes: prototypes.into_boxed_slice(),
         used_registers: reg_alloc.used_registers,
         heap_vars: heap_vars.into_boxed_slice(),
     })

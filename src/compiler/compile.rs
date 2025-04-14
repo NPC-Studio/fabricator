@@ -5,9 +5,9 @@ use crate::{
     closure::Prototype,
     compiler::{
         analysis::{
-            dead_code_elim::eliminate_dead_code, eliminate_copies::eliminate_copies,
-            shadow_liveness::ShadowVerificationError, shadow_reduction::reduce_shadows,
-            ssa_conversion::convert_to_ssa,
+            cleanup::clean_unused_variables, dead_code_elim::eliminate_dead_code,
+            eliminate_copies::eliminate_copies, shadow_liveness::ShadowVerificationError,
+            shadow_reduction::reduce_shadows, ssa_conversion::convert_to_ssa,
         },
         codegen::codegen,
         frontend::{compile_ir, FrontendError},
@@ -46,7 +46,7 @@ pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, Com
     let parsed = parse(src, Interner(mc)).unwrap();
     let mut ir = compile_ir(&parsed).unwrap();
     optimize_ir(&mut ir).expect("Internal Compiler Error");
-    let prototype = codegen(&ir).unwrap();
+    let prototype = codegen(mc, &ir).unwrap();
 
     Ok(prototype)
 }
@@ -57,7 +57,9 @@ pub enum OptimizationError {
     ShadowVariables(#[from] ShadowVerificationError),
 }
 
-pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), OptimizationError> {
+pub fn optimize_ir<S: Clone + AsRef<str>>(
+    ir: &mut ir::Function<S>,
+) -> Result<(), OptimizationError> {
     convert_to_ssa(ir);
 
     fold_constants(ir);
@@ -72,6 +74,7 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) -> Result<(), Optimizatio
     clean_instructions(ir);
     clean_unreachable_blocks(ir);
     clean_unused_functions(ir);
+    clean_unused_variables(ir);
 
     for func in ir.functions.values_mut() {
         optimize_ir(func)?;

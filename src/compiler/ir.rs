@@ -521,9 +521,36 @@ impl<S: AsRef<str>> Function<S> {
             write_block(f, block_id)?;
         }
 
+        if !self.shadow_vars.is_empty() {
+            write_indent(f, 0)?;
+            write!(f, "shadow_vars:")?;
+            for shadow_var in self.shadow_vars.ids() {
+                write!(f, " S{}", shadow_var.index())?;
+            }
+            writeln!(f)?;
+        }
+
+        if !self.variables.is_empty() {
+            write_indent(f, 0)?;
+            write!(f, "variables:")?;
+            for var in self.variables.ids() {
+                write!(f, " V{}", var.index())?;
+            }
+            writeln!(f)?;
+        }
+
+        if !self.upvalues.is_empty() {
+            write_indent(f, 0)?;
+            writeln!(f, "upvalues:")?;
+            for (&var_id, &up_var_id) in self.upvalues.iter() {
+                write_indent(f, 4)?;
+                writeln!(f, "V{}: parent V{}", var_id.index(), up_var_id.index())?;
+            }
+        }
+
         for (func_id, function) in self.functions.iter() {
             write_indent(f, 0)?;
-            writeln!(f, "sub_function F{}", func_id.index())?;
+            writeln!(f, "function F{}:", func_id.index())?;
             function.pretty_print(f, indent + 4)?;
         }
 

@@ -1,0 +1,13 @@
+var i = 0;
+
+var f = function() {
+    var inner = function() {
+        i += 1;
+    	return i;
+    };
+    return inner();
+};
+
+assert(f() == 1)
+assert(f() == 2)
+assert(f() == 3)

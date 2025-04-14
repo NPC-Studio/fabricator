@@ -48,6 +48,7 @@ pub enum Token<S> {
     DoublePipe,
 
     Var,
+    Function,
 
     Switch,
     Case,
@@ -105,6 +106,7 @@ impl<S: AsRef<str>> Token<S> {
             Token::DoubleAmpersand => Token::DoubleAmpersand,
             Token::DoublePipe => Token::DoublePipe,
             Token::Var => Token::Var,
+            Token::Function => Token::Function,
             Token::Switch => Token::Switch,
             Token::Case => Token::Case,
             Token::Break => Token::Break,
@@ -161,6 +163,7 @@ impl<S: PartialEq> PartialEq for Token<S> {
             (Token::DoubleAmpersand, Token::DoubleAmpersand) => true,
             (Token::DoublePipe, Token::DoublePipe) => true,
             (Token::Var, Token::Var) => true,
+            (Token::Function, Token::Function) => true,
             (Token::Switch, Token::Switch) => true,
             (Token::Case, Token::Case) => true,
             (Token::Break, Token::Break) => true,
@@ -426,6 +429,7 @@ where
                 self.read_identifier();
                 match self.string_buffer.as_str() {
                     "var" => Some(Token::Var),
+                    "function" => Some(Token::Function),
                     "switch" => Some(Token::Switch),
                     "case" => Some(Token::Case),
                     "break" => Some(Token::Break),

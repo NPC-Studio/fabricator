@@ -100,6 +100,11 @@ impl<I: Id, V> IdMap<I, V> {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    #[inline]
     pub fn index_upper_bound(&self) -> Index {
         self.map.index_upper_bound()
     }
@@ -236,6 +241,11 @@ impl<I: Id, V> SecondaryMap<I, V> {
     #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     #[inline]

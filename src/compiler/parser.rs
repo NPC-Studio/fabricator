@@ -65,7 +65,14 @@ pub enum Expression<S> {
     Group(Box<Expression<S>>),
     Unary(UnaryOperator, Box<Expression<S>>),
     Binary(Box<Expression<S>>, BinaryOperator, Box<Expression<S>>),
+    Function(FunctionExpr<S>),
     Call(FunctionCall<S>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionExpr<S> {
+    pub arguments: Vec<S>,
+    pub body: Block<S>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -327,7 +334,15 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     self.advance(1);
                     self.look_ahead(1)?;
                     let arguments = if !matches!(self.peek(0), Some((Token::RightParen, _))) {
-                        self.parse_expression_list()?
+                        let mut expressions = Vec::new();
+                        expressions.push(self.parse_expression()?);
+                        self.look_ahead(1)?;
+                        while matches!(self.peek(0), Some((Token::Comma, _))) {
+                            self.advance(1);
+                            expressions.push(self.parse_expression()?);
+                            self.look_ahead(1)?;
+                        }
+                        expressions
                     } else {
                         Vec::new()
                     };
@@ -362,28 +377,70 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     }
 
     fn parse_simple_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
-        match self.expect_next("<expression>")? {
-            (Token::Undefined, _) => Ok(Expression::Undefined),
-            (Token::True, _) => Ok(Expression::True),
-            (Token::False, _) => Ok(Expression::False),
-            (Token::Float(f), _) => Ok(Expression::Float(f)),
-            (Token::Integer(i), _) => Ok(Expression::Integer(i)),
-            (Token::String(s), _) => Ok(Expression::String(s)),
-            (Token::Identifier(i), _) => Ok(Expression::Name(i)),
+        self.look_ahead(1)?;
+        match self.peek_expected(0, "<expression>")? {
+            (Token::Undefined, _) => {
+                self.advance(1);
+                Ok(Expression::Undefined)
+            }
+            (Token::True, _) => {
+                self.advance(1);
+                Ok(Expression::True)
+            }
+            (Token::False, _) => {
+                self.advance(1);
+                Ok(Expression::False)
+            }
+            (&Token::Float(f), _) => {
+                self.advance(1);
+                Ok(Expression::Float(f))
+            }
+            (&Token::Integer(i), _) => {
+                self.advance(1);
+                Ok(Expression::Integer(i))
+            }
+            (Token::String(_), _) => {
+                let Some((Token::String(s), _)) = self.next().unwrap() else {
+                    unreachable!()
+                };
+                Ok(Expression::String(s))
+            }
+            (Token::Identifier(_), _) => {
+                self.look_ahead(2)?;
+                if matches!(self.peek(1), Some((Token::LeftParen, _))) {
+                    self.parse_suffixed_expression()
+                } else {
+                    let Some((Token::Identifier(i), _)) = self.next().unwrap() else {
+                        unreachable!()
+                    };
+                    Ok(Expression::Name(i))
+                }
+            }
+            (Token::Function, _) => {
+                self.advance(1);
+                self.parse_token(Token::LeftParen)?;
+                let mut arguments = Vec::new();
+                self.look_ahead(1)?;
+                if !matches!(self.peek(0), Some((Token::RightParen, _))) {
+                    loop {
+                        arguments.push(self.parse_identifier()?);
+                        self.look_ahead(1)?;
+                        if matches!(self.peek(0), Some((Token::Comma, _))) {
+                            self.advance(1);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.parse_token(Token::RightParen)?;
+                self.parse_token(Token::LeftBrace)?;
+                let body = self.parse_block()?;
+                self.parse_token(Token::RightBrace)?;
+
+                Ok(Expression::Function(FunctionExpr { arguments, body }))
+            }
             _ => self.parse_suffixed_expression(),
         }
-    }
-
-    fn parse_expression_list(&mut self) -> Result<Vec<Expression<S::String>>, ParseError> {
-        let mut expressions = Vec::new();
-        expressions.push(self.parse_expression()?);
-        self.look_ahead(1)?;
-        while matches!(self.peek(0), Some((Token::Comma, _))) {
-            self.advance(1);
-            expressions.push(self.parse_expression()?);
-            self.look_ahead(1)?;
-        }
-        Ok(expressions)
     }
 
     fn parse_identifier(&mut self) -> Result<S::String, ParseError> {
@@ -581,6 +638,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::DoubleAmpersand => "&&",
         Token::DoublePipe => "--",
         Token::Var => "var",
+        Token::Function => "function",
         Token::Switch => "switch",
         Token::Case => "case",
         Token::Break => "break",

@@ -193,6 +193,11 @@ impl<V> IdMap<V> {
         self.occupancy as usize
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.occupancy == 0
+    }
+
     /// All indexes from every `Id` produced by this `IdMap` will be less than the returned `Index`.
     #[inline]
     pub fn index_upper_bound(&self) -> Index {
@@ -477,6 +482,11 @@ impl<V> SecondaryMap<V> {
     #[inline]
     pub fn len(&self) -> usize {
         self.occupancy as usize
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.occupancy == 0
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {

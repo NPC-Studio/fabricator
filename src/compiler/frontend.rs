@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map, HashMap, HashSet},
     hash::Hash,
+    mem,
 };
 
 use thiserror::Error;
@@ -18,14 +19,22 @@ pub fn compile_ir<S: Eq + Hash + Clone>(
 ) -> Result<ir::Function<S>, FrontendError> {
     let mut compiler = Compiler::new();
     compiler.block(block)?;
-    Ok(compiler.function)
+    Ok(compiler.current.function)
 }
 
-struct Compiler<S> {
+struct Function<S> {
     function: ir::Function<S>,
     current_block: ir::BlockId,
     variables: HashMap<S, Vec<ir::Variable>>,
     scopes: Vec<HashSet<S>>,
+    // Either a `Some` for an upvalue, or a `None` as a negative cache for no upper function having
+    // such a variable.
+    upvalues: HashMap<S, Option<ir::Variable>>,
+}
+
+struct Compiler<S> {
+    upper: Vec<Function<S>>,
+    current: Function<S>,
 }
 
 impl<S: Eq + Hash + Clone> Compiler<S> {
@@ -34,24 +43,28 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
         let shadow_vars = ir::ShadowVarSet::new();
-        let sub_functions = ir::FunctionMap::new();
+        let functions = ir::FunctionMap::new();
         let upvalues = ir::UpValueMap::new();
 
         let start_block = blocks.insert(ir::Block::default());
 
         Self {
-            function: ir::Function {
-                instructions,
-                blocks,
-                variables,
-                shadow_vars,
-                functions: sub_functions,
-                upvalues,
-                start_block,
+            upper: Vec::new(),
+            current: Function {
+                function: ir::Function {
+                    instructions,
+                    blocks,
+                    variables,
+                    shadow_vars,
+                    functions,
+                    upvalues,
+                    start_block,
+                },
+                current_block: start_block,
+                variables: Default::default(),
+                scopes: Default::default(),
+                upvalues: HashMap::new(),
             },
-            current_block: start_block,
-            variables: Default::default(),
-            scopes: Default::default(),
         }
     }
 
@@ -156,22 +169,22 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         } else {
             ir::Exit::Return { returns: 0 }
         };
-        self.function.blocks[self.current_block].exit = exit;
-        self.current_block = self.function.blocks.insert(ir::Block::default());
+        self.current.function.blocks[self.current.current_block].exit = exit;
+        self.current.current_block = self.current.function.blocks.insert(ir::Block::default());
         Ok(())
     }
 
     fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), FrontendError> {
         let cond = self.commit_expression(&if_statement.condition)?;
-        let body = self.function.blocks.insert(ir::Block::default());
-        let successor = self.function.blocks.insert(ir::Block::default());
+        let body = self.current.function.blocks.insert(ir::Block::default());
+        let successor = self.current.function.blocks.insert(ir::Block::default());
 
-        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
             cond,
             if_true: body,
             if_false: successor,
         };
-        self.current_block = body;
+        self.current.current_block = body;
 
         {
             self.push_scope();
@@ -179,8 +192,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             self.pop_scope();
         }
 
-        self.function.blocks[body].exit = ir::Exit::Jump(successor);
-        self.current_block = successor;
+        self.current.function.blocks[body].exit = ir::Exit::Jump(successor);
+        self.current.current_block = successor;
         Ok(())
     }
 
@@ -188,8 +201,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         for_statement: &parser::ForStatement<S>,
     ) -> Result<(), FrontendError> {
-        let body = self.function.blocks.insert(ir::Block::default());
-        let successor = self.function.blocks.insert(ir::Block::default());
+        let body = self.current.function.blocks.insert(ir::Block::default());
+        let successor = self.current.function.blocks.insert(ir::Block::default());
 
         {
             self.push_scope();
@@ -202,12 +215,12 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             {
                 self.push_scope();
 
-                self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+                self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
                     cond,
                     if_true: body,
                     if_false: successor,
                 };
-                self.current_block = body;
+                self.current.current_block = body;
 
                 self.block(&for_statement.body)?;
 
@@ -223,7 +236,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             }
 
             let cond = self.commit_expression(&for_statement.condition)?;
-            self.function.blocks[body].exit = ir::Exit::Branch {
+            self.current.function.blocks[body].exit = ir::Exit::Branch {
                 cond,
                 if_true: body,
                 if_false: successor,
@@ -232,7 +245,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             self.pop_scope();
         }
 
-        self.current_block = successor;
+        self.current.current_block = successor;
 
         Ok(())
     }
@@ -331,6 +344,12 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 };
                 self.push_instruction(inst)
             }
+            parser::Expression::Function(func_expr) => {
+                self.push_function(&func_expr.arguments);
+                self.block(&func_expr.body)?;
+                let func_id = self.pop_function();
+                self.push_instruction(ir::Instruction::Closure(func_id))
+            }
             parser::Expression::Call(func) => {
                 self.function_call(func, 1)?;
                 self.push_instruction(ir::Instruction::Pop)
@@ -364,22 +383,64 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         Ok(())
     }
 
-    fn push_instruction(&mut self, inst: ir::Instruction<S>) -> ir::InstId {
-        let inst_id = self.function.instructions.insert(inst);
-        self.function.blocks[self.current_block]
-            .instructions
-            .push(inst_id);
-        inst_id
+    fn push_function(&mut self, args: &[S]) {
+        let instructions = ir::InstructionMap::new();
+        let mut blocks = ir::BlockMap::new();
+        let variables = ir::VariableSet::new();
+        let shadow_vars = ir::ShadowVarSet::new();
+        let functions = ir::FunctionMap::new();
+        let upvalues = ir::UpValueMap::new();
+        let start_block = blocks.insert(ir::Block::default());
+
+        let function = ir::Function {
+            instructions,
+            blocks,
+            variables,
+            shadow_vars,
+            functions,
+            upvalues,
+            start_block,
+        };
+
+        let upper = mem::replace(
+            &mut self.current,
+            Function {
+                function,
+                current_block: start_block,
+                variables: Default::default(),
+                scopes: Default::default(),
+                upvalues: Default::default(),
+            },
+        );
+        self.upper.push(upper);
+
+        self.push_scope();
+
+        for arg_name in args.iter().rev() {
+            let arg_var = self.declare_var(arg_name.clone());
+            let pop_arg = self.push_instruction(ir::Instruction::Pop);
+            self.push_instruction(ir::Instruction::SetVariable(arg_var, pop_arg));
+        }
+    }
+
+    fn pop_function(&mut self) -> ir::FuncId {
+        self.pop_scope();
+
+        let upper = self.upper.pop().expect("no upper function to pop to");
+        let lower = mem::replace(&mut self.current, upper);
+
+        self.current.function.functions.insert(lower.function)
     }
 
     fn push_scope(&mut self) {
-        self.scopes.push(HashSet::new());
+        self.current.scopes.push(HashSet::new());
     }
 
     fn pop_scope(&mut self) {
-        if let Some(out_of_scope) = self.scopes.pop() {
+        if let Some(out_of_scope) = self.current.scopes.pop() {
             for vname in out_of_scope {
-                let hash_map::Entry::Occupied(mut entry) = self.variables.entry(vname) else {
+                let hash_map::Entry::Occupied(mut entry) = self.current.variables.entry(vname)
+                else {
                     unreachable!();
                 };
                 entry.get_mut().pop().unwrap();
@@ -391,10 +452,10 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
     }
 
     fn declare_var(&mut self, vname: S) -> ir::Variable {
-        let in_scope = self.scopes.last().unwrap().contains(&vname);
-        let variable_stack = self.variables.entry(vname).or_default();
+        let in_scope = self.current.scopes.last().unwrap().contains(&vname);
+        let variable_stack = self.current.variables.entry(vname).or_default();
 
-        let var = self.function.variables.insert(());
+        let var = self.current.function.variables.insert(());
         if in_scope {
             variable_stack.pop().unwrap();
         }
@@ -403,6 +464,60 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
     }
 
     fn get_var(&mut self, vname: &S) -> Option<ir::Variable> {
-        self.variables.get(vname).and_then(|v| v.last().copied())
+        if let Some(declared) = self
+            .current
+            .variables
+            .get(vname)
+            .and_then(|s| s.last().copied())
+        {
+            Some(declared)
+        } else if let Some(&upvalue) = self.current.upvalues.get(vname) {
+            upvalue
+        } else {
+            let mut upper_var = None;
+            for (index, upper) in self.upper.iter().enumerate().rev() {
+                if let Some(declared) = upper.variables.get(vname).and_then(|s| s.last().copied()) {
+                    upper_var = Some((index, Some(declared)));
+                    break;
+                } else if let Some(&upvalue) = upper.upvalues.get(vname) {
+                    upper_var = Some((index, upvalue));
+                    break;
+                }
+            }
+
+            if let Some((index, var)) = upper_var {
+                if let Some(mut found) = var {
+                    let add_upvalue =
+                        |f: &mut Function<S>, name: S, upper_var: ir::Variable| -> ir::Variable {
+                            let var = f.function.variables.insert(());
+                            f.function.upvalues.insert(var, upper_var);
+                            f.upvalues.insert(name, Some(var));
+                            var
+                        };
+
+                    for upper in &mut self.upper[index + 1..] {
+                        found = add_upvalue(upper, vname.clone(), found);
+                    }
+                    Some(add_upvalue(&mut self.current, vname.clone(), found))
+                } else {
+                    for upper in &mut self.upper[index + 1..] {
+                        upper.upvalues.insert(vname.clone(), None);
+                    }
+                    self.current.upvalues.insert(vname.clone(), None);
+                    None
+                }
+            } else {
+                self.current.upvalues.insert(vname.clone(), None);
+                None
+            }
+        }
+    }
+
+    fn push_instruction(&mut self, inst: ir::Instruction<S>) -> ir::InstId {
+        let inst_id = self.current.function.instructions.insert(inst);
+        self.current.function.blocks[self.current.current_block]
+            .instructions
+            .push(inst_id);
+        inst_id
     }
 }

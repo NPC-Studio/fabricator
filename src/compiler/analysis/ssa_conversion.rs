@@ -12,8 +12,9 @@ use super::vec_change_set::VecChangeSet;
 
 /// Convert uses of IR variables into SSA, possibly by inserting Phi and Upsilon instructions.
 ///
-/// This will convert uses of variables in reachable blocks, blocks that are never executed will
-/// not be modified.
+/// This will convert uses of variables in reachable blocks, blocks that are never executed will not
+/// be modified. Also, any variables that are upvalues in child functions will not be changed into
+/// SSA form.
 ///
 /// All uses of variables without an assignment are converted into `Undefined`. This includes
 /// `GetVariable` instructions used before a `SetVariable` to the same variable, and also any
@@ -21,6 +22,14 @@ use super::vec_change_set::VecChangeSet;
 ///
 /// The resulting phi placement will be *minimal* but not *pruned*.
 pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
+    // We don't do SSA conversion of upvalues, either ones from an upper function or ones shared to
+    // a lower function.
+    let mut skipping_vars = HashSet::new();
+    skipping_vars.extend(ir.upvalues.keys().copied());
+    for func in ir.functions.values() {
+        skipping_vars.extend(func.upvalues.values().copied());
+    }
+
     let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
     let mut assigning_blocks: SecondaryMap<ir::Variable, HashSet<ir::BlockId>> =
@@ -31,8 +40,10 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
         let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
             if let &ir::Instruction::SetVariable(variable, _) = &ir.instructions[inst_id] {
-                let blocks = assigning_blocks.get_or_insert_default(variable);
-                blocks.insert(block_id);
+                if !skipping_vars.contains(&variable) {
+                    let blocks = assigning_blocks.get_or_insert_default(variable);
+                    blocks.insert(block_id);
+                }
             }
         }
     }
@@ -120,15 +131,19 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             current_vars.get(variable).and_then(|s| s.last().copied())
                         {
                             *inst = ir::Instruction::Copy(top);
-                        } else {
+                        } else if !skipping_vars.contains(&variable) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
                             *inst = ir::Instruction::Undefined;
                         }
                     }
                     &ir::Instruction::SetVariable(variable, source) => {
-                        *inst = ir::Instruction::NoOp;
-                        current_vars.get_mut(variable).unwrap().push(source);
+                        if let Some(stack) = current_vars.get_mut(variable) {
+                            *inst = ir::Instruction::NoOp;
+                            stack.push(source);
+                        } else {
+                            assert!(skipping_vars.contains(&variable));
+                        }
                     }
                     &ir::Instruction::Phi(shadow_var) => {
                         // If there is a `Phi` function we did not insert, we ignore it.
