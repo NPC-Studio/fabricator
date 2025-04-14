@@ -13,8 +13,8 @@ use super::vec_change_set::VecChangeSet;
 /// Convert uses of IR variables into SSA, possibly by inserting Phi and Upsilon instructions.
 ///
 /// This will convert uses of variables in reachable blocks, blocks that are never executed will not
-/// be modified. Also, any variables that are upvalues in child functions will not be changed into
-/// SSA form.
+/// be modified. Also, any variables that are upvalues from the parent function or upvalues in any
+/// child functions will not be changed into SSA form to maintain cross-function sharing.
 ///
 /// All uses of variables without an assignment are converted into `Undefined`. This includes
 /// `GetVariable` instructions used before a `SetVariable` to the same variable, and also any

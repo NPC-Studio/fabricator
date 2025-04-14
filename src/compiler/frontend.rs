@@ -474,6 +474,12 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         } else if let Some(&upvalue) = self.current.upvalues.get(vname) {
             upvalue
         } else {
+            // Search for any value with the requested name in any upper function. If we find one,
+            // create a new variable for it in this function and record it as an upvalue.
+            //
+            // If we don't find any value with the requested name in any upper function, add a
+            // `None` entry to the upvalues map to record that no such upvalue can be found.
+
             let mut upper_var = None;
             for (index, upper) in self.upper.iter().enumerate().rev() {
                 if let Some(declared) = upper.variables.get(vname).and_then(|s| s.last().copied()) {
