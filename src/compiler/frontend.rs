@@ -113,24 +113,33 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         assignment_statement: &parser::AssignmentStatement<S>,
     ) -> Result<(), FrontendError> {
-        enum VarOrThis {
+        enum Target {
             Var(ir::Variable),
-            This(ir::InstId),
+            This { key: ir::InstId },
+            Field { object: ir::InstId, key: ir::InstId },
         }
 
-        let name = match &assignment_statement.target {
-            AssignmentTarget::Name(name) => name,
-            AssignmentTarget::Field(_) => unimplemented!(),
-        };
-
-        let (target, old) = if let Some(var) = self.get_var(name) {
-            let old = self.push_instruction(ir::Instruction::GetVariable(var));
-            (VarOrThis::Var(var), old)
-        } else {
-            let key =
-                self.push_instruction(ir::Instruction::Constant(Constant::String(name.clone())));
-            let old = self.push_instruction(ir::Instruction::GetThis(key));
-            (VarOrThis::This(key), old)
+        let (target, old) = match &assignment_statement.target {
+            AssignmentTarget::Name(name) => {
+                if let Some(var) = self.get_var(name) {
+                    let old = self.push_instruction(ir::Instruction::GetVariable(var));
+                    (Target::Var(var), old)
+                } else {
+                    let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
+                        name.clone(),
+                    )));
+                    let old = self.push_instruction(ir::Instruction::GetThis { key });
+                    (Target::This { key }, old)
+                }
+            }
+            AssignmentTarget::Field(field_expr) => {
+                let object = self.commit_expression(&field_expr.base)?;
+                let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
+                    field_expr.field.clone(),
+                )));
+                let old = self.push_instruction(ir::Instruction::GetField { object, key });
+                (Target::Field { object, key }, old)
+            }
         };
 
         let val = self.commit_expression(&assignment_statement.value)?;
@@ -151,11 +160,18 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         };
 
         match target {
-            VarOrThis::Var(var) => {
+            Target::Var(var) => {
                 self.push_instruction(ir::Instruction::SetVariable(var, assign));
             }
-            VarOrThis::This(key) => {
+            Target::This { key } => {
                 self.push_instruction(ir::Instruction::SetThis { key, value: assign });
+            }
+            Target::Field { object, key } => {
+                self.push_instruction(ir::Instruction::SetField {
+                    object,
+                    key,
+                    value: assign,
+                });
             }
         }
 
@@ -283,7 +299,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 } else {
                     let key = self
                         .push_instruction(ir::Instruction::Constant(Constant::String(s.clone())));
-                    self.push_instruction(ir::Instruction::GetThis(key))
+                    self.push_instruction(ir::Instruction::GetThis { key })
                 }
             }
             parser::Expression::Group(expr) => self.commit_expression(expr)?,
@@ -358,7 +374,16 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.call_expr(func, 1)?;
                 self.push_instruction(ir::Instruction::Pop)
             }
-            parser::Expression::Field(_) => unimplemented!(),
+            parser::Expression::Field(field_expr) => {
+                let base = self.commit_expression(&field_expr.base)?;
+                let field = self.push_instruction(ir::Instruction::Constant(Constant::String(
+                    field_expr.field.clone(),
+                )));
+                self.push_instruction(ir::Instruction::GetField {
+                    object: base,
+                    key: field,
+                })
+            }
         })
     }
 

@@ -102,8 +102,19 @@ pub enum Instruction<S> {
     Closure(FuncId),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
-    GetThis(InstId),
+    GetThis {
+        key: InstId,
+    },
     SetThis {
+        key: InstId,
+        value: InstId,
+    },
+    GetField {
+        object: InstId,
+        key: InstId,
+    },
+    SetField {
+        object: InstId,
         key: InstId,
         value: InstId,
     },
@@ -130,6 +141,12 @@ pub enum Instruction<S> {
         args: ArgCount,
         returns: ArgCount,
     },
+    Method {
+        source: InstId,
+        this: InstId,
+        args: ArgCount,
+        returns: ArgCount,
+    },
 }
 
 pub const MAX_INSTRUCTION_SOURCES: usize = 2;
@@ -150,10 +167,19 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(*source);
             }
-            Instruction::GetThis(key) => {
+            Instruction::GetThis { key } => {
                 sources.push(*key);
             }
             Instruction::SetThis { key, value } => {
+                sources.push(*key);
+                sources.push(*value);
+            }
+            Instruction::GetField { object, key } => {
+                sources.push(*object);
+                sources.push(*key);
+            }
+            Instruction::SetField { object, key, value } => {
+                sources.push(*object);
                 sources.push(*key);
                 sources.push(*value);
             }
@@ -177,6 +203,10 @@ impl<S> Instruction<S> {
             Instruction::Call { source, .. } => {
                 sources.push(*source);
             }
+            Instruction::Method { source, this, .. } => {
+                sources.push(*source);
+                sources.push(*this);
+            }
         }
 
         sources
@@ -197,10 +227,19 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(source);
             }
-            Instruction::GetThis(key) => {
+            Instruction::GetThis { key } => {
                 sources.push(key);
             }
             Instruction::SetThis { key, value } => {
+                sources.push(key);
+                sources.push(value);
+            }
+            Instruction::GetField { object, key } => {
+                sources.push(object);
+                sources.push(key);
+            }
+            Instruction::SetField { object, key, value } => {
+                sources.push(object);
                 sources.push(key);
                 sources.push(value);
             }
@@ -226,6 +265,10 @@ impl<S> Instruction<S> {
             Instruction::Call { source, .. } => {
                 sources.push(source);
             }
+            Instruction::Method { source, this, .. } => {
+                sources.push(source);
+                sources.push(this);
+            }
         }
 
         sources
@@ -240,8 +283,10 @@ impl<S> Instruction<S> {
             Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
-            Instruction::GetThis(_) => true,
+            Instruction::GetThis { .. } => true,
             Instruction::SetThis { .. } => false,
+            Instruction::GetField { .. } => true,
+            Instruction::SetField { .. } => false,
             Instruction::Phi(_) => true,
             Instruction::Upsilon(_, _) => false,
             Instruction::UnOp { .. } => true,
@@ -250,6 +295,7 @@ impl<S> Instruction<S> {
             Instruction::Push { .. } => false,
             Instruction::Pop => true,
             Instruction::Call { .. } => false,
+            Instruction::Method { .. } => false,
         }
     }
 
@@ -262,8 +308,10 @@ impl<S> Instruction<S> {
             Instruction::Closure(_) => false,
             Instruction::GetVariable(_) => false,
             Instruction::SetVariable { .. } => true,
-            Instruction::GetThis(_) => false,
+            Instruction::GetThis { .. } => false,
             Instruction::SetThis { .. } => true,
+            Instruction::GetField { .. } => false,
+            Instruction::SetField { .. } => true,
             Instruction::Phi(_) => false,
             Instruction::Upsilon(_, _) => true,
             Instruction::UnOp { .. } => false,
@@ -272,6 +320,7 @@ impl<S> Instruction<S> {
             Instruction::Push { .. } => true,
             Instruction::Pop => true,
             Instruction::Call { .. } => true,
+            Instruction::Method { .. } => true,
         }
     }
 }
@@ -421,11 +470,33 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
                     }
-                    Instruction::GetThis(key) => {
-                        writeln!(f, "get_self(I{})", key.index())?;
+                    Instruction::GetThis { key } => {
+                        writeln!(f, "get_self(key = I{})", key.index())?;
                     }
                     Instruction::SetThis { key, value } => {
-                        writeln!(f, "set_self(I{}, I{})", key.index(), value.index())?;
+                        writeln!(
+                            f,
+                            "set_self(key = I{}, value = I{})",
+                            key.index(),
+                            value.index()
+                        )?;
+                    }
+                    Instruction::GetField { object, key } => {
+                        writeln!(
+                            f,
+                            "get_field(object = I{}, key = I{})",
+                            object.index(),
+                            key.index()
+                        )?;
+                    }
+                    Instruction::SetField { object, key, value } => {
+                        writeln!(
+                            f,
+                            "set_field(object = I{}, key = I{}, value = I{})",
+                            object.index(),
+                            key.index(),
+                            value.index()
+                        )?;
                     }
                     Instruction::Phi(shadow) => {
                         writeln!(f, "phi(S{})", shadow.index())?;
@@ -481,6 +552,21 @@ impl<S: AsRef<str>> Function<S> {
                             f,
                             "call(I{}, args = {}, returns = {})",
                             source.index(),
+                            args,
+                            returns
+                        )?;
+                    }
+                    Instruction::Method {
+                        source,
+                        this,
+                        args,
+                        returns,
+                    } => {
+                        writeln!(
+                            f,
+                            "call_method(I{}, this = {}, args = {}, returns = {})",
+                            source.index(),
+                            this.index(),
                             args,
                             returns
                         )?;

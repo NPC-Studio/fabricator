@@ -275,6 +275,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn get_field(
             &mut self,
             dest: RegIdx,
@@ -291,6 +292,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn set_field(
             &mut self,
             object: RegIdx,
@@ -432,6 +434,7 @@ fn dispatch<'gc>(
             self.do_call(self.this, func, args, returns)
         }
 
+        #[inline]
         fn method(
             &mut self,
             this: RegIdx,

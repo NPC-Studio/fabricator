@@ -171,7 +171,7 @@ fn codegen_function<'gc>(
                         source: reg_alloc.instruction_registers[source],
                     });
                 }
-                ir::Instruction::GetThis(key) => {
+                ir::Instruction::GetThis { key } => {
                     vm_instructions.push(Instruction::GetThis {
                         dest: reg_alloc.instruction_registers[inst_id],
                         key: reg_alloc.instruction_registers[key],
@@ -179,6 +179,20 @@ fn codegen_function<'gc>(
                 }
                 ir::Instruction::SetThis { key, value } => {
                     vm_instructions.push(Instruction::SetThis {
+                        key: reg_alloc.instruction_registers[key],
+                        value: reg_alloc.instruction_registers[value],
+                    });
+                }
+                ir::Instruction::GetField { object, key } => {
+                    vm_instructions.push(Instruction::GetField {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        object: reg_alloc.instruction_registers[object],
+                        key: reg_alloc.instruction_registers[key],
+                    });
+                }
+                ir::Instruction::SetField { object, key, value } => {
+                    vm_instructions.push(Instruction::SetField {
+                        object: reg_alloc.instruction_registers[object],
                         key: reg_alloc.instruction_registers[key],
                         value: reg_alloc.instruction_registers[value],
                     });
@@ -304,6 +318,19 @@ fn codegen_function<'gc>(
                 } => {
                     vm_instructions.push(Instruction::Call {
                         func: reg_alloc.instruction_registers[source],
+                        args,
+                        returns,
+                    });
+                }
+                ir::Instruction::Method {
+                    source,
+                    this,
+                    args,
+                    returns,
+                } => {
+                    vm_instructions.push(Instruction::Method {
+                        func: reg_alloc.instruction_registers[source],
+                        this: reg_alloc.instruction_registers[this],
                         args,
                         returns,
                     });
