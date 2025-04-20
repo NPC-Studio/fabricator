@@ -240,6 +240,7 @@ fn dispatch<'gc>(
                 &self.ctx,
                 proto,
                 self.closure.heap(),
+                Some(self.this),
             )?);
             Ok(())
         }

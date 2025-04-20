@@ -440,7 +440,7 @@ where
                     self.interner.intern(self.string_buffer.as_str()),
                 ))
             }
-            (Some(c), _) if c.is_ascii_alphabetic() => {
+            (Some(c), _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
                     "var" => Some(Token::Var),
@@ -484,7 +484,7 @@ where
     fn read_identifier(&mut self) {
         let start = self.peek(0).expect("no start char for identifier");
         assert!(
-            start.is_ascii_alphabetic(),
+            is_identifier_start_char(start),
             "identifier does not start with alphabetic character"
         );
 
@@ -493,7 +493,7 @@ where
         self.advance(1);
 
         while let Some(c) = self.peek(0) {
-            if !c.is_ascii_alphanumeric() {
+            if !is_identifier_char(c) {
                 break;
             }
 
@@ -677,6 +677,14 @@ where
 
 fn is_newline(c: char) -> bool {
     c == '\n' || c == '\r'
+}
+
+fn is_identifier_start_char(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 fn read_dec_integer(s: &str) -> Option<u64> {

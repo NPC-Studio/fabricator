@@ -1,10 +1,10 @@
 use std::fmt;
 
-use gc_arena::{barrier, Collect, Gc, Lock, Mutation};
+use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{context::Context, error::Error, object::Object, stack::Stack};
 
-pub trait CallbackFn<'gc>: Collect<'gc> {
+pub trait CallbackFn<'gc> {
     fn call(
         &self,
         ctx: Context<'gc>,
@@ -15,53 +15,23 @@ pub trait CallbackFn<'gc>: Collect<'gc> {
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Callback<'gc>(Gc<'gc, CallbackInner<'gc>>);
-
-// We represent a callback as a single pointer with an inline VTable header.
 pub struct CallbackInner<'gc> {
-    call: unsafe fn(
-        *const CallbackInner<'gc>,
-        Context<'gc>,
-        Object<'gc>,
-        Stack<'gc, '_>,
-    ) -> Result<(), Error>,
-    this: Lock<Option<Object<'gc>>>,
+    callback_fn: Gc<'gc, dyn CallbackFn<'gc>>,
+    this: Option<Object<'gc>>,
 }
 
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub struct Callback<'gc>(Gc<'gc, CallbackInner<'gc>>);
+
 impl<'gc> Callback<'gc> {
-    pub fn new<C: CallbackFn<'gc> + 'gc>(mc: &Mutation<'gc>, callback: C) -> Self {
-        #[repr(C)]
-        struct HeaderCallback<'gc, C> {
-            header: CallbackInner<'gc>,
-            callback: C,
-        }
-
-        // SAFETY: We can't auto-implement `Collect` due to the function pointer lifetimes, but
-        // function pointers can't hold any data.
-        unsafe impl<'gc, C: Collect<'gc>> Collect<'gc> for HeaderCallback<'gc, C> {
-            const NEEDS_TRACE: bool = C::NEEDS_TRACE;
-
-            fn trace<T: gc_arena::collect::Trace<'gc>>(&self, cc: &mut T) {
-                self.header.this.trace(cc);
-                self.callback.trace(cc)
-            }
-        }
-
-        let hc = Gc::new(
-            mc,
-            HeaderCallback {
-                header: CallbackInner {
-                    call: |ptr, mc, this, stack| unsafe {
-                        let hc = ptr as *const HeaderCallback<C>;
-                        ((*hc).callback).call(mc, this, stack)
-                    },
-                    this: Lock::new(None),
-                },
-                callback,
-            },
-        );
-
-        Self(unsafe { Gc::cast::<CallbackInner>(hc) })
+    pub fn new<C: CallbackFn<'gc> + Collect<'gc> + 'gc>(
+        mc: &Mutation<'gc>,
+        callback: C,
+        this: Option<Object<'gc>>,
+    ) -> Self {
+        let callback_fn = gc_arena::unsize!(Gc::new(mc, callback) => dyn CallbackFn);
+        Self(Gc::new(mc, CallbackInner { callback_fn, this }))
     }
 
     /// Call the contained callback.
@@ -73,14 +43,9 @@ impl<'gc> Callback<'gc> {
         this: Object<'gc>,
         stack: Stack<'gc, '_>,
     ) -> Result<(), Error> {
-        unsafe {
-            (self.0.call)(
-                Gc::as_ptr(self.0),
-                ctx,
-                self.0.this.get().unwrap_or(this),
-                stack,
-            )
-        }
+        self.0
+            .callback_fn
+            .call(ctx, self.0.this.unwrap_or(this), stack)
     }
 
     /// Call the contained callback.
@@ -91,21 +56,22 @@ impl<'gc> Callback<'gc> {
         self.call_with(ctx, ctx.globals(), stack)
     }
 
-    /// Bind an object to this callback so that this object will always be used as the `this`
-    /// object.
+    /// Return a clone of this callback with the embedded `this` value changed to the provided one.
     ///
     /// If `None` is provided, then the bound `this` object will be removed.
-    ///
-    /// Returns the previously bound `this` object, if one was set.
-    pub fn bind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Option<Object<'gc>> {
-        barrier::field!(Gc::write(mc, self.0), CallbackInner, this)
-            .unlock()
-            .replace(this)
+    pub fn rebind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Callback<'gc> {
+        Self(Gc::new(
+            mc,
+            CallbackInner {
+                callback_fn: self.0.callback_fn,
+                this,
+            },
+        ))
     }
 
     /// Returns the currently bound `this` object, if one is set.
     pub fn this(self) -> Option<Object<'gc>> {
-        self.0.this.get()
+        self.0.this
     }
 
     /// Create a callback from a Rust function.
@@ -148,7 +114,7 @@ impl<'gc> Callback<'gc> {
             }
         }
 
-        Callback::new(mc, RootCallback { root, call })
+        Callback::new(mc, RootCallback { root, call }, None)
     }
 
     pub fn from_inner(inner: Gc<'gc, CallbackInner<'gc>>) -> Self {

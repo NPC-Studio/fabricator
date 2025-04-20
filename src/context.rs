@@ -79,13 +79,18 @@ impl Interpreter {
         let mut this = Self::empty();
 
         this.enter(|ctx| {
+            let globals = ctx.globals();
+
             let assert = Callback::from_fn(&ctx, |_, _, stack| {
-                if !stack.get(0).to_bool() {
-                    Err("assert failed".into())
-                } else {
-                    Ok(())
+                for i in 0..stack.len() {
+                    if !stack.get(i).to_bool() {
+                        return Err("assert failed".into());
+                    }
                 }
+                Ok(())
             });
+            globals.set(&ctx, String::new(&ctx, "assert"), Value::Callback(assert));
+
             let print = Callback::from_fn(&ctx, |_, _, stack| {
                 for i in 0..stack.len() {
                     print!("{:?}", stack.get(i));
@@ -96,10 +101,19 @@ impl Interpreter {
                 println!();
                 Ok(())
             });
-
-            let globals = ctx.globals();
-            globals.set(&ctx, String::new(&ctx, "assert"), Value::Callback(assert));
             globals.set(&ctx, String::new(&ctx, "print"), Value::Callback(print));
+
+            let method = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                let rebound = match (stack.get(0), stack.get(1).to_function()) {
+                    (Value::Object(this), Some(func)) => func.rebind(&ctx, Some(this)),
+                    (Value::Undefined, Some(func)) => func.rebind(&ctx, None),
+                    _ => return Err("bad parameter to `method`".into()),
+                };
+                stack.clear();
+                stack.push_back(rebound.into());
+                Ok(())
+            });
+            globals.set(&ctx, String::new(&ctx, "method"), Value::Callback(method));
         });
 
         this

@@ -1,4 +1,4 @@
-use gc_arena::Collect;
+use gc_arena::{Collect, Mutation};
 
 use crate::{callback::Callback, closure::Closure, object::Object, string::String};
 
@@ -7,6 +7,24 @@ use crate::{callback::Callback, closure::Closure, object::Object, string::String
 pub enum Function<'gc> {
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
+}
+
+impl<'gc> Function<'gc> {
+    pub fn rebind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Self {
+        match self {
+            Function::Closure(closure) => Function::Closure(closure.rebind(mc, this)),
+            Function::Callback(callback) => Function::Callback(callback.rebind(mc, this)),
+        }
+    }
+}
+
+impl<'gc> Into<Value<'gc>> for Function<'gc> {
+    fn into(self) -> Value<'gc> {
+        match self {
+            Function::Closure(closure) => Value::Closure(closure),
+            Function::Callback(callback) => Value::Callback(callback),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
