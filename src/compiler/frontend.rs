@@ -393,18 +393,49 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             .len()
             .try_into()
             .map_err(|_| FrontendError::ParameterOverflow)?;
-        let base = self.commit_expression(&func.base)?;
+
+        enum Call {
+            Function(ir::InstId),
+            Method {
+                func: ir::InstId,
+                object: ir::InstId,
+            },
+        }
+
+        let call = match &*func.base {
+            parser::Expression::Field(field_expr) => {
+                let object = self.commit_expression(&field_expr.base)?;
+                let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
+                    field_expr.field.clone(),
+                )));
+                let func = self.push_instruction(ir::Instruction::GetField { object, key });
+                Call::Method { func, object }
+            }
+            expr => Call::Function(self.commit_expression(expr)?),
+        };
 
         for arg in &func.arguments {
             let arg = self.commit_expression(arg)?;
             self.push_instruction(ir::Instruction::Push(arg));
         }
 
-        self.push_instruction(ir::Instruction::Call {
-            source: base,
-            args,
-            returns,
-        });
+        match call {
+            Call::Function(func) => {
+                self.push_instruction(ir::Instruction::Call {
+                    source: func,
+                    args,
+                    returns,
+                });
+            }
+            Call::Method { func, object } => {
+                self.push_instruction(ir::Instruction::Method {
+                    source: func,
+                    this: object,
+                    args,
+                    returns,
+                });
+            }
+        }
 
         Ok(())
     }
