@@ -303,6 +303,18 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 }
             }
             parser::Expression::Group(expr) => self.commit_expression(expr)?,
+            parser::Expression::Object(fields) => {
+                let object = self.push_instruction(ir::Instruction::NewObject);
+                for (field, value) in fields {
+                    let value = self.commit_expression(value)?;
+                    self.push_instruction(ir::Instruction::SetFieldConst {
+                        object,
+                        key: Constant::String(field.clone()),
+                        value,
+                    });
+                }
+                object
+            }
             parser::Expression::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
                     source: self.commit_expression(expr)?,

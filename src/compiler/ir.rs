@@ -109,6 +109,14 @@ pub enum Instruction<S> {
         key: InstId,
         value: InstId,
     },
+    GetThisConst {
+        key: Constant<S>,
+    },
+    SetThisConst {
+        key: Constant<S>,
+        value: InstId,
+    },
+    NewObject,
     GetField {
         object: InstId,
         key: InstId,
@@ -116,6 +124,15 @@ pub enum Instruction<S> {
     SetField {
         object: InstId,
         key: InstId,
+        value: InstId,
+    },
+    GetFieldConst {
+        object: InstId,
+        key: Constant<S>,
+    },
+    SetFieldConst {
+        object: InstId,
+        key: Constant<S>,
         value: InstId,
     },
     Phi(ShadowVar),
@@ -149,9 +166,33 @@ pub enum Instruction<S> {
     },
 }
 
+pub const MAX_INSTRUCTION_CONSTANTS: usize = 1;
 pub const MAX_INSTRUCTION_SOURCES: usize = 2;
 
 impl<S> Instruction<S> {
+    pub fn constants(&self) -> ArrayVec<&Constant<S>, MAX_INSTRUCTION_CONSTANTS> {
+        let mut constants = ArrayVec::new();
+        match self {
+            Instruction::Constant(constant) => {
+                constants.push(constant);
+            }
+            Instruction::GetThisConst { key, .. } => {
+                constants.push(key);
+            }
+            Instruction::SetThisConst { key, .. } => {
+                constants.push(key);
+            }
+            Instruction::GetFieldConst { key, .. } => {
+                constants.push(key);
+            }
+            Instruction::SetFieldConst { key, .. } => {
+                constants.push(key);
+            }
+            _ => {}
+        }
+        constants
+    }
+
     pub fn sources(&self) -> ArrayVec<InstId, MAX_INSTRUCTION_SOURCES> {
         let mut sources = ArrayVec::new();
 
@@ -174,6 +215,11 @@ impl<S> Instruction<S> {
                 sources.push(*key);
                 sources.push(*value);
             }
+            Instruction::GetThisConst { .. } => {}
+            Instruction::SetThisConst { value, .. } => {
+                sources.push(*value);
+            }
+            Instruction::NewObject => {}
             Instruction::GetField { object, key } => {
                 sources.push(*object);
                 sources.push(*key);
@@ -181,6 +227,13 @@ impl<S> Instruction<S> {
             Instruction::SetField { object, key, value } => {
                 sources.push(*object);
                 sources.push(*key);
+                sources.push(*value);
+            }
+            Instruction::GetFieldConst { object, .. } => {
+                sources.push(*object);
+            }
+            Instruction::SetFieldConst { object, value, .. } => {
+                sources.push(*object);
                 sources.push(*value);
             }
             Instruction::Phi(_) => {}
@@ -234,6 +287,11 @@ impl<S> Instruction<S> {
                 sources.push(key);
                 sources.push(value);
             }
+            Instruction::GetThisConst { .. } => {}
+            Instruction::SetThisConst { value, .. } => {
+                sources.push(value);
+            }
+            Instruction::NewObject => {}
             Instruction::GetField { object, key } => {
                 sources.push(object);
                 sources.push(key);
@@ -241,6 +299,13 @@ impl<S> Instruction<S> {
             Instruction::SetField { object, key, value } => {
                 sources.push(object);
                 sources.push(key);
+                sources.push(value);
+            }
+            Instruction::GetFieldConst { object, .. } => {
+                sources.push(object);
+            }
+            Instruction::SetFieldConst { object, value, .. } => {
+                sources.push(object);
                 sources.push(value);
             }
             Instruction::Phi(_) => {}
@@ -285,8 +350,13 @@ impl<S> Instruction<S> {
             Instruction::SetVariable { .. } => false,
             Instruction::GetThis { .. } => true,
             Instruction::SetThis { .. } => false,
+            Instruction::GetThisConst { .. } => true,
+            Instruction::SetThisConst { .. } => false,
+            Instruction::NewObject => true,
             Instruction::GetField { .. } => true,
             Instruction::SetField { .. } => false,
+            Instruction::GetFieldConst { .. } => true,
+            Instruction::SetFieldConst { .. } => false,
             Instruction::Phi(_) => true,
             Instruction::Upsilon(_, _) => false,
             Instruction::UnOp { .. } => true,
@@ -310,8 +380,13 @@ impl<S> Instruction<S> {
             Instruction::SetVariable { .. } => true,
             Instruction::GetThis { .. } => false,
             Instruction::SetThis { .. } => true,
+            Instruction::GetThisConst { .. } => false,
+            Instruction::SetThisConst { .. } => true,
+            Instruction::NewObject => false,
             Instruction::GetField { .. } => false,
             Instruction::SetField { .. } => true,
+            Instruction::GetFieldConst { .. } => false,
+            Instruction::SetFieldConst { .. } => true,
             Instruction::Phi(_) => false,
             Instruction::Upsilon(_, _) => true,
             Instruction::UnOp { .. } => false,
@@ -481,6 +556,20 @@ impl<S: AsRef<str>> Function<S> {
                             value.index()
                         )?;
                     }
+                    Instruction::GetThisConst { key } => {
+                        writeln!(f, "get_self(key = {:?})", key.as_ref())?;
+                    }
+                    Instruction::SetThisConst { key, value } => {
+                        writeln!(
+                            f,
+                            "set_self(key = {:?}, value = I{})",
+                            key.as_ref(),
+                            value.index()
+                        )?;
+                    }
+                    Instruction::NewObject => {
+                        writeln!(f, "new_object()",)?;
+                    }
                     Instruction::GetField { object, key } => {
                         writeln!(
                             f,
@@ -495,6 +584,23 @@ impl<S: AsRef<str>> Function<S> {
                             "set_field(object = I{}, key = I{}, value = I{})",
                             object.index(),
                             key.index(),
+                            value.index()
+                        )?;
+                    }
+                    Instruction::GetFieldConst { object, key } => {
+                        writeln!(
+                            f,
+                            "get_field(object = I{}, key = {:?})",
+                            object.index(),
+                            key.as_ref(),
+                        )?;
+                    }
+                    Instruction::SetFieldConst { object, key, value } => {
+                        writeln!(
+                            f,
+                            "set_field(object = I{}, key = {:?}, value = I{})",
+                            object.index(),
+                            key.as_ref(),
                             value.index()
                         )?;
                     }

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     bytecode,
-    closure::Closure,
+    closure::{Closure, Constant},
     context::Context,
     error::Error,
     instructions::{ConstIdx, HeapIdx, ProtoIdx, RegIdx},
@@ -276,6 +276,31 @@ fn dispatch<'gc>(
         }
 
         #[inline]
+        fn get_this_const(&mut self, dest: RegIdx, key: ConstIdx) -> Result<(), Self::Error> {
+            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
+            Ok(())
+        }
+
+        #[inline]
+        fn set_this_const(&mut self, key: ConstIdx, value: RegIdx) -> Result<(), Self::Error> {
+            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            self.this
+                .set(&self.ctx, key, self.registers[value as usize]);
+            Ok(())
+        }
+
+        #[inline]
+        fn new_object(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Object(Object::new(&self.ctx));
+            Ok(())
+        }
+
+        #[inline]
         fn get_field(
             &mut self,
             dest: RegIdx,
@@ -303,6 +328,40 @@ fn dispatch<'gc>(
                 return Err(VmError::BadObject.into());
             };
             let Value::String(key) = self.registers[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            object.set(&self.ctx, key, self.registers[value as usize]);
+            Ok(())
+        }
+
+        #[inline]
+        fn get_field_const(
+            &mut self,
+            dest: RegIdx,
+            object: RegIdx,
+            key: ConstIdx,
+        ) -> Result<(), Self::Error> {
+            let Value::Object(object) = self.registers[object as usize] else {
+                return Err(VmError::BadObject.into());
+            };
+            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            self.registers[dest as usize] = object.get(key).unwrap_or_default();
+            Ok(())
+        }
+
+        #[inline]
+        fn set_field_const(
+            &mut self,
+            object: RegIdx,
+            key: ConstIdx,
+            value: RegIdx,
+        ) -> Result<(), Self::Error> {
+            let Value::Object(object) = self.registers[object as usize] else {
+                return Err(VmError::BadObject.into());
+            };
+            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
             object.set(&self.ctx, key, self.registers[value as usize]);

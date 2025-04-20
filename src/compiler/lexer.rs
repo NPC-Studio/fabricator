@@ -13,6 +13,7 @@ pub enum Token<S> {
     LeftBrace,
     RightBrace,
 
+    Colon,
     SemiColon,
     Comma,
 
@@ -79,6 +80,7 @@ impl<S: AsRef<str>> Token<S> {
             Token::RightBracket => Token::RightBracket,
             Token::LeftBrace => Token::LeftBrace,
             Token::RightBrace => Token::RightBrace,
+            Token::Colon => Token::Colon,
             Token::SemiColon => Token::SemiColon,
             Token::Comma => Token::Comma,
             Token::Dot => Token::Dot,
@@ -137,6 +139,7 @@ impl<S: PartialEq> PartialEq for Token<S> {
             (Token::RightBracket, Token::RightBracket) => true,
             (Token::LeftBrace, Token::LeftBrace) => true,
             (Token::RightBrace, Token::RightBrace) => true,
+            (Token::Colon, Token::Colon) => true,
             (Token::SemiColon, Token::SemiColon) => true,
             (Token::Comma, Token::Comma) => true,
             (Token::Dot, Token::Dot) => true,
@@ -370,6 +373,10 @@ where
             (Some('}'), _) => {
                 self.advance(1);
                 Some(Token::RightBrace)
+            }
+            (Some(':'), _) => {
+                self.advance(1);
+                Some(Token::Colon)
             }
             (Some(';'), _) => {
                 self.advance(1);

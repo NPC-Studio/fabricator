@@ -1,0 +1,7 @@
+var obj = {
+	a: 1,
+	b: 2,
+};
+
+assert(obj.a == 1);
+assert(obj.b == 2);

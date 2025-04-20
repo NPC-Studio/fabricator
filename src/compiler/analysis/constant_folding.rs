@@ -17,28 +17,25 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                 }
             };
 
-            let mut const_val = None;
+            let mut new_inst = None;
             match ir.instructions[inst_id].clone() {
                 ir::Instruction::Copy(source) => {
-                    const_val = get_constant(source);
+                    new_inst = get_constant(source).map(ir::Instruction::Constant);
                 }
                 ir::Instruction::UnOp { source, op } => {
                     if let Some(c) = get_constant(source) {
-                        const_val = Some(match op {
+                        new_inst = Some(ir::Instruction::Constant(match op {
                             ir::UnOp::Not => Constant::Boolean(!c.to_bool()),
-                        });
+                        }));
                     }
                 }
                 ir::Instruction::BinOp { left, right, op } => {
                     if let (Some(l), Some(r)) = (get_constant(left), get_constant(right)) {
-                        match op {
-                            ir::BinOp::Add => {
-                                const_val = l.add(r);
-                            }
-                            ir::BinOp::Sub => {
-                                const_val = l.sub(r);
-                            }
+                        new_inst = match op {
+                            ir::BinOp::Add => l.add(r),
+                            ir::BinOp::Sub => l.sub(r),
                         }
+                        .map(ir::Instruction::Constant)
                     }
                 }
                 ir::Instruction::BinComp { left, right, comp } => {
@@ -51,14 +48,24 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                             ir::BinComp::GreaterThan => r.less_equal(l),
                             ir::BinComp::GreaterEqual => r.less_than(l),
                         };
-                        const_val = res.map(Constant::Boolean);
+                        new_inst = res.map(|b| ir::Instruction::Constant(Constant::Boolean(b)));
+                    }
+                }
+                ir::Instruction::GetField { object, key } => {
+                    if let Some(key) = get_constant(key) {
+                        new_inst = Some(ir::Instruction::GetFieldConst { object, key })
+                    }
+                }
+                ir::Instruction::SetField { object, key, value } => {
+                    if let Some(key) = get_constant(key) {
+                        new_inst = Some(ir::Instruction::SetFieldConst { object, key, value })
                     }
                 }
                 _ => {}
             }
 
-            if let Some(const_val) = const_val {
-                ir.instructions[inst_id] = ir::Instruction::Constant(const_val);
+            if let Some(new_inst) = new_inst {
+                ir.instructions[inst_id] = new_inst;
             }
         }
 

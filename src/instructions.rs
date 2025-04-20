@@ -15,8 +15,13 @@ macro_rules! for_each_instruction {
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
             simple => get_this = GetThis { dest: RegIdx, key: RegIdx };
             simple => set_this = SetThis  { key: RegIdx, value: RegIdx };
+            simple => get_this_const = GetThisConst { dest: RegIdx, key: ConstIdx };
+            simple => set_this_const = SetThisConst  { key: ConstIdx, value: RegIdx };
+            simple => new_object = NewObject { dest: RegIdx };
             simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
+            simple => get_field_const = GetFieldConst { dest: RegIdx, object: RegIdx, key: ConstIdx };
+            simple => set_field_const = SetFieldConst  { object: RegIdx, key: ConstIdx, value: RegIdx };
             simple => move_ = Move { dest: RegIdx, source: RegIdx };
             simple => not = Not { dest: RegIdx, arg: RegIdx };
             simple => add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };

@@ -71,6 +71,7 @@ pub enum Expression<S> {
     String(S),
     Name(S),
     Group(Box<Expression<S>>),
+    Object(Vec<(S, Expression<S>)>),
     Unary(UnaryOp, Box<Expression<S>>),
     Binary(Box<Expression<S>>, BinaryOp, Box<Expression<S>>),
     Function(FunctionExpr<S>),
@@ -175,7 +176,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(token),
-                    expected: "statement",
+                    expected: "<statement>",
                 },
                 line_number,
             })
@@ -441,7 +442,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (Token::Identifier(_), _) => {
                 self.look_ahead(2)?;
-                if matches!(self.peek(1), Some((Token::LeftParen, _))) {
+                if matches!(self.peek(1), Some((Token::LeftParen | Token::Dot, _))) {
                     self.parse_suffixed_expression()
                 } else {
                     let Some((Token::Identifier(i), _)) = self.next().unwrap() else {
@@ -473,8 +474,56 @@ impl<'a, S: StringInterner> Parser<'a, S> {
 
                 Ok(Expression::Function(FunctionExpr { arguments, body }))
             }
+            (Token::LeftBrace, _) => Ok(Expression::Object(self.parse_object()?)),
             _ => self.parse_suffixed_expression(),
         }
+    }
+
+    fn parse_object(&mut self) -> Result<Vec<(S::String, Expression<S::String>)>, ParseError> {
+        self.parse_token(Token::LeftBrace)?;
+        let mut entries = Vec::new();
+        loop {
+            let key = self.parse_identifier()?;
+            self.parse_token(Token::Colon)?;
+            let value = self.parse_expression()?;
+
+            entries.push((key, value));
+
+            self.look_ahead(1)?;
+            match self.peek(0) {
+                Some((Token::Comma, _)) => {
+                    self.advance(1);
+                    self.look_ahead(1)?;
+                    if matches!(self.peek(0), Some((Token::RightBrace, _))) {
+                        self.advance(1);
+                        break;
+                    }
+                }
+                Some((Token::RightBrace, _)) => {
+                    self.advance(1);
+                    break;
+                }
+                Some((t, line_number)) => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(&t),
+                            expected: "',' or '}'",
+                        },
+                        line_number,
+                    });
+                }
+                None => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::EndOfStream {
+                            expected: "',' or '}'",
+                        },
+                        line_number: self.lexer.line_number(),
+                    });
+                }
+            }
+        }
+
+        Ok(entries)
     }
 
     fn parse_identifier(&mut self) -> Result<S::String, ParseError> {
@@ -643,6 +692,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::RightBracket => "]",
         Token::LeftBrace => "{",
         Token::RightBrace => "}",
+        Token::Colon => ":",
         Token::SemiColon => ";",
         Token::Comma => ",",
         Token::Dot => ".",
@@ -756,6 +806,10 @@ mod tests {
             }
 
             test.foo = 1;
+            test.bar = {
+                a: 1,
+                b: 2,
+            };
         "#;
 
         assert_eq!(
@@ -809,6 +863,17 @@ mod tests {
                         }),
                         op: AssignmentOp::Equal,
                         value: Box::new(Expression::Integer(1)),
+                    }),
+                    Statement::Assignment(AssignmentStatement {
+                        target: AssignmentTarget::Field(FieldExpr {
+                            base: Box::new(Expression::Name("test".to_owned())),
+                            field: "bar".to_owned(),
+                        }),
+                        op: AssignmentOp::Equal,
+                        value: Box::new(Expression::Object(vec![
+                            ("a".to_owned(), Expression::Integer(1)),
+                            ("b".to_owned(), Expression::Integer(2)),
+                        ])),
                     }),
                 ]
             }

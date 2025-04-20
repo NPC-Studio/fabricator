@@ -98,7 +98,7 @@ fn codegen_function<'gc>(
 
     for block in ir.blocks.values() {
         for &inst_id in &block.instructions {
-            if let ir::Instruction::Constant(c) = ir.instructions[inst_id] {
+            for &c in ir.instructions[inst_id].constants() {
                 if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c) {
                     vacant.insert(
                         constants
@@ -183,6 +183,23 @@ fn codegen_function<'gc>(
                         value: reg_alloc.instruction_registers[value],
                     });
                 }
+                ir::Instruction::GetThisConst { key } => {
+                    vm_instructions.push(Instruction::GetThisConst {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        key: constant_indexes[&key],
+                    });
+                }
+                ir::Instruction::SetThisConst { key, value } => {
+                    vm_instructions.push(Instruction::SetThisConst {
+                        key: constant_indexes[&key],
+                        value: reg_alloc.instruction_registers[value],
+                    });
+                }
+                ir::Instruction::NewObject => {
+                    vm_instructions.push(Instruction::NewObject {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                    });
+                }
                 ir::Instruction::GetField { object, key } => {
                     vm_instructions.push(Instruction::GetField {
                         dest: reg_alloc.instruction_registers[inst_id],
@@ -194,6 +211,20 @@ fn codegen_function<'gc>(
                     vm_instructions.push(Instruction::SetField {
                         object: reg_alloc.instruction_registers[object],
                         key: reg_alloc.instruction_registers[key],
+                        value: reg_alloc.instruction_registers[value],
+                    });
+                }
+                ir::Instruction::GetFieldConst { object, key } => {
+                    vm_instructions.push(Instruction::GetFieldConst {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        object: reg_alloc.instruction_registers[object],
+                        key: constant_indexes[&key],
+                    });
+                }
+                ir::Instruction::SetFieldConst { object, key, value } => {
+                    vm_instructions.push(Instruction::SetFieldConst {
+                        object: reg_alloc.instruction_registers[object],
+                        key: constant_indexes[&key],
                         value: reg_alloc.instruction_registers[value],
                     });
                 }
