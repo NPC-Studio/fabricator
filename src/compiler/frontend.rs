@@ -6,7 +6,11 @@ use std::{
 
 use thiserror::Error;
 
-use crate::compiler::{constant::Constant, ir, parser};
+use crate::compiler::{
+    constant::Constant,
+    ir,
+    parser::{self, AssignmentTarget},
+};
 
 #[derive(Debug, Error)]
 pub enum FrontendError {
@@ -91,7 +95,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::Statement::If(if_statement) => self.if_statement(if_statement),
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
-            parser::Statement::Call(function_call) => self.function_call(&function_call, 0),
+            parser::Statement::Call(function_call) => self.call_expr(&function_call, 0),
         }
     }
 
@@ -114,36 +118,36 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             This(ir::InstId),
         }
 
-        let (target, old) = if let Some(var) = self.get_var(&assignment_statement.name) {
+        let name = match &assignment_statement.target {
+            AssignmentTarget::Name(name) => name,
+            AssignmentTarget::Field(_) => unimplemented!(),
+        };
+
+        let (target, old) = if let Some(var) = self.get_var(name) {
             let old = self.push_instruction(ir::Instruction::GetVariable(var));
             (VarOrThis::Var(var), old)
         } else {
-            let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
-                assignment_statement.name.clone(),
-            )));
+            let key =
+                self.push_instruction(ir::Instruction::Constant(Constant::String(name.clone())));
             let old = self.push_instruction(ir::Instruction::GetThis(key));
             (VarOrThis::This(key), old)
         };
 
         let val = self.commit_expression(&assignment_statement.value)?;
         let assign = match assignment_statement.op {
-            parser::AssignmentOperator::Equal => val,
-            parser::AssignmentOperator::PlusEqual => {
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Add,
-                })
-            }
-            parser::AssignmentOperator::MinusEqual => {
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Sub,
-                })
-            }
-            parser::AssignmentOperator::MultEqual => unimplemented!(),
-            parser::AssignmentOperator::DivEqual => unimplemented!(),
+            parser::AssignmentOp::Equal => val,
+            parser::AssignmentOp::PlusEqual => self.push_instruction(ir::Instruction::BinOp {
+                left: old,
+                right: val,
+                op: ir::BinOp::Add,
+            }),
+            parser::AssignmentOp::MinusEqual => self.push_instruction(ir::Instruction::BinOp {
+                left: old,
+                right: val,
+                op: ir::BinOp::Sub,
+            }),
+            parser::AssignmentOp::MultEqual => unimplemented!(),
+            parser::AssignmentOp::DivEqual => unimplemented!(),
         };
 
         match target {
@@ -287,8 +291,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 let inst = ir::Instruction::UnOp {
                     source: self.commit_expression(expr)?,
                     op: match op {
-                        parser::UnaryOperator::Not => ir::UnOp::Not,
-                        parser::UnaryOperator::Minus => unimplemented!(),
+                        parser::UnaryOp::Not => ir::UnOp::Not,
+                        parser::UnaryOp::Minus => unimplemented!(),
                     },
                 };
                 self.push_instruction(inst)
@@ -297,50 +301,50 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 let left = self.commit_expression(left)?;
                 let right = self.commit_expression(right)?;
                 let inst = match op {
-                    parser::BinaryOperator::Add => ir::Instruction::BinOp {
+                    parser::BinaryOp::Mult => unimplemented!(),
+                    parser::BinaryOp::Div => unimplemented!(),
+                    parser::BinaryOp::Add => ir::Instruction::BinOp {
                         left,
                         right,
                         op: ir::BinOp::Add,
                     },
-                    parser::BinaryOperator::Sub => ir::Instruction::BinOp {
+                    parser::BinaryOp::Sub => ir::Instruction::BinOp {
                         left,
                         right,
                         op: ir::BinOp::Sub,
                     },
-                    parser::BinaryOperator::Mult => unimplemented!(),
-                    parser::BinaryOperator::Div => unimplemented!(),
-                    parser::BinaryOperator::Equal => ir::Instruction::BinComp {
+                    parser::BinaryOp::Equal => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::Equal,
                     },
-                    parser::BinaryOperator::NotEqual => ir::Instruction::BinComp {
+                    parser::BinaryOp::NotEqual => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::NotEqual,
                     },
-                    parser::BinaryOperator::LessThan => ir::Instruction::BinComp {
+                    parser::BinaryOp::LessThan => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::LessThan,
                     },
-                    parser::BinaryOperator::LessEqual => ir::Instruction::BinComp {
+                    parser::BinaryOp::LessEqual => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::LessEqual,
                     },
-                    parser::BinaryOperator::GreaterThan => ir::Instruction::BinComp {
+                    parser::BinaryOp::GreaterThan => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::GreaterThan,
                     },
-                    parser::BinaryOperator::GreaterEqual => ir::Instruction::BinComp {
+                    parser::BinaryOp::GreaterEqual => ir::Instruction::BinComp {
                         left,
                         right,
                         comp: ir::BinComp::GreaterEqual,
                     },
-                    parser::BinaryOperator::And => unimplemented!(),
-                    parser::BinaryOperator::Or => unimplemented!(),
+                    parser::BinaryOp::And => unimplemented!(),
+                    parser::BinaryOp::Or => unimplemented!(),
                 };
                 self.push_instruction(inst)
             }
@@ -351,17 +355,14 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.push_instruction(ir::Instruction::Closure(func_id))
             }
             parser::Expression::Call(func) => {
-                self.function_call(func, 1)?;
+                self.call_expr(func, 1)?;
                 self.push_instruction(ir::Instruction::Pop)
             }
+            parser::Expression::Field(_) => unimplemented!(),
         })
     }
 
-    fn function_call(
-        &mut self,
-        func: &parser::FunctionCall<S>,
-        returns: u8,
-    ) -> Result<(), FrontendError> {
+    fn call_expr(&mut self, func: &parser::CallExpr<S>, returns: u8) -> Result<(), FrontendError> {
         let args = func
             .arguments
             .len()

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use thiserror::Error;
 
 use crate::compiler::{
@@ -18,7 +20,7 @@ pub enum Statement<S> {
     If(IfStatement<S>),
     For(ForStatement<S>),
     Block(Block<S>),
-    Call(FunctionCall<S>),
+    Call(CallExpr<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,9 +31,15 @@ pub struct VarStatement<S> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentStatement<S> {
-    pub name: S,
-    pub op: AssignmentOperator,
+    pub target: AssignmentTarget<S>,
+    pub op: AssignmentOp,
     pub value: Box<Expression<S>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssignmentTarget<S> {
+    Name(S),
+    Field(FieldExpr<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,10 +71,11 @@ pub enum Expression<S> {
     String(S),
     Name(S),
     Group(Box<Expression<S>>),
-    Unary(UnaryOperator, Box<Expression<S>>),
-    Binary(Box<Expression<S>>, BinaryOperator, Box<Expression<S>>),
+    Unary(UnaryOp, Box<Expression<S>>),
+    Binary(Box<Expression<S>>, BinaryOp, Box<Expression<S>>),
     Function(FunctionExpr<S>),
-    Call(FunctionCall<S>),
+    Call(CallExpr<S>),
+    Field(FieldExpr<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,23 +85,29 @@ pub struct FunctionExpr<S> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionCall<S> {
+pub struct CallExpr<S> {
     pub base: Box<Expression<S>>,
     pub arguments: Vec<Expression<S>>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldExpr<S> {
+    pub base: Box<Expression<S>>,
+    pub field: S,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum UnaryOperator {
+pub enum UnaryOp {
     Not,
     Minus,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum BinaryOperator {
-    Add,
-    Sub,
+pub enum BinaryOp {
     Mult,
     Div,
+    Add,
+    Sub,
     Equal,
     NotEqual,
     LessThan,
@@ -104,7 +119,7 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum AssignmentOperator {
+pub enum AssignmentOp {
     Equal,
     PlusEqual,
     MinusEqual,
@@ -189,7 +204,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
-        self.look_ahead(2)?;
+        self.look_ahead(1)?;
         match self.peek_expected(0, "<statement>")? {
             (Token::Var, _) => {
                 self.advance(1);
@@ -203,6 +218,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (Token::Return, _) => {
                 self.advance(1);
+                self.look_ahead(1)?;
                 let value = match self.peek(0) {
                     Some((Token::SemiColon, _)) => None,
                     None => None,
@@ -248,45 +264,55 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 self.parse_token(Token::RightBrace)?;
                 Ok(Statement::Block(block))
             }
-            (token, line_number) => {
-                if let (Token::Identifier(_), Some(assignment_op)) = (
-                    token,
-                    self.peek(1).and_then(|(t, _)| get_assignment_operator(t)),
-                ) {
-                    let Ok(Some((Token::Identifier(name), _))) = self.next() else {
-                        unreachable!()
+            (_, line_number) => match self.parse_suffixed_expression() {
+                Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
+                Ok(expr @ (Expression::Name(_) | Expression::Field(_))) => {
+                    let target = match expr {
+                        Expression::Name(name) => AssignmentTarget::Name(name),
+                        Expression::Field(field) => AssignmentTarget::Field(field),
+                        _ => unreachable!(),
                     };
-                    self.advance(1);
-                    let value = self.parse_expression()?;
-                    Ok(Statement::Assignment(AssignmentStatement {
-                        name,
-                        op: assignment_op,
-                        value: Box::new(value),
-                    }))
-                } else {
-                    match self.parse_suffixed_expression() {
-                        Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
-                        Ok(_) => Err(ParseError {
+
+                    self.look_ahead(1)?;
+                    if let Some(assignment_op) =
+                        self.peek(0).and_then(|(t, _)| get_assignment_operator(t))
+                    {
+                        self.advance(1);
+                        let value = self.parse_expression()?;
+                        Ok(Statement::Assignment(AssignmentStatement {
+                            target,
+                            op: assignment_op,
+                            value: Box::new(value),
+                        }))
+                    } else {
+                        Err(ParseError {
                             kind: ParseErrorKind::Unexpected {
                                 unexpected: "<non-statement expression>",
                                 expected: "<statement>",
                             },
                             line_number,
-                        }),
-                        Err(ParseError {
-                            kind: ParseErrorKind::Unexpected { unexpected, .. },
-                            line_number,
-                        }) => Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected,
-                                expected: "<statement>",
-                            },
-                            line_number,
-                        }),
-                        Err(err) => Err(err),
+                        })
                     }
                 }
-            }
+                Ok(_) => Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: "<non-statement expression>",
+                        expected: "<statement>",
+                    },
+                    line_number,
+                }),
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected { unexpected, .. },
+                    line_number,
+                }) => Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected,
+                        expected: "<statement>",
+                    },
+                    line_number,
+                }),
+                Err(err) => Err(err),
+            },
         }
     }
 
@@ -347,9 +373,17 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         Vec::new()
                     };
                     self.parse_token(Token::RightParen)?;
-                    expr = Expression::Call(FunctionCall {
+                    expr = Expression::Call(CallExpr {
                         base: Box::new(expr),
                         arguments,
+                    });
+                }
+                Some((Token::Dot, _)) => {
+                    self.advance(1);
+                    let field = self.parse_identifier()?;
+                    expr = Expression::Field(FieldExpr {
+                        base: Box::new(expr),
+                        field,
                     });
                 }
                 _ => break,
@@ -564,39 +598,39 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     }
 }
 
-fn get_unary_operator<S>(token: &Token<S>) -> Option<UnaryOperator> {
+fn get_unary_operator<S>(token: &Token<S>) -> Option<UnaryOp> {
     match *token {
-        Token::Minus => Some(UnaryOperator::Minus),
-        Token::Bang => Some(UnaryOperator::Not),
+        Token::Minus => Some(UnaryOp::Minus),
+        Token::Bang => Some(UnaryOp::Not),
         _ => None,
     }
 }
 
-fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOperator> {
+fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOp> {
     match *token {
-        Token::Plus => Some(BinaryOperator::Add),
-        Token::Minus => Some(BinaryOperator::Sub),
-        Token::Star => Some(BinaryOperator::Mult),
-        Token::Slash => Some(BinaryOperator::Div),
-        Token::DoubleEqual => Some(BinaryOperator::Equal),
-        Token::BangEqual => Some(BinaryOperator::NotEqual),
-        Token::Less => Some(BinaryOperator::LessThan),
-        Token::LessEqual => Some(BinaryOperator::LessEqual),
-        Token::Greater => Some(BinaryOperator::GreaterThan),
-        Token::GreaterEqual => Some(BinaryOperator::GreaterEqual),
-        Token::DoubleAmpersand => Some(BinaryOperator::And),
-        Token::DoublePipe => Some(BinaryOperator::Or),
+        Token::Star => Some(BinaryOp::Mult),
+        Token::Slash => Some(BinaryOp::Div),
+        Token::Plus => Some(BinaryOp::Add),
+        Token::Minus => Some(BinaryOp::Sub),
+        Token::DoubleEqual => Some(BinaryOp::Equal),
+        Token::BangEqual => Some(BinaryOp::NotEqual),
+        Token::Less => Some(BinaryOp::LessThan),
+        Token::LessEqual => Some(BinaryOp::LessEqual),
+        Token::Greater => Some(BinaryOp::GreaterThan),
+        Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
+        Token::DoubleAmpersand => Some(BinaryOp::And),
+        Token::DoublePipe => Some(BinaryOp::Or),
         _ => None,
     }
 }
 
-fn get_assignment_operator<S>(token: &Token<S>) -> Option<AssignmentOperator> {
+fn get_assignment_operator<S>(token: &Token<S>) -> Option<AssignmentOp> {
     match *token {
-        Token::Equal => Some(AssignmentOperator::Equal),
-        Token::PlusEqual => Some(AssignmentOperator::PlusEqual),
-        Token::MinusEqual => Some(AssignmentOperator::MinusEqual),
-        Token::StarEqual => Some(AssignmentOperator::MultEqual),
-        Token::SlashEqual => Some(AssignmentOperator::DivEqual),
+        Token::Equal => Some(AssignmentOp::Equal),
+        Token::PlusEqual => Some(AssignmentOp::PlusEqual),
+        Token::MinusEqual => Some(AssignmentOp::MinusEqual),
+        Token::StarEqual => Some(AssignmentOp::MultEqual),
+        Token::SlashEqual => Some(AssignmentOp::DivEqual),
         _ => None,
     }
 }
@@ -611,6 +645,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::RightBrace => "}",
         Token::SemiColon => ";",
         Token::Comma => ",",
+        Token::Dot => ".",
         Token::Plus => "+",
         Token::Minus => "-",
         Token::Bang => "!",
@@ -669,20 +704,20 @@ const UNARY_PRIORITY: OperatorPriority = 6;
 // Different left and right priorities can be used to make an operation associate leftwards
 // or rightwards, if the two priorities are the same the operation will default to associating
 // leftwards.
-fn binary_priority(operator: BinaryOperator) -> (OperatorPriority, OperatorPriority) {
+fn binary_priority(operator: BinaryOp) -> (OperatorPriority, OperatorPriority) {
     match operator {
-        BinaryOperator::Add => (4, 4),
-        BinaryOperator::Sub => (4, 4),
-        BinaryOperator::Mult => (5, 5),
-        BinaryOperator::Div => (5, 5),
-        BinaryOperator::NotEqual => (3, 3),
-        BinaryOperator::Equal => (3, 3),
-        BinaryOperator::LessThan => (3, 3),
-        BinaryOperator::LessEqual => (3, 3),
-        BinaryOperator::GreaterThan => (3, 3),
-        BinaryOperator::GreaterEqual => (3, 3),
-        BinaryOperator::And => (2, 2),
-        BinaryOperator::Or => (1, 1),
+        BinaryOp::Mult => (5, 5),
+        BinaryOp::Div => (5, 5),
+        BinaryOp::Add => (4, 4),
+        BinaryOp::Sub => (4, 4),
+        BinaryOp::NotEqual => (3, 3),
+        BinaryOp::Equal => (3, 3),
+        BinaryOp::LessThan => (3, 3),
+        BinaryOp::LessEqual => (3, 3),
+        BinaryOp::GreaterThan => (3, 3),
+        BinaryOp::GreaterEqual => (3, 3),
+        BinaryOp::And => (2, 2),
+        BinaryOp::Or => (1, 1),
     }
 }
 
@@ -719,6 +754,8 @@ mod tests {
             if sum > 100 {
                 print("yes");
             }
+
+            test.foo = 1;
         "#;
 
         assert_eq!(
@@ -736,18 +773,18 @@ mod tests {
                         })),
                         condition: Box::new(Expression::Binary(
                             Box::new(Expression::Name("i".to_owned())),
-                            BinaryOperator::LessThan,
+                            BinaryOp::LessThan,
                             Box::new(Expression::Integer(1000000))
                         )),
                         iterator: Box::new(Statement::Assignment(AssignmentStatement {
-                            name: "i".to_owned(),
-                            op: AssignmentOperator::PlusEqual,
+                            target: AssignmentTarget::Name("i".to_owned()),
+                            op: AssignmentOp::PlusEqual,
                             value: Box::new(Expression::Integer(1)),
                         })),
                         body: Block {
                             statements: vec![Statement::Assignment(AssignmentStatement {
-                                name: "sum".to_owned(),
-                                op: AssignmentOperator::PlusEqual,
+                                target: AssignmentTarget::Name("sum".to_owned()),
+                                op: AssignmentOp::PlusEqual,
                                 value: Box::new(Expression::Name("i".to_owned())),
                             })]
                         }
@@ -755,15 +792,23 @@ mod tests {
                     Statement::If(IfStatement {
                         condition: Box::new(Expression::Binary(
                             Box::new(Expression::Name("sum".to_owned())),
-                            BinaryOperator::GreaterThan,
+                            BinaryOp::GreaterThan,
                             Box::new(Expression::Integer(100)),
                         )),
                         body: Block {
-                            statements: vec![Statement::Call(FunctionCall {
+                            statements: vec![Statement::Call(CallExpr {
                                 base: Box::new(Expression::Name("print".to_owned())),
                                 arguments: vec![Expression::String("yes".to_owned())],
                             })]
                         },
+                    }),
+                    Statement::Assignment(AssignmentStatement {
+                        target: AssignmentTarget::Field(FieldExpr {
+                            base: Box::new(Expression::Name("test".to_owned())),
+                            field: "foo".to_owned(),
+                        }),
+                        op: AssignmentOp::Equal,
+                        value: Box::new(Expression::Integer(1)),
                     }),
                 ]
             }
