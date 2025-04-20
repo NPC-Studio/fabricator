@@ -79,14 +79,14 @@ impl Interpreter {
         let mut this = Self::empty();
 
         this.enter(|ctx| {
-            let assert = Callback::from_fn(&ctx, |_, stack| {
+            let assert = Callback::from_fn(&ctx, |_, _, stack| {
                 if !stack.get(0).to_bool() {
                     Err("assert failed".into())
                 } else {
                     Ok(())
                 }
             });
-            let print = Callback::from_fn(&ctx, |_, stack| {
+            let print = Callback::from_fn(&ctx, |_, _, stack| {
                 for i in 0..stack.len() {
                     print!("{:?}", stack.get(i));
                     if i != stack.len() - 1 {

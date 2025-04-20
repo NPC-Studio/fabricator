@@ -12,7 +12,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
 
     let (thread, closure) = interpreter.enter(|ctx| {
         let prototype = compile(&ctx, &code).expect("compile error");
-        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), ctx.globals()).unwrap();
+        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype)).unwrap();
 
         let thread = Thread::new(&ctx);
         (ctx.stash(thread), ctx.stash(closure))
@@ -23,7 +23,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
             interpreter.enter(|ctx| {
                 let thread = ctx.fetch(&thread);
                 let closure = ctx.fetch(&closure);
-                thread.exec(&ctx, closure).expect("execution error");
+                thread.exec(ctx, closure).expect("execution error");
             });
         });
     });

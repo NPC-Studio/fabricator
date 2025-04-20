@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gc_arena::{Collect, Gc, Lock, Mutation};
+use gc_arena::{barrier, Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
 use crate::{
@@ -76,7 +76,7 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
-    this: Object<'gc>,
+    this: Lock<Option<Object<'gc>>>,
     heap: Box<[HeapVar<'gc>]>,
 }
 
@@ -100,19 +100,14 @@ impl<'gc> Closure<'gc> {
     /// Create a new top-level closure.
     ///
     /// Given prototype must not have any upvalues.
-    pub fn new(
-        mc: &Mutation<'gc>,
-        proto: Gc<'gc, Prototype<'gc>>,
-        this: Object<'gc>,
-    ) -> Result<Self, MissingUpValue> {
-        Self::with_upvalues(mc, proto, this, &[])
+    pub fn new(mc: &Mutation<'gc>, proto: Gc<'gc, Prototype<'gc>>) -> Result<Self, MissingUpValue> {
+        Self::with_upvalues(mc, proto, &[])
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
     pub fn with_upvalues(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
-        this: Object<'gc>,
         upvalues: &[HeapVar<'gc>],
     ) -> Result<Self, MissingUpValue> {
         let mut heap = Vec::new();
@@ -131,7 +126,7 @@ impl<'gc> Closure<'gc> {
             mc,
             ClosureInner {
                 proto,
-                this,
+                this: Lock::new(None),
                 heap: heap.into_boxed_slice(),
             },
         )))
@@ -152,9 +147,23 @@ impl<'gc> Closure<'gc> {
         self.0.proto
     }
 
+    /// Bind an object to this closure so that this object will always be used as the `this`
+    /// object.
+    ///
+    /// If `None` is provided, then the bound `this` object will be removed.
+    ///
+    /// Returns the previously bound `this` object, if one was set.
     #[inline]
-    pub fn this(self) -> Object<'gc> {
-        self.0.this
+    pub fn bind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Option<Object<'gc>> {
+        barrier::field!(Gc::write(mc, self.0), ClosureInner, this)
+            .unlock()
+            .replace(this)
+    }
+
+    /// Returns the currently bound `this` object, if one is set.
+    #[inline]
+    pub fn this(self) -> Option<Object<'gc>> {
+        self.0.this.get()
     }
 
     #[inline]

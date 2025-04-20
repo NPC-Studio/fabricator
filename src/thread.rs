@@ -6,8 +6,10 @@ use thiserror::Error;
 use crate::{
     bytecode,
     closure::Closure,
+    context::Context,
     error::Error,
     instructions::{ConstIdx, HeapIdx, ProtoIdx, RegIdx},
+    object::Object,
     stack::Stack,
     value::{Function, Value},
 };
@@ -16,6 +18,10 @@ use crate::{
 pub enum VmError {
     #[error("bad op")]
     BadOp,
+    #[error("bad object")]
+    BadObject,
+    #[error("bad object key")]
+    BadKey,
     #[error("bad call")]
     BadCall,
     #[error("bad closure")]
@@ -58,22 +64,32 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    pub fn exec(self, mc: &Mutation<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
-        let mut this = self.0.try_borrow_mut(mc).expect("thread locked");
-        this.registers.clear();
-        this.stack.clear();
+    pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
+        self.exec_with(ctx, closure, ctx.globals())
+    }
 
-        this.call(mc, closure, 0)?;
+    pub fn exec_with(
+        self,
+        ctx: Context<'gc>,
+        closure: Closure<'gc>,
+        this: Object<'gc>,
+    ) -> Result<Vec<Value<'gc>>, Error> {
+        let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
+        thread.registers.clear();
+        thread.stack.clear();
 
-        Ok(this.stack.drain(..).collect())
+        thread.call(ctx, closure, this, 0)?;
+
+        Ok(thread.stack.drain(..).collect())
     }
 }
 
 impl<'gc> ThreadState<'gc> {
     fn call(
         &mut self,
-        mc: &Mutation<'gc>,
+        ctx: Context<'gc>,
         closure: Closure<'gc>,
+        this: Object<'gc>,
         stack_bottom: usize,
     ) -> Result<(), Error> {
         let proto = closure.prototype();
@@ -88,8 +104,9 @@ impl<'gc> ThreadState<'gc> {
         loop {
             // We pass in a 256 slice of registers to avoid register bounds checks.
             match dispatch(
-                mc,
+                ctx,
                 closure,
+                closure.this().unwrap_or(this),
                 &mut pc,
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
@@ -98,6 +115,7 @@ impl<'gc> ThreadState<'gc> {
             )? {
                 Next::Call {
                     closure,
+                    this,
                     args,
                     returns,
                 } => {
@@ -109,7 +127,7 @@ impl<'gc> ThreadState<'gc> {
 
                     // We only preserve the registers that are intended to be used,
                     self.stack.truncate(register_bottom + proto.used_registers);
-                    self.call(mc, closure, arg_bottom)?;
+                    self.call(ctx, closure, this, arg_bottom)?;
                     // Resize the register slice to be 256 wide.
                     self.stack.resize(register_bottom + 256, Value::Undefined);
 
@@ -135,6 +153,7 @@ impl<'gc> ThreadState<'gc> {
 enum Next<'gc> {
     Call {
         closure: Closure<'gc>,
+        this: Object<'gc>,
         args: u8,
         returns: u8,
     },
@@ -144,17 +163,52 @@ enum Next<'gc> {
 }
 
 fn dispatch<'gc>(
-    mc: &Mutation<'gc>,
+    ctx: Context<'gc>,
     closure: Closure<'gc>,
+    this: Object<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
     mut stack: Stack<'gc, '_>,
 ) -> Result<Next<'gc>, Error> {
     struct Dispatch<'gc, 'a> {
-        mc: &'a Mutation<'gc>,
+        ctx: Context<'gc>,
         closure: Closure<'gc>,
+        this: Object<'gc>,
         registers: &'a mut [Value<'gc>],
         stack: Stack<'gc, 'a>,
+    }
+
+    impl<'gc, 'a> Dispatch<'gc, 'a> {
+        #[inline]
+        fn do_call(
+            &mut self,
+            this: Object<'gc>,
+            func: Function<'gc>,
+            args: u8,
+            returns: u8,
+        ) -> Result<ControlFlow<Next<'gc>>, Error> {
+            Ok(match func {
+                Function::Closure(closure) => ControlFlow::Break(Next::Call {
+                    closure,
+                    this,
+                    args,
+                    returns,
+                }),
+                Function::Callback(callback) => {
+                    let arg_bottom = self.stack.len() - args as usize;
+
+                    // Pad stack with undefined values to match the requested args len.
+                    self.stack.resize(arg_bottom + args as usize);
+
+                    callback.call_with(self.ctx, this, self.stack.sub_stack(arg_bottom))?;
+
+                    // Pad stack with undefined values to match the expected return len.
+                    self.stack.resize(arg_bottom + returns as usize);
+
+                    ControlFlow::Continue(())
+                }
+            })
+        }
     }
 
     impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
@@ -183,9 +237,8 @@ fn dispatch<'gc>(
                 .get(proto as usize)
                 .ok_or(VmError::BadClosure)?;
             self.registers[dest as usize] = Value::Closure(Closure::with_upvalues(
-                self.mc,
+                &self.ctx,
                 proto,
-                self.closure.this(),
                 self.closure.heap(),
             )?);
             Ok(())
@@ -199,27 +252,58 @@ fn dispatch<'gc>(
 
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
-            self.closure.heap()[heap as usize].set(self.mc, self.registers[source as usize]);
+            self.closure.heap()[heap as usize].set(&self.ctx, self.registers[source as usize]);
             Ok(())
         }
 
         #[inline]
         fn get_this(&mut self, dest: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
             let Value::String(key) = self.registers[key as usize] else {
-                return Err(VmError::BadOp.into());
+                return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = self.closure.this().get(key).unwrap_or_default();
+            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
             Ok(())
         }
 
         #[inline]
         fn set_this(&mut self, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
             let Value::String(key) = self.registers[key as usize] else {
-                return Err(VmError::BadOp.into());
+                return Err(VmError::BadKey.into());
             };
-            self.closure
-                .this()
-                .set(self.mc, key, self.registers[value as usize]);
+            self.this
+                .set(&self.ctx, key, self.registers[value as usize]);
+            Ok(())
+        }
+
+        fn get_field(
+            &mut self,
+            dest: RegIdx,
+            object: RegIdx,
+            key: RegIdx,
+        ) -> Result<(), Self::Error> {
+            let Value::Object(object) = self.registers[object as usize] else {
+                return Err(VmError::BadObject.into());
+            };
+            let Value::String(key) = self.registers[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            self.registers[dest as usize] = object.get(key).unwrap_or_default();
+            Ok(())
+        }
+
+        fn set_field(
+            &mut self,
+            object: RegIdx,
+            key: RegIdx,
+            value: RegIdx,
+        ) -> Result<(), Self::Error> {
+            let Value::Object(object) = self.registers[object as usize] else {
+                return Err(VmError::BadObject.into());
+            };
+            let Value::String(key) = self.registers[key as usize] else {
+                return Err(VmError::BadKey.into());
+            };
+            object.set(&self.ctx, key, self.registers[value as usize]);
             Ok(())
         }
 
@@ -345,26 +429,25 @@ fn dispatch<'gc>(
                 .to_function()
                 .ok_or(VmError::BadCall)?;
 
-            Ok(match func {
-                Function::Closure(closure) => ControlFlow::Break(Next::Call {
-                    closure,
-                    args,
-                    returns,
-                }),
-                Function::Callback(callback) => {
-                    let arg_bottom = self.stack.len() - args as usize;
+            self.do_call(self.this, func, args, returns)
+        }
 
-                    // Pad stack with undefined values to match the requested args len.
-                    self.stack.resize(arg_bottom + args as usize);
+        fn method(
+            &mut self,
+            this: RegIdx,
+            func: RegIdx,
+            args: u8,
+            returns: u8,
+        ) -> Result<ControlFlow<Self::Break>, Self::Error> {
+            let Value::Object(this) = self.registers[this as usize] else {
+                return Err(VmError::BadObject.into());
+            };
 
-                    callback.call(self.mc, self.stack.sub_stack(arg_bottom))?;
+            let func = self.registers[func as usize]
+                .to_function()
+                .ok_or(VmError::BadCall)?;
 
-                    // Pad stack with undefined values to match the expected return len.
-                    self.stack.resize(arg_bottom + returns as usize);
-
-                    ControlFlow::Continue(())
-                }
-            })
+            self.do_call(this, func, args, returns)
         }
 
         #[inline]
@@ -375,8 +458,9 @@ fn dispatch<'gc>(
 
     let mut dispatcher = bytecode::Dispatcher::new(&closure.prototype().as_ref().bytecode, *pc);
     let ret = dispatcher.dispatch_loop(&mut Dispatch {
-        mc,
+        ctx,
         closure,
+        this,
         registers,
         stack: stack.reborrow(),
     });

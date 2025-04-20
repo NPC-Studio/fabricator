@@ -15,6 +15,8 @@ macro_rules! for_each_instruction {
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
             simple => get_this = GetThis { dest: RegIdx, key: RegIdx };
             simple => set_this = SetThis  { key: RegIdx, value: RegIdx };
+            simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
+            simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
             simple => move_ = Move { dest: RegIdx, source: RegIdx };
             simple => not = Not { dest: RegIdx, arg: RegIdx };
             simple => add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
@@ -30,6 +32,7 @@ macro_rules! for_each_instruction {
             jump => jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };
 
             call => call = Call { func: RegIdx, args: u8, returns: u8 };
+            call => method = Method { this: RegIdx, func: RegIdx, args: u8, returns: u8 };
             call => return_ = Return { returns: u8 };
         }
     };

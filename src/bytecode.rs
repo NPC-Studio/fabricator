@@ -318,6 +318,17 @@ impl<'a> Dispatcher<'a> {
                                     return Ok(b);
                                 }
                             }
+                            OpCode::Method => {
+                                let params::Method {
+                                    this,
+                                    func,
+                                    args,
+                                    returns,
+                                } = bytecode_read(&mut self.ptr);
+                                if let ControlFlow::Break(b) = dispatch.method(this, func, args, returns)? {
+                                    return Ok(b);
+                                }
+                            }
                             OpCode::Return => {
                                 let params::Return { returns } = bytecode_read(&mut self.ptr);
                                 return dispatch.return_(returns);
@@ -352,6 +363,15 @@ macro_rules! define_dispatch {
                 args: u8,
                 returns: u8,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+
+            fn method(
+                &mut self,
+                base: RegIdx,
+                func: RegIdx,
+                args: u8,
+                returns: u8,
+            ) -> Result<ControlFlow<Self::Break>, Self::Error>;
+
             fn return_(&mut self, returns: u8) -> Result<Self::Break, Self::Error>;
         }
     };
