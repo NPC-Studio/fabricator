@@ -22,6 +22,8 @@ pub enum VmError {
     BadObject,
     #[error("bad object key")]
     BadKey,
+    #[error("no such field")]
+    NoSuchField,
     #[error("bad call")]
     BadCall,
     #[error("bad closure")]
@@ -262,7 +264,7 @@ fn dispatch<'gc>(
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
+            self.registers[dest as usize] = self.this.get(key).ok_or(VmError::NoSuchField)?;
             Ok(())
         }
 
@@ -281,7 +283,7 @@ fn dispatch<'gc>(
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = self.this.get(key).unwrap_or_default();
+            self.registers[dest as usize] = self.this.get(key).ok_or(VmError::NoSuchField)?;
             Ok(())
         }
 
@@ -314,7 +316,7 @@ fn dispatch<'gc>(
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = object.get(key).unwrap_or_default();
+            self.registers[dest as usize] = object.get(key).ok_or(VmError::NoSuchField)?;
             Ok(())
         }
 
@@ -348,7 +350,7 @@ fn dispatch<'gc>(
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = object.get(key).unwrap_or_default();
+            self.registers[dest as usize] = object.get(key).ok_or(VmError::NoSuchField)?;
             Ok(())
         }
 
