@@ -56,6 +56,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             upper: Vec::new(),
             current: Function {
                 function: ir::Function {
+                    num_parameters: 0,
                     instructions,
                     blocks,
                     variables,
@@ -95,7 +96,10 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::Statement::If(if_statement) => self.if_statement(if_statement),
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
-            parser::Statement::Call(function_call) => self.call_expr(&function_call, 0),
+            parser::Statement::Call(function_call) => {
+                let _ = self.call_expr(&function_call, false)?;
+                Ok(())
+            }
         }
     }
 
@@ -191,10 +195,9 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
     ) -> Result<(), FrontendError> {
         let exit = if let Some(value) = &return_statement.value {
             let val = self.commit_expression(value)?;
-            self.push_instruction(ir::Instruction::Push(val));
-            ir::Exit::Return { returns: 1 }
+            ir::Exit::Return { value: Some(val) }
         } else {
-            ir::Exit::Return { returns: 0 }
+            ir::Exit::Return { value: None }
         };
         self.current.function.blocks[self.current.current_block].exit = exit;
         self.current.current_block = self.current.function.blocks.insert(ir::Block::default());
@@ -385,15 +388,12 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.push_instruction(inst)
             }
             parser::Expression::Function(func_expr) => {
-                self.push_function(&func_expr.arguments);
+                self.push_function(&func_expr.parameters)?;
                 self.block(&func_expr.body)?;
                 let func_id = self.pop_function();
                 self.push_instruction(ir::Instruction::Closure(func_id))
             }
-            parser::Expression::Call(func) => {
-                self.call_expr(func, 1)?;
-                self.push_instruction(ir::Instruction::Pop)
-            }
+            parser::Expression::Call(func) => self.call_expr(func, true)?,
             parser::Expression::Field(field_expr) => {
                 let base = self.commit_expression(&field_expr.base)?;
                 let field = self.push_instruction(ir::Instruction::Constant(Constant::String(
@@ -407,13 +407,11 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         })
     }
 
-    fn call_expr(&mut self, func: &parser::CallExpr<S>, returns: u8) -> Result<(), FrontendError> {
-        let args = func
-            .arguments
-            .len()
-            .try_into()
-            .map_err(|_| FrontendError::ParameterOverflow)?;
-
+    fn call_expr(
+        &mut self,
+        func: &parser::CallExpr<S>,
+        return_value: bool,
+    ) -> Result<ir::InstId, FrontendError> {
         enum Call {
             Function(ir::InstId),
             Method {
@@ -434,33 +432,27 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             expr => Call::Function(self.commit_expression(expr)?),
         };
 
+        let mut args = Vec::new();
         for arg in &func.arguments {
-            let arg = self.commit_expression(arg)?;
-            self.push_instruction(ir::Instruction::Push(arg));
+            args.push(self.commit_expression(arg)?);
         }
 
-        match call {
-            Call::Function(func) => {
-                self.push_instruction(ir::Instruction::Call {
-                    source: func,
-                    args,
-                    returns,
-                });
-            }
-            Call::Method { func, object } => {
-                self.push_instruction(ir::Instruction::Method {
-                    source: func,
-                    this: object,
-                    args,
-                    returns,
-                });
-            }
-        }
-
-        Ok(())
+        Ok(match call {
+            Call::Function(func) => self.push_instruction(ir::Instruction::Call {
+                func,
+                args,
+                return_value,
+            }),
+            Call::Method { func, object } => self.push_instruction(ir::Instruction::Method {
+                func,
+                this: object,
+                args,
+                return_value,
+            }),
+        })
     }
 
-    fn push_function(&mut self, args: &[S]) {
+    fn push_function(&mut self, parameters: &[S]) -> Result<(), FrontendError> {
         let instructions = ir::InstructionMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
@@ -470,6 +462,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         let start_block = blocks.insert(ir::Block::default());
 
         let function = ir::Function {
+            num_parameters: parameters.len(),
             instructions,
             blocks,
             variables,
@@ -493,11 +486,17 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
 
         self.push_scope();
 
-        for arg_name in args.iter().rev() {
-            let arg_var = self.declare_var(arg_name.clone());
-            let pop_arg = self.push_instruction(ir::Instruction::Pop);
-            self.push_instruction(ir::Instruction::SetVariable(arg_var, pop_arg));
+        for (param_index, param_name) in parameters.iter().enumerate() {
+            let param_var = self.declare_var(param_name.clone());
+            let pop_arg = self.push_instruction(ir::Instruction::Parameter(
+                param_index
+                    .try_into()
+                    .map_err(|_| FrontendError::ParameterOverflow)?,
+            ));
+            self.push_instruction(ir::Instruction::SetVariable(param_var, pop_arg));
         }
+
+        Ok(())
     }
 
     fn pop_function(&mut self) -> ir::FuncId {

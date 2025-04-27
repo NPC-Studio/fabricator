@@ -181,6 +181,12 @@ fn codegen_function<'gc>(
                         dest: reg_alloc.instruction_registers[inst_id],
                     });
                 }
+                ir::Instruction::Parameter(index) => {
+                    vm_instructions.push(Instruction::Param {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        index,
+                    });
+                }
                 ir::Instruction::GetField { object, key } => {
                     vm_instructions.push(Instruction::GetField {
                         dest: reg_alloc.instruction_registers[inst_id],
@@ -311,48 +317,78 @@ fn codegen_function<'gc>(
                         }
                     }
                 }
-                ir::Instruction::Push(source) => {
-                    vm_instructions.push(Instruction::Push {
-                        source: reg_alloc.instruction_registers[source],
-                        len: 1,
-                    });
-                }
-                ir::Instruction::Pop => {
-                    vm_instructions.push(Instruction::Pop {
-                        dest: reg_alloc.instruction_registers[inst_id],
-                        len: 1,
-                    });
-                }
                 ir::Instruction::Call {
-                    source,
-                    args,
-                    returns,
+                    func,
+                    ref args,
+                    return_value,
                 } => {
-                    vm_instructions.push(Instruction::Call {
-                        func: reg_alloc.instruction_registers[source],
-                        args,
-                        returns,
-                    });
+                    for &arg in args {
+                        vm_instructions.push(Instruction::Push {
+                            source: reg_alloc.instruction_registers[arg],
+                            len: 1,
+                        });
+                    }
+
+                    if return_value {
+                        vm_instructions.push(Instruction::Call {
+                            func: reg_alloc.instruction_registers[func],
+                            returns: 1,
+                        });
+                        vm_instructions.push(Instruction::Pop {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            len: 1,
+                        });
+                    } else {
+                        vm_instructions.push(Instruction::Call {
+                            func: reg_alloc.instruction_registers[func],
+                            returns: 0,
+                        });
+                    }
                 }
                 ir::Instruction::Method {
-                    source,
+                    func,
                     this,
-                    args,
-                    returns,
+                    ref args,
+                    return_value,
                 } => {
-                    vm_instructions.push(Instruction::Method {
-                        func: reg_alloc.instruction_registers[source],
-                        this: reg_alloc.instruction_registers[this],
-                        args,
-                        returns,
-                    });
+                    for &arg in args {
+                        vm_instructions.push(Instruction::Push {
+                            source: reg_alloc.instruction_registers[arg],
+                            len: 1,
+                        });
+                    }
+
+                    let this = reg_alloc.instruction_registers[this];
+                    if return_value {
+                        vm_instructions.push(Instruction::Method {
+                            this,
+                            func: reg_alloc.instruction_registers[func],
+                            returns: 1,
+                        });
+                        vm_instructions.push(Instruction::Pop {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            len: 1,
+                        });
+                    } else {
+                        vm_instructions.push(Instruction::Method {
+                            this,
+                            func: reg_alloc.instruction_registers[func],
+                            returns: 0,
+                        });
+                    }
                 }
             }
         }
 
         match block.exit {
-            ir::Exit::Return { returns } => {
-                vm_instructions.push(Instruction::Return { returns });
+            ir::Exit::Return { value } => {
+                if let Some(value) = value {
+                    vm_instructions.push(Instruction::Push {
+                        source: reg_alloc.instruction_registers[value],
+                        len: 1,
+                    });
+                }
+                vm_instructions.push(Instruction::Return {});
             }
             ir::Exit::Jump(block_id) => {
                 // If we are the next block in output order, we don't need to add a jump

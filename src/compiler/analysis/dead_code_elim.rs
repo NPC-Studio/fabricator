@@ -97,6 +97,14 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
+    // Any parameter of `Exit::Return` is always live.
+    for &block_id in &reachable_blocks {
+        if let ir::Exit::Return { value: Some(ret) } = ir.blocks[block_id].exit {
+            live_instructions.insert(ret.index() as usize);
+            worklist.push(Work::Instruction(ret));
+        }
+    }
+
     while let Some(work) = worklist.pop() {
         match work {
             Work::Instruction(inst_id) => {
@@ -131,15 +139,16 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                 }
             }
             Work::Branch(block_id) => {
+                // The `cond` parameter of `Exit::Branch` is only live if there is a live
+                // instruction that is control-flow dependent on this branch.
                 let block = &ir.blocks[block_id];
                 match block.exit {
-                    ir::Exit::Return { .. } => unreachable!(),
-                    ir::Exit::Jump(_) => unreachable!(),
                     ir::Exit::Branch { cond, .. } => {
                         if live_instructions.insert(cond.index() as usize) {
                             worklist.push(Work::Instruction(cond));
                         }
                     }
+                    _ => unreachable!(),
                 }
             }
         }

@@ -8,7 +8,9 @@ use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{
-    instructions::{for_each_instruction, ConstIdx, HeapIdx, Instruction, ProtoIdx, RegIdx},
+    instructions::{
+        for_each_instruction, ConstIdx, HeapIdx, Instruction, ParamIdx, ProtoIdx, RegIdx,
+    },
     util::bit_containers::BitVec,
 };
 
@@ -311,10 +313,9 @@ impl<'a> Dispatcher<'a> {
                             OpCode::Call => {
                                 let params::Call {
                                     func,
-                                    args,
                                     returns,
                                 } = bytecode_read(&mut self.ptr);
-                                if let ControlFlow::Break(b) = dispatch.call(func, args, returns)? {
+                                if let ControlFlow::Break(b) = dispatch.call(func, returns)? {
                                     return Ok(b);
                                 }
                             }
@@ -322,16 +323,15 @@ impl<'a> Dispatcher<'a> {
                                 let params::Method {
                                     this,
                                     func,
-                                    args,
                                     returns,
                                 } = bytecode_read(&mut self.ptr);
-                                if let ControlFlow::Break(b) = dispatch.method(this, func, args, returns)? {
+                                if let ControlFlow::Break(b) = dispatch.method(this, func, returns)? {
                                     return Ok(b);
                                 }
                             }
                             OpCode::Return => {
-                                let params::Return { returns } = bytecode_read(&mut self.ptr);
-                                return dispatch.return_(returns);
+                                let params::Return { } = bytecode_read(&mut self.ptr);
+                                return dispatch.return_();
                             }
                         }
                     };
@@ -360,7 +360,6 @@ macro_rules! define_dispatch {
             fn call(
                 &mut self,
                 func: RegIdx,
-                args: u8,
                 returns: u8,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
 
@@ -368,11 +367,10 @@ macro_rules! define_dispatch {
                 &mut self,
                 base: RegIdx,
                 func: RegIdx,
-                args: u8,
                 returns: u8,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
 
-            fn return_(&mut self, returns: u8) -> Result<Self::Break, Self::Error>;
+            fn return_(&mut self) -> Result<Self::Break, Self::Error>;
         }
     };
 }
@@ -461,7 +459,7 @@ mod tests {
                 is_true: true,
             },
             Instruction::Move { source: 7, dest: 8 },
-            Instruction::Return { returns: 0 },
+            Instruction::Return {},
         ];
 
         let bytecode = ByteCode::encode(insts).unwrap();

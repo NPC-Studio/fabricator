@@ -81,7 +81,7 @@ pub enum Expression<S> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionExpr<S> {
-    pub arguments: Vec<S>,
+    pub parameters: Vec<S>,
     pub body: Block<S>,
 }
 
@@ -454,11 +454,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             (Token::Function, _) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
-                let mut arguments = Vec::new();
+                let mut parameters = Vec::new();
                 self.look_ahead(1)?;
                 if !matches!(self.peek(0), Some((Token::RightParen, _))) {
                     loop {
-                        arguments.push(self.parse_identifier()?);
+                        parameters.push(self.parse_identifier()?);
                         self.look_ahead(1)?;
                         if matches!(self.peek(0), Some((Token::Comma, _))) {
                             self.advance(1);
@@ -472,7 +472,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 let body = self.parse_block()?;
                 self.parse_token(Token::RightBrace)?;
 
-                Ok(Expression::Function(FunctionExpr { arguments, body }))
+                Ok(Expression::Function(FunctionExpr { parameters, body }))
             }
             (Token::LeftBrace, _) => Ok(Expression::Object(self.parse_object()?)),
             _ => self.parse_suffixed_expression(),

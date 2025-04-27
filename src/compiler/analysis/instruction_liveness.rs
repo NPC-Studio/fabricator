@@ -115,8 +115,8 @@ impl InstructionLiveness {
                 }
             }
 
-            if let Some(cond) = block.exit.cond_source() {
-                let (cond_block, _) = inst_positions[cond];
+            for inst_id in block.exit.sources() {
+                let (cond_block, _) = inst_positions[inst_id];
                 if !dominators.dominates(cond_block, block_id).unwrap() {
                     return Err(InstructionVerificationError::UseNotDominated);
                 }
@@ -203,8 +203,8 @@ impl InstructionLiveness {
                 }
             }
 
-            if let Some(source_inst_id) = block.exit.cond_source() {
-                mark_use(source_inst_id, block.instructions.len());
+            for inst_id in block.exit.sources() {
+                mark_use(inst_id, block.instructions.len());
             }
 
             for &inst_id in live_in {

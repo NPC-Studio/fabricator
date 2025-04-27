@@ -15,8 +15,7 @@ new_id_type! {
     pub struct FuncId;
 }
 
-pub type Offset = i32;
-pub type ArgCount = u8;
+pub type ParamIndex = u8;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
@@ -93,7 +92,7 @@ pub enum BinComp {
 /// such shared values are present. Any `VarId` that remains after optimization really will be
 /// turned into a heap allocated variable, allowing them to be mutably shared between different
 /// closures with potentially different lifetimes.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,
     Copy(InstId),
@@ -104,6 +103,7 @@ pub enum Instruction<S> {
     SetVariable(Variable, InstId),
     This,
     NewObject,
+    Parameter(ParamIndex),
     GetField {
         object: InstId,
         key: InstId,
@@ -138,18 +138,16 @@ pub enum Instruction<S> {
         right: InstId,
         comp: BinComp,
     },
-    Push(InstId),
-    Pop,
     Call {
-        source: InstId,
-        args: ArgCount,
-        returns: ArgCount,
+        func: InstId,
+        args: Vec<InstId>,
+        return_value: bool,
     },
     Method {
-        source: InstId,
         this: InstId,
-        args: ArgCount,
-        returns: ArgCount,
+        func: InstId,
+        args: Vec<InstId>,
+        return_value: bool,
     },
 }
 
@@ -165,47 +163,67 @@ impl<S> Instruction<S> {
     }
 
     pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
-        type Array = ArrayVec<InstId, 3>;
+        macro_rules! make_iter {
+            ($small:expr, $rest:expr) => {
+                ArrayVec::<_, 3>::from_iter($small.into_iter())
+                    .into_iter()
+                    .chain($rest.iter().copied())
+            };
+
+            ($small:expr) => {
+                make_iter!($small, &[])
+            };
+        }
 
         match self {
-            &Instruction::Copy(source) => Array::from_iter([source]),
-            &Instruction::SetVariable(_, source) => Array::from_iter([source]),
-            &Instruction::GetField { object, key } => Array::from_iter([object, key]),
-            &Instruction::SetField { object, key, value } => Array::from_iter([object, key, value]),
-            &Instruction::GetFieldConst { object, .. } => Array::from_iter([object]),
-            &Instruction::SetFieldConst { object, value, .. } => Array::from_iter([object, value]),
-            &Instruction::Upsilon(_, source) => Array::from_iter([source]),
-            &Instruction::UnOp { source, .. } => Array::from_iter([source]),
-            &Instruction::BinOp { left, right, .. } => Array::from_iter([left, right]),
-            &Instruction::BinComp { left, right, .. } => Array::from_iter([left, right]),
-            &Instruction::Push(source) => Array::from_iter([source]),
-            &Instruction::Call { source, .. } => Array::from_iter([source]),
-            &Instruction::Method { source, this, .. } => Array::from_iter([source, this]),
-            _ => Array::from_iter([]),
+            &Instruction::Copy(source) => make_iter!([source]),
+            &Instruction::SetVariable(_, source) => make_iter!([source]),
+            &Instruction::GetField { object, key } => make_iter!([object, key]),
+            &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
+            &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
+            &Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            &Instruction::Upsilon(_, source) => make_iter!([source]),
+            &Instruction::UnOp { source, .. } => make_iter!([source]),
+            &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
+            &Instruction::BinComp { left, right, .. } => make_iter!([left, right]),
+            Instruction::Call { func, args, .. } => make_iter!([*func], args),
+            Instruction::Method {
+                this, func, args, ..
+            } => make_iter!([*this, *func], args),
+            _ => make_iter!([]),
         }
-        .into_iter()
     }
 
     pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
-        type Array<'a> = ArrayVec<&'a mut InstId, 3>;
+        macro_rules! make_iter {
+            ($small:expr, $rest:expr) => {
+                ArrayVec::<_, 3>::from_iter($small.into_iter())
+                    .into_iter()
+                    .chain($rest.iter_mut())
+            };
+
+            ($small:expr) => {
+                make_iter!($small, &mut [])
+            };
+        }
 
         match self {
-            Instruction::Copy(source) => Array::from_iter([source]),
-            Instruction::SetVariable(_, source) => Array::from_iter([source]),
-            Instruction::GetField { object, key } => Array::from_iter([object, key]),
-            Instruction::SetField { object, key, value } => Array::from_iter([object, key, value]),
-            Instruction::GetFieldConst { object, .. } => Array::from_iter([object]),
-            Instruction::SetFieldConst { object, value, .. } => Array::from_iter([object, value]),
-            Instruction::Upsilon(_, source) => Array::from_iter([source]),
-            Instruction::UnOp { source, .. } => Array::from_iter([source]),
-            Instruction::BinOp { left, right, .. } => Array::from_iter([left, right]),
-            Instruction::BinComp { left, right, .. } => Array::from_iter([left, right]),
-            Instruction::Push(source) => Array::from_iter([source]),
-            Instruction::Call { source, .. } => Array::from_iter([source]),
-            Instruction::Method { source, this, .. } => Array::from_iter([source, this]),
-            _ => Array::from_iter([]),
+            Instruction::Copy(source) => make_iter!([source]),
+            Instruction::SetVariable(_, source) => make_iter!([source]),
+            Instruction::GetField { object, key } => make_iter!([object, key]),
+            Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
+            Instruction::GetFieldConst { object, .. } => make_iter!([object]),
+            Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            Instruction::Upsilon(_, source) => make_iter!([source]),
+            Instruction::UnOp { source, .. } => make_iter!([source]),
+            Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
+            Instruction::BinComp { left, right, .. } => make_iter!([left, right]),
+            Instruction::Call { func, args, .. } => make_iter!([func], args),
+            Instruction::Method {
+                this, func, args, ..
+            } => make_iter!([this, func], args),
+            _ => make_iter!([]),
         }
-        .into_iter()
     }
 
     pub fn has_value(&self) -> bool {
@@ -217,13 +235,15 @@ impl<S> Instruction<S> {
             Instruction::GetVariable(_) => true,
             Instruction::This => true,
             Instruction::NewObject => true,
+            Instruction::Parameter(_) => true,
             Instruction::GetField { .. } => true,
             Instruction::GetFieldConst { .. } => true,
             Instruction::Phi(_) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
             Instruction::BinComp { .. } => true,
-            Instruction::Pop => true,
+            Instruction::Call { return_value, .. } => *return_value,
+            Instruction::Method { return_value, .. } => *return_value,
             _ => false,
         }
     }
@@ -234,8 +254,6 @@ impl<S> Instruction<S> {
             Instruction::SetField { .. } => true,
             Instruction::SetFieldConst { .. } => true,
             Instruction::Upsilon(_, _) => true,
-            Instruction::Push { .. } => true,
-            Instruction::Pop => true,
             Instruction::Call { .. } => true,
             Instruction::Method { .. } => true,
             _ => false,
@@ -246,7 +264,7 @@ impl<S> Instruction<S> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Exit {
     Return {
-        returns: ArgCount,
+        value: Option<InstId>,
     },
     Jump(BlockId),
     Branch {
@@ -257,15 +275,17 @@ pub enum Exit {
 }
 
 impl Exit {
-    pub fn cond_source(&self) -> Option<InstId> {
+    pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
         match self {
+            Exit::Return { value } => *value,
             Exit::Branch { cond, .. } => Some(*cond),
             _ => None,
         }
+        .into_iter()
     }
 
     pub fn successors(&self) -> impl Iterator<Item = BlockId> + '_ {
-        type Array = ArrayVec<BlockId, 3>;
+        type Array = ArrayVec<BlockId, 2>;
 
         match self {
             Exit::Return { .. } => Array::from_iter([]),
@@ -278,7 +298,7 @@ impl Exit {
     }
 
     pub fn successors_mut(&mut self) -> impl Iterator<Item = &mut BlockId> + '_ {
-        type Array<'a> = ArrayVec<&'a mut BlockId, 3>;
+        type Array<'a> = ArrayVec<&'a mut BlockId, 2>;
 
         match self {
             Exit::Return { .. } => Array::from_iter([]),
@@ -301,7 +321,7 @@ impl Default for Block {
     fn default() -> Self {
         Self {
             instructions: Vec::new(),
-            exit: Exit::Return { returns: 0 },
+            exit: Exit::Return { value: None },
         }
     }
 }
@@ -314,6 +334,7 @@ pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
 pub type UpValueMap = HashMap<Variable, Variable>;
 
 pub struct Function<S> {
+    pub num_parameters: usize,
     pub instructions: InstructionMap<S>,
     pub blocks: BlockMap,
     pub variables: VariableSet,
@@ -366,7 +387,7 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "constant({:?})", constant.as_ref())?;
                     }
                     Instruction::Closure(closure) => {
-                        writeln!(f, "closure(F{:?})", closure.index())?;
+                        writeln!(f, "closure(F{})", closure.index())?;
                     }
                     Instruction::GetVariable(var) => {
                         writeln!(f, "get_var(V{})", var.index())?;
@@ -375,17 +396,20 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
                     }
                     Instruction::This => {
-                        writeln!(f, "this()",)?;
+                        writeln!(f, "this()")?;
                     }
                     Instruction::NewObject => {
-                        writeln!(f, "new_object()",)?;
+                        writeln!(f, "new_object()")?;
+                    }
+                    Instruction::Parameter(ind) => {
+                        writeln!(f, "parameter(P{})", ind)?;
                     }
                     Instruction::GetField { object, key } => {
                         writeln!(
                             f,
                             "get_field(object = I{}, key = I{})",
                             object.index(),
-                            key.index()
+                            key.index(),
                         )?;
                     }
                     Instruction::SetField { object, key, value } => {
@@ -394,7 +418,7 @@ impl<S: AsRef<str>> Function<S> {
                             "set_field(object = I{}, key = I{}, value = I{})",
                             object.index(),
                             key.index(),
-                            value.index()
+                            value.index(),
                         )?;
                     }
                     Instruction::GetFieldConst { object, key } => {
@@ -453,48 +477,59 @@ impl<S: AsRef<str>> Function<S> {
                             writeln!(f, "greater_equal(I{}, I{})", left.index(), right.index())?;
                         }
                     },
-                    Instruction::Push(source) => {
-                        writeln!(f, "push(I{})", source.index())?;
-                    }
-                    Instruction::Pop => {
-                        writeln!(f, "pop()")?;
-                    }
                     Instruction::Call {
-                        source,
+                        func,
                         args,
-                        returns,
+                        return_value,
                     } => {
-                        writeln!(
+                        write!(
                             f,
-                            "call(I{}, args = {}, returns = {})",
-                            source.index(),
-                            args,
-                            returns
+                            "call(I{}, return_value = {}, args = [",
+                            func.index(),
+                            return_value,
                         )?;
+                        for (i, &arg) in args.iter().enumerate() {
+                            if i != 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "I{}", arg.index())?;
+                        }
+                        writeln!(f, "])")?;
                     }
                     Instruction::Method {
-                        source,
                         this,
+                        func,
                         args,
-                        returns,
+                        return_value,
                     } => {
-                        writeln!(
+                        write!(
                             f,
-                            "call_method(I{}, this = {}, args = {}, returns = {})",
-                            source.index(),
+                            "call(I{}, this = I{}, return_value = {}, args = [",
+                            func.index(),
                             this.index(),
-                            args,
-                            returns
+                            return_value,
                         )?;
+                        for (i, &arg) in args.iter().enumerate() {
+                            if i != 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "I{}", arg.index())?;
+                        }
+                        writeln!(f, "])")?;
                     }
                 }
             }
 
             write_indent(f, 4)?;
             match block.exit {
-                Exit::Return { returns } => {
-                    writeln!(f, "return(args = {})", returns)?;
-                }
+                Exit::Return { value } => match value {
+                    Some(value) => {
+                        writeln!(f, "return(I{})", value.index())?;
+                    }
+                    None => {
+                        writeln!(f, "return()")?;
+                    }
+                },
                 Exit::Jump(block_id) => {
                     writeln!(f, "jump(B{})", block_id.index())?;
                 }
@@ -522,6 +557,9 @@ impl<S: AsRef<str>> Function<S> {
         for block_id in self.blocks.ids() {
             write_block(f, block_id)?;
         }
+
+        write_indent(f, 0)?;
+        writeln!(f, "num_parameters: {}", self.num_parameters)?;
 
         if !self.shadow_vars.is_empty() {
             write_indent(f, 0)?;

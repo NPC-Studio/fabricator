@@ -2,6 +2,7 @@ use std::fmt;
 
 pub type RegIdx = u8;
 pub type ConstIdx = u16;
+pub type ParamIdx = u8;
 pub type HeapIdx = u8;
 pub type ProtoIdx = u8;
 
@@ -15,6 +16,7 @@ macro_rules! for_each_instruction {
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
+            simple => param = Param { dest: RegIdx, index: ParamIdx };
             simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
             simple => get_field_const = GetFieldConst { dest: RegIdx, object: RegIdx, key: ConstIdx };
@@ -33,9 +35,9 @@ macro_rules! for_each_instruction {
             jump => jump = Jump { offset: i16 };
             jump => jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };
 
-            call => call = Call { func: RegIdx, args: u8, returns: u8 };
-            call => method = Method { this: RegIdx, func: RegIdx, args: u8, returns: u8 };
-            call => return_ = Return { returns: u8 };
+            call => call = Call { func: RegIdx, returns: u8 };
+            call => method = Method { this: RegIdx, func: RegIdx, returns: u8 };
+            call => return_ = Return { };
         }
     };
 }
@@ -81,6 +83,7 @@ impl Instruction {
                     $(Instruction::$name { $($field),* } => {
                         write!(f, stringify!($snake_name))?;
                         write!(f, "(")?;
+                        #[allow(unused, unused_mut)]
                         let mut prev = false;
                         $(
                             if prev {

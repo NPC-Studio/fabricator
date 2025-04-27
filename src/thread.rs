@@ -8,7 +8,7 @@ use crate::{
     closure::{Closure, Constant},
     context::Context,
     error::Error,
-    instructions::{ConstIdx, HeapIdx, ProtoIdx, RegIdx},
+    instructions::{ConstIdx, HeapIdx, ParamIdx, ProtoIdx, RegIdx},
     object::Object,
     stack::Stack,
     value::{Function, Value},
@@ -101,6 +101,8 @@ impl<'gc> ThreadState<'gc> {
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
 
+        let params_top = self.stack.len();
+
         let mut pc: usize = 0;
 
         loop {
@@ -114,36 +116,28 @@ impl<'gc> ThreadState<'gc> {
                     .try_into()
                     .unwrap(),
                 Stack::new(&mut self.stack, stack_bottom),
+                params_top - stack_bottom,
             )? {
                 Next::Call {
                     closure,
                     this,
-                    args,
                     returns,
                 } => {
-                    let arg_bottom = (self.stack.len() - args as usize).max(stack_bottom);
-
-                    // Pad stack with undefined values to match the requested args len.
-                    self.stack
-                        .resize(arg_bottom + args as usize, Value::Undefined);
-
-                    // We only preserve the registers that are intended to be used,
+                    // We only preserve the registers that the prototype claims to use,
                     self.stack.truncate(register_bottom + proto.used_registers);
-                    self.call(ctx, closure, this, arg_bottom)?;
+                    self.call(ctx, closure, this, params_top)?;
                     // Resize the register slice to be 256 wide.
                     self.stack.resize(register_bottom + 256, Value::Undefined);
-
                     // Pad stack with undefined values to match the expected return len.
                     self.stack
-                        .resize(arg_bottom + returns as usize, Value::Undefined);
+                        .resize(params_top + returns as usize, Value::Undefined);
                 }
-                Next::Return { returns } => {
-                    // Pad the stack with the requested number of returns.
-                    self.stack
-                        .resize(stack_bottom + returns as usize, Value::Undefined);
-
-                    // Clear the registers and heap vars for this frame.
+                Next::Return => {
+                    // Clear the registers for this frame.
                     self.registers.truncate(register_bottom);
+                    // Drain all of the parameters, everything left on the stack for this frame is
+                    // a return.
+                    self.stack.drain(stack_bottom..params_top);
 
                     return Ok(());
                 }
@@ -156,12 +150,9 @@ enum Next<'gc> {
     Call {
         closure: Closure<'gc>,
         this: Object<'gc>,
-        args: u8,
         returns: u8,
     },
-    Return {
-        returns: u8,
-    },
+    Return,
 }
 
 fn dispatch<'gc>(
@@ -170,7 +161,8 @@ fn dispatch<'gc>(
     this: Object<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
-    mut stack: Stack<'gc, '_>,
+    stack: Stack<'gc, '_>,
+    num_params: usize,
 ) -> Result<Next<'gc>, Error> {
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
@@ -178,6 +170,7 @@ fn dispatch<'gc>(
         this: Object<'gc>,
         registers: &'a mut [Value<'gc>],
         stack: Stack<'gc, 'a>,
+        num_params: usize,
     }
 
     impl<'gc, 'a> Dispatch<'gc, 'a> {
@@ -186,26 +179,21 @@ fn dispatch<'gc>(
             &mut self,
             this: Object<'gc>,
             func: Function<'gc>,
-            args: u8,
             returns: u8,
         ) -> Result<ControlFlow<Next<'gc>>, Error> {
             Ok(match func {
                 Function::Closure(closure) => ControlFlow::Break(Next::Call {
                     closure,
                     this,
-                    args,
                     returns,
                 }),
                 Function::Callback(callback) => {
-                    let arg_bottom = self.stack.len() - args as usize;
-
-                    // Pad stack with undefined values to match the requested args len.
-                    self.stack.resize(arg_bottom + args as usize);
-
-                    callback.call_with(self.ctx, this, self.stack.sub_stack(arg_bottom))?;
+                    callback.call_with(self.ctx, this, self.stack.sub_stack(self.num_params))?;
 
                     // Pad stack with undefined values to match the expected return len.
-                    self.stack.resize(arg_bottom + returns as usize);
+                    self.stack
+                        .sub_stack(self.num_params)
+                        .resize(returns as usize);
 
                     ControlFlow::Continue(())
                 }
@@ -259,6 +247,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Object(self.this);
             Ok(())
@@ -267,6 +256,16 @@ fn dispatch<'gc>(
         #[inline]
         fn new_object(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Value::Object(Object::new(&self.ctx));
+            Ok(())
+        }
+
+        #[inline]
+        fn param(&mut self, dest: RegIdx, index: ParamIdx) -> Result<(), Self::Error> {
+            if (index as usize) < self.num_params {
+                self.registers[dest as usize] = self.stack.get(index as usize);
+            } else {
+                self.registers[dest as usize] = Value::Undefined;
+            }
             Ok(())
         }
 
@@ -435,6 +434,7 @@ fn dispatch<'gc>(
         fn push(&mut self, source: RegIdx, len: u8) -> Result<(), Self::Error> {
             for i in 0..len {
                 self.stack
+                    .sub_stack(self.num_params)
                     .push_back(self.registers[source as usize + i as usize]);
             }
             Ok(())
@@ -443,8 +443,11 @@ fn dispatch<'gc>(
         #[inline]
         fn pop(&mut self, dest: RegIdx, len: u8) -> Result<(), Self::Error> {
             for i in (0..len).rev() {
-                self.registers[dest as usize + i as usize] =
-                    self.stack.pop_back().ok_or(VmError::StackUnderflow)?;
+                self.registers[dest as usize + i as usize] = self
+                    .stack
+                    .sub_stack(self.num_params)
+                    .pop_back()
+                    .ok_or(VmError::StackUnderflow)?;
             }
             Ok(())
         }
@@ -453,14 +456,13 @@ fn dispatch<'gc>(
         fn call(
             &mut self,
             func: RegIdx,
-            args: u8,
             returns: u8,
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
             let func = self.registers[func as usize]
                 .to_function()
                 .ok_or(VmError::BadCall)?;
 
-            self.do_call(self.this, func, args, returns)
+            self.do_call(self.this, func, returns)
         }
 
         #[inline]
@@ -468,7 +470,6 @@ fn dispatch<'gc>(
             &mut self,
             this: RegIdx,
             func: RegIdx,
-            args: u8,
             returns: u8,
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
             let Value::Object(this) = self.registers[this as usize] else {
@@ -479,12 +480,12 @@ fn dispatch<'gc>(
                 .to_function()
                 .ok_or(VmError::BadCall)?;
 
-            self.do_call(this, func, args, returns)
+            self.do_call(this, func, returns)
         }
 
         #[inline]
-        fn return_(&mut self, returns: u8) -> Result<Self::Break, Self::Error> {
-            Ok(Next::Return { returns })
+        fn return_(&mut self) -> Result<Self::Break, Self::Error> {
+            Ok(Next::Return)
         }
     }
 
@@ -494,7 +495,8 @@ fn dispatch<'gc>(
         closure,
         this,
         registers,
-        stack: stack.reborrow(),
+        stack,
+        num_params,
     });
     *pc = dispatcher.pc();
     ret
