@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use arrayvec::ArrayVec;
-
 use crate::{
     compiler::{
         analysis::{
@@ -300,10 +298,10 @@ impl RegisterAllocation {
                     }
 
                     if let Some(end) = range.end {
-                        let life_ends = inst_life_ends.entry(end).or_insert_with(|| {
-                            ArrayVec::<ir::InstId, { ir::MAX_INSTRUCTION_SOURCES + 1 }>::new()
-                        });
-                        life_ends.push(inst_id);
+                        inst_life_ends
+                            .entry(end)
+                            .or_insert_with(Vec::new)
+                            .push(inst_id);
                     }
                 }
             }

@@ -153,204 +153,92 @@ pub enum Instruction<S> {
     },
 }
 
-pub const MAX_INSTRUCTION_CONSTANTS: usize = 1;
-pub const MAX_INSTRUCTION_SOURCES: usize = 2;
-
 impl<S> Instruction<S> {
-    pub fn constants(&self) -> ArrayVec<&Constant<S>, MAX_INSTRUCTION_CONSTANTS> {
-        let mut constants = ArrayVec::new();
+    pub fn constants(&self) -> impl Iterator<Item = &Constant<S>> + '_ {
         match self {
-            Instruction::Constant(constant) => {
-                constants.push(constant);
-            }
-            Instruction::GetFieldConst { key, .. } => {
-                constants.push(key);
-            }
-            Instruction::SetFieldConst { key, .. } => {
-                constants.push(key);
-            }
-            _ => {}
+            Instruction::Constant(constant) => Some(constant),
+            Instruction::GetFieldConst { key, .. } => Some(key),
+            Instruction::SetFieldConst { key, .. } => Some(key),
+            _ => None,
         }
-        constants
+        .into_iter()
     }
 
-    pub fn sources(&self) -> ArrayVec<InstId, MAX_INSTRUCTION_SOURCES> {
-        let mut sources = ArrayVec::new();
+    pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
+        type Array = ArrayVec<InstId, 3>;
 
         match self {
-            Instruction::NoOp => {}
-            Instruction::Copy(source) => {
-                sources.push(*source);
-            }
-            Instruction::Undefined => {}
-            Instruction::Constant(_) => {}
-            Instruction::Closure(_) => {}
-            Instruction::GetVariable(_) => {}
-            Instruction::SetVariable(_, source) => {
-                sources.push(*source);
-            }
-            Instruction::This => {}
-            Instruction::NewObject => {}
-            Instruction::GetField { object, key } => {
-                sources.push(*object);
-                sources.push(*key);
-            }
-            Instruction::SetField { object, key, value } => {
-                sources.push(*object);
-                sources.push(*key);
-                sources.push(*value);
-            }
-            Instruction::GetFieldConst { object, .. } => {
-                sources.push(*object);
-            }
-            Instruction::SetFieldConst { object, value, .. } => {
-                sources.push(*object);
-                sources.push(*value);
-            }
-            Instruction::Phi(_) => {}
-            Instruction::Upsilon(_, source) => sources.push(*source),
-            Instruction::UnOp { source, .. } => {
-                sources.push(*source);
-            }
-            Instruction::BinOp { left, right, .. } => {
-                sources.push(*left);
-                sources.push(*right);
-            }
-            Instruction::BinComp { left, right, .. } => {
-                sources.push(*left);
-                sources.push(*right);
-            }
-            Instruction::Push(source) => {
-                sources.push(*source);
-            }
-            Instruction::Pop => {}
-            Instruction::Call { source, .. } => {
-                sources.push(*source);
-            }
-            Instruction::Method { source, this, .. } => {
-                sources.push(*source);
-                sources.push(*this);
-            }
+            &Instruction::Copy(source) => Array::from_iter([source]),
+            &Instruction::SetVariable(_, source) => Array::from_iter([source]),
+            &Instruction::GetField { object, key } => Array::from_iter([object, key]),
+            &Instruction::SetField { object, key, value } => Array::from_iter([object, key, value]),
+            &Instruction::GetFieldConst { object, .. } => Array::from_iter([object]),
+            &Instruction::SetFieldConst { object, value, .. } => Array::from_iter([object, value]),
+            &Instruction::Upsilon(_, source) => Array::from_iter([source]),
+            &Instruction::UnOp { source, .. } => Array::from_iter([source]),
+            &Instruction::BinOp { left, right, .. } => Array::from_iter([left, right]),
+            &Instruction::BinComp { left, right, .. } => Array::from_iter([left, right]),
+            &Instruction::Push(source) => Array::from_iter([source]),
+            &Instruction::Call { source, .. } => Array::from_iter([source]),
+            &Instruction::Method { source, this, .. } => Array::from_iter([source, this]),
+            _ => Array::from_iter([]),
         }
-
-        sources
+        .into_iter()
     }
 
-    pub fn sources_mut(&mut self) -> ArrayVec<&mut InstId, MAX_INSTRUCTION_SOURCES> {
-        let mut sources = ArrayVec::new();
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
+        type Array<'a> = ArrayVec<&'a mut InstId, 3>;
 
         match self {
-            Instruction::NoOp => {}
-            Instruction::Copy(source) => {
-                sources.push(source);
-            }
-            Instruction::Undefined => {}
-            Instruction::Constant(_) => {}
-            Instruction::Closure(_) => {}
-            Instruction::GetVariable(_) => {}
-            Instruction::SetVariable(_, source) => {
-                sources.push(source);
-            }
-            Instruction::This => {}
-            Instruction::NewObject => {}
-            Instruction::GetField { object, key } => {
-                sources.push(object);
-                sources.push(key);
-            }
-            Instruction::SetField { object, key, value } => {
-                sources.push(object);
-                sources.push(key);
-                sources.push(value);
-            }
-            Instruction::GetFieldConst { object, .. } => {
-                sources.push(object);
-            }
-            Instruction::SetFieldConst { object, value, .. } => {
-                sources.push(object);
-                sources.push(value);
-            }
-            Instruction::Phi(_) => {}
-            Instruction::Upsilon(_, source) => {
-                sources.push(source);
-            }
-            Instruction::UnOp { source, .. } => {
-                sources.push(source);
-            }
-            Instruction::BinOp { left, right, .. } => {
-                sources.push(left);
-                sources.push(right);
-            }
-            Instruction::BinComp { left, right, .. } => {
-                sources.push(left);
-                sources.push(right);
-            }
-            Instruction::Push(source) => {
-                sources.push(source);
-            }
-            Instruction::Pop => {}
-            Instruction::Call { source, .. } => {
-                sources.push(source);
-            }
-            Instruction::Method { source, this, .. } => {
-                sources.push(source);
-                sources.push(this);
-            }
+            Instruction::Copy(source) => Array::from_iter([source]),
+            Instruction::SetVariable(_, source) => Array::from_iter([source]),
+            Instruction::GetField { object, key } => Array::from_iter([object, key]),
+            Instruction::SetField { object, key, value } => Array::from_iter([object, key, value]),
+            Instruction::GetFieldConst { object, .. } => Array::from_iter([object]),
+            Instruction::SetFieldConst { object, value, .. } => Array::from_iter([object, value]),
+            Instruction::Upsilon(_, source) => Array::from_iter([source]),
+            Instruction::UnOp { source, .. } => Array::from_iter([source]),
+            Instruction::BinOp { left, right, .. } => Array::from_iter([left, right]),
+            Instruction::BinComp { left, right, .. } => Array::from_iter([left, right]),
+            Instruction::Push(source) => Array::from_iter([source]),
+            Instruction::Call { source, .. } => Array::from_iter([source]),
+            Instruction::Method { source, this, .. } => Array::from_iter([source, this]),
+            _ => Array::from_iter([]),
         }
-
-        sources
+        .into_iter()
     }
 
     pub fn has_value(&self) -> bool {
         match self {
-            Instruction::NoOp => false,
             Instruction::Copy(_) => true,
             Instruction::Undefined => true,
             Instruction::Constant(_) => true,
             Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
-            Instruction::SetVariable { .. } => false,
             Instruction::This => true,
             Instruction::NewObject => true,
             Instruction::GetField { .. } => true,
-            Instruction::SetField { .. } => false,
             Instruction::GetFieldConst { .. } => true,
-            Instruction::SetFieldConst { .. } => false,
             Instruction::Phi(_) => true,
-            Instruction::Upsilon(_, _) => false,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
             Instruction::BinComp { .. } => true,
-            Instruction::Push { .. } => false,
             Instruction::Pop => true,
-            Instruction::Call { .. } => false,
-            Instruction::Method { .. } => false,
+            _ => false,
         }
     }
 
     pub fn has_effect(&self) -> bool {
         match self {
-            Instruction::NoOp => false,
-            Instruction::Copy(_) => false,
-            Instruction::Undefined => false,
-            Instruction::Constant(_) => false,
-            Instruction::Closure(_) => false,
-            Instruction::GetVariable(_) => false,
             Instruction::SetVariable { .. } => true,
-            Instruction::This => false,
-            Instruction::NewObject => false,
-            Instruction::GetField { .. } => false,
             Instruction::SetField { .. } => true,
-            Instruction::GetFieldConst { .. } => false,
             Instruction::SetFieldConst { .. } => true,
-            Instruction::Phi(_) => false,
             Instruction::Upsilon(_, _) => true,
-            Instruction::UnOp { .. } => false,
-            Instruction::BinOp { .. } => false,
-            Instruction::BinComp { .. } => false,
             Instruction::Push { .. } => true,
             Instruction::Pop => true,
             Instruction::Call { .. } => true,
             Instruction::Method { .. } => true,
+            _ => false,
         }
     }
 }
@@ -368,8 +256,6 @@ pub enum Exit {
     },
 }
 
-pub const MAX_BLOCK_SUCCESSORS: usize = 2;
-
 impl Exit {
     pub fn cond_source(&self) -> Option<InstId> {
         match self {
@@ -378,42 +264,30 @@ impl Exit {
         }
     }
 
-    pub fn successors(&self) -> ArrayVec<BlockId, MAX_BLOCK_SUCCESSORS> {
-        let mut successors = ArrayVec::<_, 2>::new();
+    pub fn successors(&self) -> impl Iterator<Item = BlockId> + '_ {
+        type Array = ArrayVec<BlockId, 3>;
 
         match self {
-            Exit::Return { .. } => {}
-            Exit::Jump(block_id) => {
-                successors.push(*block_id);
-            }
-            Exit::Branch {
+            Exit::Return { .. } => Array::from_iter([]),
+            &Exit::Jump(block_id) => Array::from_iter([block_id]),
+            &Exit::Branch {
                 if_true, if_false, ..
-            } => {
-                successors.push(*if_true);
-                successors.push(*if_false);
-            }
+            } => Array::from_iter([if_true, if_false]),
         }
-
-        successors
+        .into_iter()
     }
 
-    pub fn successors_mut(&mut self) -> ArrayVec<&mut BlockId, MAX_BLOCK_SUCCESSORS> {
-        let mut successors = ArrayVec::<_, 2>::new();
+    pub fn successors_mut(&mut self) -> impl Iterator<Item = &mut BlockId> + '_ {
+        type Array<'a> = ArrayVec<&'a mut BlockId, 3>;
 
         match self {
-            Exit::Return { .. } => {}
-            Exit::Jump(block_id) => {
-                successors.push(block_id);
-            }
+            Exit::Return { .. } => Array::from_iter([]),
+            Exit::Jump(block_id) => Array::from_iter([block_id]),
             Exit::Branch {
                 if_true, if_false, ..
-            } => {
-                successors.push(if_true);
-                successors.push(if_false);
-            }
+            } => Array::from_iter([if_true, if_false]),
         }
-
-        successors
+        .into_iter()
     }
 }
 
