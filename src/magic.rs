@@ -28,12 +28,13 @@ pub struct MagicReadOnly;
 pub trait Magic<'gc> {
     fn get(&self, ctx: Context<'gc>) -> Result<Value<'gc>, Error>;
 
-    fn read_only(&self) -> bool {
-        true
-    }
-
     fn set(&self, _ctx: Context<'gc>, _value: Value<'gc>) -> Result<(), Error> {
         Err(MagicReadOnly.into())
+    }
+
+    // Magic value should be treated as read-only, calling `Magic::set` will error.
+    fn read_only(&self) -> bool {
+        true
     }
 }
 
