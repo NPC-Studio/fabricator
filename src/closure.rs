@@ -3,9 +3,7 @@ use std::fmt;
 use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
-use crate::{
-    bytecode::ByteCode, instructions::HeapIdx, object::Object, string::String, value::Value,
-};
+use crate::{bytecode::ByteCode, instructions::HeapIdx, string::String, value::Value};
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
@@ -77,7 +75,7 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
     heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
-    this: Option<Object<'gc>>,
+    this: Value<'gc>,
 }
 
 impl<'gc> fmt::Debug for Closure<'gc> {
@@ -103,7 +101,7 @@ impl<'gc> Closure<'gc> {
     pub fn new(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
-        this: Option<Object<'gc>>,
+        this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
         Self::with_upvalues(mc, proto, &[], this)
     }
@@ -113,7 +111,7 @@ impl<'gc> Closure<'gc> {
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
         upvalues: &[HeapVar<'gc>],
-        this: Option<Object<'gc>>,
+        this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
         let mut heap = Vec::new();
         for &heap_desc in &proto.heap_vars {
@@ -154,9 +152,9 @@ impl<'gc> Closure<'gc> {
 
     /// Return a clone of this closure with the embedded `this` value changed to the provided one.
     ///
-    /// If `None` is provided, then the bound `this` object will be removed.
+    /// If `Value::Undefined` is provided, then the bound `this` object will be removed.
     #[inline]
-    pub fn rebind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Closure<'gc> {
+    pub fn rebind(self, mc: &Mutation<'gc>, this: Value<'gc>) -> Closure<'gc> {
         Self(Gc::new(
             mc,
             ClosureInner {
@@ -167,9 +165,11 @@ impl<'gc> Closure<'gc> {
         ))
     }
 
-    /// Returns the currently bound `this` object, if one is set.
+    /// Returns the currently bound `this` object.
+    ///
+    /// Will return `Value::Undefined` if there is no bound `this` object set.
     #[inline]
-    pub fn this(self) -> Option<Object<'gc>> {
+    pub fn this(self) -> Value<'gc> {
         self.0.this
     }
 

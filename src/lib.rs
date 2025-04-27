@@ -12,5 +12,6 @@ pub mod stack;
 pub mod stash;
 pub mod string;
 pub mod thread;
+pub mod userdata;
 pub mod util;
 pub mod value;

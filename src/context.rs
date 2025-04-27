@@ -104,14 +104,20 @@ impl Interpreter {
             globals.set(&ctx, String::new(&ctx, "print"), Value::Callback(print));
 
             let method = Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                let rebound = match (stack.get(0), stack.get(1).to_function()) {
-                    (Value::Object(this), Some(func)) => func.rebind(&ctx, Some(this)),
-                    (Value::Undefined, Some(func)) => func.rebind(&ctx, None),
-                    _ => return Err("bad parameter to `method`".into()),
+                let Some(func) = stack.get(1).to_function() else {
+                    return Err("`method` must be called on a callback or closure".into());
                 };
-                stack.clear();
-                stack.push_back(rebound.into());
-                Ok(())
+
+                match stack.get(0) {
+                    obj @ (Value::Undefined | Value::Object(_) | Value::UserData(_)) => {
+                        stack.clear();
+                        stack.push_back(func.rebind(&ctx, obj).into());
+                        Ok(())
+                    }
+                    _ => {
+                        Err("`method` self value must be an object, userdata, or undefined".into())
+                    }
+                }
             });
             globals.set(&ctx, String::new(&ctx, "method"), Value::Callback(method));
         });

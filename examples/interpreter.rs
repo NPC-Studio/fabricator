@@ -13,6 +13,7 @@ use fabricator::{
     context::Interpreter,
     string::String,
     thread::Thread,
+    value::Value,
 };
 use gc_arena::{Gc, Mutation};
 
@@ -37,7 +38,7 @@ fn main() {
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
             let prototype = compile(&ctx, &code).unwrap();
-            let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), None).unwrap();
+            let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), Value::Undefined).unwrap();
 
             let thread = Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(ctx, closure).unwrap());

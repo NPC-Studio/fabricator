@@ -1,6 +1,8 @@
 use gc_arena::{Collect, Mutation};
 
-use crate::{callback::Callback, closure::Closure, object::Object, string::String};
+use crate::{
+    callback::Callback, closure::Closure, object::Object, string::String, userdata::UserData,
+};
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -10,7 +12,7 @@ pub enum Function<'gc> {
 }
 
 impl<'gc> Function<'gc> {
-    pub fn rebind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Self {
+    pub fn rebind(self, mc: &Mutation<'gc>, this: Value<'gc>) -> Self {
         match self {
             Function::Closure(closure) => Function::Closure(closure.rebind(mc, this)),
             Function::Callback(callback) => Function::Callback(callback.rebind(mc, this)),
@@ -38,6 +40,7 @@ pub enum Value<'gc> {
     Object(Object<'gc>),
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
+    UserData(UserData<'gc>),
 }
 
 impl<'gc> Default for Value<'gc> {
@@ -47,6 +50,11 @@ impl<'gc> Default for Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
+    #[inline]
+    pub fn is_undefined(self) -> bool {
+        matches!(self, Value::Undefined)
+    }
+
     #[inline]
     pub fn to_bool(self) -> bool {
         match self {

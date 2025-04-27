@@ -11,6 +11,7 @@ use crate::{
     instructions::{ConstIdx, HeapIdx, ParamIdx, ProtoIdx, RegIdx},
     object::Object,
     stack::Stack,
+    string::String,
     value::{Function, Value},
 };
 
@@ -67,14 +68,14 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
-        self.exec_with(ctx, closure, ctx.globals())
+        self.exec_with(ctx, closure, Value::Object(ctx.globals()))
     }
 
     pub fn exec_with(
         self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Object<'gc>,
+        this: Value<'gc>,
     ) -> Result<Vec<Value<'gc>>, Error> {
         let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
         thread.registers.clear();
@@ -91,7 +92,7 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Object<'gc>,
+        this: Value<'gc>,
         stack_bottom: usize,
     ) -> Result<(), Error> {
         let proto = closure.prototype();
@@ -110,7 +111,11 @@ impl<'gc> ThreadState<'gc> {
             match dispatch(
                 ctx,
                 closure,
-                closure.this().unwrap_or(this),
+                if closure.this().is_undefined() {
+                    this
+                } else {
+                    closure.this()
+                },
                 &mut pc,
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
@@ -149,7 +154,7 @@ impl<'gc> ThreadState<'gc> {
 enum Next<'gc> {
     Call {
         closure: Closure<'gc>,
-        this: Object<'gc>,
+        this: Value<'gc>,
         returns: u8,
     },
     Return,
@@ -158,7 +163,7 @@ enum Next<'gc> {
 fn dispatch<'gc>(
     ctx: Context<'gc>,
     closure: Closure<'gc>,
-    this: Object<'gc>,
+    this: Value<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
     stack: Stack<'gc, '_>,
@@ -167,7 +172,7 @@ fn dispatch<'gc>(
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Object<'gc>,
+        this: Value<'gc>,
         registers: &'a mut [Value<'gc>],
         stack: Stack<'gc, 'a>,
         num_params: usize,
@@ -177,7 +182,7 @@ fn dispatch<'gc>(
         #[inline]
         fn do_call(
             &mut self,
-            this: Object<'gc>,
+            this: Value<'gc>,
             func: Function<'gc>,
             returns: u8,
         ) -> Result<ControlFlow<Next<'gc>>, Error> {
@@ -198,6 +203,46 @@ fn dispatch<'gc>(
                     ControlFlow::Continue(())
                 }
             })
+        }
+
+        #[inline]
+        fn do_get_field(&mut self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
+            match obj {
+                Value::Object(object) => Ok(object.get(key)),
+                Value::UserData(user_data) => {
+                    if let Some(methods) = user_data.methods() {
+                        Ok(methods.get_field(self.ctx, user_data, key))
+                    } else {
+                        Err(VmError::BadObject)
+                    }
+                }
+                _ => Err(VmError::BadObject),
+            }?
+            .ok_or(VmError::NoSuchField.into())
+        }
+
+        #[inline]
+        fn do_set_field(
+            &mut self,
+            obj: Value<'gc>,
+            key: String<'gc>,
+            value: Value<'gc>,
+        ) -> Result<(), Error> {
+            match obj {
+                Value::Object(object) => {
+                    object.set(&self.ctx, key, value);
+                }
+                Value::UserData(user_data) => {
+                    if let Some(methods) = user_data.methods() {
+                        methods.set_field(self.ctx, user_data, key, value)?;
+                    } else {
+                        return Err(VmError::BadObject.into());
+                    }
+                }
+                _ => return Err(VmError::BadObject.into()),
+            }
+
+            Ok(())
         }
     }
 
@@ -230,7 +275,7 @@ fn dispatch<'gc>(
                 &self.ctx,
                 proto,
                 self.closure.heap(),
-                Some(self.this),
+                self.this,
             )?);
             Ok(())
         }
@@ -249,7 +294,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Object(self.this);
+            self.registers[dest as usize] = self.this;
             Ok(())
         }
 
@@ -276,13 +321,12 @@ fn dispatch<'gc>(
             object: RegIdx,
             key: RegIdx,
         ) -> Result<(), Self::Error> {
-            let Value::Object(object) = self.registers[object as usize] else {
-                return Err(VmError::BadObject.into());
-            };
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = object.get(key).ok_or(VmError::NoSuchField)?;
+
+            self.registers[dest as usize] =
+                self.do_get_field(self.registers[object as usize], key)?;
             Ok(())
         }
 
@@ -293,14 +337,14 @@ fn dispatch<'gc>(
             key: RegIdx,
             value: RegIdx,
         ) -> Result<(), Self::Error> {
-            let Value::Object(object) = self.registers[object as usize] else {
-                return Err(VmError::BadObject.into());
-            };
             let Value::String(key) = self.registers[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            object.set(&self.ctx, key, self.registers[value as usize]);
-            Ok(())
+            self.do_set_field(
+                self.registers[object as usize],
+                key,
+                self.registers[value as usize],
+            )
         }
 
         #[inline]
@@ -310,13 +354,11 @@ fn dispatch<'gc>(
             object: RegIdx,
             key: ConstIdx,
         ) -> Result<(), Self::Error> {
-            let Value::Object(object) = self.registers[object as usize] else {
-                return Err(VmError::BadObject.into());
-            };
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            self.registers[dest as usize] = object.get(key).ok_or(VmError::NoSuchField)?;
+            self.registers[dest as usize] =
+                self.do_get_field(self.registers[object as usize], key)?;
             Ok(())
         }
 
@@ -327,14 +369,14 @@ fn dispatch<'gc>(
             key: ConstIdx,
             value: RegIdx,
         ) -> Result<(), Self::Error> {
-            let Value::Object(object) = self.registers[object as usize] else {
-                return Err(VmError::BadObject.into());
-            };
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
                 return Err(VmError::BadKey.into());
             };
-            object.set(&self.ctx, key, self.registers[value as usize]);
-            Ok(())
+            self.do_set_field(
+                self.registers[object as usize],
+                key,
+                self.registers[value as usize],
+            )
         }
 
         #[inline]
@@ -472,10 +514,7 @@ fn dispatch<'gc>(
             func: RegIdx,
             returns: u8,
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-            let Value::Object(this) = self.registers[this as usize] else {
-                return Err(VmError::BadObject.into());
-            };
-
+            let this = self.registers[this as usize];
             let func = self.registers[func as usize]
                 .to_function()
                 .ok_or(VmError::BadCall)?;

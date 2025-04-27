@@ -2,22 +2,18 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{context::Context, error::Error, object::Object, stack::Stack};
+use crate::{context::Context, error::Error, stack::Stack, value::Value};
 
 pub trait CallbackFn<'gc> {
-    fn call(
-        &self,
-        ctx: Context<'gc>,
-        this: Object<'gc>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<(), Error>;
+    fn call(&self, ctx: Context<'gc>, this: Value<'gc>, stack: Stack<'gc, '_>)
+        -> Result<(), Error>;
 }
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct CallbackInner<'gc> {
     callback_fn: Gc<'gc, dyn CallbackFn<'gc>>,
-    this: Option<Object<'gc>>,
+    this: Value<'gc>,
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -28,7 +24,7 @@ impl<'gc> Callback<'gc> {
     pub fn new<C: CallbackFn<'gc> + Collect<'gc> + 'gc>(
         mc: &Mutation<'gc>,
         callback: C,
-        this: Option<Object<'gc>>,
+        this: Value<'gc>,
     ) -> Self {
         let callback_fn = gc_arena::unsize!(Gc::new(mc, callback) => dyn CallbackFn);
         Self(Gc::new(mc, CallbackInner { callback_fn, this }))
@@ -40,12 +36,18 @@ impl<'gc> Callback<'gc> {
     pub fn call_with(
         self,
         ctx: Context<'gc>,
-        this: Object<'gc>,
+        this: Value<'gc>,
         stack: Stack<'gc, '_>,
     ) -> Result<(), Error> {
-        self.0
-            .callback_fn
-            .call(ctx, self.0.this.unwrap_or(this), stack)
+        self.0.callback_fn.call(
+            ctx,
+            if self.0.this.is_undefined() {
+                this
+            } else {
+                self.0.this
+            },
+            stack,
+        )
     }
 
     /// Call the contained callback.
@@ -53,13 +55,13 @@ impl<'gc> Callback<'gc> {
     /// If no `this` object is bound to the callback, then the `this` object will be set as
     /// `ctx.globals()`.
     pub fn call(self, ctx: Context<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error> {
-        self.call_with(ctx, ctx.globals(), stack)
+        self.call_with(ctx, Value::Object(ctx.globals()), stack)
     }
 
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.
     ///
-    /// If `None` is provided, then the bound `this` object will be removed.
-    pub fn rebind(self, mc: &Mutation<'gc>, this: Option<Object<'gc>>) -> Callback<'gc> {
+    /// If `Value::Undefined` is provided, then the bound `this` object will be removed.
+    pub fn rebind(self, mc: &Mutation<'gc>, this: Value<'gc>) -> Callback<'gc> {
         Self(Gc::new(
             mc,
             CallbackInner {
@@ -70,7 +72,7 @@ impl<'gc> Callback<'gc> {
     }
 
     /// Returns the currently bound `this` object, if one is set.
-    pub fn this(self) -> Option<Object<'gc>> {
+    pub fn this(self) -> Value<'gc> {
         self.0.this
     }
 
@@ -80,7 +82,7 @@ impl<'gc> Callback<'gc> {
     /// to associate GC data with this function, use [`Callback::from_fn_with`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
-        F: 'static + Fn(Context<'gc>, Object<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
+        F: 'static + Fn(Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
     {
         Self::from_fn_with(mc, (), move |_, ctx, this, stack| call(ctx, this, stack))
     }
@@ -89,7 +91,7 @@ impl<'gc> Callback<'gc> {
     pub fn from_fn_with<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect<'gc>,
-        F: 'static + Fn(&R, Context<'gc>, Object<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
+        F: 'static + Fn(&R, Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
@@ -102,19 +104,19 @@ impl<'gc> Callback<'gc> {
         impl<'gc, R, F> CallbackFn<'gc> for RootCallback<R, F>
         where
             R: 'gc + Collect<'gc>,
-            F: 'static + Fn(&R, Context<'gc>, Object<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
+            F: 'static + Fn(&R, Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error>,
         {
             fn call(
                 &self,
                 ctx: Context<'gc>,
-                this: Object<'gc>,
+                this: Value<'gc>,
                 stack: Stack<'gc, '_>,
             ) -> Result<(), Error> {
                 (self.call)(&self.root, ctx, this, stack)
             }
         }
 
-        Callback::new(mc, RootCallback { root, call }, None)
+        Callback::new(mc, RootCallback { root, call }, Value::Undefined)
     }
 
     pub fn from_inner(inner: Gc<'gc, CallbackInner<'gc>>) -> Self {
