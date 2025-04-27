@@ -4,7 +4,7 @@ use std::{
 };
 
 use fabricator::{
-    closure::Closure, compiler::compile, context::Interpreter, error::Error, thread::Thread,
+    closure::Closure, compiler::compile, error::Error, interpreter::Interpreter, thread::Thread,
     value::Value,
 };
 use gc_arena::Gc;
@@ -13,8 +13,14 @@ fn run_code(code: &str) -> Result<(), Error> {
     let mut interpreter = Interpreter::testing();
 
     interpreter.enter(|ctx| {
-        let prototype = compile(&ctx, &code)?;
-        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), Value::Undefined).unwrap();
+        let prototype = compile(&ctx, ctx.stdlib(), &code)?;
+        let closure = Closure::new(
+            &ctx,
+            Gc::new(&ctx, prototype),
+            ctx.stdlib(),
+            Value::Undefined,
+        )
+        .unwrap();
 
         let thread = Thread::new(&ctx);
         thread.exec(ctx, closure)?;

@@ -6,9 +6,9 @@ use thiserror::Error;
 use crate::{
     bytecode,
     closure::{Closure, Constant},
-    context::Context,
     error::Error,
-    instructions::{ConstIdx, HeapIdx, ParamIdx, ProtoIdx, RegIdx},
+    instructions::{ConstIdx, HeapIdx, MagicIdx, ParamIdx, ProtoIdx, RegIdx},
+    interpreter::Context,
     object::Object,
     stack::Stack,
     string::String,
@@ -27,8 +27,10 @@ pub enum VmError {
     NoSuchField,
     #[error("bad call")]
     BadCall,
-    #[error("bad closure")]
-    BadClosure,
+    #[error("bad closure index")]
+    BadClosureIdx,
+    #[error("bad magic index")]
+    BadMagicIdx,
     #[error("stack underflow")]
     StackUnderflow,
 }
@@ -270,11 +272,14 @@ fn dispatch<'gc>(
                 .prototype()
                 .prototypes
                 .get(proto as usize)
-                .ok_or(VmError::BadClosure)?;
+                .ok_or(VmError::BadClosureIdx)?;
+            // inner closures inherit the set of magic values from the parent, and inherit the
+            // current `this` value.
             self.registers[dest as usize] = Value::Closure(Closure::with_upvalues(
                 &self.ctx,
                 proto,
                 self.closure.heap(),
+                self.closure.magic(),
                 self.this,
             )?);
             Ok(())
@@ -289,6 +294,12 @@ fn dispatch<'gc>(
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.closure.heap()[heap as usize].set(&self.ctx, self.registers[source as usize]);
+            Ok(())
+        }
+
+        #[inline]
+        fn global(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Object(self.ctx.globals());
             Ok(())
         }
 
@@ -491,6 +502,28 @@ fn dispatch<'gc>(
                     .pop_back()
                     .ok_or(VmError::StackUnderflow)?;
             }
+            Ok(())
+        }
+
+        #[inline]
+        fn get_magic(&mut self, dest: RegIdx, magic: MagicIdx) -> Result<(), Self::Error> {
+            let magic = self
+                .closure
+                .magic()
+                .get(magic as usize)
+                .ok_or(VmError::BadMagicIdx)?;
+            self.registers[dest as usize] = magic.get(self.ctx)?;
+            Ok(())
+        }
+
+        #[inline]
+        fn set_magic(&mut self, magic: MagicIdx, source: RegIdx) -> Result<(), Self::Error> {
+            let magic = self
+                .closure
+                .magic()
+                .get(magic as usize)
+                .ok_or(VmError::BadMagicIdx)?;
+            magic.set(self.ctx, self.registers[source as usize])?;
             Ok(())
         }
 

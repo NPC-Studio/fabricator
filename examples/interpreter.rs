@@ -6,11 +6,11 @@ use fabricator::{
     compiler::{
         codegen::codegen,
         compile::{compile, optimize_ir},
-        frontend::compile_ir,
+        frontend::{compile_ir, MagicMode},
         parser::parse,
         string_interner::StringInterner,
     },
-    context::Interpreter,
+    interpreter::Interpreter,
     string::String,
     thread::Thread,
     value::Value,
@@ -37,8 +37,14 @@ fn main() {
             let mut code = StdString::new();
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
-            let prototype = compile(&ctx, &code).unwrap();
-            let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), Value::Undefined).unwrap();
+            let prototype = compile(&ctx, ctx.stdlib(), &code).unwrap();
+            let closure = Closure::new(
+                &ctx,
+                Gc::new(&ctx, prototype),
+                ctx.stdlib(),
+                Value::Undefined,
+            )
+            .unwrap();
 
             let thread = Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(ctx, closure).unwrap());
@@ -58,11 +64,23 @@ fn main() {
             }
 
             let parsed = parse(&code, Interner(&ctx)).unwrap();
-            let mut ir = compile_ir(&parsed).unwrap();
+            let mut ir = compile_ir(&parsed, |magic| {
+                let index = ctx.stdlib().find(magic.as_str())?;
+                let magic = ctx.stdlib().get(index).unwrap();
+                Some(if magic.read_only() {
+                    MagicMode::ReadOnly
+                } else {
+                    MagicMode::ReadWrite
+                })
+            })
+            .unwrap();
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = codegen(&ctx, &ir).unwrap();
+            let prototype = codegen(&ctx, &ir, |magic| {
+                ctx.stdlib().find(magic.as_str())?.try_into().ok()
+            })
+            .unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

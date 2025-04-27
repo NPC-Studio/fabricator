@@ -7,7 +7,7 @@ use gc_arena::{arena::Root, Collect, DynamicRootSet, Gc, Mutation, RefLock, Root
 
 use crate::{
     any::Any,
-    context::Context,
+    interpreter::Context,
     stash::{Fetchable, Stashable},
 };
 

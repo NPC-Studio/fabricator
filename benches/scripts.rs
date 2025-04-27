@@ -5,7 +5,7 @@ use std::{
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use fabricator::{
-    closure::Closure, compiler::compile, context::Interpreter, thread::Thread, value::Value,
+    closure::Closure, compiler::compile, interpreter::Interpreter, thread::Thread, value::Value,
 };
 use gc_arena::Gc;
 
@@ -13,8 +13,14 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
     let mut interpreter = Interpreter::testing();
 
     let (thread, closure) = interpreter.enter(|ctx| {
-        let prototype = compile(&ctx, &code).expect("compile error");
-        let closure = Closure::new(&ctx, Gc::new(&ctx, prototype), Value::Undefined).unwrap();
+        let prototype = compile(&ctx, ctx.stdlib(), &code).expect("compile error");
+        let closure = Closure::new(
+            &ctx,
+            Gc::new(&ctx, prototype),
+            ctx.stdlib(),
+            Value::Undefined,
+        )
+        .unwrap();
 
         let thread = Thread::new(&ctx);
         (ctx.stash(thread), ctx.stash(closure))

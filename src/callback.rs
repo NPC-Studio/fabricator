@@ -2,7 +2,7 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{context::Context, error::Error, stack::Stack, value::Value};
+use crate::{interpreter::Context, error::Error, stack::Stack, value::Value};
 
 pub trait CallbackFn<'gc> {
     fn call(&self, ctx: Context<'gc>, this: Value<'gc>, stack: Stack<'gc, '_>)

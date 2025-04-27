@@ -3,7 +3,9 @@ use std::fmt;
 use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
-use crate::{bytecode::ByteCode, instructions::HeapIdx, string::String, value::Value};
+use crate::{
+    bytecode::ByteCode, instructions::HeapIdx, magic::MagicSet, string::String, value::Value,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
@@ -75,6 +77,7 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
     heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
+    magic: Gc<'gc, MagicSet<'gc>>,
     this: Value<'gc>,
 }
 
@@ -101,9 +104,10 @@ impl<'gc> Closure<'gc> {
     pub fn new(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
+        magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
-        Self::with_upvalues(mc, proto, &[], this)
+        Self::with_upvalues(mc, proto, &[], magic, this)
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
@@ -111,6 +115,7 @@ impl<'gc> Closure<'gc> {
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
         upvalues: &[HeapVar<'gc>],
+        magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
         let mut heap = Vec::new();
@@ -130,6 +135,7 @@ impl<'gc> Closure<'gc> {
             ClosureInner {
                 proto,
                 heap: Gc::new(&mc, heap.into_boxed_slice()),
+                magic,
                 this,
             },
         )))
@@ -150,6 +156,19 @@ impl<'gc> Closure<'gc> {
         self.0.proto
     }
 
+    /// Return the set of magic values that this closure was created with.
+    pub fn magic(self) -> Gc<'gc, MagicSet<'gc>> {
+        self.0.magic
+    }
+
+    /// Returns the currently bound `this` object.
+    ///
+    /// Will return `Value::Undefined` if there is no bound `this` object set.
+    #[inline]
+    pub fn this(self) -> Value<'gc> {
+        self.0.this
+    }
+
     /// Return a clone of this closure with the embedded `this` value changed to the provided one.
     ///
     /// If `Value::Undefined` is provided, then the bound `this` object will be removed.
@@ -160,17 +179,10 @@ impl<'gc> Closure<'gc> {
             ClosureInner {
                 proto: self.0.proto,
                 heap: self.0.heap,
+                magic: self.0.magic,
                 this,
             },
         ))
-    }
-
-    /// Returns the currently bound `this` object.
-    ///
-    /// Will return `Value::Undefined` if there is no bound `this` object set.
-    #[inline]
-    pub fn this(self) -> Value<'gc> {
-        self.0.this
     }
 
     #[inline]

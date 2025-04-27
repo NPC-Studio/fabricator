@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     instructions::{
-        for_each_instruction, ConstIdx, HeapIdx, Instruction, ParamIdx, ProtoIdx, RegIdx,
+        for_each_instruction, ConstIdx, HeapIdx, Instruction, MagicIdx, ParamIdx, ProtoIdx, RegIdx,
     },
     util::bit_containers::BitVec,
 };

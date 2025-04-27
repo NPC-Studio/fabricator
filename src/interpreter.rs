@@ -1,9 +1,10 @@
 use std::ops;
 
-use gc_arena::{arena::Root, Arena, Collect, Mutation, Rootable};
+use gc_arena::{arena::Root, Arena, Collect, Gc, Mutation, Rootable};
 
 use crate::{
     callback::Callback,
+    magic::MagicSet,
     object::Object,
     registry::{Registry, Singleton},
     stash::{Fetchable, Stashable},
@@ -32,6 +33,10 @@ impl<'gc> Context<'gc> {
     /// This can also be done automatically with `Deref` coercion.
     pub fn mutation(self) -> &'gc Mutation<'gc> {
         self.mutation
+    }
+
+    pub fn stdlib(self) -> Gc<'gc, MagicSet<'gc>> {
+        self.state.stdlib
     }
 
     pub fn globals(self) -> Object<'gc> {
@@ -78,10 +83,10 @@ impl Interpreter {
     pub fn testing() -> Self {
         let mut this = Self::empty();
 
-        this.enter(|ctx| {
-            let globals = ctx.globals();
+        this.arena.mutate_root(|mc, root| {
+            let mut stdlib = MagicSet::new();
 
-            let assert = Callback::from_fn(&ctx, |_, _, stack| {
+            let assert = Callback::from_fn(mc, |_, _, stack| {
                 for i in 0..stack.len() {
                     if !stack.get(i).to_bool() {
                         return Err("assert failed".into());
@@ -89,9 +94,11 @@ impl Interpreter {
                 }
                 Ok(())
             });
-            globals.set(&ctx, String::new(&ctx, "assert"), Value::Callback(assert));
+            stdlib
+                .add_constant(mc, String::new(mc, "assert"), Value::Callback(assert))
+                .unwrap();
 
-            let print = Callback::from_fn(&ctx, |_, _, stack| {
+            let print = Callback::from_fn(mc, |_, _, stack| {
                 for i in 0..stack.len() {
                     print!("{:?}", stack.get(i));
                     if i != stack.len() - 1 {
@@ -101,9 +108,11 @@ impl Interpreter {
                 println!();
                 Ok(())
             });
-            globals.set(&ctx, String::new(&ctx, "print"), Value::Callback(print));
+            stdlib
+                .add_constant(mc, String::new(mc, "print"), Value::Callback(print))
+                .unwrap();
 
-            let method = Callback::from_fn(&ctx, |ctx, _, mut stack| {
+            let method = Callback::from_fn(mc, |ctx, _, mut stack| {
                 let Some(func) = stack.get(1).to_function() else {
                     return Err("`method` must be called on a callback or closure".into());
                 };
@@ -119,7 +128,11 @@ impl Interpreter {
                     }
                 }
             });
-            globals.set(&ctx, String::new(&ctx, "method"), Value::Callback(method));
+            stdlib
+                .add_constant(mc, String::new(mc, "method"), Value::Callback(method))
+                .unwrap();
+
+            root.stdlib = Gc::new(mc, stdlib);
         });
 
         this
@@ -142,6 +155,7 @@ impl Interpreter {
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 struct State<'gc> {
+    stdlib: Gc<'gc, MagicSet<'gc>>,
     globals: Object<'gc>,
     registry: Registry<'gc>,
 }
@@ -149,6 +163,7 @@ struct State<'gc> {
 impl<'gc> State<'gc> {
     fn new(mc: &Mutation<'gc>) -> State<'gc> {
         Self {
+            stdlib: Gc::new(mc, MagicSet::default()),
             globals: Object::new(mc),
             registry: Registry::new(mc),
         }

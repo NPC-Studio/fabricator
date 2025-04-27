@@ -5,6 +5,7 @@ pub type ConstIdx = u16;
 pub type ParamIdx = u8;
 pub type HeapIdx = u8;
 pub type ProtoIdx = u8;
+pub type MagicIdx = u16;
 
 macro_rules! for_each_instruction {
     ($macro:ident) => {
@@ -14,6 +15,7 @@ macro_rules! for_each_instruction {
             simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
+            simple => global = Global { dest: RegIdx };
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
             simple => param = Param { dest: RegIdx, index: ParamIdx };
@@ -31,6 +33,8 @@ macro_rules! for_each_instruction {
             simple => test_less_equal = TestLessEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => push = Push { source: RegIdx, len: u8 };
             simple => pop = Pop { dest: RegIdx, len: u8 };
+            simple => get_magic = GetMagic { dest: RegIdx, magic: MagicIdx };
+            simple => set_magic = SetMagic { magic: MagicIdx, source: RegIdx };
 
             jump => jump = Jump { offset: i16 };
             jump => jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };

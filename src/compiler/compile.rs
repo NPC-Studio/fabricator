@@ -1,4 +1,4 @@
-use gc_arena::Mutation;
+use gc_arena::{Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
@@ -10,11 +10,12 @@ use crate::{
             shadow_reduction::reduce_shadows, ssa_conversion::convert_to_ssa,
         },
         codegen::codegen,
-        frontend::{compile_ir, FrontendError},
+        frontend::{compile_ir, FrontendError, MagicMode},
         ir,
         parser::{parse, ParseError},
         string_interner::StringInterner,
     },
+    magic::MagicSet,
     string::String,
 };
 
@@ -32,7 +33,11 @@ pub enum CompilerError {
     Frontend(#[from] FrontendError),
 }
 
-pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, CompilerError> {
+pub fn compile<'gc>(
+    mc: &Mutation<'gc>,
+    stdlib: Gc<'gc, MagicSet<'gc>>,
+    src: &str,
+) -> Result<Prototype<'gc>, CompilerError> {
     struct Interner<'a, 'gc>(&'a Mutation<'gc>);
 
     impl<'a, 'gc> StringInterner for Interner<'a, 'gc> {
@@ -44,9 +49,21 @@ pub fn compile<'gc>(mc: &Mutation<'gc>, src: &str) -> Result<Prototype<'gc>, Com
     }
 
     let parsed = parse(src, Interner(mc)).unwrap();
-    let mut ir = compile_ir(&parsed).unwrap();
+    let mut ir = compile_ir(&parsed, |magic| {
+        let index = stdlib.find(magic.as_str())?;
+        let magic = stdlib.get(index).unwrap();
+        Some(if magic.read_only() {
+            MagicMode::ReadOnly
+        } else {
+            MagicMode::ReadWrite
+        })
+    })
+    .unwrap();
     optimize_ir(&mut ir).expect("Internal Compiler Error");
-    let prototype = codegen(mc, &ir).unwrap();
+    let prototype = codegen(mc, &ir, |magic| {
+        stdlib.find(magic.as_str())?.try_into().ok()
+    })
+    .unwrap();
 
     Ok(prototype)
 }

@@ -101,6 +101,8 @@ pub enum Instruction<S> {
     Closure(FuncId),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
+    GetMagic(S),
+    SetMagic(S, InstId),
     This,
     NewObject,
     Parameter(ParamIndex),
@@ -178,6 +180,7 @@ impl<S> Instruction<S> {
         match self {
             &Instruction::Copy(source) => make_iter!([source]),
             &Instruction::SetVariable(_, source) => make_iter!([source]),
+            &Instruction::SetMagic(_, source) => make_iter!([source]),
             &Instruction::GetField { object, key } => make_iter!([object, key]),
             &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -210,6 +213,7 @@ impl<S> Instruction<S> {
         match self {
             Instruction::Copy(source) => make_iter!([source]),
             Instruction::SetVariable(_, source) => make_iter!([source]),
+            Instruction::SetMagic(_, source) => make_iter!([source]),
             Instruction::GetField { object, key } => make_iter!([object, key]),
             Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -233,6 +237,7 @@ impl<S> Instruction<S> {
             Instruction::Constant(_) => true,
             Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
+            Instruction::GetMagic(_) => true,
             Instruction::This => true,
             Instruction::NewObject => true,
             Instruction::Parameter(_) => true,
@@ -251,6 +256,7 @@ impl<S> Instruction<S> {
     pub fn has_effect(&self) -> bool {
         match self {
             Instruction::SetVariable { .. } => true,
+            Instruction::SetMagic(_, _) => true,
             Instruction::SetField { .. } => true,
             Instruction::SetFieldConst { .. } => true,
             Instruction::Upsilon(_, _) => true,
@@ -394,6 +400,12 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
+                    }
+                    Instruction::GetMagic(magic) => {
+                        writeln!(f, "get_magic({:?})", magic.as_ref())?;
+                    }
+                    Instruction::SetMagic(magic, source) => {
+                        writeln!(f, "set_magic({:?}, I{})", magic.as_ref(), source.index())?;
                     }
                     Instruction::This => {
                         writeln!(f, "this()")?;

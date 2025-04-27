@@ -14,14 +14,23 @@ use crate::compiler::{
 
 #[derive(Debug, Error)]
 pub enum FrontendError {
+    #[error("assignment to read-only magic value")]
+    ReadOnlyMagic,
     #[error("too many parameters")]
     ParameterOverflow,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MagicMode {
+    ReadOnly,
+    ReadWrite,
+}
+
 pub fn compile_ir<S: Eq + Hash + Clone>(
     block: &parser::Block<S>,
+    is_magic: impl Fn(&S) -> Option<MagicMode>,
 ) -> Result<ir::Function<S>, FrontendError> {
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler::new(is_magic);
     compiler.block(block)?;
     Ok(compiler.current.function)
 }
@@ -36,13 +45,18 @@ struct Function<S> {
     upvalues: HashMap<S, Option<ir::Variable>>,
 }
 
-struct Compiler<S> {
+struct Compiler<S, F> {
+    is_magic: F,
     upper: Vec<Function<S>>,
     current: Function<S>,
 }
 
-impl<S: Eq + Hash + Clone> Compiler<S> {
-    fn new() -> Self {
+impl<S, F> Compiler<S, F>
+where
+    S: Eq + Hash + Clone,
+    F: Fn(&S) -> Option<MagicMode>,
+{
+    fn new(is_magic: F) -> Self {
         let instructions = ir::InstructionMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
@@ -53,6 +67,7 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         let start_block = blocks.insert(ir::Block::default());
 
         Self {
+            is_magic,
             upper: Vec::new(),
             current: Function {
                 function: ir::Function {
@@ -117,10 +132,11 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
         &mut self,
         assignment_statement: &parser::AssignmentStatement<S>,
     ) -> Result<(), FrontendError> {
-        enum Target {
+        enum Target<S> {
             Var(ir::Variable),
             This { key: ir::InstId },
             Field { object: ir::InstId, key: ir::InstId },
+            Magic(S),
         }
 
         let this = self.push_instruction(ir::Instruction::This);
@@ -130,6 +146,12 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 if let Some(var) = self.get_var(name) {
                     let old = self.push_instruction(ir::Instruction::GetVariable(var));
                     (Target::Var(var), old)
+                } else if let Some(mode) = (self.is_magic)(name) {
+                    if mode == MagicMode::ReadOnly {
+                        return Err(FrontendError::ReadOnlyMagic);
+                    }
+                    let old = self.push_instruction(ir::Instruction::GetMagic(name.clone()));
+                    (Target::Magic(name.clone()), old)
                 } else {
                     let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
                         name.clone(),
@@ -183,6 +205,9 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                     key,
                     value: assign,
                 });
+            }
+            Target::Magic(magic) => {
+                self.push_instruction(ir::Instruction::SetMagic(magic, assign));
             }
         }
 
@@ -306,6 +331,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             parser::Expression::Name(s) => {
                 if let Some(var) = self.get_var(s) {
                     self.push_instruction(ir::Instruction::GetVariable(var))
+                } else if (self.is_magic)(s).is_some() {
+                    self.push_instruction(ir::Instruction::GetMagic(s.clone()))
                 } else {
                     let this = self.push_instruction(ir::Instruction::This);
                     let key = self
