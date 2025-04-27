@@ -102,20 +102,7 @@ pub enum Instruction<S> {
     Closure(FuncId),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
-    GetThis {
-        key: InstId,
-    },
-    SetThis {
-        key: InstId,
-        value: InstId,
-    },
-    GetThisConst {
-        key: Constant<S>,
-    },
-    SetThisConst {
-        key: Constant<S>,
-        value: InstId,
-    },
+    This,
     NewObject,
     GetField {
         object: InstId,
@@ -176,12 +163,6 @@ impl<S> Instruction<S> {
             Instruction::Constant(constant) => {
                 constants.push(constant);
             }
-            Instruction::GetThisConst { key, .. } => {
-                constants.push(key);
-            }
-            Instruction::SetThisConst { key, .. } => {
-                constants.push(key);
-            }
             Instruction::GetFieldConst { key, .. } => {
                 constants.push(key);
             }
@@ -208,17 +189,7 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(*source);
             }
-            Instruction::GetThis { key } => {
-                sources.push(*key);
-            }
-            Instruction::SetThis { key, value } => {
-                sources.push(*key);
-                sources.push(*value);
-            }
-            Instruction::GetThisConst { .. } => {}
-            Instruction::SetThisConst { value, .. } => {
-                sources.push(*value);
-            }
+            Instruction::This => {}
             Instruction::NewObject => {}
             Instruction::GetField { object, key } => {
                 sources.push(*object);
@@ -280,17 +251,7 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => {
                 sources.push(source);
             }
-            Instruction::GetThis { key } => {
-                sources.push(key);
-            }
-            Instruction::SetThis { key, value } => {
-                sources.push(key);
-                sources.push(value);
-            }
-            Instruction::GetThisConst { .. } => {}
-            Instruction::SetThisConst { value, .. } => {
-                sources.push(value);
-            }
+            Instruction::This => {}
             Instruction::NewObject => {}
             Instruction::GetField { object, key } => {
                 sources.push(object);
@@ -348,10 +309,7 @@ impl<S> Instruction<S> {
             Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::SetVariable { .. } => false,
-            Instruction::GetThis { .. } => true,
-            Instruction::SetThis { .. } => false,
-            Instruction::GetThisConst { .. } => true,
-            Instruction::SetThisConst { .. } => false,
+            Instruction::This => true,
             Instruction::NewObject => true,
             Instruction::GetField { .. } => true,
             Instruction::SetField { .. } => false,
@@ -378,10 +336,7 @@ impl<S> Instruction<S> {
             Instruction::Closure(_) => false,
             Instruction::GetVariable(_) => false,
             Instruction::SetVariable { .. } => true,
-            Instruction::GetThis { .. } => false,
-            Instruction::SetThis { .. } => true,
-            Instruction::GetThisConst { .. } => false,
-            Instruction::SetThisConst { .. } => true,
+            Instruction::This => false,
             Instruction::NewObject => false,
             Instruction::GetField { .. } => false,
             Instruction::SetField { .. } => true,
@@ -545,27 +500,8 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
                     }
-                    Instruction::GetThis { key } => {
-                        writeln!(f, "get_self(key = I{})", key.index())?;
-                    }
-                    Instruction::SetThis { key, value } => {
-                        writeln!(
-                            f,
-                            "set_self(key = I{}, value = I{})",
-                            key.index(),
-                            value.index()
-                        )?;
-                    }
-                    Instruction::GetThisConst { key } => {
-                        writeln!(f, "get_self(key = {:?})", key.as_ref())?;
-                    }
-                    Instruction::SetThisConst { key, value } => {
-                        writeln!(
-                            f,
-                            "set_self(key = {:?}, value = I{})",
-                            key.as_ref(),
-                            value.index()
-                        )?;
+                    Instruction::This => {
+                        writeln!(f, "this()",)?;
                     }
                     Instruction::NewObject => {
                         writeln!(f, "new_object()",)?;

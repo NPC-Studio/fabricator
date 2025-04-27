@@ -13,10 +13,7 @@ macro_rules! for_each_instruction {
             simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
-            simple => get_this = GetThis { dest: RegIdx, key: RegIdx };
-            simple => set_this = SetThis  { key: RegIdx, value: RegIdx };
-            simple => get_this_const = GetThisConst { dest: RegIdx, key: ConstIdx };
-            simple => set_this_const = SetThisConst  { key: ConstIdx, value: RegIdx };
+            simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
             simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };

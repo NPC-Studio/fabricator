@@ -119,6 +119,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
             Field { object: ir::InstId, key: ir::InstId },
         }
 
+        let this = self.push_instruction(ir::Instruction::This);
+
         let (target, old) = match &assignment_statement.target {
             AssignmentTarget::Name(name) => {
                 if let Some(var) = self.get_var(name) {
@@ -128,7 +130,8 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                     let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
                         name.clone(),
                     )));
-                    let old = self.push_instruction(ir::Instruction::GetThis { key });
+                    let old =
+                        self.push_instruction(ir::Instruction::GetField { object: this, key });
                     (Target::This { key }, old)
                 }
             }
@@ -164,7 +167,11 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 self.push_instruction(ir::Instruction::SetVariable(var, assign));
             }
             Target::This { key } => {
-                self.push_instruction(ir::Instruction::SetThis { key, value: assign });
+                self.push_instruction(ir::Instruction::SetField {
+                    object: this,
+                    key,
+                    value: assign,
+                });
             }
             Target::Field { object, key } => {
                 self.push_instruction(ir::Instruction::SetField {
@@ -297,9 +304,10 @@ impl<S: Eq + Hash + Clone> Compiler<S> {
                 if let Some(var) = self.get_var(s) {
                     self.push_instruction(ir::Instruction::GetVariable(var))
                 } else {
+                    let this = self.push_instruction(ir::Instruction::This);
                     let key = self
                         .push_instruction(ir::Instruction::Constant(Constant::String(s.clone())));
-                    self.push_instruction(ir::Instruction::GetThis { key })
+                    self.push_instruction(ir::Instruction::GetField { object: this, key })
                 }
             }
             parser::Expression::Group(expr) => self.commit_expression(expr)?,

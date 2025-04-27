@@ -171,28 +171,9 @@ fn codegen_function<'gc>(
                         source: reg_alloc.instruction_registers[source],
                     });
                 }
-                ir::Instruction::GetThis { key } => {
-                    vm_instructions.push(Instruction::GetThis {
+                ir::Instruction::This => {
+                    vm_instructions.push(Instruction::This {
                         dest: reg_alloc.instruction_registers[inst_id],
-                        key: reg_alloc.instruction_registers[key],
-                    });
-                }
-                ir::Instruction::SetThis { key, value } => {
-                    vm_instructions.push(Instruction::SetThis {
-                        key: reg_alloc.instruction_registers[key],
-                        value: reg_alloc.instruction_registers[value],
-                    });
-                }
-                ir::Instruction::GetThisConst { key } => {
-                    vm_instructions.push(Instruction::GetThisConst {
-                        dest: reg_alloc.instruction_registers[inst_id],
-                        key: constant_indexes[&key],
-                    });
-                }
-                ir::Instruction::SetThisConst { key, value } => {
-                    vm_instructions.push(Instruction::SetThisConst {
-                        key: constant_indexes[&key],
-                        value: reg_alloc.instruction_registers[value],
                     });
                 }
                 ir::Instruction::NewObject => {
