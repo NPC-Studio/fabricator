@@ -30,7 +30,7 @@ impl<'gc> Context<'gc> {
     /// Get a reference to [`Mutation`] (the `gc-arena` mutation handle) out of the `Context`
     /// object.
     ///
-    /// This can also be done automatically with `Deref` coercion.
+    /// This can also be done automatically with [`ops::Deref`] coercion.
     pub fn mutation(self) -> &'gc Mutation<'gc> {
         self.mutation
     }

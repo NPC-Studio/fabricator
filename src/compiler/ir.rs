@@ -59,7 +59,7 @@ pub enum BinOp {
 /// different data definitions depending on the path in the CFG that was taken. These are normally
 /// called "phi functions" and are described by Cytron et al. here:
 ///
-/// https://dl.acm.org/doi/pdf/10.1145/115372.115320
+/// <https://dl.acm.org/doi/pdf/10.1145/115372.115320>
 ///
 /// We use a slight modification to this system here. Instead of "phi" instructions referencing the
 /// instructions they select between, instead a separate "upsilon" instruction writes to a "shadow
@@ -69,7 +69,7 @@ pub enum BinOp {
 /// This phi / upsilon SSA form was invented by Filip Pizlo is more deeply explained in this
 /// document (where he calls it "pizlo-form"):
 ///
-/// https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d
+/// <https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d>
 ///
 /// In order for the IR to be well-formed, any `ShadowVarId` identifier must be unique, owned by
 /// a *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used
