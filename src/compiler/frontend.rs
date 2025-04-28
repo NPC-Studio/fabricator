@@ -199,8 +199,16 @@ where
                 right: val,
                 op: ir::BinOp::Sub,
             }),
-            parser::AssignmentOp::MultEqual => unimplemented!(),
-            parser::AssignmentOp::DivEqual => unimplemented!(),
+            parser::AssignmentOp::MultEqual => self.push_instruction(ir::Instruction::BinOp {
+                left: old,
+                right: val,
+                op: ir::BinOp::Mult,
+            }),
+            parser::AssignmentOp::DivEqual => self.push_instruction(ir::Instruction::BinOp {
+                left: old,
+                right: val,
+                op: ir::BinOp::Div,
+            }),
         };
 
         match target {
