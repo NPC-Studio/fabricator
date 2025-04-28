@@ -8,6 +8,6 @@ var f = function() {
     return inner();
 };
 
-assert(f() == 1)
-assert(f() == 2)
-assert(f() == 3)
+assert(f() == 1);
+assert(f() == 2);
+assert(f() == 3);

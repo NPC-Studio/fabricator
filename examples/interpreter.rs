@@ -6,11 +6,13 @@ use fabricator::{
     compiler::{
         codegen::codegen,
         compile::{compile, optimize_ir},
-        frontend::{compile_ir, MagicMode},
-        parser::parse,
+        frontend::FrontendSettings,
+        magic_dict::{MagicDict, MagicMode},
+        parser::ParseSettings,
         string_interner::StringInterner,
     },
     interpreter::Interpreter,
+    magic::MagicSet,
     string::String,
     thread::Thread,
     value::Value,
@@ -63,24 +65,36 @@ fn main() {
                 }
             }
 
-            let parsed = parse(&code, Interner(&ctx)).unwrap();
-            let mut ir = compile_ir(&parsed, |magic| {
-                let index = ctx.stdlib().find(magic.as_str())?;
-                let magic = ctx.stdlib().get(index).unwrap();
-                Some(if magic.read_only() {
-                    MagicMode::ReadOnly
-                } else {
-                    MagicMode::ReadWrite
-                })
-            })
-            .unwrap();
+            let parsed = ParseSettings::default()
+                .parse(&code, Interner(&ctx))
+                .unwrap();
+
+            struct MDict<'gc>(Gc<'gc, MagicSet<'gc>>);
+
+            impl<'gc> MagicDict<String<'gc>> for MDict<'gc> {
+                fn magic_mode(&self, ident: &String<'gc>) -> Option<MagicMode> {
+                    let index = self.0.find(ident.as_str())?;
+                    let magic = self.0.get(index).unwrap();
+                    Some(if magic.read_only() {
+                        MagicMode::ReadOnly
+                    } else {
+                        MagicMode::ReadWrite
+                    })
+                }
+
+                fn magic_index(&self, ident: &String<'gc>) -> Option<usize> {
+                    self.0.find(ident.as_str())
+                }
+            }
+
+            let mut ir = FrontendSettings::default()
+                .compile_ir(&parsed, MDict(ctx.stdlib()))
+                .unwrap();
+
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = codegen(&ctx, &ir, |magic| {
-                ctx.stdlib().find(magic.as_str())?.try_into().ok()
-            })
-            .unwrap();
+            let prototype = codegen(&ctx, &ir, MDict(ctx.stdlib())).unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

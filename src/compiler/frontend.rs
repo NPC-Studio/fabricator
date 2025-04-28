@@ -9,8 +9,11 @@ use thiserror::Error;
 use crate::compiler::{
     constant::Constant,
     ir,
+    magic_dict::MagicMode,
     parser::{self, AssignmentTarget},
 };
+
+use super::magic_dict::MagicDict;
 
 #[derive(Debug, Error)]
 pub enum FrontendError {
@@ -20,19 +23,36 @@ pub enum FrontendError {
     ParameterOverflow,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum MagicMode {
-    ReadOnly,
-    ReadWrite,
+#[derive(Debug, Copy, Clone)]
+pub struct FrontendSettings {
+    /// Use proper lexical scoping for variable declarations.
+    ///
+    /// if `false`, then all variable declarations will be visible until the end of the enclosing
+    /// function even when the enclosing scope ends.
+    pub lexical_scoping: bool,
 }
 
-pub fn compile_ir<S: Eq + Hash + Clone>(
-    block: &parser::Block<S>,
-    is_magic: impl Fn(&S) -> Option<MagicMode>,
-) -> Result<ir::Function<S>, FrontendError> {
-    let mut compiler = Compiler::new(is_magic);
-    compiler.block(block)?;
-    Ok(compiler.current.function)
+impl Default for FrontendSettings {
+    fn default() -> Self {
+        Self {
+            lexical_scoping: true,
+        }
+    }
+}
+
+impl FrontendSettings {
+    pub fn compile_ir<S>(
+        self,
+        block: &parser::Block<S>,
+        magic_dict: impl MagicDict<S>,
+    ) -> Result<ir::Function<S>, FrontendError>
+    where
+        S: Eq + Hash + Clone + AsRef<str>,
+    {
+        let mut compiler = Compiler::new(self, magic_dict);
+        compiler.block(block)?;
+        Ok(compiler.current.function)
+    }
 }
 
 struct Function<S> {
@@ -45,18 +65,19 @@ struct Function<S> {
     upvalues: HashMap<S, Option<ir::Variable>>,
 }
 
-struct Compiler<S, F> {
-    is_magic: F,
+struct Compiler<S, M> {
+    settings: FrontendSettings,
+    magic_dict: M,
     upper: Vec<Function<S>>,
     current: Function<S>,
 }
 
-impl<S, F> Compiler<S, F>
+impl<S, M> Compiler<S, M>
 where
-    S: Eq + Hash + Clone,
-    F: Fn(&S) -> Option<MagicMode>,
+    S: Eq + Hash + Clone + AsRef<str>,
+    M: MagicDict<S>,
 {
-    fn new(is_magic: F) -> Self {
+    fn new(settings: FrontendSettings, magic_dict: M) -> Self {
         let instructions = ir::InstructionMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
@@ -67,7 +88,8 @@ where
         let start_block = blocks.insert(ir::Block::default());
 
         Self {
-            is_magic,
+            settings,
+            magic_dict,
             upper: Vec::new(),
             current: Function {
                 function: ir::Function {
@@ -82,7 +104,7 @@ where
                 },
                 current_block: start_block,
                 variables: Default::default(),
-                scopes: Default::default(),
+                scopes: vec![HashSet::new()],
                 upvalues: HashMap::new(),
             },
         }
@@ -155,7 +177,7 @@ where
                 if let Some(var) = self.get_var(name) {
                     let old = self.push_instruction(ir::Instruction::GetVariable(var));
                     (Target::Var(var), old)
-                } else if let Some(mode) = (self.is_magic)(name) {
+                } else if let Some(mode) = self.magic_dict.magic_mode(name) {
                     if mode == MagicMode::ReadOnly {
                         return Err(FrontendError::ReadOnlyMagic);
                     }
@@ -372,7 +394,7 @@ where
             parser::Expression::Name(s) => {
                 if let Some(var) = self.get_var(s) {
                     self.push_instruction(ir::Instruction::GetVariable(var))
-                } else if (self.is_magic)(s).is_some() {
+                } else if self.magic_dict.magic_mode(s).is_some() {
                     self.push_instruction(ir::Instruction::GetMagic(s.clone()))
                 } else {
                     let this = self.push_instruction(ir::Instruction::This);
@@ -531,7 +553,7 @@ where
                 function,
                 current_block: start_block,
                 variables: Default::default(),
-                scopes: Default::default(),
+                scopes: Vec::new(),
                 upvalues: Default::default(),
             },
         );
@@ -562,26 +584,35 @@ where
     }
 
     fn push_scope(&mut self) {
-        self.current.scopes.push(HashSet::new());
+        if self.settings.lexical_scoping {
+            self.current.scopes.push(HashSet::new());
+        }
     }
 
     fn pop_scope(&mut self) {
-        if let Some(out_of_scope) = self.current.scopes.pop() {
-            for vname in out_of_scope {
-                let hash_map::Entry::Occupied(mut entry) = self.current.variables.entry(vname)
-                else {
-                    unreachable!();
-                };
-                entry.get_mut().pop().unwrap();
-                if entry.get().is_empty() {
-                    entry.remove();
+        if self.settings.lexical_scoping {
+            if let Some(out_of_scope) = self.current.scopes.pop() {
+                for vname in out_of_scope {
+                    let hash_map::Entry::Occupied(mut entry) = self.current.variables.entry(vname)
+                    else {
+                        unreachable!();
+                    };
+                    entry.get_mut().pop().unwrap();
+                    if entry.get().is_empty() {
+                        entry.remove();
+                    }
                 }
             }
         }
     }
 
     fn declare_var(&mut self, vname: S) -> ir::Variable {
-        let in_scope = self.current.scopes.last().unwrap().contains(&vname);
+        let in_scope = !self
+            .current
+            .scopes
+            .last_mut()
+            .unwrap()
+            .insert(vname.clone());
         let variable_stack = self.current.variables.entry(vname).or_default();
 
         let var = self.current.function.variables.insert(());

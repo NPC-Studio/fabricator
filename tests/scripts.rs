@@ -4,16 +4,24 @@ use std::{
 };
 
 use fabricator::{
-    closure::Closure, compiler::compile, error::Error, interpreter::Interpreter, thread::Thread,
+    closure::Closure,
+    compiler::{compile, compile_compat},
+    error::Error,
+    interpreter::Interpreter,
+    thread::Thread,
     value::Value,
 };
 use gc_arena::Gc;
 
-fn run_code(code: &str) -> Result<(), Error> {
+fn run_code(code: &str, compat: bool) -> Result<(), Error> {
     let mut interpreter = Interpreter::testing();
 
     interpreter.enter(|ctx| {
-        let prototype = compile(&ctx, ctx.stdlib(), &code)?;
+        let prototype = if compat {
+            compile_compat(&ctx, ctx.stdlib(), &code)?
+        } else {
+            compile(&ctx, ctx.stdlib(), &code)?
+        };
         let closure = Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),
@@ -36,9 +44,9 @@ fn run_tests(dir: &str) -> bool {
         let path = dir.expect("could not read dir entry").path();
         let code = io::read_to_string(File::open(&path).unwrap()).unwrap();
         if let Some(ext) = path.extension() {
-            if ext == "fml" {
+            if ext == "fml" || ext == "gml" {
                 let _ = writeln!(stdout(), "running {:?}", path);
-                if let Err(err) = run_code(&code) {
+                if let Err(err) = run_code(&code, ext == "gml") {
                     let _ = writeln!(stdout(), "error encountered running {:?}: {:?}", path, err);
                     all_passed = false;
                 }

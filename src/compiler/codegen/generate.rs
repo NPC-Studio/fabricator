@@ -15,8 +15,9 @@ use crate::{
         constant::Constant,
         graph::dfs::topological_order,
         ir,
+        magic_dict::MagicDict,
     },
-    instructions::{ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx},
+    instructions::{ConstIdx, HeapIdx, Instruction, ProtoIdx},
     string::String,
     util::typed_id_map::SecondaryMap,
 };
@@ -41,20 +42,22 @@ pub enum CodegenError {
     JumpOutOfRange,
     #[error("missing magic value")]
     NoSuchMagic,
+    #[error("magic value index too large")]
+    MagicIndexOverflow,
 }
 
 pub fn codegen<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<String<'gc>>,
-    magic_index: impl Fn(String<'gc>) -> Option<MagicIdx>,
+    magic_dict: impl MagicDict<String<'gc>>,
 ) -> Result<Prototype<'gc>, CodegenError> {
-    codegen_function(mc, ir, &magic_index, &SecondaryMap::new())
+    codegen_function(mc, ir, &magic_dict, &SecondaryMap::new())
 }
 
 fn codegen_function<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<String<'gc>>,
-    magic_index: &impl Fn(String<'gc>) -> Option<MagicIdx>,
+    magic_dict: &impl MagicDict<String<'gc>>,
     parent_heap_indexe: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
@@ -96,7 +99,7 @@ fn codegen_function<'gc>(
         );
         prototypes.push(Gc::new(
             mc,
-            codegen_function(mc, func, magic_index, &heap_indexes)?,
+            codegen_function(mc, func, magic_dict, &heap_indexes)?,
         ));
     }
 
@@ -179,14 +182,22 @@ fn codegen_function<'gc>(
                     });
                 }
                 ir::Instruction::GetMagic(magic) => {
-                    let magic = magic_index(magic).ok_or(CodegenError::NoSuchMagic)?;
+                    let magic = magic_dict
+                        .magic_index(&magic)
+                        .ok_or(CodegenError::NoSuchMagic)?
+                        .try_into()
+                        .map_err(|_| CodegenError::MagicIndexOverflow)?;
                     vm_instructions.push(Instruction::GetMagic {
                         dest: reg_alloc.instruction_registers[inst_id],
                         magic,
                     });
                 }
                 ir::Instruction::SetMagic(magic, source) => {
-                    let magic = magic_index(magic).ok_or(CodegenError::NoSuchMagic)?;
+                    let magic = magic_dict
+                        .magic_index(&magic)
+                        .ok_or(CodegenError::NoSuchMagic)?
+                        .try_into()
+                        .map_err(|_| CodegenError::MagicIndexOverflow)?;
                     vm_instructions.push(Instruction::SetMagic {
                         magic,
                         source: reg_alloc.instruction_registers[source],

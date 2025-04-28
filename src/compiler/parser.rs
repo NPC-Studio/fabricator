@@ -158,21 +158,38 @@ pub struct ParseError {
     pub line_number: LineNumber,
 }
 
-pub fn parse<S>(source: &str, interner: S) -> Result<Block<S::String>, ParseError>
-where
-    S: StringInterner,
-{
-    Parser::new(source, interner).parse()
+#[derive(Debug, Copy, Clone)]
+pub struct ParseSettings {
+    /// Require semicolons at the end of all statements other than block-like statements like `if`
+    /// and `for`.
+    pub strict: bool,
+}
+
+impl Default for ParseSettings {
+    fn default() -> Self {
+        Self { strict: true }
+    }
+}
+
+impl ParseSettings {
+    pub fn parse<S>(self, source: &str, interner: S) -> Result<Block<S::String>, ParseError>
+    where
+        S: StringInterner,
+    {
+        Parser::new(self, source, interner).parse()
+    }
 }
 
 struct Parser<'a, S: StringInterner> {
+    settings: ParseSettings,
     lexer: Lexer<'a, S>,
     look_ahead_buffer: Vec<Option<(Token<S::String>, LineNumber)>>,
 }
 
 impl<'a, S: StringInterner> Parser<'a, S> {
-    fn new(source: &'a str, interner: S) -> Self {
+    fn new(settings: ParseSettings, source: &'a str, interner: S) -> Self {
         Parser {
+            settings,
             lexer: Lexer::new(source, interner),
             look_ahead_buffer: Vec::new(),
         }
@@ -203,12 +220,23 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 break;
             }
 
-            statements.push(self.parse_statement()?);
+            let stmt = self.parse_statement()?;
 
-            self.look_ahead(1)?;
-            if matches!(self.peek(0), Some((Token::SemiColon, _))) {
-                self.advance(1);
+            if self.settings.strict {
+                if !matches!(
+                    &stmt,
+                    Statement::If(_) | Statement::For(_) | Statement::Block(_)
+                ) {
+                    self.parse_token(Token::SemiColon)?;
+                }
+            } else {
+                self.look_ahead(1)?;
+                if matches!(self.peek(0), Some((Token::SemiColon, _))) {
+                    self.advance(1);
+                }
             }
+
+            statements.push(stmt);
         }
 
         Ok(Block { statements })
@@ -864,7 +892,7 @@ mod tests {
             }
         }
 
-        super::parse(source, SimpleInterner)
+        ParseSettings::default().parse(source, SimpleInterner)
     }
 
     #[test]
