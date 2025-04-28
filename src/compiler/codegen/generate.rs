@@ -270,6 +270,12 @@ fn codegen_function<'gc>(
                                 arg: reg_alloc.instruction_registers[source],
                             });
                         }
+                        ir::UnOp::Neg => {
+                            vm_instructions.push(Instruction::Neg {
+                                dest: output_reg,
+                                arg: reg_alloc.instruction_registers[source],
+                            });
+                        }
                     }
                 }
                 ir::Instruction::BinOp { left, right, op } => {
@@ -289,48 +295,71 @@ fn codegen_function<'gc>(
                                 arg2: reg_alloc.instruction_registers[right],
                             });
                         }
-                    }
-                }
-                ir::Instruction::BinComp { left, right, comp } => {
-                    let output_reg = reg_alloc.instruction_registers[inst_id];
-                    match comp {
-                        ir::BinComp::LessThan => {
+                        ir::BinOp::Mult => {
+                            vm_instructions.push(Instruction::Mult {
+                                dest: output_reg,
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
+                            });
+                        }
+                        ir::BinOp::Div => {
+                            vm_instructions.push(Instruction::Div {
+                                dest: output_reg,
+                                arg1: reg_alloc.instruction_registers[left],
+                                arg2: reg_alloc.instruction_registers[right],
+                            });
+                        }
+                        ir::BinOp::LessThan => {
                             vm_instructions.push(Instruction::TestLess {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
                             });
                         }
-                        ir::BinComp::LessEqual => {
+                        ir::BinOp::LessEqual => {
                             vm_instructions.push(Instruction::TestLessEqual {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
                             });
                         }
-                        ir::BinComp::Equal => {
+                        ir::BinOp::Equal => {
                             vm_instructions.push(Instruction::TestEqual {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
                             });
                         }
-                        ir::BinComp::NotEqual => {
+                        ir::BinOp::NotEqual => {
                             vm_instructions.push(Instruction::TestNotEqual {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[left],
                                 arg2: reg_alloc.instruction_registers[right],
                             });
                         }
-                        ir::BinComp::GreaterThan => {
+                        ir::BinOp::GreaterThan => {
                             vm_instructions.push(Instruction::TestLessEqual {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],
                             });
                         }
-                        ir::BinComp::GreaterEqual => {
+                        ir::BinOp::GreaterEqual => {
                             vm_instructions.push(Instruction::TestLess {
+                                dest: output_reg,
+                                arg1: reg_alloc.instruction_registers[right],
+                                arg2: reg_alloc.instruction_registers[left],
+                            });
+                        }
+                        ir::BinOp::And => {
+                            vm_instructions.push(Instruction::And {
+                                dest: output_reg,
+                                arg1: reg_alloc.instruction_registers[right],
+                                arg2: reg_alloc.instruction_registers[left],
+                            });
+                        }
+                        ir::BinOp::Or => {
+                            vm_instructions.push(Instruction::Or {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],

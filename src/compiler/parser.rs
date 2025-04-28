@@ -18,6 +18,7 @@ pub enum Statement<S> {
     Assignment(AssignmentStatement<S>),
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
+    IfElse(IfElseStatement<S>),
     For(ForStatement<S>),
     Block(Block<S>),
     Call(CallExpr<S>),
@@ -51,6 +52,13 @@ pub struct ReturnStatement<S> {
 pub struct IfStatement<S> {
     pub condition: Box<Expression<S>>,
     pub body: Block<S>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfElseStatement<S> {
+    pub condition: Box<Expression<S>>,
+    pub then_block: Block<S>,
+    pub else_block: Block<S>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,10 +243,22 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 self.parse_token(Token::LeftBrace)?;
                 let body = self.parse_block()?;
                 self.parse_token(Token::RightBrace)?;
-                Ok(Statement::If(IfStatement {
-                    condition: Box::new(condition),
-                    body,
-                }))
+
+                self.look_ahead(1)?;
+                Ok(if matches!(self.peek(0), Some((Token::Else, _))) {
+                    self.advance(1);
+                    let else_block = self.parse_block()?;
+                    Statement::IfElse(IfElseStatement {
+                        condition: Box::new(condition),
+                        then_block: body,
+                        else_block,
+                    })
+                } else {
+                    Statement::If(IfStatement {
+                        condition: Box::new(condition),
+                        body,
+                    })
+                })
             }
             (Token::For, _) => {
                 self.advance(1);
@@ -728,6 +748,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::Case => "case",
         Token::Break => "break",
         Token::If => "if",
+        Token::Else => "else",
         Token::For => "for",
         Token::Repeat => "repeat",
         Token::Return => "return",

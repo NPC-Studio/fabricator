@@ -63,6 +63,15 @@ impl<S> Constant<S> {
     }
 
     #[inline]
+    pub fn negate(&self) -> Option<Constant<S>> {
+        match *self {
+            Constant::Integer(i) => Some(Constant::Integer(-i)),
+            Constant::Float(f) => Some(Constant::Float(-f)),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn add(self, other: Constant<S>) -> Option<Constant<S>> {
         match (self, other) {
             (Constant::Integer(a), Constant::Integer(b)) => {
@@ -84,6 +93,32 @@ impl<S> Constant<S> {
             (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 - b)),
             (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a - b as f64)),
             (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a - b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn mult(self, other: Constant<S>) -> Option<Constant<S>> {
+        match (self, other) {
+            (Constant::Integer(a), Constant::Integer(b)) => {
+                Some(Constant::Integer(a.wrapping_mul(b)))
+            }
+            (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 * b)),
+            (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a * b as f64)),
+            (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a * b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn div(self, other: Constant<S>) -> Option<Constant<S>> {
+        match (self, other) {
+            (Constant::Integer(a), Constant::Integer(b)) => {
+                Some(Constant::Integer(a.wrapping_div(b)))
+            }
+            (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 / b)),
+            (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a / b as f64)),
+            (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a / b)),
             _ => None,
         }
     }

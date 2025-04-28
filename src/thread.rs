@@ -403,6 +403,14 @@ fn dispatch<'gc>(
         }
 
         #[inline]
+        fn neg(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize]
+                .negate()
+                .ok_or(VmError::BadOp)?;
+            Ok(())
+        }
+
+        #[inline]
         fn add(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
@@ -417,6 +425,22 @@ fn dispatch<'gc>(
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
             *dest = arg1.sub(arg2).ok_or(VmError::BadOp)?;
+            Ok(())
+        }
+
+        fn mult(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = arg1.mult(arg2).ok_or(VmError::BadOp)?;
+            Ok(())
+        }
+
+        fn div(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = arg1.div(arg2).ok_or(VmError::BadOp)?;
             Ok(())
         }
 
@@ -475,6 +499,22 @@ fn dispatch<'gc>(
                     .less_equal(self.registers[arg2 as usize])
                     .ok_or(VmError::BadOp)?,
             );
+            Ok(())
+        }
+
+        fn and(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = Value::Boolean(arg1.to_bool() && arg2.to_bool());
+            Ok(())
+        }
+
+        fn or(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
+            let arg1 = self.registers[arg1 as usize];
+            let arg2 = self.registers[arg2 as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = Value::Boolean(arg1.to_bool() || arg2.to_bool());
             Ok(())
         }
 

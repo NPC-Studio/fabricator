@@ -25,12 +25,17 @@ macro_rules! for_each_instruction {
             simple => set_field_const = SetFieldConst  { object: RegIdx, key: ConstIdx, value: RegIdx };
             simple => move_ = Move { dest: RegIdx, source: RegIdx };
             simple => not = Not { dest: RegIdx, arg: RegIdx };
+            simple => neg = Neg { dest: RegIdx, arg: RegIdx };
             simple => add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => sub = Sub { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => mult = Mult { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => div = Div { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => test_equal = TestEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => test_not_equal = TestNotEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => test_less = TestLess { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => test_less_equal = TestLessEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => and = And { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            simple => or = Or { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
             simple => push = Push { source: RegIdx, len: u8 };
             simple => pop = Pop { dest: RegIdx, len: u8 };
             simple => get_magic = GetMagic { dest: RegIdx, magic: MagicIdx };

@@ -24,9 +24,11 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                 }
                 ir::Instruction::UnOp { source, op } => {
                     if let Some(c) = get_constant(source) {
-                        new_inst = Some(ir::Instruction::Constant(match op {
-                            ir::UnOp::Not => Constant::Boolean(!c.to_bool()),
-                        }));
+                        new_inst = match op {
+                            ir::UnOp::Not => Some(Constant::Boolean(!c.to_bool())),
+                            ir::UnOp::Neg => c.negate(),
+                        }
+                        .map(ir::Instruction::Constant);
                     }
                 }
                 ir::Instruction::BinOp { left, right, op } => {
@@ -34,21 +36,18 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                         new_inst = match op {
                             ir::BinOp::Add => l.add(r),
                             ir::BinOp::Sub => l.sub(r),
+                            ir::BinOp::Mult => l.mult(r),
+                            ir::BinOp::Div => l.div(r),
+                            ir::BinOp::Equal => l.equal(r).map(Constant::Boolean),
+                            ir::BinOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
+                            ir::BinOp::LessThan => l.less_than(r).map(Constant::Boolean),
+                            ir::BinOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
+                            ir::BinOp::GreaterThan => r.less_equal(l).map(Constant::Boolean),
+                            ir::BinOp::GreaterEqual => r.less_than(l).map(Constant::Boolean),
+                            ir::BinOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
+                            ir::BinOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
                         }
                         .map(ir::Instruction::Constant)
-                    }
-                }
-                ir::Instruction::BinComp { left, right, comp } => {
-                    if let (Some(l), Some(r)) = (get_constant(left), get_constant(right)) {
-                        let res = match comp {
-                            ir::BinComp::LessThan => l.less_than(r),
-                            ir::BinComp::LessEqual => l.less_equal(r),
-                            ir::BinComp::Equal => l.equal(r),
-                            ir::BinComp::NotEqual => l.equal(r).map(|b| !b),
-                            ir::BinComp::GreaterThan => r.less_equal(l),
-                            ir::BinComp::GreaterEqual => r.less_than(l),
-                        };
-                        new_inst = res.map(|b| ir::Instruction::Constant(Constant::Boolean(b)));
                     }
                 }
                 ir::Instruction::GetField { object, key } => {

@@ -109,6 +109,9 @@ where
             }
             parser::Statement::Return(return_) => self.return_statement(return_),
             parser::Statement::If(if_statement) => self.if_statement(if_statement),
+            parser::Statement::IfElse(if_else_statement) => {
+                self.if_else_statement(if_else_statement)
+            }
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
             parser::Statement::Call(function_call) => {
@@ -252,6 +255,41 @@ where
         Ok(())
     }
 
+    fn if_else_statement(
+        &mut self,
+        if_else_statement: &parser::IfElseStatement<S>,
+    ) -> Result<(), FrontendError> {
+        let cond = self.commit_expression(&if_else_statement.condition)?;
+        let then_block = self.current.function.blocks.insert(ir::Block::default());
+        let else_block = self.current.function.blocks.insert(ir::Block::default());
+        let successor = self.current.function.blocks.insert(ir::Block::default());
+
+        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+            cond,
+            if_true: then_block,
+            if_false: else_block,
+        };
+
+        self.current.current_block = then_block;
+        {
+            self.push_scope();
+            self.block(&if_else_statement.then_block)?;
+            self.pop_scope();
+        }
+        self.current.function.blocks[then_block].exit = ir::Exit::Jump(successor);
+
+        self.current.current_block = else_block;
+        {
+            self.push_scope();
+            self.block(&if_else_statement.else_block)?;
+            self.pop_scope();
+        }
+        self.current.function.blocks[else_block].exit = ir::Exit::Jump(successor);
+
+        self.current.current_block = successor;
+        Ok(())
+    }
+
     fn for_statement(
         &mut self,
         for_statement: &parser::ForStatement<S>,
@@ -358,7 +396,7 @@ where
                     source: self.commit_expression(expr)?,
                     op: match op {
                         parser::UnaryOp::Not => ir::UnOp::Not,
-                        parser::UnaryOp::Minus => unimplemented!(),
+                        parser::UnaryOp::Minus => ir::UnOp::Neg,
                     },
                 };
                 self.push_instruction(inst)
@@ -366,53 +404,21 @@ where
             parser::Expression::Binary(left, op, right) => {
                 let left = self.commit_expression(left)?;
                 let right = self.commit_expression(right)?;
-                let inst = match op {
-                    parser::BinaryOp::Mult => unimplemented!(),
-                    parser::BinaryOp::Div => unimplemented!(),
-                    parser::BinaryOp::Add => ir::Instruction::BinOp {
-                        left,
-                        right,
-                        op: ir::BinOp::Add,
-                    },
-                    parser::BinaryOp::Sub => ir::Instruction::BinOp {
-                        left,
-                        right,
-                        op: ir::BinOp::Sub,
-                    },
-                    parser::BinaryOp::Equal => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::Equal,
-                    },
-                    parser::BinaryOp::NotEqual => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::NotEqual,
-                    },
-                    parser::BinaryOp::LessThan => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::LessThan,
-                    },
-                    parser::BinaryOp::LessEqual => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::LessEqual,
-                    },
-                    parser::BinaryOp::GreaterThan => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::GreaterThan,
-                    },
-                    parser::BinaryOp::GreaterEqual => ir::Instruction::BinComp {
-                        left,
-                        right,
-                        comp: ir::BinComp::GreaterEqual,
-                    },
-                    parser::BinaryOp::And => unimplemented!(),
-                    parser::BinaryOp::Or => unimplemented!(),
+                let op = match op {
+                    parser::BinaryOp::Add => ir::BinOp::Add,
+                    parser::BinaryOp::Sub => ir::BinOp::Sub,
+                    parser::BinaryOp::Mult => ir::BinOp::Mult,
+                    parser::BinaryOp::Div => ir::BinOp::Div,
+                    parser::BinaryOp::Equal => ir::BinOp::Equal,
+                    parser::BinaryOp::NotEqual => ir::BinOp::NotEqual,
+                    parser::BinaryOp::LessThan => ir::BinOp::LessThan,
+                    parser::BinaryOp::LessEqual => ir::BinOp::LessEqual,
+                    parser::BinaryOp::GreaterThan => ir::BinOp::GreaterThan,
+                    parser::BinaryOp::GreaterEqual => ir::BinOp::GreaterEqual,
+                    parser::BinaryOp::And => ir::BinOp::And,
+                    parser::BinaryOp::Or => ir::BinOp::Or,
                 };
-                self.push_instruction(inst)
+                self.push_instruction(ir::Instruction::BinOp { left, right, op })
             }
             parser::Expression::Function(func_expr) => {
                 self.push_function(&func_expr.parameters)?;

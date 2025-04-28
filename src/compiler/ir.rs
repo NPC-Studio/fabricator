@@ -20,22 +20,23 @@ pub type ParamIndex = u8;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
     Not,
+    Neg,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BinOp {
     Add,
     Sub,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum BinComp {
-    LessThan,
-    LessEqual,
+    Mult,
+    Div,
     Equal,
     NotEqual,
+    LessThan,
+    LessEqual,
     GreaterThan,
     GreaterEqual,
+    And,
+    Or,
 }
 
 /// A single IR instruction.
@@ -135,11 +136,6 @@ pub enum Instruction<S> {
         right: InstId,
         op: BinOp,
     },
-    BinComp {
-        left: InstId,
-        right: InstId,
-        comp: BinComp,
-    },
     Call {
         func: InstId,
         args: Vec<InstId>,
@@ -188,7 +184,6 @@ impl<S> Instruction<S> {
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            &Instruction::BinComp { left, right, .. } => make_iter!([left, right]),
             Instruction::Call { func, args, .. } => make_iter!([*func], args),
             Instruction::Method {
                 this, func, args, ..
@@ -221,7 +216,6 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::BinComp { left, right, .. } => make_iter!([left, right]),
             Instruction::Call { func, args, .. } => make_iter!([func], args),
             Instruction::Method {
                 this, func, args, ..
@@ -246,7 +240,6 @@ impl<S> Instruction<S> {
             Instruction::Phi(_) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
-            Instruction::BinComp { .. } => true,
             Instruction::Call { return_value, .. } => *return_value,
             Instruction::Method { return_value, .. } => *return_value,
             _ => false,
@@ -460,6 +453,9 @@ impl<S: AsRef<str>> Function<S> {
                         UnOp::Not => {
                             writeln!(f, "not(I{})", source.index())?;
                         }
+                        UnOp::Neg => {
+                            writeln!(f, "neg(I{})", source.index())?;
+                        }
                     },
                     Instruction::BinOp { left, right, op } => match op {
                         BinOp::Add => {
@@ -468,25 +464,35 @@ impl<S: AsRef<str>> Function<S> {
                         BinOp::Sub => {
                             writeln!(f, "sub(I{}, I{})", left.index(), right.index())?;
                         }
-                    },
-                    Instruction::BinComp { left, right, comp } => match comp {
-                        BinComp::LessThan => {
+                        BinOp::Mult => {
+                            writeln!(f, "mult(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::Div => {
+                            writeln!(f, "div(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::LessThan => {
                             writeln!(f, "less_than(I{}, I{})", left.index(), right.index())?;
                         }
-                        BinComp::LessEqual => {
+                        BinOp::LessEqual => {
                             writeln!(f, "less_equal(I{}, I{})", left.index(), right.index())?;
                         }
-                        BinComp::Equal => {
+                        BinOp::Equal => {
                             writeln!(f, "equal(I{}, I{})", left.index(), right.index())?;
                         }
-                        BinComp::NotEqual => {
+                        BinOp::NotEqual => {
                             writeln!(f, "not_equal(I{}, I{})", left.index(), right.index())?;
                         }
-                        BinComp::GreaterThan => {
+                        BinOp::GreaterThan => {
                             writeln!(f, "greater_than(I{}, I{})", left.index(), right.index())?;
                         }
-                        BinComp::GreaterEqual => {
+                        BinOp::GreaterEqual => {
                             writeln!(f, "greater_equal(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::And => {
+                            writeln!(f, "and(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::Or => {
+                            writeln!(f, "or(I{}, I{})", left.index(), right.index())?;
                         }
                     },
                     Instruction::Call {

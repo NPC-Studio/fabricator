@@ -56,6 +56,15 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    pub fn to_function(self) -> Option<Function<'gc>> {
+        match self {
+            Value::Closure(closure) => Some(Function::Closure(closure)),
+            Value::Callback(callback) => Some(Function::Callback(callback)),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn to_bool(self) -> bool {
         match self {
             Value::Undefined => false,
@@ -67,10 +76,10 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_function(self) -> Option<Function<'gc>> {
+    pub fn negate(self) -> Option<Value<'gc>> {
         match self {
-            Value::Closure(closure) => Some(Function::Closure(closure)),
-            Value::Callback(callback) => Some(Function::Callback(callback)),
+            Value::Integer(i) => Some(Value::Integer(-i)),
+            Value::Float(f) => Some(Value::Float(-f)),
             _ => None,
         }
     }
@@ -93,6 +102,28 @@ impl<'gc> Value<'gc> {
             (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 - b)),
             (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a - b as f64)),
             (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_mul(b))),
+            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 * b)),
+            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a * b as f64)),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn div(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_div(b))),
+            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 / b)),
+            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a / b as f64)),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a / b)),
             _ => None,
         }
     }
