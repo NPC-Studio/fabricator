@@ -109,9 +109,6 @@ where
             }
             parser::Statement::Return(return_) => self.return_statement(return_),
             parser::Statement::If(if_statement) => self.if_statement(if_statement),
-            parser::Statement::IfElse(if_else_statement) => {
-                self.if_else_statement(if_else_statement)
-            }
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
             parser::Statement::Call(function_call) => {
@@ -234,32 +231,6 @@ where
 
     fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), FrontendError> {
         let cond = self.commit_expression(&if_statement.condition)?;
-        let body = self.current.function.blocks.insert(ir::Block::default());
-        let successor = self.current.function.blocks.insert(ir::Block::default());
-
-        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
-            cond,
-            if_true: body,
-            if_false: successor,
-        };
-
-        self.current.current_block = body;
-        {
-            self.push_scope();
-            self.statement(&if_statement.then_stmt)?;
-            self.pop_scope();
-        }
-
-        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
-        self.current.current_block = successor;
-        Ok(())
-    }
-
-    fn if_else_statement(
-        &mut self,
-        if_else_statement: &parser::IfElseStatement<S>,
-    ) -> Result<(), FrontendError> {
-        let cond = self.commit_expression(&if_else_statement.condition)?;
         let then_block = self.current.function.blocks.insert(ir::Block::default());
         let else_block = self.current.function.blocks.insert(ir::Block::default());
         let successor = self.current.function.blocks.insert(ir::Block::default());
@@ -273,16 +244,18 @@ where
         self.current.current_block = then_block;
         {
             self.push_scope();
-            self.statement(&if_else_statement.then_stmt)?;
+            self.statement(&if_statement.then_stmt)?;
             self.pop_scope();
         }
         self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
 
         self.current.current_block = else_block;
-        {
-            self.push_scope();
-            self.statement(&if_else_statement.else_stmt)?;
-            self.pop_scope();
+        if let Some(else_stmt) = &if_statement.else_stmt {
+            {
+                self.push_scope();
+                self.statement(else_stmt)?;
+                self.pop_scope();
+            }
         }
         self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
 

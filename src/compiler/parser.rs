@@ -18,7 +18,6 @@ pub enum Statement<S> {
     Assignment(AssignmentStatement<S>),
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
-    IfElse(IfElseStatement<S>),
     For(ForStatement<S>),
     Block(Block<S>),
     Call(CallExpr<S>),
@@ -52,13 +51,7 @@ pub struct ReturnStatement<S> {
 pub struct IfStatement<S> {
     pub condition: Box<Expression<S>>,
     pub then_stmt: Box<Statement<S>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct IfElseStatement<S> {
-    pub condition: Box<Expression<S>>,
-    pub then_stmt: Box<Statement<S>>,
-    pub else_stmt: Box<Statement<S>>,
+    pub else_stmt: Option<Box<Statement<S>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,22 +234,19 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 self.advance(1);
                 let condition = self.parse_expression()?;
                 let then_stmt = self.parse_statement()?;
+                let mut else_stmt = None;
 
                 self.look_ahead(1)?;
-                Ok(if matches!(self.peek(0), Some((Token::Else, _))) {
+                if matches!(self.peek(0), Some((Token::Else, _))) {
                     self.advance(1);
-                    let else_stmt = self.parse_statement()?;
-                    Statement::IfElse(IfElseStatement {
-                        condition: Box::new(condition),
-                        then_stmt: Box::new(then_stmt),
-                        else_stmt: Box::new(else_stmt),
-                    })
-                } else {
-                    Statement::If(IfStatement {
-                        condition: Box::new(condition),
-                        then_stmt: Box::new(then_stmt),
-                    })
-                })
+                    else_stmt = Some(self.parse_statement()?);
+                }
+
+                Ok(Statement::If(IfStatement {
+                    condition: Box::new(condition),
+                    then_stmt: Box::new(then_stmt),
+                    else_stmt: else_stmt.map(Box::new),
+                }))
             }
             (Token::For, _) => {
                 self.advance(1);
@@ -872,6 +862,7 @@ mod tests {
                                 arguments: vec![Expression::String("yes".to_owned())],
                             })]
                         })),
+                        else_stmt: None,
                     }),
                     Statement::Assignment(AssignmentStatement {
                         target: AssignmentTarget::Field(FieldExpr {
