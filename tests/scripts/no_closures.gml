@@ -14,9 +14,6 @@ var b = create();
 var c = create();
 
 assert(a() == 1);
-assert(b() == 1);
-assert(c() == 1);
-
-assert(a() == 2);
 assert(b() == 2);
-assert(c() == 2);
+assert(c() == 3);
+

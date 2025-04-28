@@ -32,26 +32,23 @@ impl<'gc> Constant<'gc> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 #[collect(require_static)]
 pub enum HeapVarDescriptor {
-    Owned,
+    /// This heap variable is owned by the prototype.
+    ///
+    /// Contains a "slot" for the owned heap variable that should be unique amongst all owned heap
+    /// variables in this prototype.
+    ///
+    /// When the running closure created from this prototype executes and uses this heap variable,
+    /// it will create a new, unique instance of it.
+    Owned(HeapIdx),
+    /// This heap variable is owned by a parent prototype.
+    ///
+    /// Having a non-owned heap variable means that this prototype represents a function that closes
+    /// over an upper variable, and the two functions need to share this variable with potentially
+    /// different lifetimes.
+    ///
+    /// Contains the *index* in the parent prototype list for the heap variable that this upvalue
+    /// references.
     UpValue(HeapIdx),
-}
-
-#[derive(Copy, Clone, Collect)]
-#[collect(no_drop)]
-pub struct HeapVar<'gc>(Gc<'gc, Lock<Value<'gc>>>);
-
-impl<'gc> HeapVar<'gc> {
-    pub fn new(mc: &Mutation<'gc>, value: Value<'gc>) -> Self {
-        Self(Gc::new(mc, Lock::new(value)))
-    }
-
-    pub fn get(self) -> Value<'gc> {
-        self.0.get()
-    }
-
-    pub fn set(self, mc: &Mutation<'gc>, state: Value<'gc>) {
-        self.0.set(mc, state)
-    }
 }
 
 #[derive(Debug, Collect)]
@@ -62,6 +59,18 @@ pub struct Prototype<'gc> {
     pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
     pub used_registers: usize,
     pub heap_vars: Box<[HeapVarDescriptor]>,
+}
+
+#[derive(Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub enum HeapVar<'gc> {
+    /// A `HeapVarDescriptor::Owned` heap variable.
+    Owned(HeapIdx),
+    /// A `HeapVarDescriptor::UpValue` heap variable.
+    ///
+    /// When a closure is created with upvalues, the parent heap variables are moved into a unique
+    /// `Gc` so that the parent and child closures can share them, even with independent lifetimes.
+    UpValue(Gc<'gc, Lock<Value<'gc>>>),
 }
 
 #[derive(Debug, Error)]
@@ -76,9 +85,9 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
-    heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
     magic: Gc<'gc, MagicSet<'gc>>,
     this: Value<'gc>,
+    heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
 }
 
 impl<'gc> fmt::Debug for Closure<'gc> {
@@ -107,36 +116,29 @@ impl<'gc> Closure<'gc> {
         magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
-        Self::with_upvalues(mc, proto, &[], magic, this)
+        for h in &proto.heap_vars {
+            if matches!(h, HeapVarDescriptor::UpValue(_)) {
+                return Err(MissingUpValue);
+            }
+        }
+        Self::from_parts(mc, proto, magic, this, Gc::new(mc, Box::new([])))
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
-    pub fn with_upvalues(
+    pub fn from_parts(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
-        upvalues: &[HeapVar<'gc>],
         magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
+        heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
     ) -> Result<Self, MissingUpValue> {
-        let mut heap = Vec::new();
-        for &heap_desc in &proto.heap_vars {
-            match heap_desc {
-                HeapVarDescriptor::Owned => {
-                    heap.push(HeapVar::new(mc, Value::Undefined));
-                }
-                HeapVarDescriptor::UpValue(index) => {
-                    heap.push(*upvalues.get(index as usize).ok_or(MissingUpValue)?);
-                }
-            }
-        }
-
         Ok(Self(Gc::new(
             mc,
             ClosureInner {
                 proto,
-                heap: Gc::new(mc, heap.into_boxed_slice()),
                 magic,
                 this,
+                heap,
             },
         )))
     }

@@ -58,7 +58,7 @@ fn codegen_function<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<String<'gc>>,
     magic_dict: &impl MagicDict<String<'gc>>,
-    parent_heap_indexe: &SecondaryMap<ir::Variable, HeapIdx>,
+    parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
@@ -68,23 +68,25 @@ fn codegen_function<'gc>(
 
     let mut heap_vars = Vec::new();
     let mut heap_indexes: SecondaryMap<ir::Variable, HeapIdx> = SecondaryMap::new();
+    let mut owned_index: HeapIdx = 0;
     for (index, var) in ir.variables.ids().enumerate() {
+        let index: HeapIdx = index
+            .try_into()
+            .map_err(|_| CodegenError::HeapVarOverflow)?;
+
         heap_vars.push(if let Some(&upvalue) = ir.upvalues.get(&var) {
             HeapVarDescriptor::UpValue(
-                *parent_heap_indexe
+                *parent_heap_indexes
                     .get(upvalue)
                     .expect("upvalue not present in parent"),
             )
         } else {
-            HeapVarDescriptor::Owned
+            let index = owned_index;
+            owned_index = owned_index.checked_add(1).unwrap();
+            HeapVarDescriptor::Owned(index)
         });
 
-        heap_indexes.insert(
-            var,
-            index
-                .try_into()
-                .map_err(|_| CodegenError::HeapVarOverflow)?,
-        );
+        heap_indexes.insert(var, index);
     }
 
     let mut prototypes = Vec::new();

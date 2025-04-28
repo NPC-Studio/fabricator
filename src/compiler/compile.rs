@@ -86,6 +86,7 @@ pub fn compile_compat<'gc>(
     let parsed = ParseSettings { strict: false }.parse(src, Interner(mc))?;
     let mut ir = FrontendSettings {
         lexical_scoping: false,
+        allow_closures: false,
     }
     .compile_ir(&parsed, MDict(stdlib))?;
 

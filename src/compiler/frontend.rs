@@ -30,12 +30,18 @@ pub struct FrontendSettings {
     /// if `false`, then all variable declarations will be visible until the end of the enclosing
     /// function even when the enclosing scope ends.
     pub lexical_scoping: bool,
+
+    /// Allow lambda expressions to reference variables from outer functions.
+    ///
+    /// Without this, such variables will instead be interpreted as implicit `self` variables.
+    pub allow_closures: bool,
 }
 
 impl Default for FrontendSettings {
     fn default() -> Self {
         Self {
             lexical_scoping: true,
+            allow_closures: true,
         }
     }
 }
@@ -553,7 +559,7 @@ where
                 function,
                 current_block: start_block,
                 variables: Default::default(),
-                scopes: Vec::new(),
+                scopes: vec![HashSet::new()],
                 upvalues: Default::default(),
             },
         );
@@ -633,7 +639,7 @@ where
             Some(declared)
         } else if let Some(&upvalue) = self.current.upvalues.get(vname) {
             upvalue
-        } else {
+        } else if self.settings.allow_closures {
             // Search for any value with the requested name in any upper function. If we find one,
             // create a new variable for it in this function and record it as an upvalue.
             //
@@ -676,6 +682,8 @@ where
                 self.current.upvalues.insert(vname.clone(), None);
                 None
             }
+        } else {
+            None
         }
     }
 

@@ -1,12 +1,12 @@
 use std::ops::ControlFlow;
 
-use gc_arena::{Collect, Gc, Mutation, RefLock};
+use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
     array::Array,
     bytecode,
-    closure::{Closure, Constant},
+    closure::{Closure, Constant, HeapVar, HeapVarDescriptor},
     error::Error,
     instructions::{ConstIdx, HeapIdx, MagicIdx, ParamIdx, ProtoIdx, RegIdx},
     interpreter::Context,
@@ -38,6 +38,8 @@ pub enum VmError {
     BadMagicIdx,
     #[error("stack underflow")]
     StackUnderflow,
+    #[error("cannot init upvalue heap variable")]
+    InitHeapNotOwned,
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -49,6 +51,7 @@ pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
 pub struct ThreadState<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
+    heap: Vec<OwnedHeapVar<'gc>>,
 }
 
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
@@ -60,6 +63,7 @@ impl<'gc> Thread<'gc> {
             RefLock::new(ThreadState {
                 registers: Vec::new(),
                 stack: Vec::new(),
+                heap: Vec::new(),
             }),
         ))
     }
@@ -111,6 +115,15 @@ impl<'gc> ThreadState<'gc> {
 
         let params_top = self.stack.len();
 
+        let heap_bottom = self.heap.len();
+        for hd in closure.heap() {
+            if let &HeapVar::Owned(idx) = hd {
+                let idx = heap_bottom + idx as usize;
+                self.heap
+                    .resize_with(idx + 1, || OwnedHeapVar::unique(Value::Undefined));
+            }
+        }
+
         let mut pc: usize = 0;
 
         loop {
@@ -127,6 +140,7 @@ impl<'gc> ThreadState<'gc> {
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
                     .unwrap(),
+                &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
                 params_top - stack_bottom,
             )? {
@@ -167,12 +181,53 @@ enum Next<'gc> {
     Return,
 }
 
+type SharedHeap<'gc> = Gc<'gc, Lock<Value<'gc>>>;
+
+#[derive(Collect)]
+#[collect(no_drop)]
+enum OwnedHeapVar<'gc> {
+    Unique(Value<'gc>),
+    Shared(SharedHeap<'gc>),
+}
+
+impl<'gc> OwnedHeapVar<'gc> {
+    fn unique(value: Value<'gc>) -> Self {
+        Self::Unique(value)
+    }
+
+    fn get(&self) -> Value<'gc> {
+        match self {
+            OwnedHeapVar::Unique(v) => *v,
+            OwnedHeapVar::Shared(v) => v.get(),
+        }
+    }
+
+    fn set(&mut self, mc: &Mutation<'gc>, value: Value<'gc>) {
+        match self {
+            OwnedHeapVar::Unique(v) => *v = value,
+            OwnedHeapVar::Shared(v) => v.set(mc, value),
+        }
+    }
+
+    fn make_shared(&mut self, mc: &Mutation<'gc>) -> SharedHeap<'gc> {
+        match *self {
+            OwnedHeapVar::Unique(v) => {
+                let gc = Gc::new(mc, Lock::new(v));
+                *self = OwnedHeapVar::Shared(gc);
+                gc
+            }
+            OwnedHeapVar::Shared(v) => v,
+        }
+    }
+}
+
 fn dispatch<'gc>(
     ctx: Context<'gc>,
     closure: Closure<'gc>,
     this: Value<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
+    heap: &mut [OwnedHeapVar<'gc>],
     stack: Stack<'gc, '_>,
     num_params: usize,
 ) -> Result<Next<'gc>, Error> {
@@ -181,6 +236,7 @@ fn dispatch<'gc>(
         closure: Closure<'gc>,
         this: Value<'gc>,
         registers: &'a mut [Value<'gc>],
+        heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
         num_params: usize,
     }
@@ -329,28 +385,62 @@ fn dispatch<'gc>(
                 .prototypes
                 .get(proto as usize)
                 .ok_or(VmError::BadClosureIdx)?;
+
+            let mut heap = Vec::new();
+            for &hd in &proto.heap_vars {
+                match hd {
+                    HeapVarDescriptor::Owned(idx) => {
+                        heap.push(HeapVar::Owned(idx));
+                    }
+                    HeapVarDescriptor::UpValue(idx) => {
+                        heap.push(HeapVar::UpValue(match self.closure.heap()[idx as usize] {
+                            HeapVar::Owned(idx) => self.heap[idx as usize].make_shared(&self.ctx),
+                            HeapVar::UpValue(v) => v,
+                        }));
+                    }
+                }
+            }
+
             // inner closures inherit the set of magic values from the parent, and inherit the
             // current `this` value.
-            self.registers[dest as usize] = Closure::with_upvalues(
+            self.registers[dest as usize] = Closure::from_parts(
                 &self.ctx,
                 proto,
-                self.closure.heap(),
                 self.closure.magic(),
                 self.this,
+                Gc::new(&self.ctx, heap.into_boxed_slice()),
             )?
             .into();
             Ok(())
         }
 
         #[inline]
+        fn init_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
+            match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => {
+                    self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
+                    Ok(())
+                }
+                HeapVar::UpValue(_) => Err(VmError::InitHeapNotOwned.into()),
+            }
+        }
+
+        #[inline]
         fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.closure.heap()[heap as usize].get();
+            self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => self.heap[idx as usize].get(),
+                HeapVar::UpValue(v) => v.get(),
+            };
             Ok(())
         }
 
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
-            self.closure.heap()[heap as usize].set(&self.ctx, self.registers[source as usize]);
+            let source = self.registers[source as usize];
+            match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
+                HeapVar::UpValue(v) => v.set(&self.ctx, source),
+            };
             Ok(())
         }
 
@@ -726,6 +816,7 @@ fn dispatch<'gc>(
         closure,
         this,
         registers,
+        heap,
         stack,
         num_params,
     });

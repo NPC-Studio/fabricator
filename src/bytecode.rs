@@ -398,6 +398,7 @@ mod params {
             $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
         )*) => {
             $(
+                #[derive(Copy, Clone)]
                 #[repr(packed)]
                 pub struct $name {
                     $(pub $field: $field_ty),*

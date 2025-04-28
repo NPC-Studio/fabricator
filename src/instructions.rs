@@ -12,9 +12,10 @@ macro_rules! for_each_instruction {
         $macro! {
             simple => undefined = Undefined { dest: RegIdx };
             simple => load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
-            simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
+            simple => init_heap = InitHeap { heap: HeapIdx };
             simple => get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
+            simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
             simple => global = Global { dest: RegIdx };
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
@@ -81,8 +82,17 @@ impl Instruction {
             (ConstIdx) => {
                 "C"
             };
+            (ParamIdx) => {
+                "Pa"
+            };
             (HeapIdx) => {
                 "H"
+            };
+            (ProtoIdx) => {
+                "Pr"
+            };
+            (MagicIdx) => {
+                "M"
             };
             ($other:ident) => {
                 ""
