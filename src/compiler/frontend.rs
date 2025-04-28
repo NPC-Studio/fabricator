@@ -242,15 +242,15 @@ where
             if_true: body,
             if_false: successor,
         };
-        self.current.current_block = body;
 
+        self.current.current_block = body;
         {
             self.push_scope();
-            self.block(&if_statement.body)?;
+            self.statement(&if_statement.then_stmt)?;
             self.pop_scope();
         }
 
-        self.current.function.blocks[body].exit = ir::Exit::Jump(successor);
+        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
         self.current.current_block = successor;
         Ok(())
     }
@@ -273,18 +273,18 @@ where
         self.current.current_block = then_block;
         {
             self.push_scope();
-            self.block(&if_else_statement.then_block)?;
+            self.statement(&if_else_statement.then_stmt)?;
             self.pop_scope();
         }
-        self.current.function.blocks[then_block].exit = ir::Exit::Jump(successor);
+        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
 
         self.current.current_block = else_block;
         {
             self.push_scope();
-            self.block(&if_else_statement.else_block)?;
+            self.statement(&if_else_statement.else_stmt)?;
             self.pop_scope();
         }
-        self.current.function.blocks[else_block].exit = ir::Exit::Jump(successor);
+        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
 
         self.current.current_block = successor;
         Ok(())
@@ -315,7 +315,7 @@ where
                 };
                 self.current.current_block = body;
 
-                self.block(&for_statement.body)?;
+                self.statement(&for_statement.body)?;
 
                 self.pop_scope();
             }
@@ -329,7 +329,7 @@ where
             }
 
             let cond = self.commit_expression(&for_statement.condition)?;
-            self.current.function.blocks[body].exit = ir::Exit::Branch {
+            self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
                 cond,
                 if_true: body,
                 if_false: successor,

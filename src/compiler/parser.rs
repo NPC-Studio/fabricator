@@ -51,14 +51,14 @@ pub struct ReturnStatement<S> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfStatement<S> {
     pub condition: Box<Expression<S>>,
-    pub body: Block<S>,
+    pub then_stmt: Box<Statement<S>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfElseStatement<S> {
     pub condition: Box<Expression<S>>,
-    pub then_block: Block<S>,
-    pub else_block: Block<S>,
+    pub then_stmt: Box<Statement<S>>,
+    pub else_stmt: Box<Statement<S>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,7 +66,7 @@ pub struct ForStatement<S> {
     pub initializer: Box<Statement<S>>,
     pub condition: Box<Expression<S>>,
     pub iterator: Box<Statement<S>>,
-    pub body: Block<S>,
+    pub body: Box<Statement<S>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,23 +240,21 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             (Token::If, _) => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
-                self.parse_token(Token::LeftBrace)?;
-                let body = self.parse_block()?;
-                self.parse_token(Token::RightBrace)?;
+                let then_stmt = self.parse_statement()?;
 
                 self.look_ahead(1)?;
                 Ok(if matches!(self.peek(0), Some((Token::Else, _))) {
                     self.advance(1);
-                    let else_block = self.parse_block()?;
+                    let else_stmt = self.parse_statement()?;
                     Statement::IfElse(IfElseStatement {
                         condition: Box::new(condition),
-                        then_block: body,
-                        else_block,
+                        then_stmt: Box::new(then_stmt),
+                        else_stmt: Box::new(else_stmt),
                     })
                 } else {
                     Statement::If(IfStatement {
                         condition: Box::new(condition),
-                        body,
+                        then_stmt: Box::new(then_stmt),
                     })
                 })
             }
@@ -269,14 +267,12 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 self.parse_token(Token::SemiColon)?;
                 let iterator = self.parse_statement()?;
                 self.parse_token(Token::RightParen)?;
-                self.parse_token(Token::LeftBrace)?;
-                let body = self.parse_block()?;
-                self.parse_token(Token::RightBrace)?;
+                let body = self.parse_statement()?;
                 Ok(Statement::For(ForStatement {
                     initializer: Box::new(initializer),
                     condition: Box::new(condition),
                     iterator: Box::new(iterator),
-                    body,
+                    body: Box::new(body),
                 }))
             }
             (Token::LeftBrace, _) => {
@@ -856,13 +852,13 @@ mod tests {
                             op: AssignmentOp::PlusEqual,
                             value: Box::new(Expression::Integer(1)),
                         })),
-                        body: Block {
+                        body: Box::new(Statement::Block(Block {
                             statements: vec![Statement::Assignment(AssignmentStatement {
                                 target: AssignmentTarget::Name("sum".to_owned()),
                                 op: AssignmentOp::PlusEqual,
                                 value: Box::new(Expression::Name("i".to_owned())),
                             })]
-                        }
+                        }))
                     }),
                     Statement::If(IfStatement {
                         condition: Box::new(Expression::Binary(
@@ -870,12 +866,12 @@ mod tests {
                             BinaryOp::GreaterThan,
                             Box::new(Expression::Integer(100)),
                         )),
-                        body: Block {
+                        then_stmt: Box::new(Statement::Block(Block {
                             statements: vec![Statement::Call(CallExpr {
                                 base: Box::new(Expression::Name("print".to_owned())),
                                 arguments: vec![Expression::String("yes".to_owned())],
                             })]
-                        },
+                        })),
                     }),
                     Statement::Assignment(AssignmentStatement {
                         target: AssignmentTarget::Field(FieldExpr {
