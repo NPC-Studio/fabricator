@@ -72,8 +72,7 @@ impl<T> VecChangeSet<T> {
         let mut inserts = self.inserts.drain(..).peekable();
         let mut removes = self.removes.drain(..).peekable();
 
-        let mut new_vec = Vec::new();
-        new_vec.reserve(
+        let mut new_vec = Vec::with_capacity(
             old_len
                 .checked_sub(removes_len)
                 .expect("index removed more than once")

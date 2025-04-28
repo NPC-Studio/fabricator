@@ -112,7 +112,7 @@ where
             parser::Statement::For(for_statement) => self.for_statement(for_statement),
             parser::Statement::Block(block) => self.block(block),
             parser::Statement::Call(function_call) => {
-                let _ = self.call_expr(&function_call, false)?;
+                let _ = self.call_expr(function_call, false)?;
                 Ok(())
             }
         }

@@ -57,10 +57,10 @@ fn codegen_function<'gc>(
     magic_index: &impl Fn(String<'gc>) -> Option<MagicIdx>,
     parent_heap_indexe: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
-    let instruction_liveness = InstructionLiveness::compute(&ir)?;
-    let shadow_liveness = ShadowLiveness::compute(&ir)?;
+    let instruction_liveness = InstructionLiveness::compute(ir)?;
+    let shadow_liveness = ShadowLiveness::compute(ir)?;
 
-    let reg_alloc = RegisterAllocation::allocate(&ir, &instruction_liveness, &shadow_liveness)
+    let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
         .ok_or(CodegenError::RegisterOverflow)?;
 
     let mut heap_vars = Vec::new();
@@ -498,7 +498,7 @@ fn codegen_function<'gc>(
             Constant::Undefined => closure::Constant::Undefined,
             Constant::Boolean(b) => closure::Constant::Boolean(b),
             Constant::Integer(i) => {
-                if let Some(i) = i.try_into().ok() {
+                if let Ok(i) = i.try_into() {
                     closure::Constant::Integer(i)
                 } else {
                     closure::Constant::Float(i as f64)

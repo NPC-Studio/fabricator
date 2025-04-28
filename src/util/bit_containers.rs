@@ -83,6 +83,11 @@ impl BitVec {
     }
 
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
     pub fn get(&self, i: usize) -> Option<bool> {
         if i < self.len() {
             Some(self.bits.as_slice().get_bit(i))

@@ -56,12 +56,12 @@ impl<V> IndexMap<V> {
     }
 
     pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
-        mem::replace(&mut self.get_mut_option(i), Some(v))
+        mem::replace(self.get_mut_option(i), Some(v))
     }
 
     pub fn remove(&mut self, i: usize) -> Option<V> {
         if let Some(v) = self.vec.get_mut(i) {
-            mem::replace(v, None)
+            v.take()
         } else {
             None
         }
@@ -159,6 +159,10 @@ impl IndexSet {
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     fn set(&mut self, i: usize, val: bool) -> bool {

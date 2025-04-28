@@ -59,13 +59,9 @@ pub fn compute_upsilon_reachability<S>(
                     // In the case where there is also an overlapping outgoing range in the phi
                     // block that contains an `Upsilon` instruction, we start iterating on that
                     // block so it won't be skipped.
-                    ir.blocks[block_id]
-                        .exit
-                        .successors()
-                        .into_iter()
-                        .filter(|&block_id| {
-                            live_blocks.contains(&block_id) && block_id != phi_block
-                        })
+                    ir.blocks[block_id].exit.successors().filter(|&block_id| {
+                        live_blocks.contains(&block_id) && block_id != phi_block
+                    })
                 },
                 |block_id| {
                     outgoing_reach

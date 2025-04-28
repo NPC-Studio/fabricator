@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::{
     any::{Any, AnyInner},
-    interpreter::Context,
     error::Error,
+    interpreter::Context,
     string::String,
     value::Value,
 };
@@ -34,6 +34,7 @@ pub trait UserDataMethods<'gc> {
     ) -> Result<(), Error>;
 }
 
+/// Meta-data for a `UserData` type.
 #[derive(Clone, Default, Collect)]
 #[collect(no_drop)]
 pub struct UserDataMeta<'gc> {
@@ -64,9 +65,9 @@ pub type UserDataInner<'gc> = AnyInner<UserDataMeta<'gc>>;
 /// internally mutable, use the mechanisms in `gc-arena` for this like [`gc_arena::lock::RefLock`]
 /// instead.
 ///
-/// Internally, `UserData` simply wraps an [`Any`] type with an optional metatable. For more
-/// advanced cases where you simply need to store a user defined GC type with safe downcasting,
-/// use [`Any`] directly.
+/// Internally, `UserData` simply wraps an [`Any`] type with some optional metadata. For more
+/// advanced cases where you simply need to store a user defined GC type with safe downcasting, use
+/// [`Any`] directly.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct UserData<'gc>(Any<'gc, UserDataMeta<'gc>>);

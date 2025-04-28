@@ -36,8 +36,8 @@ impl<N: Node> Dominators<N> {
         let post_order = dfs_post_order(start, &successors);
 
         let mut post_order_indexes = IndexMap::new();
-        for i in 0..post_order.len() {
-            post_order_indexes.insert(post_order[i].index(), i);
+        for (i, n) in post_order.iter().enumerate() {
+            post_order_indexes.insert(n.index(), i);
         }
 
         let predecessors = Predecessors::compute(0..post_order.len(), |ni| {

@@ -46,10 +46,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     }
 
     let post_dominators = Dominators::compute(RevNode::Exit, |node| match node {
-        RevNode::Exit => Either::Left(exit_blocks.iter().copied().map(|n| RevNode::Node(n))),
-        RevNode::Node(block_id) => {
-            Either::Right(predecessors.get(block_id).map(|n| RevNode::Node(n)))
-        }
+        RevNode::Exit => Either::Left(exit_blocks.iter().copied().map(RevNode::Node)),
+        RevNode::Node(block_id) => Either::Right(predecessors.get(block_id).map(RevNode::Node)),
     });
 
     let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());

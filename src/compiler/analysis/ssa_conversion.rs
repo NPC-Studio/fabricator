@@ -125,8 +125,8 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             let block = &mut ir.blocks[block_id];
             for &inst_id in &block.instructions {
                 let inst = &mut ir.instructions[inst_id];
-                match &*inst {
-                    &ir::Instruction::GetVariable(variable) => {
+                match *inst {
+                    ir::Instruction::GetVariable(variable) => {
                         if let Some(top) =
                             current_vars.get(variable).and_then(|s| s.last().copied())
                         {
@@ -137,7 +137,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             *inst = ir::Instruction::Undefined;
                         }
                     }
-                    &ir::Instruction::SetVariable(variable, source) => {
+                    ir::Instruction::SetVariable(variable, source) => {
                         if let Some(stack) = current_vars.get_mut(variable) {
                             *inst = ir::Instruction::NoOp;
                             stack.push(source);
@@ -145,7 +145,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             assert!(skipping_vars.contains(&variable));
                         }
                     }
-                    &ir::Instruction::Phi(shadow_var) => {
+                    ir::Instruction::Phi(shadow_var) => {
                         // If there is a `Phi` function we did not insert, we ignore it.
                         if let Some(&variable) = shadow_map.get(shadow_var) {
                             current_vars.get_mut(variable).unwrap().push(inst_id);

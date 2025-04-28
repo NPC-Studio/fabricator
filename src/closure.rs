@@ -134,7 +134,7 @@ impl<'gc> Closure<'gc> {
             mc,
             ClosureInner {
                 proto,
-                heap: Gc::new(&mc, heap.into_boxed_slice()),
+                heap: Gc::new(mc, heap.into_boxed_slice()),
                 magic,
                 this,
             },

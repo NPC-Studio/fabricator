@@ -53,7 +53,7 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             for &block_id in &merges {
                 merged_block
                     .instructions
-                    .extend(ir.blocks[block_id].instructions.drain(..));
+                    .append(&mut ir.blocks[block_id].instructions);
             }
 
             let &first = merges.first().unwrap();

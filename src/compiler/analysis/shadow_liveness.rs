@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map, HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -222,7 +222,8 @@ impl ShadowLiveness {
                 let block_outgoing_ranges = outgoing_ranges.get_mut(block_id).unwrap();
 
                 for &shadow_var in &*block_live_out {
-                    if !block_outgoing_ranges.contains_key(&shadow_var) {
+                    if let hash_map::Entry::Vacant(vacant) = block_outgoing_ranges.entry(shadow_var)
+                    {
                         // The outgoing range for this shadow variable starts at the last `Upsilon`
                         // instruction in this block that sets it, if it exists.
                         let range = ShadowOutgoingRange {
@@ -230,7 +231,7 @@ impl ShadowLiveness {
                                 .get(&shadow_var)
                                 .and_then(|l| l.last().copied()),
                         };
-                        block_outgoing_ranges.insert(shadow_var, range);
+                        vacant.insert(range);
 
                         // If there was no upsilon for this shadow variable in this block, then it
                         // must be in a predecessor block.

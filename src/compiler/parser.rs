@@ -512,7 +512,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 Some((t, line_number)) => {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(&t),
+                            unexpected: token_indicator(t),
                             expected: "',' or '}'",
                         },
                         line_number,

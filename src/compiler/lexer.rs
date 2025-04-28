@@ -526,7 +526,7 @@ where
 
             self.advance(1);
             if c == '\\' {
-                match self.peek(0).ok_or_else(|| LexError::UnfinishedString)? {
+                match self.peek(0).ok_or(LexError::UnfinishedString)? {
                     'n' => {
                         self.advance(1);
                         self.string_buffer.push('\n');
@@ -642,7 +642,7 @@ where
 
         if is_hex {
             // Hex floats are not supported
-            return Err(LexError::BadNumber);
+            Err(LexError::BadNumber)
         } else {
             Ok(Token::Float(
                 read_dec_float(&self.string_buffer).ok_or(LexError::BadNumber)?,

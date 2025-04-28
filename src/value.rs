@@ -20,15 +20,6 @@ impl<'gc> Function<'gc> {
     }
 }
 
-impl<'gc> Into<Value<'gc>> for Function<'gc> {
-    fn into(self) -> Value<'gc> {
-        match self {
-            Function::Closure(closure) => Value::Closure(closure),
-            Function::Callback(callback) => Value::Callback(callback),
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
@@ -46,6 +37,63 @@ pub enum Value<'gc> {
 impl<'gc> Default for Value<'gc> {
     fn default() -> Self {
         Value::Undefined
+    }
+}
+
+impl<'gc> From<bool> for Value<'gc> {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl<'gc> From<i64> for Value<'gc> {
+    fn from(i: i64) -> Self {
+        Value::Integer(i)
+    }
+}
+
+impl<'gc> From<f64> for Value<'gc> {
+    fn from(f: f64) -> Self {
+        Value::Float(f)
+    }
+}
+
+impl<'gc> From<String<'gc>> for Value<'gc> {
+    fn from(s: String<'gc>) -> Self {
+        Value::String(s)
+    }
+}
+
+impl<'gc> From<Object<'gc>> for Value<'gc> {
+    fn from(o: Object<'gc>) -> Self {
+        Value::Object(o)
+    }
+}
+
+impl<'gc> From<Closure<'gc>> for Value<'gc> {
+    fn from(c: Closure<'gc>) -> Self {
+        Value::Closure(c)
+    }
+}
+
+impl<'gc> From<Callback<'gc>> for Value<'gc> {
+    fn from(c: Callback<'gc>) -> Self {
+        Value::Callback(c)
+    }
+}
+
+impl<'gc> From<UserData<'gc>> for Value<'gc> {
+    fn from(u: UserData<'gc>) -> Self {
+        Value::UserData(u)
+    }
+}
+
+impl<'gc> From<Function<'gc>> for Value<'gc> {
+    fn from(func: Function<'gc>) -> Self {
+        match func {
+            Function::Closure(closure) => Value::Closure(closure),
+            Function::Callback(callback) => Value::Callback(callback),
+        }
     }
 }
 

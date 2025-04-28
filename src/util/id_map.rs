@@ -392,9 +392,7 @@ impl<V> SecondaryMap<V> {
     }
 
     pub fn remove(&mut self, key: Id) -> Option<V> {
-        let Some(slot) = self.slots.get_mut(key.index() as usize) else {
-            return None;
-        };
+        let slot = self.slots.get_mut(key.index() as usize)?;
 
         match slot {
             SecondarySlot::Occupied { generation, .. } if *generation == key.generation() => {
@@ -481,7 +479,7 @@ impl<V> SecondaryMap<V> {
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.occupancy as usize
+        self.occupancy
     }
 
     #[inline]
