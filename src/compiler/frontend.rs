@@ -134,8 +134,17 @@ where
     ) -> Result<(), FrontendError> {
         enum Target<S> {
             Var(ir::Variable),
-            This { key: ir::InstId },
-            Field { object: ir::InstId, key: ir::InstId },
+            This {
+                key: ir::InstId,
+            },
+            Field {
+                object: ir::InstId,
+                key: ir::InstId,
+            },
+            Index {
+                array: ir::InstId,
+                index: ir::InstId,
+            },
             Magic(S),
         }
 
@@ -168,6 +177,12 @@ where
                 )));
                 let old = self.push_instruction(ir::Instruction::GetField { object, key });
                 (Target::Field { object, key }, old)
+            }
+            AssignmentTarget::Index(index_expr) => {
+                let array = self.commit_expression(&index_expr.base)?;
+                let index = self.commit_expression(&index_expr.index)?;
+                let old = self.push_instruction(ir::Instruction::GetIndex { array, index });
+                (Target::Index { array, index }, old)
             }
         };
 
@@ -203,6 +218,13 @@ where
                 self.push_instruction(ir::Instruction::SetField {
                     object,
                     key,
+                    value: assign,
+                });
+            }
+            Target::Index { array, index } => {
+                self.push_instruction(ir::Instruction::SetIndex {
+                    array,
+                    index,
                     value: assign,
                 });
             }
@@ -364,6 +386,18 @@ where
                 }
                 object
             }
+            parser::Expression::Array(values) => {
+                let array = self.push_instruction(ir::Instruction::NewArray);
+                for (i, value) in values.iter().enumerate() {
+                    let value = self.commit_expression(value)?;
+                    self.push_instruction(ir::Instruction::SetIndexConst {
+                        array,
+                        index: Constant::Integer(i as i128),
+                        value,
+                    });
+                }
+                array
+            }
             parser::Expression::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
                     source: self.commit_expression(expr)?,
@@ -409,6 +443,11 @@ where
                     object: base,
                     key: field,
                 })
+            }
+            parser::Expression::Index(index_expr) => {
+                let base = self.commit_expression(&index_expr.base)?;
+                let index = self.commit_expression(&index_expr.index)?;
+                self.push_instruction(ir::Instruction::GetIndex { array: base, index })
             }
         })
     }

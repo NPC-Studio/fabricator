@@ -24,12 +24,28 @@ pub trait UserDataMethods<'gc> {
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         key: String<'gc>,
-    ) -> Option<Value<'gc>>;
+    ) -> Result<Value<'gc>, Error>;
+
     fn set_field(
         &self,
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         key: String<'gc>,
+        value: Value<'gc>,
+    ) -> Result<(), Error>;
+
+    fn get_index(
+        &self,
+        ctx: Context<'gc>,
+        ud: UserData<'gc>,
+        index: Value<'gc>,
+    ) -> Result<Value<'gc>, Error>;
+
+    fn set_index(
+        &self,
+        ctx: Context<'gc>,
+        ud: UserData<'gc>,
+        index: Value<'gc>,
         value: Value<'gc>,
     ) -> Result<(), Error>;
 }
@@ -195,8 +211,6 @@ impl<'gc> UserData<'gc> {
         mc: &Mutation<'gc>,
         methods: Option<Gc<'gc, dyn UserDataMethods<'gc>>>,
     ) {
-        barrier::field!(self.0.write_metadata(mc), UserDataMeta, methods)
-            .unlock()
-            .set(methods);
+        barrier::unlock!(self.0.write_metadata(mc), UserDataMeta, methods).set(methods);
     }
 }

@@ -14,6 +14,8 @@ impl<'gc> PartialEq for Object<'gc> {
     }
 }
 
+impl<'gc> Eq for Object<'gc> {}
+
 impl<'gc> Object<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self(Gc::new(mc, Default::default()))

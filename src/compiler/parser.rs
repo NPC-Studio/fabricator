@@ -40,6 +40,7 @@ pub struct AssignmentStatement<S> {
 pub enum AssignmentTarget<S> {
     Name(S),
     Field(FieldExpr<S>),
+    Index(IndexExpr<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,11 +74,13 @@ pub enum Expression<S> {
     Name(S),
     Group(Box<Expression<S>>),
     Object(Vec<(S, Expression<S>)>),
+    Array(Vec<Expression<S>>),
     Unary(UnaryOp, Box<Expression<S>>),
     Binary(Box<Expression<S>>, BinaryOp, Box<Expression<S>>),
     Function(FunctionExpr<S>),
     Call(CallExpr<S>),
     Field(FieldExpr<S>),
+    Index(IndexExpr<S>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +99,12 @@ pub struct CallExpr<S> {
 pub struct FieldExpr<S> {
     pub base: Box<Expression<S>>,
     pub field: S,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexExpr<S> {
+    pub base: Box<Expression<S>>,
+    pub index: Box<Expression<S>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -273,10 +282,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (_, line_number) => match self.parse_suffixed_expression() {
                 Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
-                Ok(expr @ (Expression::Name(_) | Expression::Field(_))) => {
+                Ok(expr @ (Expression::Name(_) | Expression::Field(_) | Expression::Index(_))) => {
                     let target = match expr {
                         Expression::Name(name) => AssignmentTarget::Name(name),
                         Expression::Field(field) => AssignmentTarget::Field(field),
+                        Expression::Index(index) => AssignmentTarget::Index(index),
                         _ => unreachable!(),
                     };
 
@@ -393,6 +403,15 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         field,
                     });
                 }
+                Some((Token::LeftBracket, _)) => {
+                    self.advance(1);
+                    let index = self.parse_expression()?;
+                    self.parse_token(Token::RightBracket)?;
+                    expr = Expression::Index(IndexExpr {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    });
+                }
                 _ => break,
             }
         }
@@ -448,7 +467,10 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (Token::Identifier(_), _) => {
                 self.look_ahead(2)?;
-                if matches!(self.peek(1), Some((Token::LeftParen | Token::Dot, _))) {
+                if matches!(
+                    self.peek(1),
+                    Some((Token::LeftParen | Token::Dot | Token::LeftBracket, _))
+                ) {
                     self.parse_suffixed_expression()
                 } else {
                     let Some((Token::Identifier(i), _)) = self.next().unwrap() else {
@@ -481,6 +503,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 Ok(Expression::Function(FunctionExpr { parameters, body }))
             }
             (Token::LeftBrace, _) => Ok(Expression::Object(self.parse_object()?)),
+            (Token::LeftBracket, _) => Ok(Expression::Array(self.parse_array()?)),
             _ => self.parse_suffixed_expression(),
         }
     }
@@ -488,7 +511,14 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn parse_object(&mut self) -> Result<Vec<(S::String, Expression<S::String>)>, ParseError> {
         self.parse_token(Token::LeftBrace)?;
         let mut entries = Vec::new();
+
         loop {
+            self.look_ahead(1)?;
+            if matches!(self.peek(0), Some((Token::RightBrace, _))) {
+                self.advance(1);
+                break;
+            }
+
             let key = self.parse_identifier()?;
             self.parse_token(Token::Colon)?;
             let value = self.parse_expression()?;
@@ -522,6 +552,56 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     return Err(ParseError {
                         kind: ParseErrorKind::EndOfStream {
                             expected: "',' or '}'",
+                        },
+                        line_number: self.lexer.line_number(),
+                    });
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+
+    fn parse_array(&mut self) -> Result<Vec<Expression<S::String>>, ParseError> {
+        self.parse_token(Token::LeftBracket)?;
+        let mut entries = Vec::new();
+        loop {
+            self.look_ahead(1)?;
+            if matches!(self.peek(0), Some((Token::RightBracket, _))) {
+                self.advance(1);
+                break;
+            }
+
+            let value = self.parse_expression()?;
+            entries.push(value);
+
+            self.look_ahead(1)?;
+            match self.peek(0) {
+                Some((Token::Comma, _)) => {
+                    self.advance(1);
+                    self.look_ahead(1)?;
+                    if matches!(self.peek(0), Some((Token::RightBracket, _))) {
+                        self.advance(1);
+                        break;
+                    }
+                }
+                Some((Token::RightBracket, _)) => {
+                    self.advance(1);
+                    break;
+                }
+                Some((t, line_number)) => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(t),
+                            expected: "',' or ']'",
+                        },
+                        line_number,
+                    });
+                }
+                None => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::EndOfStream {
+                            expected: "',' or ']'",
                         },
                         line_number: self.lexer.line_number(),
                     });

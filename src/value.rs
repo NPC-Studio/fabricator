@@ -1,7 +1,8 @@
 use gc_arena::{Collect, Mutation};
 
 use crate::{
-    callback::Callback, closure::Closure, object::Object, string::String, userdata::UserData,
+    array::Array, callback::Callback, closure::Closure, object::Object, string::String,
+    userdata::UserData,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -29,6 +30,7 @@ pub enum Value<'gc> {
     Float(f64),
     String(String<'gc>),
     Object(Object<'gc>),
+    Array(Array<'gc>),
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
     UserData(UserData<'gc>),
@@ -67,6 +69,12 @@ impl<'gc> From<String<'gc>> for Value<'gc> {
 impl<'gc> From<Object<'gc>> for Value<'gc> {
     fn from(o: Object<'gc>) -> Self {
         Value::Object(o)
+    }
+}
+
+impl<'gc> From<Array<'gc>> for Value<'gc> {
+    fn from(a: Array<'gc>) -> Self {
+        Value::Array(a)
     }
 }
 
@@ -120,6 +128,26 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => i > 0,
             Value::Float(f) => f > 0.5,
             _ => true,
+        }
+    }
+
+    #[inline]
+    pub fn to_integer(self) -> Option<i64> {
+        match self {
+            Value::Boolean(b) => Some(if b { 1 } else { 0 }),
+            Value::Integer(i) => Some(i),
+            Value::Float(f) => Some(f.round() as i64),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn to_float(self) -> Option<f64> {
+        match self {
+            Value::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
+            Value::Integer(i) => Some(i as f64),
+            Value::Float(f) => Some(f),
+            _ => None,
         }
     }
 

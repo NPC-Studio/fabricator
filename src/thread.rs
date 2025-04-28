@@ -4,6 +4,7 @@ use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
+    array::Array,
     bytecode,
     closure::{Closure, Constant},
     error::Error,
@@ -21,8 +22,12 @@ pub enum VmError {
     BadOp,
     #[error("bad object")]
     BadObject,
-    #[error("bad object key")]
+    #[error("bad key")]
     BadKey,
+    #[error("bad array")]
+    BadArray,
+    #[error("bad index")]
+    BadIndex,
     #[error("no such field")]
     NoSuchField,
     #[error("bad call")]
@@ -70,7 +75,7 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
-        self.exec_with(ctx, closure, Value::Object(ctx.globals()))
+        self.exec_with(ctx, closure, ctx.globals().into())
     }
 
     pub fn exec_with(
@@ -210,17 +215,16 @@ fn dispatch<'gc>(
         #[inline]
         fn do_get_field(&mut self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
             match obj {
-                Value::Object(object) => Ok(object.get(key)),
+                Value::Object(object) => object.get(key).ok_or(VmError::NoSuchField.into()),
                 Value::UserData(user_data) => {
                     if let Some(methods) = user_data.methods() {
-                        Ok(methods.get_field(self.ctx, user_data, key))
+                        methods.get_field(self.ctx, user_data, key)
                     } else {
-                        Err(VmError::BadObject)
+                        Err(VmError::BadObject.into())
                     }
                 }
-                _ => Err(VmError::BadObject),
-            }?
-            .ok_or(VmError::NoSuchField.into())
+                _ => Err(VmError::BadObject.into()),
+            }
         }
 
         #[inline]
@@ -245,6 +249,58 @@ fn dispatch<'gc>(
             }
 
             Ok(())
+        }
+
+        #[inline]
+        fn do_get_index(
+            &mut self,
+            array: Value<'gc>,
+            index: Value<'gc>,
+        ) -> Result<Value<'gc>, Error> {
+            match array {
+                Value::Array(array) => {
+                    let index = index
+                        .to_integer()
+                        .and_then(|i| i.try_into().ok())
+                        .ok_or(VmError::BadIndex)?;
+                    Ok(array.get(index))
+                }
+                Value::UserData(user_data) => {
+                    if let Some(methods) = user_data.methods() {
+                        methods.get_index(self.ctx, user_data, index)
+                    } else {
+                        Err(VmError::BadArray.into())
+                    }
+                }
+                _ => Err(VmError::BadArray.into()),
+            }
+        }
+
+        #[inline]
+        fn do_set_index(
+            &mut self,
+            array: Value<'gc>,
+            index: Value<'gc>,
+            value: Value<'gc>,
+        ) -> Result<(), Error> {
+            match array {
+                Value::Array(array) => {
+                    let index = index
+                        .to_integer()
+                        .and_then(|i| i.try_into().ok())
+                        .ok_or(VmError::BadIndex)?;
+                    array.set(&self.ctx, index, value);
+                    Ok(())
+                }
+                Value::UserData(user_data) => {
+                    if let Some(methods) = user_data.methods() {
+                        methods.set_index(self.ctx, user_data, index, value)
+                    } else {
+                        Err(VmError::BadObject.into())
+                    }
+                }
+                _ => Err(VmError::BadArray.into()),
+            }
         }
     }
 
@@ -275,13 +331,14 @@ fn dispatch<'gc>(
                 .ok_or(VmError::BadClosureIdx)?;
             // inner closures inherit the set of magic values from the parent, and inherit the
             // current `this` value.
-            self.registers[dest as usize] = Value::Closure(Closure::with_upvalues(
+            self.registers[dest as usize] = Closure::with_upvalues(
                 &self.ctx,
                 proto,
                 self.closure.heap(),
                 self.closure.magic(),
                 self.this,
-            )?);
+            )?
+            .into();
             Ok(())
         }
 
@@ -299,7 +356,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn global(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Object(self.ctx.globals());
+            self.registers[dest as usize] = self.ctx.globals().into();
             Ok(())
         }
 
@@ -311,7 +368,13 @@ fn dispatch<'gc>(
 
         #[inline]
         fn new_object(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Object(Object::new(&self.ctx));
+            self.registers[dest as usize] = Object::new(&self.ctx).into();
+            Ok(())
+        }
+
+        #[inline]
+        fn new_array(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Array::new(&self.ctx).into();
             Ok(())
         }
 
@@ -391,6 +454,64 @@ fn dispatch<'gc>(
         }
 
         #[inline]
+        fn get_index(
+            &mut self,
+            dest: RegIdx,
+            array: RegIdx,
+            index: RegIdx,
+        ) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.do_get_index(
+                self.registers[array as usize],
+                self.registers[index as usize],
+            )?;
+            Ok(())
+        }
+
+        #[inline]
+        fn set_index(
+            &mut self,
+            array: RegIdx,
+            index: RegIdx,
+            value: RegIdx,
+        ) -> Result<(), Self::Error> {
+            self.do_set_index(
+                self.registers[array as usize],
+                self.registers[index as usize],
+                self.registers[value as usize],
+            )?;
+            Ok(())
+        }
+
+        #[inline]
+        fn get_index_const(
+            &mut self,
+            dest: RegIdx,
+            array: RegIdx,
+            index: ConstIdx,
+        ) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.do_get_index(
+                self.registers[array as usize],
+                self.closure.prototype().constants[index as usize].to_value(),
+            )?;
+            Ok(())
+        }
+
+        #[inline]
+        fn set_index_const(
+            &mut self,
+            array: RegIdx,
+            index: ConstIdx,
+            value: RegIdx,
+        ) -> Result<(), Self::Error> {
+            self.do_set_index(
+                self.registers[array as usize],
+                self.closure.prototype().constants[index as usize].to_value(),
+                self.registers[value as usize],
+            )?;
+            Ok(())
+        }
+
+        #[inline]
         fn move_(&mut self, dest: RegIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[source as usize];
             Ok(())
@@ -398,7 +519,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Boolean(!self.registers[arg as usize].to_bool());
+            self.registers[dest as usize] = (!self.registers[arg as usize].to_bool()).into();
             Ok(())
         }
 
@@ -454,7 +575,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = Value::Boolean(arg1.equal(arg2).ok_or(VmError::BadOp)?);
+            *dest = arg1.equal(arg2).ok_or(VmError::BadOp)?.into();
             Ok(())
         }
 
@@ -468,7 +589,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = Value::Boolean(!arg1.equal(arg2).ok_or(VmError::BadOp)?);
+            *dest = (!arg1.equal(arg2).ok_or(VmError::BadOp)?).into();
             Ok(())
         }
 
@@ -479,11 +600,10 @@ fn dispatch<'gc>(
             arg1: RegIdx,
             arg2: RegIdx,
         ) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Boolean(
-                self.registers[arg1 as usize]
-                    .less_than(self.registers[arg2 as usize])
-                    .ok_or(VmError::BadOp)?,
-            );
+            self.registers[dest as usize] = self.registers[arg1 as usize]
+                .less_than(self.registers[arg2 as usize])
+                .ok_or(VmError::BadOp)?
+                .into();
             Ok(())
         }
 
@@ -494,11 +614,10 @@ fn dispatch<'gc>(
             arg1: RegIdx,
             arg2: RegIdx,
         ) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Boolean(
-                self.registers[arg1 as usize]
-                    .less_equal(self.registers[arg2 as usize])
-                    .ok_or(VmError::BadOp)?,
-            );
+            self.registers[dest as usize] = self.registers[arg1 as usize]
+                .less_equal(self.registers[arg2 as usize])
+                .ok_or(VmError::BadOp)?
+                .into();
             Ok(())
         }
 
@@ -506,7 +625,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = Value::Boolean(arg1.to_bool() && arg2.to_bool());
+            *dest = (arg1.to_bool() && arg2.to_bool()).into();
             Ok(())
         }
 
@@ -514,7 +633,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = Value::Boolean(arg1.to_bool() || arg2.to_bool());
+            *dest = (arg1.to_bool() || arg2.to_bool()).into();
             Ok(())
         }
 

@@ -95,7 +95,7 @@ impl Interpreter {
                 Ok(())
             });
             stdlib
-                .add_constant(mc, String::new(mc, "assert"), Value::Callback(assert))
+                .add_constant(mc, String::new(mc, "assert"), assert.into())
                 .unwrap();
 
             let print = Callback::from_fn(mc, |_, _, stack| {
@@ -109,7 +109,7 @@ impl Interpreter {
                 Ok(())
             });
             stdlib
-                .add_constant(mc, String::new(mc, "print"), Value::Callback(print))
+                .add_constant(mc, String::new(mc, "print"), print.into())
                 .unwrap();
 
             let method = Callback::from_fn(mc, |ctx, _, mut stack| {
@@ -129,12 +129,12 @@ impl Interpreter {
                 }
             });
             stdlib
-                .add_constant(mc, String::new(mc, "method"), Value::Callback(method))
+                .add_constant(mc, String::new(mc, "method"), method.into())
                 .unwrap();
 
             let black_box = Callback::from_fn(mc, |_, _, _| Ok(()));
             stdlib
-                .add_constant(mc, String::new(mc, "black_box"), Value::Callback(black_box))
+                .add_constant(mc, String::new(mc, "black_box"), black_box.into())
                 .unwrap();
 
             root.stdlib = Gc::new(mc, stdlib);

@@ -18,11 +18,16 @@ macro_rules! for_each_instruction {
             simple => global = Global { dest: RegIdx };
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
+            simple => new_array = NewArray { dest: RegIdx };
             simple => param = Param { dest: RegIdx, index: ParamIdx };
             simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
             simple => get_field_const = GetFieldConst { dest: RegIdx, object: RegIdx, key: ConstIdx };
             simple => set_field_const = SetFieldConst  { object: RegIdx, key: ConstIdx, value: RegIdx };
+            simple => get_index = GetIndex { dest: RegIdx, array: RegIdx, index: RegIdx };
+            simple => set_index = SetIndex  { array: RegIdx, index: RegIdx, value: RegIdx };
+            simple => get_index_const = GetIndexConst { dest: RegIdx, array: RegIdx, index: ConstIdx };
+            simple => set_index_const = SetIndexConst { array: RegIdx, index: ConstIdx, value: RegIdx };
             simple => move_ = Move { dest: RegIdx, source: RegIdx };
             simple => not = Not { dest: RegIdx, arg: RegIdx };
             simple => neg = Neg { dest: RegIdx, arg: RegIdx };

@@ -2,7 +2,7 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{interpreter::Context, error::Error, stack::Stack, value::Value};
+use crate::{error::Error, interpreter::Context, stack::Stack, value::Value};
 
 pub trait CallbackFn<'gc> {
     fn call(&self, ctx: Context<'gc>, this: Value<'gc>, stack: Stack<'gc, '_>)
@@ -55,7 +55,7 @@ impl<'gc> Callback<'gc> {
     /// If no `this` object is bound to the callback, then the `this` object will be set as
     /// `ctx.globals()`.
     pub fn call(self, ctx: Context<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error> {
-        self.call_with(ctx, Value::Object(ctx.globals()), stack)
+        self.call_with(ctx, ctx.globals().into(), stack)
     }
 
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.

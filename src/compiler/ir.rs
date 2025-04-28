@@ -106,6 +106,7 @@ pub enum Instruction<S> {
     SetMagic(S, InstId),
     This,
     NewObject,
+    NewArray,
     Parameter(ParamIndex),
     GetField {
         object: InstId,
@@ -123,6 +124,24 @@ pub enum Instruction<S> {
     SetFieldConst {
         object: InstId,
         key: Constant<S>,
+        value: InstId,
+    },
+    GetIndex {
+        array: InstId,
+        index: InstId,
+    },
+    SetIndex {
+        array: InstId,
+        index: InstId,
+        value: InstId,
+    },
+    GetIndexConst {
+        array: InstId,
+        index: Constant<S>,
+    },
+    SetIndexConst {
+        array: InstId,
+        index: Constant<S>,
         value: InstId,
     },
     Phi(ShadowVar),
@@ -155,6 +174,8 @@ impl<S> Instruction<S> {
             Instruction::Constant(constant) => Some(constant),
             Instruction::GetFieldConst { key, .. } => Some(key),
             Instruction::SetFieldConst { key, .. } => Some(key),
+            Instruction::GetIndexConst { index, .. } => Some(index),
+            Instruction::SetIndexConst { index, .. } => Some(index),
             _ => None,
         }
         .into_iter()
@@ -181,6 +202,14 @@ impl<S> Instruction<S> {
             &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
             &Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            &Instruction::GetIndex { array, index } => make_iter!([array, index]),
+            &Instruction::SetIndex {
+                array,
+                index,
+                value,
+            } => make_iter!([array, index, value]),
+            &Instruction::GetIndexConst { array, .. } => make_iter!([array]),
+            &Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
@@ -213,6 +242,14 @@ impl<S> Instruction<S> {
             Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             Instruction::GetFieldConst { object, .. } => make_iter!([object]),
             Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            Instruction::GetIndex { array, index } => make_iter!([array, index]),
+            Instruction::SetIndex {
+                array,
+                index,
+                value,
+            } => make_iter!([array, index, value]),
+            Instruction::GetIndexConst { array, .. } => make_iter!([array]),
+            Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
@@ -234,9 +271,12 @@ impl<S> Instruction<S> {
             Instruction::GetMagic(_) => true,
             Instruction::This => true,
             Instruction::NewObject => true,
+            Instruction::NewArray => true,
             Instruction::Parameter(_) => true,
             Instruction::GetField { .. } => true,
             Instruction::GetFieldConst { .. } => true,
+            Instruction::GetIndex { .. } => true,
+            Instruction::GetIndexConst { .. } => true,
             Instruction::Phi(_) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
@@ -252,6 +292,8 @@ impl<S> Instruction<S> {
             Instruction::SetMagic(_, _) => true,
             Instruction::SetField { .. } => true,
             Instruction::SetFieldConst { .. } => true,
+            Instruction::SetIndex { .. } => true,
+            Instruction::SetIndexConst { .. } => true,
             Instruction::Upsilon(_, _) => true,
             Instruction::Call { .. } => true,
             Instruction::Method { .. } => true,
@@ -406,6 +448,9 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::NewObject => {
                         writeln!(f, "new_object()")?;
                     }
+                    Instruction::NewArray => {
+                        writeln!(f, "new_array()")?;
+                    }
                     Instruction::Parameter(ind) => {
                         writeln!(f, "parameter(P{})", ind)?;
                     }
@@ -440,6 +485,48 @@ impl<S: AsRef<str>> Function<S> {
                             "set_field(object = I{}, key = {:?}, value = I{})",
                             object.index(),
                             key.as_ref(),
+                            value.index()
+                        )?;
+                    }
+                    Instruction::GetIndex { array, index } => {
+                        writeln!(
+                            f,
+                            "get_index(array = I{}, index = I{})",
+                            array.index(),
+                            index.index(),
+                        )?;
+                    }
+                    Instruction::SetIndex {
+                        array,
+                        index,
+                        value,
+                    } => {
+                        writeln!(
+                            f,
+                            "set_index(array = I{}, index = I{}, value = I{})",
+                            array.index(),
+                            index.index(),
+                            value.index(),
+                        )?;
+                    }
+                    Instruction::GetIndexConst { array, index } => {
+                        writeln!(
+                            f,
+                            "get_index(array = I{}, index = {:?})",
+                            array.index(),
+                            index.as_ref(),
+                        )?;
+                    }
+                    Instruction::SetIndexConst {
+                        array,
+                        index,
+                        value,
+                    } => {
+                        writeln!(
+                            f,
+                            "set_index(array = I{}, index = {:?}, value = I{})",
+                            array.index(),
+                            index.as_ref(),
                             value.index()
                         )?;
                     }

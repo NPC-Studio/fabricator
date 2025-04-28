@@ -202,6 +202,11 @@ fn codegen_function<'gc>(
                         dest: reg_alloc.instruction_registers[inst_id],
                     });
                 }
+                ir::Instruction::NewArray => {
+                    vm_instructions.push(Instruction::NewArray {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                    });
+                }
                 ir::Instruction::Parameter(index) => {
                     vm_instructions.push(Instruction::Param {
                         dest: reg_alloc.instruction_registers[inst_id],
@@ -233,6 +238,42 @@ fn codegen_function<'gc>(
                     vm_instructions.push(Instruction::SetFieldConst {
                         object: reg_alloc.instruction_registers[object],
                         key: constant_indexes[&key],
+                        value: reg_alloc.instruction_registers[value],
+                    });
+                }
+                ir::Instruction::GetIndex { array, index } => {
+                    vm_instructions.push(Instruction::GetIndex {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        array: reg_alloc.instruction_registers[array],
+                        index: reg_alloc.instruction_registers[index],
+                    });
+                }
+                ir::Instruction::SetIndex {
+                    array,
+                    index,
+                    value,
+                } => {
+                    vm_instructions.push(Instruction::SetIndex {
+                        array: reg_alloc.instruction_registers[array],
+                        index: reg_alloc.instruction_registers[index],
+                        value: reg_alloc.instruction_registers[value],
+                    });
+                }
+                ir::Instruction::GetIndexConst { array, index } => {
+                    vm_instructions.push(Instruction::GetIndexConst {
+                        dest: reg_alloc.instruction_registers[inst_id],
+                        array: reg_alloc.instruction_registers[array],
+                        index: constant_indexes[&index],
+                    });
+                }
+                ir::Instruction::SetIndexConst {
+                    array,
+                    index,
+                    value,
+                } => {
+                    vm_instructions.push(Instruction::SetIndexConst {
+                        array: reg_alloc.instruction_registers[array],
+                        index: constant_indexes[&index],
                         value: reg_alloc.instruction_registers[value],
                     });
                 }

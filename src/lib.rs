@@ -1,4 +1,5 @@
 pub mod any;
+pub mod array;
 pub mod bytecode;
 pub mod callback;
 pub mod closure;
