@@ -239,6 +239,10 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     value: value.map(Box::new),
                 }))
             }
+            (Token::Exit, _) => {
+                self.advance(1);
+                Ok(Statement::Return(ReturnStatement { value: None }))
+            }
             (Token::If, _) => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
@@ -804,6 +808,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::For => "for",
         Token::Repeat => "repeat",
         Token::Return => "return",
+        Token::Exit => "exit",
         Token::Undefined => "undefined",
         Token::True => "true",
         Token::False => "false",
