@@ -465,20 +465,6 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 };
                 Ok(Expression::String(s))
             }
-            (Token::Identifier(_), _) => {
-                self.look_ahead(2)?;
-                if matches!(
-                    self.peek(1),
-                    Some((Token::LeftParen | Token::Dot | Token::LeftBracket, _))
-                ) {
-                    self.parse_suffixed_expression()
-                } else {
-                    let Some((Token::Identifier(i), _)) = self.next().unwrap() else {
-                        unreachable!()
-                    };
-                    Ok(Expression::Name(i))
-                }
-            }
             (Token::Function, _) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
