@@ -132,6 +132,11 @@ impl Interpreter {
                 .add_constant(mc, String::new(mc, "method"), Value::Callback(method))
                 .unwrap();
 
+            let black_box = Callback::from_fn(mc, |_, _, _| Ok(()));
+            stdlib
+                .add_constant(mc, String::new(mc, "black_box"), Value::Callback(black_box))
+                .unwrap();
+
             root.stdlib = Gc::new(mc, stdlib);
         });
 

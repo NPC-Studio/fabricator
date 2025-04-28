@@ -398,7 +398,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Boolean(self.registers[arg as usize].to_bool());
+            self.registers[dest as usize] = Value::Boolean(!self.registers[arg as usize].to_bool());
             Ok(())
         }
 

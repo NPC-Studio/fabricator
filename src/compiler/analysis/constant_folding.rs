@@ -42,8 +42,8 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                             ir::BinOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
                             ir::BinOp::LessThan => l.less_than(r).map(Constant::Boolean),
                             ir::BinOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
-                            ir::BinOp::GreaterThan => r.less_equal(l).map(Constant::Boolean),
-                            ir::BinOp::GreaterEqual => r.less_than(l).map(Constant::Boolean),
+                            ir::BinOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
+                            ir::BinOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
                             ir::BinOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
                             ir::BinOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
                         }

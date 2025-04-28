@@ -338,14 +338,14 @@ fn codegen_function<'gc>(
                             });
                         }
                         ir::BinOp::GreaterThan => {
-                            vm_instructions.push(Instruction::TestLessEqual {
+                            vm_instructions.push(Instruction::TestLess {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],
                             });
                         }
                         ir::BinOp::GreaterEqual => {
-                            vm_instructions.push(Instruction::TestLess {
+                            vm_instructions.push(Instruction::TestLessEqual {
                                 dest: output_reg,
                                 arg1: reg_alloc.instruction_registers[right],
                                 arg2: reg_alloc.instruction_registers[left],

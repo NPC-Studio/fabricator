@@ -7,6 +7,7 @@ use std::{
 
 use crate::value::Value;
 
+#[derive(Debug)]
 pub struct Stack<'gc, 'a> {
     values: &'a mut Vec<Value<'gc>>,
     bottom: usize,
