@@ -41,14 +41,7 @@ pub struct InstructionLivenessRange {
     pub end: Option<usize>,
 }
 
-impl InstructionLivenessRange {
-    pub fn is_live(&self, inst_index: usize) -> bool {
-        self.start.is_none_or(|start| inst_index >= start)
-            && self.end.is_none_or(|end| inst_index <= end)
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InstructionLiveness {
     block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::InstId, InstructionLivenessRange>>,
     live_blocks_for_instruction: SecondaryMap<ir::InstId, HashSet<ir::BlockId>>,

@@ -71,7 +71,7 @@ pub enum BinOp {
 ///
 /// <https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d>
 ///
-/// In order for the IR to be well-formed, any `ShadowVar` identifier must be unique, owned by
+/// In order for the IR to be well-formed, any `ShadowVar` identifier must be unique and owned by
 /// a *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used
 /// only once by a unique `Phi` instruction. Additionally, all paths through the CFG starting with
 /// `start_block` that may reach a `Phi` instruction must have an `Upsilon` that assigns to that
@@ -83,17 +83,6 @@ pub enum BinOp {
 /// Each `Variable` references a unique variable, and `GetVariable` and `SetVariable` instructions
 /// read from and write to these variables.
 ///
-/// In order for the IR to be well-formed, all (owned) variable must have *exactly one*
-/// `Instruction::OpenVariable` instruction and *at most one* `Instruction::CloseVariable`
-/// instruction, and the open must dominate the close and the close must post-dominate the open.
-/// Every `Instruction::GetVariable` or `Instruction::SetVariable` instruction for these variables
-/// must come after the open and strictly before any close instruction. These instructions should
-/// represent the total scope of a variable in the original source.
-///
-/// Upvalue variables can be used anywhere in their containing function and in well-formed IR must
-/// have neither `Instruction::OpenVariable` nor `Instruction::CloseVariable` instructions. Upvalue
-/// variables are always alive for the entire lifetime of the closure that contains them.
-///
 /// The output of the compiler will use these IR variables to represent actual variables in code,
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
 /// `Upsilon` instructions.
@@ -102,6 +91,21 @@ pub enum BinOp {
 /// that are shared across parent / child functions will not be converted to SSA form. These shared
 /// variables that remain after optimization will instead be represented by VM "heap" variables,
 /// allowing them to be shared across closures.
+///
+/// In order for the IR to be well-formed, variables must follow the following rules:
+///
+/// * All (owned) variable must have *exactly one* `OpenVariable` instruction and *at most one*
+///   `CloseVariable` instruction.
+/// * Upvalue variables can be used anywhere in their containing function and in well-formed IR must
+///   have neither `OpenVariable` nor `CloseVariable` instructions. Upvalue variables are always
+///   open for the entire lifetime of the closure that contains them.
+/// * There should be nowhere in the CFG where a variable can potentially be either opened or
+///   closed, depending on the path taken. Every location must, for every variable, be either
+///   *definitely* open or *definitely* closed for that variable. This is meant to imply also that
+///   it should not be possible to re-open a variable without closing it first (you should not be
+///   able to enter a single block in both an open and closed state).
+/// * Every `GetVariable` and `SetVariable` instruction must be in a definitely-open location in
+///   the CFG for that variable.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,

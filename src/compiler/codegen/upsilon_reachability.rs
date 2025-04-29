@@ -49,6 +49,11 @@ pub fn compute_upsilon_reachability<S>(
             depth_first_search(
                 upsilon_block_id,
                 |block_id| {
+                    outgoing_reach
+                        .get_mut(&block_id)
+                        .unwrap()
+                        .push((upsilon_block_id, upsilon_index));
+
                     // We only need to traverse down parts of the CFG that are live for this shadow
                     // variable.
                     //
@@ -62,12 +67,6 @@ pub fn compute_upsilon_reachability<S>(
                     ir.blocks[block_id].exit.successors().filter(|&block_id| {
                         live_blocks.contains(&block_id) && block_id != phi_block
                     })
-                },
-                |block_id| {
-                    outgoing_reach
-                        .get_mut(&block_id)
-                        .unwrap()
-                        .push((upsilon_block_id, upsilon_index));
                 },
                 |_| {},
             );

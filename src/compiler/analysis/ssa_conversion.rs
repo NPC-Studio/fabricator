@@ -103,18 +103,17 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // This algorithm is also from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    let mut current_vars: SecondaryMap<ir::Variable, Vec<ir::InstId>> =
+    let current_vars: SecondaryMap<ir::Variable, Vec<ir::InstId>> =
         SecondaryMap::from_iter(assigning_blocks.ids().map(|var| (var, Vec::new())));
-    let mut var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::Variable, usize>> =
+    let var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::Variable, usize>> =
         SecondaryMap::new();
 
     // We turn the recursive algorithm from Cytron et al. into an explicit DFS of the dominator
     // tree.
     let start_block = ir.start_block;
     depth_first_search_with(
-        &mut (&mut current_vars, &mut var_stack_bottom),
+        &mut (current_vars, var_stack_bottom),
         start_block,
-        |(_, _), block_id| dominators.dominance_children(block_id).unwrap(),
         |(current_vars, var_stack_bottom), block_id| {
             let var_stack_bottom = var_stack_bottom.get_or_insert_default(block_id);
             for (var, stack) in current_vars.iter() {
@@ -189,6 +188,8 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     }
                 }
             }
+
+            dominators.dominance_children(block_id).unwrap()
         },
         |(current_vars, var_stack_bottom), block_id| {
             for (&var, &stack_bottom) in &var_stack_bottom[block_id] {

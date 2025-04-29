@@ -50,12 +50,12 @@ pub struct ShadowOutgoingRange {
 
 /// The liveness range of a shadow variable within a block.
 ///
-/// For each `Phi` instruction in well-formed IR, there will be exactly one incoming range and at
-/// least one outgoing range.
+/// For each `Phi` instruction in well-formed IR, there will be exactly one incoming range and zero
+/// or more outgoing ranges.
 ///
 /// All live `Upsilon` instructions will be at the `start` field of either `incoming_range` or
 /// `outgoing_range`, and the `Phi` instruction will be at the `incoming_range.end` field in the one
-/// block containing the `Phi` instruction..
+/// block containing the `Phi` instruction.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub struct ShadowLivenessRange {
     /// If an incoming range is set, this block will always contain the single `Phi` instruction for
@@ -77,27 +77,7 @@ pub struct ShadowLivenessRange {
     pub outgoing_range: Option<ShadowOutgoingRange>,
 }
 
-impl ShadowLivenessRange {
-    pub fn is_live(&self, inst_index: usize) -> bool {
-        if let Some(incoming_range) = self.incoming_range {
-            if incoming_range.start.is_none_or(|start| inst_index >= start) {
-                if inst_index <= incoming_range.end {
-                    return true;
-                }
-            }
-        }
-
-        if let Some(outgoing_range) = self.outgoing_range {
-            if outgoing_range.start.is_none_or(|start| inst_index >= start) {
-                return true;
-            }
-        }
-
-        false
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ShadowLiveness {
     block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::ShadowVar, ShadowLivenessRange>>,
     live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, HashSet<ir::BlockId>>,
@@ -275,6 +255,52 @@ impl ShadowLiveness {
             block_liveness,
             live_blocks_for_shadow_var,
         })
+    }
+
+    /// Replace dead upsilon instructions (upsilon instructions which have no logical effect and are
+    /// outside of the live range of their shadow variable) with `ir::Instruction::NoOp`.
+    pub fn remove_dead_upsilons<S>(&self, ir: &mut ir::Function<S>) {
+        for (block_id, block) in ir.blocks.iter() {
+            for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
+                let inst = &mut ir.instructions[inst_id];
+                if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst {
+                    if !self.is_live_upsilon(shadow_var, block_id, inst_index) {
+                        *inst = ir::Instruction::NoOp;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns true if the given instruction is a live upsilon instruction for the given shadow
+    /// variable.
+    pub fn is_live_upsilon(
+        &self,
+        shadow_var: ir::ShadowVar,
+        block_id: ir::BlockId,
+        inst_index: usize,
+    ) -> bool {
+        fn is_live_upsilon(live_range: &ShadowLivenessRange, inst_index: usize) -> bool {
+            // All live upsilons are *always* the beginning of some incoming or outgoing range.
+            if live_range
+                .incoming_range
+                .is_some_and(|r| r.start == Some(inst_index))
+            {
+                return true;
+            }
+
+            if live_range
+                .outgoing_range
+                .is_some_and(|r| r.start == Some(inst_index))
+            {
+                return true;
+            }
+
+            false
+        }
+
+        self.live_range_in_block(block_id, shadow_var)
+            .is_some_and(|r| is_live_upsilon(&r, inst_index))
     }
 
     /// Returns all shadow variables used by any phi instruction in any block.

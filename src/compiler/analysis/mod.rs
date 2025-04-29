@@ -7,8 +7,8 @@ pub mod instruction_liveness;
 pub mod shadow_liveness;
 pub mod shadow_reduction;
 pub mod ssa_conversion;
+pub mod variable_liveness;
 pub mod vec_change_set;
-pub mod verify_vars;
 
 use crate::compiler::{graph, ir};
 

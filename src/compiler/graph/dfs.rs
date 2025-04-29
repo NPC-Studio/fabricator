@@ -3,30 +3,20 @@ use crate::{compiler::graph::Node, util::index_containers::IndexSet};
 /// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
 /// each node.
 ///
-/// The order that nodes are visited in will be the same as the order returned by the `successors`
-/// callback. If the graph contains cycles, a node will only be visisted a single time.
-///
 /// The `pre` callback is called in "pre-order", as soon as a node is encountered, the callback is
-/// called.
+/// called. It is should return return the successors for the provided node.
 ///
 /// The `post` callback is called in "post-order", the callback is called after all children
 /// from that node have been visited.
-pub fn depth_first_search<N, I>(
-    start: N,
-    successors: impl Fn(N) -> I,
-    mut pre: impl FnMut(N),
-    mut post: impl FnMut(N),
-) where
+///
+/// The order that nodes are visited in will be the same as the order returned by the `pre`
+/// callback. If the graph contains cycles, a node will only be visisted a single time.
+pub fn depth_first_search<N, I>(start: N, mut pre: impl FnMut(N) -> I, mut post: impl FnMut(N))
+where
     N: Node,
     I: IntoIterator<Item = N>,
 {
-    depth_first_search_with(
-        &mut (),
-        start,
-        move |_, n| successors(n),
-        move |_, n| pre(n),
-        move |_, n| post(n),
-    );
+    depth_first_search_with(&mut (), start, move |_, n| pre(n), move |_, n| post(n));
 }
 
 /// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
@@ -37,8 +27,7 @@ pub fn depth_first_search<N, I>(
 pub fn depth_first_search_with<S, N, I>(
     state: &mut S,
     start: N,
-    successors: impl Fn(&mut S, N) -> I,
-    mut pre: impl FnMut(&mut S, N),
+    mut pre: impl FnMut(&mut S, N) -> I,
     mut post: impl FnMut(&mut S, N),
 ) where
     N: Node,
@@ -47,14 +36,12 @@ pub fn depth_first_search_with<S, N, I>(
     let mut stack = Vec::new();
     let mut visited = IndexSet::new();
     visited.insert(start.index());
-    stack.push((start, successors(state, start).into_iter()));
-    pre(state, start);
+    stack.push((start, pre(state, start).into_iter()));
 
     while let Some((node, iter)) = stack.last_mut() {
         if let Some(next) = iter.next() {
             if visited.insert(next.index()) {
-                pre(state, next);
-                stack.push((next, successors(state, next).into_iter()))
+                stack.push((next, pre(state, next).into_iter()))
             }
         } else {
             post(state, *node);
@@ -72,9 +59,9 @@ where
     let mut pre_order = Vec::new();
     depth_first_search(
         start,
-        &successors,
         |n| {
             pre_order.push(n);
+            successors(n)
         },
         |_| {},
     );
@@ -88,14 +75,9 @@ where
     I: IntoIterator<Item = N>,
 {
     let mut post_order = Vec::new();
-    depth_first_search(
-        start,
-        &successors,
-        |_| {},
-        |n| {
-            post_order.push(n);
-        },
-    );
+    depth_first_search(start, successors, |n| {
+        post_order.push(n);
+    });
     post_order
 }
 
@@ -134,8 +116,10 @@ mod tests {
 
         depth_first_search(
             1,
-            |i| successors[i].iter().copied(),
-            |i| pre.push(i),
+            |i| {
+                pre.push(i);
+                successors[i].iter().copied()
+            },
             |i| post.push(i),
         );
 

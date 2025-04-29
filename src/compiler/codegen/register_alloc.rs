@@ -71,7 +71,7 @@ impl RegisterAllocation {
             // register interferes, set its bit in `interfering_registers`.
 
             for (block_id, shadow_range) in shadow_liveness.live_ranges(shadow_var) {
-                let shadow_ranges = BlockRange::all_from_shadow_range(shadow_range);
+                let shadow_ranges = InterferenceRange::all_from_shadow_range(shadow_range);
 
                 'next_var: for (other_shadow_var, &other_shadow_reg) in
                     assigned_shadow_registers.iter()
@@ -80,7 +80,7 @@ impl RegisterAllocation {
                         shadow_liveness.live_range_in_block(block_id, other_shadow_var)
                     {
                         for other_shadow_range in
-                            BlockRange::all_from_shadow_range(other_shadow_range)
+                            InterferenceRange::all_from_shadow_range(other_shadow_range)
                         {
                             for shadow_range in shadow_ranges.clone() {
                                 if shadow_range.interferes(other_shadow_range) {
@@ -96,7 +96,7 @@ impl RegisterAllocation {
                     if let Some(inst_range) =
                         instruction_liveness.live_range_in_block(block_id, inst_id)
                     {
-                        let inst_range = BlockRange::from_instruction(inst_range);
+                        let inst_range = InterferenceRange::from_instruction_range(inst_range);
                         for shadow_range in shadow_ranges.clone() {
                             if shadow_range.interferes(inst_range) {
                                 interfering_registers.set_bit(inst_reg as usize, true);
@@ -155,7 +155,7 @@ impl RegisterAllocation {
             for &inst_id in &coalescing_instructions {
                 let check_interference = || {
                     for (block_id, inst_range) in instruction_liveness.live_ranges(inst_id) {
-                        let inst_range = BlockRange::from_instruction(inst_range);
+                        let inst_range = InterferenceRange::from_instruction_range(inst_range);
 
                         for (other_shadow_var, &other_shadow_reg) in
                             assigned_shadow_registers.iter()
@@ -197,9 +197,9 @@ impl RegisterAllocation {
                                     .copied()
                                     .any(upsilon_source_conflict)
                                 {
-                                    if inst_range
-                                        .interferes(BlockRange::from_shadow_incoming(incoming))
-                                    {
+                                    if inst_range.interferes(
+                                        InterferenceRange::from_shadow_incoming(incoming),
+                                    ) {
                                         return true;
                                     }
                                 }
@@ -211,9 +211,9 @@ impl RegisterAllocation {
                                     .copied()
                                     .any(upsilon_source_conflict)
                                 {
-                                    if inst_range
-                                        .interferes(BlockRange::from_shadow_outgoing(outgoing))
-                                    {
+                                    if inst_range.interferes(
+                                        InterferenceRange::from_shadow_outgoing(outgoing),
+                                    ) {
                                         return true;
                                     }
                                 }
@@ -224,9 +224,9 @@ impl RegisterAllocation {
                             if let Some(coalesced_inst_range) = instruction_liveness
                                 .live_range_in_block(block_id, coalesced_inst_id)
                             {
-                                if inst_range
-                                    .interferes(BlockRange::from_instruction(coalesced_inst_range))
-                                {
+                                if inst_range.interferes(InterferenceRange::from_instruction_range(
+                                    coalesced_inst_range,
+                                )) {
                                     return true;
                                 }
                             }
@@ -380,12 +380,12 @@ impl RegisterAllocation {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct BlockRange {
+struct InterferenceRange {
     start: Option<usize>,
     end: Option<usize>,
 }
 
-impl BlockRange {
+impl InterferenceRange {
     fn from_shadow_incoming(incoming_range: ShadowIncomingRange) -> Self {
         Self {
             start: incoming_range.start,
@@ -402,16 +402,20 @@ impl BlockRange {
 
     fn all_from_shadow_range(
         range: ShadowLivenessRange,
-    ) -> impl Iterator<Item = BlockRange> + Clone {
+    ) -> impl Iterator<Item = InterferenceRange> + Clone {
         [
-            range.incoming_range.map(BlockRange::from_shadow_incoming),
-            range.outgoing_range.map(BlockRange::from_shadow_outgoing),
+            range
+                .incoming_range
+                .map(InterferenceRange::from_shadow_incoming),
+            range
+                .outgoing_range
+                .map(InterferenceRange::from_shadow_outgoing),
         ]
         .into_iter()
         .flatten()
     }
 
-    fn from_instruction(range: InstructionLivenessRange) -> Self {
+    fn from_instruction_range(range: InstructionLivenessRange) -> Self {
         Self {
             start: range.start,
             end: range.end,

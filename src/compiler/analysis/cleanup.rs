@@ -27,9 +27,9 @@ pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
     let mut reachable_blocks = IndexSet::new();
     depth_first_search(
         ir.start_block,
-        |b| ir.blocks[b].exit.successors(),
         |b| {
             reachable_blocks.insert(b.index() as usize);
+            ir.blocks[b].exit.successors()
         },
         |_| {},
     );

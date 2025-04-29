@@ -10,7 +10,7 @@ use crate::{
         analysis::{
             instruction_liveness::{InstructionLiveness, InstructionVerificationError},
             shadow_liveness::{ShadowLiveness, ShadowVerificationError},
-            verify_vars::{verify_vars, VariableVerificationError},
+            variable_liveness::{VariableLiveness, VariableVerificationError},
         },
         codegen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
         constant::Constant,
@@ -63,7 +63,7 @@ fn codegen_function<'gc>(
     magic_dict: &impl MagicDict<String<'gc>>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
-    verify_vars(ir)?;
+    VariableLiveness::compute(ir)?;
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
 
@@ -282,8 +282,8 @@ fn codegen_function<'gc>(
                         value: reg_alloc.instruction_registers[value],
                     });
                 }
-                ir::Instruction::Phi(shadow_id) => {
-                    let shadow_reg = reg_alloc.shadow_registers[shadow_id];
+                ir::Instruction::Phi(shadow) => {
+                    let shadow_reg = reg_alloc.shadow_registers[shadow];
                     let dest_reg = reg_alloc.instruction_registers[inst_id];
                     if shadow_reg != dest_reg {
                         vm_instructions.push(Instruction::Move {
@@ -292,12 +292,9 @@ fn codegen_function<'gc>(
                         });
                     }
                 }
-                ir::Instruction::Upsilon(shadow_id, source) => {
-                    if shadow_liveness
-                        .live_range_in_block(block_id, shadow_id)
-                        .is_some_and(|r| r.is_live(inst_index))
-                    {
-                        let shadow_reg = reg_alloc.shadow_registers[shadow_id];
+                ir::Instruction::Upsilon(shadow, source) => {
+                    if shadow_liveness.is_live_upsilon(shadow, block_id, inst_index) {
+                        let shadow_reg = reg_alloc.shadow_registers[shadow];
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {
                             vm_instructions.push(Instruction::Move {

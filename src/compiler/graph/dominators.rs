@@ -121,10 +121,11 @@ impl<N: Node> Dominators<N> {
 
             depth_first_search(
                 post_order.len() - 1,
-                |i| dominance_children.get(i),
                 |i| {
                     pre_order_numbers[i] = pre_order_i;
                     pre_order_i += 1;
+
+                    dominance_children.get(i)
                 },
                 |i| {
                     post_order_numbers[i] = post_order_i;

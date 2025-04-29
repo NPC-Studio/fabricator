@@ -7,23 +7,7 @@ use crate::compiler::{
 /// possible.
 pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificationError> {
     let shadow_liveness = ShadowLiveness::compute(ir)?;
-
-    // Replace dead upsilon instructions with `ir::Instruction::NoOp`.
-
-    for (block_id, block) in ir.blocks.iter() {
-        for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-            let inst = &mut ir.instructions[inst_id];
-            if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst {
-                let is_live = shadow_liveness
-                    .live_range_in_block(block_id, shadow_var)
-                    .is_some_and(|r| r.is_live(inst_index));
-
-                if !is_live {
-                    *inst = ir::Instruction::NoOp;
-                }
-            }
-        }
-    }
+    shadow_liveness.remove_dead_upsilons(ir);
 
     // For each shadow variable, check and see if we can convert it to SSA form. We check to see if
     // it is "trivial", i.e. every upsilon sets the value from the same source instruction. If it
