@@ -1,5 +1,3 @@
-use crate::compiler::{graph, ir};
-
 pub mod block_merge;
 pub mod cleanup;
 pub mod constant_folding;
@@ -10,6 +8,8 @@ pub mod shadow_liveness;
 pub mod shadow_reduction;
 pub mod ssa_conversion;
 pub mod vec_change_set;
+
+use crate::compiler::{graph, ir};
 
 impl graph::Node for ir::BlockId {
     fn index(&self) -> usize {

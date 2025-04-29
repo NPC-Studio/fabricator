@@ -110,7 +110,11 @@ where
                 },
                 current_block: start_block,
                 variables: Default::default(),
-                scopes: vec![HashSet::new()],
+                scopes: if settings.lexical_scoping {
+                    Vec::new()
+                } else {
+                    vec![HashSet::new()]
+                },
                 upvalues: HashMap::new(),
             },
         }
@@ -559,7 +563,11 @@ where
                 function,
                 current_block: start_block,
                 variables: Default::default(),
-                scopes: vec![HashSet::new()],
+                scopes: if self.settings.lexical_scoping {
+                    Vec::new()
+                } else {
+                    vec![HashSet::new()]
+                },
                 upvalues: Default::default(),
             },
         );

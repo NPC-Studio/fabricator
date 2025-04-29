@@ -61,15 +61,16 @@ pub struct Prototype<'gc> {
     pub heap_vars: Box<[HeapVarDescriptor]>,
 }
 
-#[derive(Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum HeapVar<'gc> {
     /// A `HeapVarDescriptor::Owned` heap variable.
     Owned(HeapIdx),
     /// A `HeapVarDescriptor::UpValue` heap variable.
     ///
-    /// When a closure is created with upvalues, the parent heap variables are moved into a unique
-    /// `Gc` so that the parent and child closures can share them, even with independent lifetimes.
+    /// When a closure is created with upvalues, the parent heap variable that an upvalue references
+    /// will be here. These persist for the lifetime of the closure across calls, and so must be
+    /// bound to the closure itself.
     UpValue(Gc<'gc, Lock<Value<'gc>>>),
 }
 
@@ -116,12 +117,18 @@ impl<'gc> Closure<'gc> {
         magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
-        for h in &proto.heap_vars {
-            if matches!(h, HeapVarDescriptor::UpValue(_)) {
-                return Err(MissingUpValue);
+        let mut heap = Vec::new();
+        for &h in &proto.heap_vars {
+            match h {
+                HeapVarDescriptor::Owned(idx) => {
+                    heap.push(HeapVar::Owned(idx));
+                }
+                HeapVarDescriptor::UpValue(_) => {
+                    return Err(MissingUpValue);
+                }
             }
         }
-        Self::from_parts(mc, proto, magic, this, Gc::new(mc, Box::new([])))
+        Self::from_parts(mc, proto, magic, this, Gc::new(mc, heap.into_boxed_slice()))
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.

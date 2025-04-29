@@ -186,6 +186,11 @@ type SharedHeap<'gc> = Gc<'gc, Lock<Value<'gc>>>;
 #[derive(Collect)]
 #[collect(no_drop)]
 enum OwnedHeapVar<'gc> {
+    // We lie here, if a "heap" variable is only uniquely referenced by the closure that owns it, we
+    // don't bother to actually allocate it on the heap.
+    //
+    // Once a closure is created that must share this value, it will be moved to the heap as a
+    // `OwnedHeapVar::Shared` value so that it can be shared across closures.
     Unique(Value<'gc>),
     Shared(SharedHeap<'gc>),
 }

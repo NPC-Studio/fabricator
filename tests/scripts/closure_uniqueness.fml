@@ -1,0 +1,25 @@
+var arr = [];
+
+for (var i = 0; i < 10; i += 1) {
+	arr[i] = function() {
+		var old = i;
+		i += 1;
+		return old;
+	};
+}
+
+// assert(arr[0]() == 0);
+// assert(arr[1]() == 1);
+// assert(arr[9]() == 9);
+// 
+// assert(arr[0]() == 1);
+// assert(arr[1]() == 2);
+// assert(arr[9]() == 10);
+
+print(arr[0]());
+print(arr[1]());
+print(arr[9]());
+
+print(arr[0]());
+print(arr[1]());
+print(arr[9]());

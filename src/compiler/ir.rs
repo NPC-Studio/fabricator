@@ -63,7 +63,7 @@ pub enum BinOp {
 ///
 /// We use a slight modification to this system here. Instead of "phi" instructions referencing the
 /// instructions they select between, instead a separate "upsilon" instruction writes to a "shadow
-/// variable" that is present for every `Phi` instruction. The `ShadowVarId` type is the unique
+/// variable" that is present for every `Phi` instruction. The `ShadowVar` type is the unique
 /// identifier for this shadow variable in a single phi instruction.
 ///
 /// This phi / upsilon SSA form was invented by Filip Pizlo is more deeply explained in this
@@ -71,7 +71,7 @@ pub enum BinOp {
 ///
 /// <https://gist.github.com/pizlonator/79b0aa601912ff1a0eb1cb9253f5e98d>
 ///
-/// In order for the IR to be well-formed, any `ShadowVarId` identifier must be unique, owned by
+/// In order for the IR to be well-formed, any `ShadowVar` identifier must be unique, owned by
 /// a *single* `Phi` instruction. These shadow variables are Single Static *Use*, they are used
 /// only once by a unique `Phi` instruction. Additionally, all paths through the CFG starting with
 /// `start_block` that may reach a `Phi` instruction must have an `Upsilon` that assigns to that
@@ -80,8 +80,8 @@ pub enum BinOp {
 /// # Variables
 ///
 /// IR "variables" represent notionally heap allocated values that are an escape hatch for SSA form.
-/// Each `VarId` references a unique variable, and `GetVariable` and `SetVariable` instructions read
-/// from and write to these variables.
+/// Each `Variable` references a unique variable, and `GetVariable` and `SetVariable` instructions
+/// read from and write to these variables.
 ///
 /// The output of the compiler will use these IR variables to represent actual variables in code,
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
@@ -90,7 +90,7 @@ pub enum BinOp {
 /// Normally, all IR variables can be converted into SSA form in this way, however it is allowed
 /// and normal for them to still be present during codegen! IR variables are also a way to represent
 /// values shared mutably across separate closures, and they may remain after optimization if any
-/// such shared values are present. Any `VarId` that remains after optimization really will be
+/// such shared values are present. Any `Variable` that remains after optimization really will be
 /// turned into a heap allocated variable, allowing them to be mutably shared between different
 /// closures with potentially different lifetimes.
 #[derive(Debug, Clone, PartialEq)]
@@ -320,6 +320,15 @@ impl Exit {
         match self {
             Exit::Return { value } => *value,
             Exit::Branch { cond, .. } => Some(*cond),
+            _ => None,
+        }
+        .into_iter()
+    }
+
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
+        match self {
+            Exit::Return { value } => value.as_mut(),
+            Exit::Branch { cond, .. } => Some(cond),
             _ => None,
         }
         .into_iter()
