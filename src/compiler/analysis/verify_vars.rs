@@ -4,10 +4,7 @@ use thiserror::Error;
 
 use crate::{
     compiler::{
-        graph::{
-            dfs::{depth_first_search, topological_order},
-            dominators::Dominators,
-        },
+        graph::{dfs::depth_first_search, dominators::Dominators},
         ir,
     },
     util::typed_id_map::SecondaryMap,
@@ -28,14 +25,13 @@ pub enum VariableVerificationError {
 /// Verify that variable use always follows an open and preceeds a close
 pub fn verify_vars<S>(ir: &ir::Function<S>) -> Result<(), VariableVerificationError> {
     let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
-    let reachable_blocks = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
     let mut variables: HashSet<ir::Variable> = HashSet::new();
     let mut variable_opens: HashMap<ir::Variable, (ir::BlockId, usize)> = HashMap::new();
     let mut variable_closes: HashMap<ir::Variable, (ir::BlockId, usize)> = HashMap::new();
     let mut variable_uses: HashMap<ir::Variable, Vec<(ir::BlockId, usize)>> = HashMap::new();
 
-    for &block_id in &reachable_blocks {
+    for block_id in dominators.topological_order() {
         let block = &ir.blocks[block_id];
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
             match ir.instructions[inst_id] {
@@ -117,16 +113,23 @@ pub fn verify_vars<S>(ir: &ir::Function<S>) -> Result<(), VariableVerificationEr
         );
 
         for &(block_id, inst_index) in &variable_uses[&var] {
-            if post_open
-                .get(block_id)
-                .is_none_or(|r| !r.contains(inst_index))
+            if !dominators.dominates(open_block, block_id).unwrap()
+                || !(BlockRange {
+                    start: if block_id == open_block {
+                        Some(open_index)
+                    } else {
+                        None
+                    },
+                    end: None,
+                })
+                .contains(inst_index)
             {
                 return Err(VariableVerificationError::UseNotInRange);
             }
         }
 
         if let Some(&(close_block, close_index)) = variable_closes.get(&var) {
-            // Instruction ranges in which `VariableClose` may have been called.
+            // Instruction ranges in which `VariableClose` *may* have been called.
             let mut post_close: SecondaryMap<ir::BlockId, BlockRange> = SecondaryMap::new();
             depth_first_search(
                 close_block,
