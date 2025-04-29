@@ -83,16 +83,25 @@ pub enum BinOp {
 /// Each `Variable` references a unique variable, and `GetVariable` and `SetVariable` instructions
 /// read from and write to these variables.
 ///
+/// In order for the IR to be well-formed, all (owned) variable must have *exactly one*
+/// `Instruction::OpenVariable` instruction and *at most one* `Instruction::CloseVariable`
+/// instruction, and the open must dominate the close and the close must post-dominate the open.
+/// Every `Instruction::GetVariable` or `Instruction::SetVariable` instruction for these variables
+/// must come after the open and strictly before any close instruction. These instructions should
+/// represent the total scope of a variable in the original source.
+///
+/// Upvalue variables can be used anywhere in their containing function and in well-formed IR must
+/// have neither `Instruction::OpenVariable` nor `Instruction::CloseVariable` instructions. Upvalue
+/// variables are always alive for the entire lifetime of the closure that contains them.
+///
 /// The output of the compiler will use these IR variables to represent actual variables in code,
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
 /// `Upsilon` instructions.
 ///
-/// Normally, all IR variables can be converted into SSA form in this way, however it is allowed
-/// and normal for them to still be present during codegen! IR variables are also a way to represent
-/// values shared mutably across separate closures, and they may remain after optimization if any
-/// such shared values are present. Any `Variable` that remains after optimization really will be
-/// turned into a heap allocated variable, allowing them to be mutably shared between different
-/// closures with potentially different lifetimes.
+/// Normally, *all* IR variables can be converted into SSA form in this way, but any variables
+/// that are shared across parent / child functions will not be converted to SSA form. These shared
+/// variables that remain after optimization will instead be represented by VM "heap" variables,
+/// allowing them to be shared across closures.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,
@@ -100,8 +109,10 @@ pub enum Instruction<S> {
     Undefined,
     Constant(Constant<S>),
     Closure(FuncId),
+    OpenVariable(Variable),
     GetVariable(Variable),
     SetVariable(Variable, InstId),
+    CloseVariable(Variable),
     GetMagic(S),
     SetMagic(S, InstId),
     This,
@@ -288,7 +299,9 @@ impl<S> Instruction<S> {
 
     pub fn has_effect(&self) -> bool {
         match self {
+            Instruction::OpenVariable(_) => true,
             Instruction::SetVariable { .. } => true,
+            Instruction::CloseVariable(_) => true,
             Instruction::SetMagic(_, _) => true,
             Instruction::SetField { .. } => true,
             Instruction::SetFieldConst { .. } => true,
@@ -439,11 +452,17 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::Closure(closure) => {
                         writeln!(f, "closure(F{})", closure.index())?;
                     }
+                    Instruction::OpenVariable(var) => {
+                        writeln!(f, "open_var(V{})", var.index())?;
+                    }
                     Instruction::GetVariable(var) => {
                         writeln!(f, "get_var(V{})", var.index())?;
                     }
                     Instruction::SetVariable(var, source) => {
                         writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
+                    }
+                    Instruction::CloseVariable(var) => {
+                        writeln!(f, "close_var(V{})", var.index())?;
                     }
                     Instruction::GetMagic(magic) => {
                         writeln!(f, "get_magic({:?})", magic.as_ref())?;

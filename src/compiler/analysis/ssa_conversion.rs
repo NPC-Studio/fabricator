@@ -2,13 +2,12 @@ use std::collections::{hash_map, HashMap, HashSet};
 
 use crate::{
     compiler::{
+        analysis::vec_change_set::VecChangeSet,
         graph::{dfs::depth_first_search_with, dominators::Dominators},
         ir,
     },
     util::{index_containers::IndexSet, typed_id_map::SecondaryMap},
 };
-
-use super::vec_change_set::VecChangeSet;
 
 /// Convert uses of IR variables into SSA, possibly by inserting Phi and Upsilon instructions.
 ///
@@ -24,10 +23,10 @@ use super::vec_change_set::VecChangeSet;
 pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // We don't do SSA conversion of upvalues, either ones from an upper function or ones shared to
     // a lower function.
-    let mut skipping_vars = HashSet::new();
-    skipping_vars.extend(ir.upvalues.keys().copied());
+    let mut skip_vars = HashSet::new();
+    skip_vars.extend(ir.upvalues.keys().copied());
     for func in ir.functions.values() {
-        skipping_vars.extend(func.upvalues.values().copied());
+        skip_vars.extend(func.upvalues.values().copied());
     }
 
     let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
@@ -40,7 +39,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
         let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
             if let &ir::Instruction::SetVariable(variable, _) = &ir.instructions[inst_id] {
-                if !skipping_vars.contains(&variable) {
+                if !skip_vars.contains(&variable) {
                     let blocks = assigning_blocks.get_or_insert_default(variable);
                     blocks.insert(block_id);
                 }
@@ -131,7 +130,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             current_vars.get(variable).and_then(|s| s.last().copied())
                         {
                             *inst = ir::Instruction::Copy(top);
-                        } else if !skipping_vars.contains(&variable) {
+                        } else if !skip_vars.contains(&variable) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
                             *inst = ir::Instruction::Undefined;
@@ -142,13 +141,23 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             *inst = ir::Instruction::NoOp;
                             stack.push(source);
                         } else {
-                            assert!(skipping_vars.contains(&variable));
+                            assert!(skip_vars.contains(&variable));
                         }
                     }
                     ir::Instruction::Phi(shadow_var) => {
                         // If there is a `Phi` function we did not insert, we ignore it.
                         if let Some(&variable) = shadow_map.get(shadow_var) {
                             current_vars.get_mut(variable).unwrap().push(inst_id);
+                        }
+                    }
+                    ir::Instruction::OpenVariable(variable) => {
+                        if !skip_vars.contains(&variable) {
+                            *inst = ir::Instruction::NoOp;
+                        }
+                    }
+                    ir::Instruction::CloseVariable(variable) => {
+                        if !skip_vars.contains(&variable) {
+                            *inst = ir::Instruction::NoOp;
                         }
                     }
                     _ => {}

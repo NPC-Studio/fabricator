@@ -5,27 +5,25 @@ use crate::{
     closure::Prototype,
     compiler::{
         analysis::{
-            cleanup::clean_unused_variables, dead_code_elim::eliminate_dead_code,
-            eliminate_copies::eliminate_copies, shadow_liveness::ShadowVerificationError,
-            shadow_reduction::reduce_shadows, ssa_conversion::convert_to_ssa,
+            block_merge::merge_blocks,
+            cleanup::clean_unused_variables,
+            cleanup::{clean_instructions, clean_unreachable_blocks, clean_unused_functions},
+            constant_folding::fold_constants,
+            dead_code_elim::eliminate_dead_code,
+            eliminate_copies::eliminate_copies,
+            shadow_liveness::ShadowVerificationError,
+            shadow_reduction::reduce_shadows,
+            ssa_conversion::convert_to_ssa,
         },
         codegen::codegen,
         frontend::{FrontendError, FrontendSettings},
         ir,
+        magic_dict::{MagicDict, MagicMode},
         parser::{ParseError, ParseSettings},
         string_interner::StringInterner,
     },
     magic::MagicSet,
     string::String,
-};
-
-use super::{
-    analysis::{
-        block_merge::merge_blocks,
-        cleanup::{clean_instructions, clean_unreachable_blocks, clean_unused_functions},
-        constant_folding::fold_constants,
-    },
-    magic_dict::{MagicDict, MagicMode},
 };
 
 #[derive(Debug, Error)]

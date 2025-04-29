@@ -38,8 +38,8 @@ pub enum VmError {
     BadMagicIdx,
     #[error("stack underflow")]
     StackUnderflow,
-    #[error("cannot init upvalue heap variable")]
-    InitHeapNotOwned,
+    #[error("only owned heap values can be reset")]
+    ResetHeapNotOwned,
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -183,7 +183,7 @@ enum Next<'gc> {
 
 type SharedHeap<'gc> = Gc<'gc, Lock<Value<'gc>>>;
 
-#[derive(Collect)]
+#[derive(Debug, Collect)]
 #[collect(no_drop)]
 enum OwnedHeapVar<'gc> {
     // We lie here, if a "heap" variable is only uniquely referenced by the closure that owns it, we
@@ -420,17 +420,6 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn init_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
-            match self.closure.heap()[heap as usize] {
-                HeapVar::Owned(idx) => {
-                    self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
-                    Ok(())
-                }
-                HeapVar::UpValue(_) => Err(VmError::InitHeapNotOwned.into()),
-            }
-        }
-
-        #[inline]
         fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
                 HeapVar::Owned(idx) => self.heap[idx as usize].get(),
@@ -447,6 +436,17 @@ fn dispatch<'gc>(
                 HeapVar::UpValue(v) => v.set(&self.ctx, source),
             };
             Ok(())
+        }
+
+        #[inline]
+        fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
+            match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => {
+                    self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
+                    Ok(())
+                }
+                HeapVar::UpValue(_) => Err(VmError::ResetHeapNotOwned.into()),
+            }
         }
 
         #[inline]

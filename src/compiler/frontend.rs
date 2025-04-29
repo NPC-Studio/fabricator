@@ -9,11 +9,9 @@ use thiserror::Error;
 use crate::compiler::{
     constant::Constant,
     ir,
-    magic_dict::MagicMode,
+    magic_dict::{MagicDict, MagicMode},
     parser::{self, AssignmentTarget},
 };
-
-use super::magic_dict::MagicDict;
 
 #[derive(Debug, Error)]
 pub enum FrontendError {
@@ -185,21 +183,23 @@ where
         let (target, old) = match &assignment_statement.target {
             AssignmentTarget::Name(name) => {
                 if let Some(var) = self.get_var(name) {
-                    let old = self.push_instruction(ir::Instruction::GetVariable(var));
-                    (Target::Var(var), old)
+                    (Target::Var(var), ir::Instruction::GetVariable(var))
                 } else if let Some(mode) = self.magic_dict.magic_mode(name) {
                     if mode == MagicMode::ReadOnly {
                         return Err(FrontendError::ReadOnlyMagic);
                     }
-                    let old = self.push_instruction(ir::Instruction::GetMagic(name.clone()));
-                    (Target::Magic(name.clone()), old)
+                    (
+                        Target::Magic(name.clone()),
+                        ir::Instruction::GetMagic(name.clone()),
+                    )
                 } else {
                     let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
                         name.clone(),
                     )));
-                    let old =
-                        self.push_instruction(ir::Instruction::GetField { object: this, key });
-                    (Target::This { key }, old)
+                    (
+                        Target::This { key },
+                        ir::Instruction::GetField { object: this, key },
+                    )
                 }
             }
             AssignmentTarget::Field(field_expr) => {
@@ -207,40 +207,56 @@ where
                 let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
                     field_expr.field.clone(),
                 )));
-                let old = self.push_instruction(ir::Instruction::GetField { object, key });
-                (Target::Field { object, key }, old)
+                (
+                    Target::Field { object, key },
+                    ir::Instruction::GetField { object, key },
+                )
             }
             AssignmentTarget::Index(index_expr) => {
                 let array = self.commit_expression(&index_expr.base)?;
                 let index = self.commit_expression(&index_expr.index)?;
-                let old = self.push_instruction(ir::Instruction::GetIndex { array, index });
-                (Target::Index { array, index }, old)
+                (
+                    Target::Index { array, index },
+                    ir::Instruction::GetIndex { array, index },
+                )
             }
         };
 
         let val = self.commit_expression(&assignment_statement.value)?;
         let assign = match assignment_statement.op {
             parser::AssignmentOp::Equal => val,
-            parser::AssignmentOp::PlusEqual => self.push_instruction(ir::Instruction::BinOp {
-                left: old,
-                right: val,
-                op: ir::BinOp::Add,
-            }),
-            parser::AssignmentOp::MinusEqual => self.push_instruction(ir::Instruction::BinOp {
-                left: old,
-                right: val,
-                op: ir::BinOp::Sub,
-            }),
-            parser::AssignmentOp::MultEqual => self.push_instruction(ir::Instruction::BinOp {
-                left: old,
-                right: val,
-                op: ir::BinOp::Mult,
-            }),
-            parser::AssignmentOp::DivEqual => self.push_instruction(ir::Instruction::BinOp {
-                left: old,
-                right: val,
-                op: ir::BinOp::Div,
-            }),
+            parser::AssignmentOp::PlusEqual => {
+                let old = self.push_instruction(old);
+                self.push_instruction(ir::Instruction::BinOp {
+                    left: old,
+                    right: val,
+                    op: ir::BinOp::Add,
+                })
+            }
+            parser::AssignmentOp::MinusEqual => {
+                let old = self.push_instruction(old);
+                self.push_instruction(ir::Instruction::BinOp {
+                    left: old,
+                    right: val,
+                    op: ir::BinOp::Sub,
+                })
+            }
+            parser::AssignmentOp::MultEqual => {
+                let old = self.push_instruction(old);
+                self.push_instruction(ir::Instruction::BinOp {
+                    left: old,
+                    right: val,
+                    op: ir::BinOp::Mult,
+                })
+            }
+            parser::AssignmentOp::DivEqual => {
+                let old = self.push_instruction(old);
+                self.push_instruction(ir::Instruction::BinOp {
+                    left: old,
+                    right: val,
+                    op: ir::BinOp::Div,
+                })
+            }
         };
 
         match target {
@@ -329,29 +345,27 @@ where
         &mut self,
         for_statement: &parser::ForStatement<S>,
     ) -> Result<(), FrontendError> {
-        let body = self.current.function.blocks.insert(ir::Block::default());
-        let successor = self.current.function.blocks.insert(ir::Block::default());
-
         {
             self.push_scope();
 
+            let body = self.current.function.blocks.insert(ir::Block::default());
+            let successor = self.current.function.blocks.insert(ir::Block::default());
+
             self.statement(&for_statement.initializer)?;
             let cond = self.commit_expression(&for_statement.condition)?;
+
+            self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+                cond,
+                if_true: body,
+                if_false: successor,
+            };
+            self.current.current_block = body;
 
             // The condition expression is used again at the end, so we guard the body scope so it
             // doesn't affect the condition.
             {
                 self.push_scope();
-
-                self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
-                    cond,
-                    if_true: body,
-                    if_false: successor,
-                };
-                self.current.current_block = body;
-
                 self.statement(&for_statement.body)?;
-
                 self.pop_scope();
             }
 
@@ -370,10 +384,10 @@ where
                 if_false: successor,
             };
 
+            self.current.current_block = successor;
+
             self.pop_scope();
         }
-
-        self.current.current_block = successor;
 
         Ok(())
     }
@@ -611,10 +625,11 @@ where
                     else {
                         unreachable!();
                     };
-                    entry.get_mut().pop().unwrap();
+                    let var = entry.get_mut().pop().unwrap();
                     if entry.get().is_empty() {
                         entry.remove();
                     }
+                    self.push_instruction(ir::Instruction::CloseVariable(var));
                 }
             }
         }
@@ -634,6 +649,9 @@ where
             variable_stack.pop().unwrap();
         }
         variable_stack.push(var);
+
+        self.push_instruction(ir::Instruction::OpenVariable(var));
+
         var
     }
 

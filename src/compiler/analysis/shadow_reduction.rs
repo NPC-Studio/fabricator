@@ -1,6 +1,7 @@
-use crate::compiler::ir;
-
-use super::shadow_liveness::{ShadowLiveness, ShadowVerificationError};
+use crate::compiler::{
+    analysis::shadow_liveness::{ShadowLiveness, ShadowVerificationError},
+    ir,
+};
 
 /// Removes dead upsilon instructions and simplifies instructions in phi / upsilon form to SSA where
 /// possible.

@@ -5,13 +5,14 @@ use thiserror::Error;
 
 use crate::{
     bytecode::{self, ByteCode},
-    closure::{self, HeapVarDescriptor, Prototype},
+    closure::{self, Prototype},
     compiler::{
         analysis::{
             instruction_liveness::{InstructionLiveness, InstructionVerificationError},
             shadow_liveness::{ShadowLiveness, ShadowVerificationError},
+            verify_vars::{verify_vars, VariableVerificationError},
         },
-        codegen::register_alloc::RegisterAllocation,
+        codegen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
         constant::Constant,
         graph::dfs::topological_order,
         ir,
@@ -29,11 +30,13 @@ pub enum CodegenError {
     #[error(transparent)]
     PhiUpsilonVerification(#[from] ShadowVerificationError),
     #[error(transparent)]
+    VariableVerification(#[from] VariableVerificationError),
+    #[error(transparent)]
     ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
-    #[error("too many heap variables used")]
-    HeapVarOverflow,
     #[error("too many registers used")]
     RegisterOverflow,
+    #[error("too many heap variables used")]
+    HeapVarOverflow,
     #[error("too many constants used")]
     ConstantOverflow,
     #[error("too many sub-functions")]
@@ -60,34 +63,14 @@ fn codegen_function<'gc>(
     magic_dict: &impl MagicDict<String<'gc>>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
+    verify_vars(ir)?;
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
 
     let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
         .ok_or(CodegenError::RegisterOverflow)?;
-
-    let mut heap_vars = Vec::new();
-    let mut heap_indexes: SecondaryMap<ir::Variable, HeapIdx> = SecondaryMap::new();
-    let mut owned_index: HeapIdx = 0;
-    for (index, var) in ir.variables.ids().enumerate() {
-        let index: HeapIdx = index
-            .try_into()
-            .map_err(|_| CodegenError::HeapVarOverflow)?;
-
-        heap_vars.push(if let Some(&upvalue) = ir.upvalues.get(&var) {
-            HeapVarDescriptor::UpValue(
-                *parent_heap_indexes
-                    .get(upvalue)
-                    .expect("upvalue not present in parent"),
-            )
-        } else {
-            let index = owned_index;
-            owned_index = owned_index.checked_add(1).unwrap();
-            HeapVarDescriptor::Owned(index)
-        });
-
-        heap_indexes.insert(var, index);
-    }
+    let heap_alloc =
+        HeapAllocation::allocate(ir, parent_heap_indexes).ok_or(CodegenError::HeapVarOverflow)?;
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, ProtoIdx> = SecondaryMap::new();
@@ -101,7 +84,7 @@ fn codegen_function<'gc>(
         );
         prototypes.push(Gc::new(
             mc,
-            codegen_function(mc, func, magic_dict, &heap_indexes)?,
+            codegen_function(mc, func, magic_dict, &heap_alloc.heap_indexes)?,
         ));
     }
 
@@ -171,16 +154,25 @@ fn codegen_function<'gc>(
                         proto: prototype_indexes[func_id],
                     });
                 }
+                ir::Instruction::OpenVariable(_) => {
+                    // `OpenVariable` is an ephemeral instruction used only to allocate a heap
+                    // index.
+                }
                 ir::Instruction::GetVariable(var) => {
                     vm_instructions.push(Instruction::GetHeap {
                         dest: reg_alloc.instruction_registers[inst_id],
-                        heap: heap_indexes[var],
+                        heap: heap_alloc.heap_indexes[var],
                     });
                 }
                 ir::Instruction::SetVariable(dest, source) => {
                     vm_instructions.push(Instruction::SetHeap {
-                        heap: heap_indexes[dest],
+                        heap: heap_alloc.heap_indexes[dest],
                         source: reg_alloc.instruction_registers[source],
+                    });
+                }
+                ir::Instruction::CloseVariable(var) => {
+                    vm_instructions.push(Instruction::ResetHeap {
+                        heap: heap_alloc.heap_indexes[var],
                     });
                 }
                 ir::Instruction::GetMagic(magic) => {
@@ -568,6 +560,6 @@ fn codegen_function<'gc>(
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),
         used_registers: reg_alloc.used_registers,
-        heap_vars: heap_vars.into_boxed_slice(),
+        heap_vars: heap_alloc.heap_var_descriptors.into_boxed_slice(),
     })
 }

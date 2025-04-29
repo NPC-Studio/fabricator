@@ -8,14 +8,13 @@ use crate::{
                 ShadowIncomingRange, ShadowLiveness, ShadowLivenessRange, ShadowOutgoingRange,
             },
         },
+        codegen::upsilon_reachability::compute_upsilon_reachability,
         graph::dfs::topological_order,
         ir,
     },
     instructions::RegIdx,
     util::{bit_containers::BitSlice, typed_id_map::SecondaryMap},
 };
-
-use super::upsilon_reachability::compute_upsilon_reachability;
 
 #[derive(Debug)]
 pub struct RegisterAllocation {
