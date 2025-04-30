@@ -271,6 +271,18 @@ impl VariableLiveness {
 
         Ok(this)
     }
+
+    /// Returns all variables that are live anywhere within the given block.
+    pub fn live_for_block(
+        &self,
+        block_id: ir::BlockId,
+    ) -> impl Iterator<Item = (ir::Variable, VariableLivenessRange)> + '_ {
+        self.live_variables_for_block
+            .get(block_id)
+            .into_iter()
+            .flatten()
+            .map(move |&var| (var, self.live_ranges[var][&block_id]))
+    }
 }
 
 #[cfg(test)]

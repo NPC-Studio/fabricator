@@ -63,14 +63,14 @@ fn codegen_function<'gc>(
     magic_dict: &impl MagicDict<String<'gc>>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
 ) -> Result<Prototype<'gc>, CodegenError> {
-    VariableLiveness::compute(ir)?;
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
+    let variable_liveness = VariableLiveness::compute(ir)?;
 
     let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
         .ok_or(CodegenError::RegisterOverflow)?;
-    let heap_alloc =
-        HeapAllocation::allocate(ir, parent_heap_indexes).ok_or(CodegenError::HeapVarOverflow)?;
+    let heap_alloc = HeapAllocation::allocate(ir, &variable_liveness, parent_heap_indexes)
+        .ok_or(CodegenError::HeapVarOverflow)?;
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, ProtoIdx> = SecondaryMap::new();

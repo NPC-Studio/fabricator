@@ -339,7 +339,7 @@ impl RegisterAllocation {
                     }
                 }
 
-                if let Some(&inst_life_start) = inst_life_starts.get(&inst_index) {
+                if let Some(inst_life_start) = inst_life_start {
                     let reg = if stillborn {
                         // We just need any free register to put the output which won't be used in
                         // the future.
