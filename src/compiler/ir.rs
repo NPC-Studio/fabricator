@@ -104,8 +104,8 @@ pub enum BinOp {
 ///   *definitely* open or *definitely* closed for that variable. This is meant to imply also that
 ///   it should not be possible to re-open a variable without closing it first (you should not be
 ///   able to enter a single block in both an open and closed state).
-/// * Every `GetVariable` and `SetVariable` instruction must be in a definitely-open location in
-///   the CFG for that variable.
+/// * Every `GetVariable`, `SetVariable`, and `Closure` instruction that uses a variable must be in
+///   a definitely-open location in the CFG for that variable.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,

@@ -63,8 +63,8 @@ impl VariableLiveness {
     ///      `CloseVariable` instruction.
     ///   2) Every instruction in the CFG has a definite opened or closed state for every variable,
     ///      there are no ambiguous regions.
-    ///   3) Every use of a variable (`GetVariable` or `SetVariable`) is in a definitely-open
-    ///      region.
+    ///   3) Every use of a variable (`GetVariable`, `SetVariable`, or `Closure`) is in a
+    ///      definitely-open region.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, VariableVerificationError> {
         let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
@@ -91,6 +91,15 @@ impl VariableLiveness {
                             .entry(var)
                             .or_default()
                             .push((block_id, inst_index));
+                    }
+                    ir::Instruction::Closure(func) => {
+                        for &var in ir.functions[func].upvalues.values() {
+                            variables.insert(var);
+                            variable_uses
+                                .entry(var)
+                                .or_default()
+                                .push((block_id, inst_index));
+                        }
                     }
                     ir::Instruction::CloseVariable(var) => {
                         variables.insert(var);
@@ -148,14 +157,25 @@ impl VariableLiveness {
                 |block_id| {
                     let mut range_start = None;
                     let mut range_end = None;
+
                     if block_id == open_block_id {
                         range_start = Some(open_index);
                     }
+
                     if let Some((close_block_id, close_index)) = variable_close {
                         if block_id == close_block_id {
                             range_end = Some(close_index);
                         }
                     }
+
+                    let block = &ir.blocks[block_id];
+
+                    if range_end.is_none() {
+                        if let ir::Exit::Return { .. } = block.exit {
+                            range_end = Some(block.instructions.len());
+                        }
+                    }
+
                     assert!(live_ranges
                         .insert(
                             block_id,
@@ -168,7 +188,7 @@ impl VariableLiveness {
 
                     if range_end.is_some() {
                         None
-                    } else if ir.blocks[block_id].exit.successors().any(|b| {
+                    } else if block.exit.successors().any(|b| {
                         b == open_block_id || !dominators.dominates(open_block_id, b).unwrap()
                     }) {
                         // We should not be able to reach a block that the open block does not
@@ -176,7 +196,7 @@ impl VariableLiveness {
                         indeterminate_block = true;
                         None
                     } else {
-                        Some(ir.blocks[block_id].exit.successors())
+                        Some(block.exit.successors())
                     }
                     .into_iter()
                     .flatten()
@@ -196,7 +216,9 @@ impl VariableLiveness {
                 depth_first_search(
                     close_block_id,
                     |block_id| {
-                        if ir.blocks[block_id]
+                        let block = &ir.blocks[block_id];
+
+                        if block
                             .exit
                             .successors()
                             .any(|b| b != open_block_id && live_ranges.contains_key(&b))
@@ -210,7 +232,7 @@ impl VariableLiveness {
                             // blocks that are not dominated by the open block. We know none of
                             // those blocks are live because we already checked for non-dominted
                             // live blocks above.
-                            Some(ir.blocks[block_id].exit.successors().filter(|&b| {
+                            Some(block.exit.successors().filter(|&b| {
                                 b != open_block_id
                                     || !dominators.dominates(open_block_id, b).unwrap()
                             }))
