@@ -1,5 +1,5 @@
 [package]
-name = "fabricator-interpreter"
+name = "fabricator-vm"
 version.workspace = true
 edition.workspace = true
 

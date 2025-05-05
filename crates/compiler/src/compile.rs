@@ -1,7 +1,7 @@
 use gc_arena::{Gc, Mutation};
 use thiserror::Error;
 
-use fabricator_interpreter::{closure::Prototype, magic::MagicSet, string::String};
+use fabricator_vm as vm;
 
 use crate::{
     analysis::{
@@ -34,17 +34,17 @@ pub enum CompilerError {
 struct Interner<'a, 'gc>(&'a Mutation<'gc>);
 
 impl<'a, 'gc> StringInterner for Interner<'a, 'gc> {
-    type String = String<'gc>;
+    type String = vm::String<'gc>;
 
-    fn intern(&mut self, s: &str) -> String<'gc> {
-        String::new(self.0, s)
+    fn intern(&mut self, s: &str) -> vm::String<'gc> {
+        vm::String::new(self.0, s)
     }
 }
 
-struct MDict<'gc>(Gc<'gc, MagicSet<'gc>>);
+struct MDict<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
 
-impl<'gc> MagicDict<String<'gc>> for MDict<'gc> {
-    fn magic_mode(&self, ident: &String<'gc>) -> Option<MagicMode> {
+impl<'gc> MagicDict<vm::String<'gc>> for MDict<'gc> {
+    fn magic_mode(&self, ident: &vm::String<'gc>) -> Option<MagicMode> {
         let index = self.0.find(ident.as_str())?;
         let magic = self.0.get(index).unwrap();
         Some(if magic.read_only() {
@@ -54,16 +54,16 @@ impl<'gc> MagicDict<String<'gc>> for MDict<'gc> {
         })
     }
 
-    fn magic_index(&self, ident: &String<'gc>) -> Option<usize> {
+    fn magic_index(&self, ident: &vm::String<'gc>) -> Option<usize> {
         self.0.find(ident.as_str())
     }
 }
 
 pub fn compile<'gc>(
     mc: &Mutation<'gc>,
-    stdlib: Gc<'gc, MagicSet<'gc>>,
+    stdlib: Gc<'gc, vm::MagicSet<'gc>>,
     src: &str,
-) -> Result<Prototype<'gc>, CompilerError> {
+) -> Result<vm::Prototype<'gc>, CompilerError> {
     let parsed = ParseSettings::default().parse(src, Interner(mc))?;
     let mut ir = FrontendSettings::default().compile_ir(&parsed, MDict(stdlib))?;
 
@@ -75,9 +75,9 @@ pub fn compile<'gc>(
 
 pub fn compile_compat<'gc>(
     mc: &Mutation<'gc>,
-    stdlib: Gc<'gc, MagicSet<'gc>>,
+    stdlib: Gc<'gc, vm::MagicSet<'gc>>,
     src: &str,
-) -> Result<Prototype<'gc>, CompilerError> {
+) -> Result<vm::Prototype<'gc>, CompilerError> {
     let parsed = ParseSettings { strict: false }.parse(src, Interner(mc))?;
     let mut ir = FrontendSettings {
         lexical_scoping: false,

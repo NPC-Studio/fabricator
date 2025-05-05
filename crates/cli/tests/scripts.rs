@@ -3,30 +3,28 @@ use std::{
     io::{self, Write, stdout},
 };
 
-use fabricator_compiler::{compile, compile_compat};
-use fabricator_interpreter::{
-    closure::Closure, error::Error, interpreter::Interpreter, thread::Thread, value::Value,
-};
+use fabricator_compiler as compiler;
+use fabricator_vm as vm;
 use gc_arena::Gc;
 
-fn run_code(code: &str, compat: bool) -> Result<(), Error> {
-    let mut interpreter = Interpreter::testing();
+fn run_code(code: &str, compat: bool) -> Result<(), vm::Error> {
+    let mut interpreter = vm::Interpreter::testing();
 
     interpreter.enter(|ctx| {
         let prototype = if compat {
-            compile_compat(&ctx, ctx.stdlib(), &code)?
+            compiler::compile_compat(&ctx, ctx.stdlib(), &code)?
         } else {
-            compile(&ctx, ctx.stdlib(), &code)?
+            compiler::compile(&ctx, ctx.stdlib(), &code)?
         };
-        let closure = Closure::new(
+        let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),
             ctx.stdlib(),
-            Value::Undefined,
+            vm::Value::Undefined,
         )
         .unwrap();
 
-        let thread = Thread::new(&ctx);
+        let thread = vm::Thread::new(&ctx);
         thread.exec(ctx, closure)?;
         Ok(())
     })

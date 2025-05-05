@@ -1,12 +1,10 @@
 use std::collections::{HashMap, hash_map};
 
-use fabricator_interpreter::{
-    bytecode::{self, ByteCode},
-    closure::{self, Prototype},
-    instructions::{ConstIdx, HeapIdx, Instruction, ProtoIdx},
-    string::String,
-};
 use fabricator_util::typed_id_map::SecondaryMap;
+use fabricator_vm::{
+    self as vm, bytecode,
+    instructions::{self, Instruction},
+};
 use gc_arena::{Gc, Mutation};
 use thiserror::Error;
 
@@ -51,18 +49,18 @@ pub enum CodegenError {
 
 pub fn codegen<'gc>(
     mc: &Mutation<'gc>,
-    ir: &ir::Function<String<'gc>>,
-    magic_dict: impl MagicDict<String<'gc>>,
-) -> Result<Prototype<'gc>, CodegenError> {
+    ir: &ir::Function<vm::String<'gc>>,
+    magic_dict: impl MagicDict<vm::String<'gc>>,
+) -> Result<vm::Prototype<'gc>, CodegenError> {
     codegen_function(mc, ir, &magic_dict, &SecondaryMap::new())
 }
 
 fn codegen_function<'gc>(
     mc: &Mutation<'gc>,
-    ir: &ir::Function<String<'gc>>,
-    magic_dict: &impl MagicDict<String<'gc>>,
-    parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
-) -> Result<Prototype<'gc>, CodegenError> {
+    ir: &ir::Function<vm::String<'gc>>,
+    magic_dict: &impl MagicDict<vm::String<'gc>>,
+    parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
+) -> Result<vm::Prototype<'gc>, CodegenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
     let variable_liveness = VariableLiveness::compute(ir)?;
@@ -73,7 +71,8 @@ fn codegen_function<'gc>(
         .ok_or(CodegenError::HeapVarOverflow)?;
 
     let mut prototypes = Vec::new();
-    let mut prototype_indexes: SecondaryMap<ir::FuncId, ProtoIdx> = SecondaryMap::new();
+    let mut prototype_indexes: SecondaryMap<ir::FuncId, instructions::ProtoIdx> =
+        SecondaryMap::new();
     for (func_id, func) in ir.functions.iter() {
         prototype_indexes.insert(
             func_id,
@@ -89,7 +88,7 @@ fn codegen_function<'gc>(
     }
 
     let mut constants = Vec::new();
-    let mut constant_indexes = HashMap::<Constant<String<'gc>>, ConstIdx>::new();
+    let mut constant_indexes = HashMap::<Constant<vm::String<'gc>>, instructions::ConstIdx>::new();
 
     for block in ir.blocks.values() {
         for &inst_id in &block.instructions {
@@ -533,26 +532,26 @@ fn codegen_function<'gc>(
         }
     }
 
-    let bytecode = ByteCode::encode(&vm_instructions)?;
+    let bytecode = vm::ByteCode::encode(&vm_instructions)?;
 
     let constants = constants
         .into_iter()
         .map(|c| match c {
-            Constant::Undefined => closure::Constant::Undefined,
-            Constant::Boolean(b) => closure::Constant::Boolean(b),
+            Constant::Undefined => vm::Constant::Undefined,
+            Constant::Boolean(b) => vm::Constant::Boolean(b),
             Constant::Integer(i) => {
                 if let Ok(i) = i.try_into() {
-                    closure::Constant::Integer(i)
+                    vm::Constant::Integer(i)
                 } else {
-                    closure::Constant::Float(i as f64)
+                    vm::Constant::Float(i as f64)
                 }
             }
-            Constant::Float(f) => closure::Constant::Float(f),
-            Constant::String(s) => closure::Constant::String(s),
+            Constant::Float(f) => vm::Constant::Float(f),
+            Constant::String(s) => vm::Constant::String(s),
         })
         .collect::<Vec<_>>();
 
-    Ok(Prototype {
+    Ok(vm::Prototype {
         bytecode,
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),

@@ -250,8 +250,8 @@ dependencies = [
  "clap",
  "criterion",
  "fabricator-compiler",
- "fabricator-interpreter",
  "fabricator-util",
+ "fabricator-vm",
  "gc-arena",
 ]
 
@@ -261,17 +261,8 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "either",
- "fabricator-interpreter",
  "fabricator-util",
- "gc-arena",
- "thiserror",
-]
-
-[[package]]
-name = "fabricator-interpreter"
-version = "0.1.0"
-dependencies = [
- "fabricator-util",
+ "fabricator-vm",
  "gc-arena",
  "thiserror",
 ]
@@ -279,6 +270,15 @@ dependencies = [
 [[package]]
 name = "fabricator-util"
 version = "0.1.0"
+
+[[package]]
+name = "fabricator-vm"
+version = "0.1.0"
+dependencies = [
+ "fabricator-util",
+ "gc-arena",
+ "thiserror",
+]
 
 [[package]]
 name = "gc-arena"

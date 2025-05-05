@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use fabricator_interpreter::instructions::RegIdx;
 use fabricator_util::{bit_containers::BitSlice as _, typed_id_map::SecondaryMap};
+use fabricator_vm::instructions::RegIdx;
 
 use crate::{
     analysis::{

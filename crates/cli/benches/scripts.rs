@@ -4,26 +4,24 @@ use std::{
 };
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fabricator_compiler::compile;
-use fabricator_interpreter::{
-    closure::Closure, interpreter::Interpreter, thread::Thread, value::Value,
-};
+use fabricator_compiler as compiler;
+use fabricator_vm as vm;
 use gc_arena::Gc;
 
 fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
-    let mut interpreter = Interpreter::testing();
+    let mut interpreter = vm::Interpreter::testing();
 
     let (thread, closure) = interpreter.enter(|ctx| {
-        let prototype = compile(&ctx, ctx.stdlib(), &code).expect("compile error");
-        let closure = Closure::new(
+        let prototype = compiler::compile(&ctx, ctx.stdlib(), &code).expect("compile error");
+        let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),
             ctx.stdlib(),
-            Value::Undefined,
+            vm::Value::Undefined,
         )
         .unwrap();
 
-        let thread = Thread::new(&ctx);
+        let thread = vm::Thread::new(&ctx);
         (ctx.stash(thread), ctx.stash(closure))
     });
 

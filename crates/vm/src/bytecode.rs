@@ -381,7 +381,7 @@ macro_rules! define_opcode {
     )*) => {
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         #[repr(u8)]
-        pub enum OpCode {
+        enum OpCode {
             $($name),*
         }
     };

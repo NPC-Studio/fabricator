@@ -9,5 +9,5 @@ either.workspace = true
 gc-arena.workspace = true
 thiserror.workspace = true
 
-fabricator-interpreter.workspace = true
+fabricator-vm.workspace = true
 fabricator-util.workspace = true

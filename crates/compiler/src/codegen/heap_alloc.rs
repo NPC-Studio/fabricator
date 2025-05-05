@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use fabricator_interpreter::{closure::HeapVarDescriptor, instructions::HeapIdx};
 use fabricator_util::{bit_containers::BitSlice as _, typed_id_map::SecondaryMap};
+use fabricator_vm::{closure::HeapVarDescriptor, instructions::HeapIdx};
 
 use crate::{analysis::variable_liveness::VariableLiveness, graph::dfs::topological_order, ir};
 
