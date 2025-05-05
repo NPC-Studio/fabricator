@@ -1,18 +1,25 @@
-[package]
-name = "fabricator"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+]
+default-members = [
+    "crates/*",
+]
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
 arrayvec = "0.7"
 either = "1.0"
 gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "d651e3b4363d525a2d502c2305bc73e291835c84" }
-thiserror = "1.0"
-
-[dev-dependencies]
+thiserror = "2.0"
 criterion = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 
-[[bench]]
-name = "scripts"
-harness = false
+fabricator-compiler.path = "crates/compiler"
+fabricator-interpreter.path = "crates/interpreter"
+fabricator-util.path = "crates/util"
+

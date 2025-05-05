@@ -1,0 +1,4 @@
+[package]
+name = "fabricator-util"
+version.workspace = true
+edition.workspace = true

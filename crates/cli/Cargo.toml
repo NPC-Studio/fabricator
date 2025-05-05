@@ -1,0 +1,19 @@
+[package]
+name = "fabricator-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap.workspace = true
+gc-arena.workspace = true
+
+fabricator-compiler.workspace = true
+fabricator-interpreter.workspace = true
+fabricator-util.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "scripts"
+harness = false

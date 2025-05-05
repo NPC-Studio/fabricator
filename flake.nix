@@ -24,6 +24,8 @@
           packages = [
             rust
             cargo-edit
+            cargo-outdated
+            cargo-udeps
           ];
         };
       }

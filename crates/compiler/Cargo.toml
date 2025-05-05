@@ -1,0 +1,13 @@
+[package]
+name = "fabricator-compiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+arrayvec.workspace = true
+either.workspace = true
+gc-arena.workspace = true
+thiserror.workspace = true
+
+fabricator-interpreter.workspace = true
+fabricator-util.workspace = true
