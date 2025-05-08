@@ -650,7 +650,20 @@ where
         }
         variable_stack.push(var);
 
-        self.push_instruction(ir::Instruction::OpenVariable(var));
+        if self.settings.lexical_scoping {
+            self.push_instruction(ir::Instruction::OpenVariable(var));
+        } else {
+            // If we're not using lexical scoping, just open every variable at the very start of
+            // the function.
+            let inst_id = self
+                .current
+                .function
+                .instructions
+                .insert(ir::Instruction::OpenVariable(var));
+            self.current.function.blocks[self.current.function.start_block]
+                .instructions
+                .insert(0, inst_id);
+        }
 
         var
     }
