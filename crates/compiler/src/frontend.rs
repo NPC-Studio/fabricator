@@ -32,6 +32,17 @@ pub struct FrontendSettings {
     /// Allow lambda expressions to reference variables from outer functions.
     ///
     /// Without this, such variables will instead be interpreted as implicit `self` variables.
+    ///
+    /// # Lexical scoping and closures
+    ///
+    /// Closing over a variable which is declared in the body of a loop will act differently
+    /// depending on whether `lexical_scoping` is enabled or not. With `lexical_scoping`, each
+    /// variable in a loop iteration is independent, without it, every variable in the body of a
+    /// loop is always the same instance. The first behavior is similar to ECMAScript closures with
+    /// the `let` keyword, the second behavior is similar to ECMAScript closures with the `var`
+    /// keyword.
+    ///
+    /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Closures#creating_closures_in_loops_a_common_mistake>
     pub allow_closures: bool,
 }
 
@@ -653,8 +664,9 @@ where
         if self.settings.lexical_scoping {
             self.push_instruction(ir::Instruction::OpenVariable(var));
         } else {
-            // If we're not using lexical scoping, just open every variable at the very start of
-            // the function.
+            // If we're not using lexical scoping, just open every variable at the very start of the
+            // function. This keeps the IR well-formed even with no lexical scoping and no explicit
+            // `CloseVariable` instructions.
             let inst_id = self
                 .current
                 .function
