@@ -252,6 +252,7 @@ dependencies = [
  "fabricator-compiler",
  "fabricator-util",
  "fabricator-vm",
+ "fabricator-yy-format",
  "gc-arena",
 ]
 
@@ -277,6 +278,13 @@ version = "0.1.0"
 dependencies = [
  "fabricator-util",
  "gc-arena",
+ "thiserror",
+]
+
+[[package]]
+name = "fabricator-yy-format"
+version = "0.1.0"
+dependencies = [
  "thiserror",
 ]
 

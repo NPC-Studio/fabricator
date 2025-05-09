@@ -10,6 +10,7 @@ gc-arena.workspace = true
 fabricator-compiler.workspace = true
 fabricator-util.workspace = true
 fabricator-vm.workspace = true
+fabricator-yy-format.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

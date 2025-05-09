@@ -472,8 +472,8 @@ where
         })
     }
 
-    // Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
-    // number.
+    /// Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
+    /// number.
     fn read_line_end(&mut self) {
         let newline = self.peek(0).unwrap();
         assert!(is_newline(newline));
@@ -488,13 +488,10 @@ where
         self.line_number += 1;
     }
 
-    // Read an identifier into the string buffer.
+    /// Read an identifier into the string buffer.
     fn read_identifier(&mut self) {
-        let start = self.peek(0).expect("no start char for identifier");
-        assert!(
-            is_identifier_start_char(start),
-            "identifier does not start with alphabetic character"
-        );
+        let start = self.peek(0).unwrap();
+        assert!(is_identifier_start_char(start));
 
         self.string_buffer.clear();
         self.string_buffer.push(start);
@@ -510,7 +507,7 @@ where
         }
     }
 
-    // Read a short (not multi-line) string literal into the string buffer.
+    /// Read a short (not multi-line) string literal into the string buffer.
     fn read_string(&mut self) -> Result<(), LexError> {
         assert!(self.peek(0).unwrap() == '"');
         self.advance(1);
@@ -570,9 +567,9 @@ where
         Ok(())
     }
 
-    // Reads a hex or decimal integer or floating point number. Allows decimal integers (123), hex
-    // integers (0xdeadbeef), and decimal floating point with optional exponent and exponent sign
-    // (3.21e+1).
+    /// Reads a hex or decimal integer or floating point number. Allows decimal integers (123), hex
+    /// integers (0xdeadbeef), and decimal floating point with optional exponent and exponent sign
+    /// (3.21e+1).
     fn read_numeral(&mut self) -> Result<Token<S::String>, LexError> {
         let p1 = self.peek(0).unwrap();
         assert!(p1.is_ascii_digit());
@@ -669,11 +666,11 @@ where
         self.peek_buffer.get(n).copied()
     }
 
-    // Advance the character stream `n` characters.
-    //
-    // # Panics
-    //
-    // Panics if this would advance over characters that have not been observed with `Lexer::peek`.
+    /// Advance the character stream `n` characters.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this would advance over characters that have not been observed with `Lexer::peek`.
     fn advance(&mut self, n: usize) {
         assert!(
             n <= self.peek_buffer.len(),
