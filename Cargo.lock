@@ -285,6 +285,7 @@ dependencies = [
 name = "fabricator-yy-format"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror",
 ]
 

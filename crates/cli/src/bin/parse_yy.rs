@@ -14,6 +14,6 @@ fn main() {
     let mut contents = String::new();
     file.read_to_string(&mut contents).unwrap();
 
-    let obj = yy::Value::parse(&contents).unwrap();
-    println!("{}", yy::Value::Object(obj).pretty_print());
+    let val = yy::Value::parse(&contents).unwrap();
+    println!("{}", val.to_string_pretty());
 }
