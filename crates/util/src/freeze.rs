@@ -73,10 +73,10 @@ impl<F: for<'f> Freeze<'f>> Frozen<F> {
         // 1) We turn non-'static values into a 'static ones, outside code should never be able to
         //    observe the held 'static value, because it lies about the true lifetime.
         //
-        // 2) The only way to interact with the held 'static value is through `Frozen::[try_]with`
-        //    and `Frozen::[try_]with_mut`, both of which require a callback that works with the
-        //    frozen type for *any* lifetime. This interaction is safe because the callbacks must
-        //    work for any lifetime, so they must work with the lifetime we have erased.
+        // 2) The only way to interact with the held 'static value is through `Frozen::with` and
+        //    `Frozen::with_mut`, both of which require a callback that works with the frozen type
+        //    for *any* lifetime. This interaction is safe because the callbacks must work for any
+        //    lifetime, so they must work with the lifetime we have erased.
         //
         // 3) The 'static `Frozen<F>` handles must have their values unset before the body of
         //    this function ends because we only know they live for at least the body of this
