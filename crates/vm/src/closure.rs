@@ -188,8 +188,8 @@ impl<'gc> Closure<'gc> {
             ClosureInner {
                 proto: self.0.proto,
                 heap: self.0.heap,
-                magic: self.0.magic,
                 this,
+                magic: self.0.magic,
             },
         ))
     }

@@ -16,12 +16,54 @@ pub enum Value {
     Array(Array),
 }
 
+impl From<Array> for Value {
+    fn from(v: Array) -> Self {
+        Self::Array(v)
+    }
+}
+
+impl From<Object> for Value {
+    fn from(v: Object) -> Self {
+        Self::Object(v)
+    }
+}
+
+impl From<String> for Value {
+    fn from(v: String) -> Self {
+        Self::String(v)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(v: f64) -> Self {
+        Self::Float(v)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(v: i64) -> Self {
+        Self::Integer(v)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(v: bool) -> Self {
+        Self::Boolean(v)
+    }
+}
+
+impl Default for Value {
+    fn default() -> Self {
+        Self::Null
+    }
+}
+
 impl Value {
     pub fn parse(src: &str) -> Result<Self, ParseError> {
         Parser::new(src).parse()
     }
 
-    pub fn to_string_pretty(&self) -> String {
+    pub fn format_pretty(&self) -> String {
         fn write_indent(f: &mut dyn fmt::Write, indent: usize) -> fmt::Result {
             write!(f, "{:indent$}", "")?;
             Ok(())
@@ -68,6 +110,110 @@ impl Value {
         let mut buf = String::new();
         write_value(&mut buf, self, 0).unwrap();
         buf
+    }
+
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    #[must_use]
+    pub fn is_boolean(&self) -> bool {
+        matches!(self, Self::Boolean(..))
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        if let &Self::Boolean(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Integer(..))
+    }
+
+    pub fn as_integer(&self) -> Option<i64> {
+        if let &Self::Integer(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float(..))
+    }
+
+    pub fn as_float(&self) -> Option<f64> {
+        if let &Self::Float(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(..))
+    }
+
+    pub fn as_string(&self) -> Option<&String> {
+        if let Self::String(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            Value::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_object(&self) -> bool {
+        matches!(self, Self::Object(..))
+    }
+
+    pub fn as_object(&self) -> Option<&Object> {
+        if let Self::Object(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_object(self) -> Option<Object> {
+        match self {
+            Value::Object(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::Array(..))
+    }
+
+    pub fn as_array(&self) -> Option<&Array> {
+        if let Self::Array(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_array(self) -> Option<Array> {
+        match self {
+            Value::Array(a) => Some(a),
+            _ => None,
+        }
     }
 }
 

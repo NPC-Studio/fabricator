@@ -1,9 +1,10 @@
 use core::fmt;
 
-use gc_arena::{DynamicRoot, DynamicRootSet, Mutation, Rootable};
+use gc_arena::{DynamicRoot, DynamicRootSet, Gc, Mutation, Rootable};
 
 use crate::{
-    closure::{Closure, ClosureInner},
+    closure::{Closure, ClosureInner, Prototype},
+    magic::MagicSet,
     thread::{Thread, ThreadInner},
 };
 
@@ -75,5 +76,43 @@ impl Fetchable for StashedThread {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
         Thread::from_inner(roots.fetch(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedPrototype(DynamicRoot<Rootable![Prototype<'_>]>);
+
+impl<'gc> Stashable<'gc> for Gc<'gc, Prototype<'gc>> {
+    type Stashed = StashedPrototype;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedPrototype(roots.stash::<Rootable![Prototype<'_>]>(mc, self))
+    }
+}
+
+impl Fetchable for StashedPrototype {
+    type Fetched<'gc> = Gc<'gc, Prototype<'gc>>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        roots.fetch(&self.0)
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedMagicSet(DynamicRoot<Rootable![MagicSet<'_>]>);
+
+impl<'gc> Stashable<'gc> for Gc<'gc, MagicSet<'gc>> {
+    type Stashed = StashedMagicSet;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedMagicSet(roots.stash::<Rootable![MagicSet<'_>]>(mc, self))
+    }
+}
+
+impl Fetchable for StashedMagicSet {
+    type Fetched<'gc> = Gc<'gc, MagicSet<'gc>>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        roots.fetch(&self.0)
     }
 }

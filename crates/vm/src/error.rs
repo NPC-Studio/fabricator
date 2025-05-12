@@ -22,4 +22,8 @@ impl Error {
     pub fn new(err: impl Into<Box<dyn StdError + Send + Sync>>) -> Self {
         Self(err.into())
     }
+
+    pub fn into_boxed_err(self) -> Box<dyn StdError + Send + Sync> {
+        self.0
+    }
 }

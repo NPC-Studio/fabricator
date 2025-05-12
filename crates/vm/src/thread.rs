@@ -57,9 +57,9 @@ pub struct ThreadState<'gc> {
 pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
 impl<'gc> Thread<'gc> {
-    pub fn new(ctx: &Mutation<'gc>) -> Thread<'gc> {
+    pub fn new(mc: &Mutation<'gc>) -> Thread<'gc> {
         Thread(Gc::new(
-            ctx,
+            mc,
             RefLock::new(ThreadState {
                 registers: Vec::new(),
                 stack: Vec::new(),

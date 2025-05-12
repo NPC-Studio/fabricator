@@ -15,5 +15,5 @@ fn main() {
     file.read_to_string(&mut contents).unwrap();
 
     let val = yy::Value::parse(&contents).unwrap();
-    println!("{}", val.to_string_pretty());
+    println!("{}", val.format_pretty());
 }

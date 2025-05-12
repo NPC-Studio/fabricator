@@ -1,0 +1,18 @@
+[package]
+name = "fabricator-desktop"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bytemuck = { version = "1.16", features = ["derive"] }
+clap.workspace = true
+env_logger = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
+num.workspace = true
+pollster = "0.4"
+wgpu = "25.0"
+winit = "0.30"
+
+fabricator-math.workspace = true
+fabricator-util.workspace = true
+fabricator.workspace = true

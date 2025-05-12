@@ -27,7 +27,7 @@ pub use self::{
     object::Object,
     registry::{Registry, Singleton},
     stack::Stack,
-    stash::{Fetchable, Stashable, StashedClosure, StashedThread},
+    stash::{Fetchable, Stashable, StashedClosure, StashedPrototype, StashedThread},
     string::String,
     thread::Thread,
     userdata::{UserData, UserDataMeta, UserDataMethods},
