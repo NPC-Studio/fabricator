@@ -1,5 +1,6 @@
 use std::{
     mem,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -10,7 +11,7 @@ use fabricator_desktop::{
     geometry::{Geometry, GpuGeometry},
     pipeline,
 };
-use fabricator_math::{Affine2, Box2, Vec2};
+use fabricator_math::{Affine2, Box2, Vec2, cast};
 use fabricator_util::typed_id_map::SecondaryMap;
 use winit::{
     application::ApplicationHandler,
@@ -35,6 +36,8 @@ struct State {
     parameters_buffer: wgpu::Buffer,
     parameters_bind_group: wgpu::BindGroup,
     textures: SecondaryMap<fab::TextureId, (fab::TexturePageId, Vec2<f32>, Box2<f32>)>,
+    geometry: Geometry<pipeline::Vertex, u32>,
+    batches: Vec<(Range<u32>, fab::TexturePageId)>,
 }
 
 impl State {
@@ -171,6 +174,8 @@ impl State {
             parameters_buffer,
             parameters_bind_group,
             textures,
+            geometry: Default::default(),
+            batches: Default::default(),
         };
 
         state.configure_surface();
@@ -221,6 +226,36 @@ impl State {
             .translate(Vec2::splat(-1.0))
             .scale(Vec2::new(1.0, -1.0));
 
+        self.queue.write_buffer(
+            &self.parameters_buffer,
+            0,
+            bytemuck::bytes_of(&pipeline::ParametersUniform::new(ndc_transform)),
+        );
+
+        self.geometry.clear();
+        self.batches.clear();
+
+        for quad in &self.render.quads {
+            let (texture_page_id, tex_size, tex_coords) = self.textures[quad.texture];
+            let screen_coords = Box2::with_size(quad.position, tex_size);
+
+            let index_start = self.geometry.indices.len();
+
+            self.geometry.draw_quad([
+                pipeline::Vertex::new(screen_coords.eval([0.0, 0.0]), tex_coords.eval([0.0, 0.0])),
+                pipeline::Vertex::new(screen_coords.eval([0.0, 1.0]), tex_coords.eval([0.0, 1.0])),
+                pipeline::Vertex::new(screen_coords.eval([1.0, 1.0]), tex_coords.eval([1.0, 1.0])),
+                pipeline::Vertex::new(screen_coords.eval([1.0, 0.0]), tex_coords.eval([1.0, 0.0])),
+            ]);
+
+            self.batches.push((
+                cast::cast(index_start)..cast::cast(self.geometry.indices.len()),
+                texture_page_id,
+            ));
+        }
+
+        let gpu_geometry = GpuGeometry::create(&self.device, &self.geometry);
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -237,44 +272,27 @@ impl State {
             occlusion_query_set: None,
         });
 
-        self.queue.write_buffer(
-            &self.parameters_buffer,
-            0,
-            bytemuck::bytes_of(&pipeline::ParametersUniform::new(ndc_transform)),
+        rpass.set_pipeline(&self.pipeline.pipeline);
+        rpass.set_bind_group(
+            pipeline::Pipeline::PARAMETERS_BIND_GROUP,
+            &self.parameters_bind_group,
+            &[],
         );
 
-        for quad in &self.render.quads {
-            let (texture_page_id, tex_size, tex_coords) = self.textures[quad.texture];
-            let screen_coords = Box2::with_size(quad.position, tex_size);
+        rpass.set_vertex_buffer(0, gpu_geometry.vertex_buffer.slice(..));
+        rpass.set_index_buffer(
+            gpu_geometry.index_buffer.slice(..),
+            gpu_geometry.index_format,
+        );
 
-            let mut geometry = Geometry::<pipeline::Vertex, u32>::new();
-            geometry.draw_quad([
-                pipeline::Vertex::new(screen_coords.eval([0.0, 0.0]), tex_coords.eval([0.0, 0.0])),
-                pipeline::Vertex::new(screen_coords.eval([0.0, 1.0]), tex_coords.eval([0.0, 1.0])),
-                pipeline::Vertex::new(screen_coords.eval([1.0, 1.0]), tex_coords.eval([1.0, 1.0])),
-                pipeline::Vertex::new(screen_coords.eval([1.0, 0.0]), tex_coords.eval([1.0, 0.0])),
-            ]);
-
-            let gpu_geometry = GpuGeometry::create(&self.device, &geometry);
-
-            rpass.set_pipeline(&self.pipeline.pipeline);
+        for (range, page_id) in self.batches.iter().cloned() {
             rpass.set_bind_group(
                 pipeline::Pipeline::TEXTURE_BIND_GROUP,
-                &self.texture_page_bind_groups[texture_page_id],
-                &[],
-            );
-            rpass.set_bind_group(
-                pipeline::Pipeline::PARAMETERS_BIND_GROUP,
-                &self.parameters_bind_group,
+                &self.texture_page_bind_groups[page_id],
                 &[],
             );
 
-            rpass.set_index_buffer(
-                gpu_geometry.index_buffer.slice(..),
-                gpu_geometry.index_format,
-            );
-            rpass.set_vertex_buffer(0, gpu_geometry.vertex_buffer.slice(..));
-            rpass.draw_indexed(0..6, 0, 0..1);
+            rpass.draw_indexed(range, 0, 0..1);
         }
 
         drop(rpass);
