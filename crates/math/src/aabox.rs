@@ -247,7 +247,12 @@ impl<T: num::Float, const N: usize> AABox<T, N> {
     }
 
     pub fn center(&self) -> Vector<T, N> {
-        self.min + (self.max - self.min) / T::from(2).unwrap()
+        let half = T::one() / T::from(2).unwrap();
+        self.min * half + self.max * half
+    }
+
+    pub fn eval(self, axes: [T; N]) -> Vector<T, N> {
+        Vector::from_fn(|i| self.min[i] * (T::one() - axes[i]) + self.max[i] * axes[i])
     }
 }
 
@@ -266,15 +271,6 @@ where
 {
     pub fn dim_size(&self, i: usize) -> T {
         self.max[i] - self.min[i]
-    }
-}
-
-impl<T, const N: usize> AABox<T, N>
-where
-    T: ops::Add<Output = T> + ops::Sub<Output = T> + ops::Mul<Output = T> + Copy,
-{
-    pub fn eval(self, axes: [T; N]) -> Vector<T, N> {
-        Vector::from_fn(|i| self.min[i] + (self.max[i] - self.min[i]) * axes[i])
     }
 }
 
@@ -430,5 +426,13 @@ mod tests {
                 [5, 6, 7].into(),
             ]
         );
+    }
+
+    #[test]
+    fn test_center() {
+        let center = AABox::<f32, 3>::new([0.0, 1.0, 2.0].into(), [2.0, 3.0, 4.0].into()).center();
+        assert_eq!(center[0], 1.0);
+        assert_eq!(center[1], 2.0);
+        assert_eq!(center[2], 3.0);
     }
 }
