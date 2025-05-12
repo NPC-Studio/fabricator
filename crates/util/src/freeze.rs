@@ -68,16 +68,6 @@ impl<F: for<'f> Freeze<'f>> Frozen<F> {
     ///
     /// Calling this method from a call to [`Frozen::with`] or [`Frozen::with_mut`] will panic.
     pub fn set<'f, R>(&self, v: <F as Freeze<'f>>::Frozen, f: impl FnOnce() -> R) -> R {
-        struct Guard<'a, F: for<'f> Freeze<'f>> {
-            cell: &'a RefCell<Option<<F as Freeze<'static>>::Frozen>>,
-            prev: Option<<F as Freeze<'static>>::Frozen>,
-        }
-
-        impl<F: for<'f> Freeze<'f>> Drop for Guard<'_, F> {
-            fn drop(&mut self) {
-                *self.cell.borrow_mut() = self.prev.take();
-            }
-        }
         // SAFETY: Safety depends on a few things...
         //
         // 1) We turn non-'static values into a 'static ones, outside code should never be able to
@@ -97,7 +87,28 @@ impl<F: for<'f> Freeze<'f>> Frozen<F> {
 
         let prev = self.cell.replace(Some(next));
 
-        let _reset = Guard::<F> {
+        struct Guard<'a, F: for<'f> Freeze<'f>> {
+            cell: &'a RefCell<Option<<F as Freeze<'static>>::Frozen>>,
+            prev: Option<<F as Freeze<'static>>::Frozen>,
+        }
+
+        impl<F: for<'f> Freeze<'f>> Drop for Guard<'_, F> {
+            fn drop(&mut self) {
+                if let Ok(mut cell) = self.cell.try_borrow_mut() {
+                    *cell = self.prev.take();
+                } else {
+                    // If the value is locked, then there is a live reference to it somewhere in the
+                    // body of a `Fozen::with[_mut]` call. We can no longer guarantee our invariants
+                    // and are forced to abort.
+                    //
+                    // This should be impossible to trigger safely.
+                    eprintln!("freeze lock held during guard drop, aborting!");
+                    std::process::abort()
+                }
+            }
+        }
+
+        let _guard = Guard::<F> {
             cell: &self.cell,
             prev,
         };

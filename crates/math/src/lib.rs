@@ -6,7 +6,7 @@ pub mod vector;
 
 pub use self::{
     aabox::{AABox, Box2, Box3},
-    affine::Affine2,
+    affine::{Affine, Affine2},
     matrix::{Mat2, Mat3, Matrix},
     vector::{Vec2, Vec3, Vector},
 };
