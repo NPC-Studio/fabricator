@@ -80,7 +80,7 @@ impl<F: for<'f> Freeze<'f>> Frozen<F> {
         //
         // 3) The 'static `Frozen<F>` handles must have their values unset before the body of
         //    this function ends because we only know they live for at least the body of this
-        //    function, and we use drop guards for this.
+        //    function, and we use a drop guard for this.
         let next = unsafe {
             mem::transmute::<<F as Freeze<'f>>::Frozen, <F as Freeze<'static>>::Frozen>(v)
         };
