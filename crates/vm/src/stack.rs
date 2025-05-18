@@ -5,7 +5,12 @@ use std::{
     vec,
 };
 
-use crate::value::Value;
+use crate::{
+    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
+    error::TypeError,
+    interpreter::Context,
+    value::Value,
+};
 
 #[derive(Debug)]
 pub struct Stack<'gc, 'a> {
@@ -106,6 +111,38 @@ impl<'gc, 'a> Stack<'gc, 'a> {
             Bound::Unbounded => Bound::Unbounded,
         };
         self.values.drain((start, end))
+    }
+
+    pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
+        for v in v.into_multi_value(ctx) {
+            self.values.push(v.into_value(ctx));
+        }
+    }
+
+    pub fn into_front(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
+        let mut c = 0;
+        for v in v.into_multi_value(ctx) {
+            c += 1;
+            self.values.push(v.into_value(ctx));
+        }
+        self.values[self.bottom..].rotate_right(c);
+    }
+
+    pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_value(ctx, self.pop_back().unwrap_or_default())
+    }
+
+    pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_value(ctx, self.pop_front().unwrap_or_default())
+    }
+
+    pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
+        self.clear();
+        self.extend(v.into_multi_value(ctx));
+    }
+
+    pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_multi_value(ctx, self.drain(..))
     }
 }
 

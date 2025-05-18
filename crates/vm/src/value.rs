@@ -106,6 +106,21 @@ impl<'gc> From<Function<'gc>> for Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Value::Undefined => "undefined",
+            Value::Boolean(_) => "boolean",
+            Value::Integer(_) => "integer",
+            Value::Float(_) => "float",
+            Value::String(_) => "string",
+            Value::Object(_) => "object",
+            Value::Array(_) => "array",
+            Value::Closure(_) => "closure",
+            Value::Callback(_) => "callback",
+            Value::UserData(_) => "userdata",
+        }
+    }
+
     #[inline]
     pub fn is_undefined(self) -> bool {
         matches!(self, Value::Undefined)

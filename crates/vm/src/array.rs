@@ -35,6 +35,10 @@ impl<'gc> Array<'gc> {
         self.0
     }
 
+    pub fn len(self) -> usize {
+        self.0.borrow().len()
+    }
+
     pub fn get(self, index: usize) -> Value<'gc> {
         self.0.borrow().get(index).copied().unwrap_or_default()
     }

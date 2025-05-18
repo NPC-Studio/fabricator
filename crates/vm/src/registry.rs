@@ -42,7 +42,8 @@ impl<'gc> Registry<'gc> {
     /// # Panics
     ///
     /// Singletons may depend on each other, however if a called [`Singleton::create`] method tries
-    /// to (either directly or indirectly) access *itself*, this will result in a panic.
+    /// to (either directly or indirectly) access the singleton it is creating, this will result in
+    /// a panic.
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a> + 'static,

@@ -1,6 +1,14 @@
 use std::{error::Error as StdError, fmt};
 
 use gc_arena::Collect;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, Error)]
+#[error("type error, expected {expected}, found {found}")]
+pub struct TypeError {
+    pub expected: &'static str,
+    pub found: &'static str,
+}
 
 #[derive(Debug, Collect)]
 #[collect(require_static)]
