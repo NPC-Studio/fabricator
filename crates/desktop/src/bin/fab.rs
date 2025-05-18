@@ -3,6 +3,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use clap::Parser;
@@ -38,6 +39,8 @@ struct State {
     textures: SecondaryMap<fab::TextureId, (fab::TexturePageId, Vec2<f32>, Box2<f32>)>,
     geometry: Geometry<pipeline::Vertex, u32>,
     batches: Vec<(Range<u32>, fab::TexturePageId)>,
+    last_render: Instant,
+    frames_behind: f64,
 }
 
 impl State {
@@ -176,6 +179,8 @@ impl State {
             textures,
             geometry: Default::default(),
             batches: Default::default(),
+            last_render: Instant::now(),
+            frames_behind: 1.0,
         };
 
         state.configure_surface();
@@ -207,7 +212,18 @@ impl State {
     }
 
     fn render(&mut self) {
-        self.game.tick(&mut self.render).unwrap();
+        const MAX_FRAMES_BEHIND: u8 = 4;
+
+        let now = Instant::now();
+        let since_last_render = now.duration_since(self.last_render);
+        self.last_render = now;
+        self.frames_behind += since_last_render.as_secs_f64() * self.game.tick_rate();
+        self.frames_behind = self.frames_behind.min(MAX_FRAMES_BEHIND as f64);
+
+        while self.frames_behind >= 1.0 {
+            self.game.tick(&mut self.render).unwrap();
+            self.frames_behind -= 1.0;
+        }
 
         let surface_texture = self
             .surface
