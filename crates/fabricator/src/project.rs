@@ -5,26 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context as _, Error};
+use anyhow::{Context as _, Error, bail};
 use fabricator_yy_format as yy;
 use serde::Deserialize;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum ObjectScript {
-    Step,
-}
-
-impl ObjectScript {
-    pub fn all() -> impl Iterator<Item = ObjectScript> {
-        [Self::Step].into_iter()
-    }
-
-    pub fn path(self) -> &'static str {
-        match self {
-            Self::Step => "Step_0.gml",
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Frame {
@@ -42,13 +25,45 @@ pub struct Sprite {
     pub height: u32,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ObjectEvent {
+    Create,
+    Step,
+}
+
+impl ObjectEvent {
+    pub fn all() -> impl Iterator<Item = ObjectEvent> {
+        [Self::Create, Self::Step].into_iter()
+    }
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Create => "Create_0.gml",
+            Self::Step => "Step_0.gml",
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ScriptMode {
+    Compat,
+    Full,
+}
+
+#[derive(Debug)]
+pub struct EventScript {
+    pub event: ObjectEvent,
+    pub path: PathBuf,
+    pub mode: ScriptMode,
+}
+
 #[derive(Debug)]
 pub struct Object {
     pub name: String,
     pub base_path: PathBuf,
     pub persistent: bool,
     pub sprite: Option<String>,
-    pub scripts: HashMap<ObjectScript, PathBuf>,
+    pub event_scripts: HashMap<ObjectEvent, EventScript>,
 }
 
 #[derive(Debug)]
@@ -230,11 +245,19 @@ impl Project {
 
                     let yy_object: YyObject = yy::from_value(yy_resource.into())?;
 
-                    let mut scripts = HashMap::new();
-                    for script in ObjectScript::all() {
-                        let path = base_path.join(script.path());
+                    let mut event_scripts = HashMap::new();
+                    for event in ObjectEvent::all() {
+                        let path = base_path.join(event.path());
+                        let ext = path.extension().context("missing script extension")?;
+                        let mode = if ext.eq_ignore_ascii_case("gml") {
+                            ScriptMode::Compat
+                        } else if ext.eq_ignore_ascii_case("fml") {
+                            ScriptMode::Full
+                        } else {
+                            bail!("unknown script extension {:?}", ext);
+                        };
                         if path.exists() {
-                            scripts.insert(script, path);
+                            event_scripts.insert(event, EventScript { event, path, mode });
                         }
                     }
 
@@ -243,7 +266,7 @@ impl Project {
                         base_path,
                         persistent: yy_object.persistent,
                         sprite: yy_object.sprite_id.map(|i| i.name),
-                        scripts,
+                        event_scripts,
                     };
                     project.objects.insert(object.name.clone(), object);
                 }

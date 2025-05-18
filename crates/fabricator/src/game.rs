@@ -12,7 +12,7 @@ use gc_arena::{Collect, Gc};
 
 use crate::{
     maxrects::MaxRects,
-    project::{ObjectScript, Project},
+    project::{ObjectEvent, Project, ScriptMode},
 };
 
 new_id_type! {
@@ -174,20 +174,26 @@ impl Game {
                         .with_context(|| anyhow!("missing sprite named {:?}", sprite_name))
                 })
                 .transpose()?;
-            let step_script = if let Some(script_path) = object.scripts.get(&ObjectScript::Step) {
-                let script = interpreter.enter(|ctx| -> Result<_, Error> {
-                    let mut code = String::new();
-                    File::open(script_path)?.read_to_string(&mut code)?;
 
-                    Ok(ctx.stash(Gc::new(&ctx, compiler::compile(&ctx, ctx.stdlib(), &code)?)))
-                })?;
-                Some(script)
-            } else {
-                None
-            };
+            let mut event_scripts = HashMap::new();
+
+            interpreter.enter(|ctx| -> Result<_, Error> {
+                let mut code = String::new();
+                for (&event, script) in &object.event_scripts {
+                    File::open(&script.path)?.read_to_string(&mut code)?;
+                    let proto = match script.mode {
+                        ScriptMode::Compat => compiler::compile_compat(&ctx, ctx.stdlib(), &code)?,
+                        ScriptMode::Full => compiler::compile(&ctx, ctx.stdlib(), &code)?,
+                    };
+                    event_scripts.insert(event, ctx.stash(Gc::new(&ctx, proto)));
+                }
+
+                Ok(())
+            })?;
+
             let object_id = objects.insert(Object {
                 sprite,
-                step_script,
+                event_scripts,
             });
             object_dict.insert(object_name, object_id);
         }
@@ -232,7 +238,9 @@ impl Game {
         for layer in rooms[current_room].layers.values() {
             for instance in &layer.instances {
                 let object = &objects[instance.object];
-                let step_closure = if let Some(step_script) = object.step_script.as_ref() {
+                let step_closure = if let Some(step_script) =
+                    object.event_scripts.get(&ObjectEvent::Step)
+                {
                     let instance_self = InstanceSelf::default();
                     let closure = interpreter.enter(|ctx| {
                         let step_prototype = ctx.fetch(step_script);
@@ -342,7 +350,7 @@ struct Sprite {
 
 struct Object {
     sprite: Option<SpriteId>,
-    step_script: Option<vm::StashedPrototype>,
+    event_scripts: HashMap<ObjectEvent, vm::StashedPrototype>,
 }
 
 struct InstanceTemplate {

@@ -908,7 +908,7 @@ mod tests {
             }
 
             if sum > 100 {
-                print("yes");
+                show_debug_message("yes");
             }
 
             test.foo = 1;
@@ -957,7 +957,7 @@ mod tests {
                         )),
                         then_stmt: Box::new(Statement::Block(Block {
                             statements: vec![Statement::Call(CallExpr {
-                                base: Box::new(Expression::Name("print".to_owned())),
+                                base: Box::new(Expression::Name("show_debug_message".to_owned())),
                                 arguments: vec![Expression::String("yes".to_owned())],
                             })]
                         })),
