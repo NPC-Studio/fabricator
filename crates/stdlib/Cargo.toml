@@ -1,0 +1,10 @@
+[package]
+name = "fabricator-stdlib"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gc-arena.workspace = true
+thiserror.workspace = true
+
+fabricator-vm.workspace = true

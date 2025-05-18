@@ -9,6 +9,7 @@ use fabricator_compiler::{
     parser::ParseSettings,
     string_interner::StringInterner,
 };
+use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
 use gc_arena::{Gc, Mutation};
 
@@ -26,17 +27,17 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
-    let mut interpreter = vm::Interpreter::testing();
+    let mut interpreter = vm::Interpreter::new();
     interpreter.enter(|ctx| match cli.command {
         Command::Run { path } => {
             let mut code = StdString::new();
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
-            let prototype = compile(&ctx, ctx.stdlib(), &code).unwrap();
+            let prototype = compile(&ctx, ctx.testing_stdlib(), &code).unwrap();
             let closure = vm::Closure::new(
                 &ctx,
                 Gc::new(&ctx, prototype),
-                ctx.stdlib(),
+                ctx.testing_stdlib(),
                 vm::Value::Undefined,
             )
             .unwrap();

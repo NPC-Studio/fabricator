@@ -640,6 +640,7 @@ dependencies = [
  "anyhow",
  "fabricator-compiler",
  "fabricator-math",
+ "fabricator-stdlib",
  "fabricator-util",
  "fabricator-vm",
  "fabricator-yy-format",
@@ -658,6 +659,7 @@ dependencies = [
  "criterion",
  "fabricator",
  "fabricator-compiler",
+ "fabricator-stdlib",
  "fabricator-util",
  "fabricator-vm",
  "fabricator-yy-format",
@@ -698,6 +700,15 @@ name = "fabricator-math"
 version = "0.1.0"
 dependencies = [
  "num",
+]
+
+[[package]]
+name = "fabricator-stdlib"
+version = "0.1.0"
+dependencies = [
+ "fabricator-vm",
+ "gc-arena",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

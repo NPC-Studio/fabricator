@@ -5,14 +5,16 @@ use std::{
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use fabricator_compiler as compiler;
+use fabricator_stdlib::StdlibContext;
 use fabricator_vm as vm;
 use gc_arena::Gc;
 
 fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
-    let mut interpreter = vm::Interpreter::testing();
+    let mut interpreter = vm::Interpreter::new();
 
     let (thread, closure) = interpreter.enter(|ctx| {
-        let prototype = compiler::compile(&ctx, ctx.stdlib(), &code).expect("compile error");
+        let prototype =
+            compiler::compile(&ctx, ctx.testing_stdlib(), &code).expect("compile error");
         let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),

@@ -4,22 +4,23 @@ use std::{
 };
 
 use fabricator_compiler as compiler;
+use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
 use gc_arena::Gc;
 
 fn run_code(code: &str, compat: bool) -> Result<(), vm::Error> {
-    let mut interpreter = vm::Interpreter::testing();
+    let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
         let prototype = if compat {
-            compiler::compile_compat(&ctx, ctx.stdlib(), &code)?
+            compiler::compile_compat(&ctx, ctx.testing_stdlib(), &code)?
         } else {
-            compiler::compile(&ctx, ctx.stdlib(), &code)?
+            compiler::compile(&ctx, ctx.testing_stdlib(), &code)?
         };
         let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),
-            ctx.stdlib(),
+            ctx.testing_stdlib(),
             vm::Value::Undefined,
         )
         .unwrap();

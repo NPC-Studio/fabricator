@@ -1,9 +1,6 @@
-use std::{
-    any::TypeId,
-    collections::{hash_map, HashMap},
-};
+use std::{any::TypeId, collections::HashMap};
 
-use gc_arena::{arena::Root, Collect, DynamicRootSet, Gc, Mutation, RefLock, Rootable};
+use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, RefLock, Rootable, arena::Root};
 
 use crate::{
     any::Any,
@@ -26,7 +23,7 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons: Gc<'gc, RefLock<HashMap<TypeId, Any<'gc>>>>,
+    singletons: Gc<'gc, RefLock<HashMap<TypeId, Option<Any<'gc>>>>>,
 }
 
 impl<'gc> Registry<'gc> {
@@ -41,22 +38,34 @@ impl<'gc> Registry<'gc> {
     ///
     /// If the type has already been created, returns the already created instance, otherwise calls
     /// `S::create` to create a new instance and returns it.
+    ///
+    /// # Panics
+    ///
+    /// Singletons may depend on each other, however if a called [`Singleton::create`] method tries
+    /// to (either directly or indirectly) access *itself*, this will result in a panic.
     pub fn singleton<S>(&self, ctx: Context<'gc>) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a> + 'static,
         Root<'gc, S>: Sized + Singleton<'gc> + Collect<'gc>,
     {
-        let mut singletons = self.singletons.borrow_mut(&ctx);
-        match singletons.entry(TypeId::of::<S>()) {
-            hash_map::Entry::Occupied(occupied) => occupied.get().downcast::<S>().unwrap(),
-            hash_map::Entry::Vacant(vacant) => {
-                let v = Root::<'gc, S>::create(ctx);
-                vacant
-                    .insert(Any::new::<S>(&ctx, v))
-                    .downcast::<S>()
-                    .unwrap()
-            }
+        let type_id = TypeId::of::<S>();
+        match self.singletons.borrow().get(&type_id) {
+            Some(Some(singleton)) => return singleton.downcast::<S>().unwrap(),
+            Some(None) => panic!("singleton creation depends on itself"),
+            None => {}
         }
+
+        // Insert a marker `None` value to guard against recursive dependencies.
+        self.singletons.borrow_mut(&ctx).insert(type_id, None);
+
+        // Don't hold the singletons lock during creation to allow singletons do depend on each
+        // other.
+        let v = Root::<'gc, S>::create(ctx);
+
+        let mut singletons = self.singletons.borrow_mut(&ctx);
+        let any = Any::new::<S>(&ctx, v);
+        *singletons.get_mut(&type_id).unwrap() = Some(any);
+        any.downcast::<S>().unwrap()
     }
 
     /// Returns the inner [`DynamicRootSet`] held inside the global registry.

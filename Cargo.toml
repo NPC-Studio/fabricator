@@ -25,6 +25,7 @@ thiserror = "2.0"
 
 fabricator-compiler.path = "crates/compiler"
 fabricator-math.path = "crates/math"
+fabricator-stdlib.path = "crates/stdlib"
 fabricator-util.path = "crates/util"
 fabricator-vm.path = "crates/vm"
 fabricator-yy-format.path = "crates/yy-format"

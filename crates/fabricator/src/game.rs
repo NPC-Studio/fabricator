@@ -3,6 +3,7 @@ use std::{collections::HashMap, fs::File, io::Read as _, path::PathBuf, rc::Rc};
 use anyhow::{Context as _, Error, anyhow, bail};
 use fabricator_compiler as compiler;
 use fabricator_math::Vec2;
+use fabricator_stdlib::StdlibContext as _;
 use fabricator_util::{
     freeze::{Freeze, Frozen},
     typed_id_map::{IdMap, SecondaryMap, new_id_type},
@@ -79,7 +80,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(project: Project) -> Result<Self, Error> {
-        let mut interpreter = vm::Interpreter::empty();
+        let mut interpreter = vm::Interpreter::new();
         let thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
 
         let mut sprites = IdMap::<SpriteId, Sprite>::new();
