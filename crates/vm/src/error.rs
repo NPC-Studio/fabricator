@@ -12,7 +12,7 @@ pub struct TypeError {
 
 #[derive(Debug, Collect)]
 #[collect(require_static)]
-pub struct Error(Box<dyn StdError + Send + Sync>);
+pub struct Error(anyhow::Error);
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -20,18 +20,28 @@ impl fmt::Display for Error {
     }
 }
 
-impl<E: Into<Box<dyn StdError + Send + Sync>>> From<E> for Error {
-    fn from(err: E) -> Self {
-        Self::new(err)
+impl<E> From<E> for Error
+where
+    E: StdError + Send + Sync + 'static,
+{
+    fn from(error: E) -> Self {
+        Self(error.into())
     }
 }
 
 impl Error {
-    pub fn new(err: impl Into<Box<dyn StdError + Send + Sync>>) -> Self {
+    pub fn new(err: impl StdError + Send + Sync + 'static) -> Self {
         Self(err.into())
     }
 
-    pub fn into_boxed_err(self) -> Box<dyn StdError + Send + Sync> {
-        self.0
+    pub fn msg<M>(message: M) -> Self
+    where
+        M: fmt::Display + fmt::Debug + Send + Sync + 'static,
+    {
+        Self(anyhow::Error::msg(message))
+    }
+
+    pub fn into_boxed_err(self) -> Box<dyn StdError + Send + Sync + 'static> {
+        self.0.reallocate_into_boxed_dyn_error_without_backtrace()
     }
 }

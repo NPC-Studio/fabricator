@@ -393,7 +393,7 @@ impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
         instance.with(|instance| match key.as_str() {
             "x" => Ok(vm::Value::Float(instance.position[0])),
             "y" => Ok(vm::Value::Float(instance.position[1])),
-            _ => Err("no such field".into()),
+            _ => Err(vm::Error::msg("no such field")),
         })?
     }
 
@@ -407,7 +407,7 @@ impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
         let instance = ud.downcast_static::<InstanceSelf>()?;
         let val = value
             .to_float()
-            .ok_or_else(|| "field must be set to number")?;
+            .ok_or_else(|| vm::Error::msg("field must be set to number"))?;
         instance.with_mut(|instance| {
             match key.as_str() {
                 "x" => {
@@ -417,7 +417,7 @@ impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
                     instance.position[1] = val;
                 }
                 _ => {
-                    return Err("no such field".into());
+                    return Err(vm::Error::msg("no such field"));
                 }
             }
             Ok(())
@@ -430,7 +430,7 @@ impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
         _ud: vm::UserData<'gc>,
         _index: vm::Value<'gc>,
     ) -> Result<vm::Value<'gc>, vm::Error> {
-        Err("no index access".into())
+        Err(vm::Error::msg("no index access"))
     }
 
     fn set_index(
@@ -440,6 +440,6 @@ impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
         _index: vm::Value<'gc>,
         _value: vm::Value<'gc>,
     ) -> Result<(), vm::Error> {
-        Err("no index access".into())
+        Err(vm::Error::msg("no index access"))
     }
 }

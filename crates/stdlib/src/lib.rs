@@ -18,7 +18,9 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 let mut stdlib = vm::MagicSet::new();
                 let method = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let Some(func) = stack.get(1).to_function() else {
-                        return Err("`method` must be called on a callback or closure".into());
+                        return Err(vm::Error::msg(
+                            "`method` must be called on a callback or closure",
+                        ));
                     };
 
                     match stack.get(0) {
@@ -29,9 +31,9 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                             stack.push_back(func.rebind(&ctx, obj).into());
                             Ok(())
                         }
-                        _ => Err(
-                            "`method` self value must be an object, userdata, or undefined".into(),
-                        ),
+                        _ => Err(vm::Error::msg(
+                            "`method` self value must be an object, userdata, or undefined",
+                        )),
                     }
                 });
                 stdlib
@@ -57,7 +59,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 let assert = vm::Callback::from_fn(&ctx, |_, _, stack| {
                     for i in 0..stack.len() {
                         if !stack.get(i).to_bool() {
-                            return Err("assert failed".into());
+                            return Err(vm::Error::msg("assert failed"));
                         }
                     }
                     Ok(())
