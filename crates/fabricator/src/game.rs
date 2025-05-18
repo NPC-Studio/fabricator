@@ -1,23 +1,23 @@
-use std::{collections::HashMap, fs::File, io::Read as _, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, fs::File, io::Read as _, path::PathBuf};
 
 use anyhow::{Context as _, Error, anyhow, bail};
 use fabricator_compiler as compiler;
 use fabricator_math::Vec2;
 use fabricator_stdlib::StdlibContext as _;
-use fabricator_util::{
-    freeze::{Freeze, Frozen},
-    typed_id_map::{IdMap, SecondaryMap, new_id_type},
-};
+use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc};
 
 use crate::{
     maxrects::MaxRects,
     project::{ObjectEvent, Project, ScriptMode},
+    root::{
+        Instance, InstanceId, InstanceTemplate, Layer, Object, ObjectId, Room, RoomId, Root,
+        Sprite, SpriteId, TextureId,
+    },
 };
 
 new_id_type! {
-    pub struct TextureId;
     pub struct TexturePageId;
 }
 
@@ -66,14 +66,7 @@ impl Render {
 pub struct Game {
     interpreter: vm::Interpreter,
     thread: vm::StashedThread,
-
-    sprites: IdMap<SpriteId, Sprite>,
-    objects: IdMap<ObjectId, Object>,
-    rooms: IdMap<RoomId, Room>,
-
-    current_room: RoomId,
-    instances: IdMap<InstanceId, Instance>,
-
+    root: Root,
     textures: IdMap<TextureId, Texture>,
     texture_pages: IdMap<TexturePageId, TexturePage>,
 }
@@ -239,46 +232,66 @@ impl Game {
         for layer in rooms[current_room].layers.values() {
             for instance in &layer.instances {
                 let object = &objects[instance.object];
-                let step_closure = if let Some(step_script) =
-                    object.event_scripts.get(&ObjectEvent::Step)
-                {
-                    let instance_self = InstanceSelf::default();
-                    let closure = interpreter.enter(|ctx| {
-                        let step_prototype = ctx.fetch(step_script);
-                        let userdata = vm::UserData::new_static(&ctx, instance_self.clone());
-                        userdata.set_methods(&ctx, Some(gc_arena::unsize!(Gc::new(&ctx, InstanceMethods) => dyn vm::UserDataMethods)));
-                        ctx.stash(
-                            vm::Closure::new(
-                                &ctx,
-                                step_prototype,
-                                ctx.stdlib(),
-                                userdata.into(),
+                let step_closure =
+                    if let Some(step_script) = object.event_scripts.get(&ObjectEvent::Step) {
+                        let closure = interpreter.enter(|ctx| {
+                            ctx.stash(
+                                vm::Closure::new(
+                                    &ctx,
+                                    ctx.fetch(step_script),
+                                    ctx.stdlib(),
+                                    vm::Value::Undefined,
+                                )
+                                .unwrap(),
                             )
-                            .unwrap(),
-                        )
-                    });
-                    Some((closure, instance_self))
-                } else {
-                    None
-                };
+                        });
+                        Some(closure)
+                    } else {
+                        None
+                    };
 
-                instances.insert(Instance {
+                let instance_id = instances.insert(Instance {
                     object: instance.object,
                     position: instance.position,
                     depth: layer.depth,
                     step_closure,
                 });
+
+                if let Some(create_script) = object.event_scripts.get(&ObjectEvent::Create) {
+                    interpreter
+                        .enter(|ctx| -> Result<_, vm::Error> {
+                            let thread = ctx.fetch(&thread);
+                            let instance_ud = vm::UserData::new_static(&ctx, instance_id);
+                            instance_ud.set_methods(&ctx, Some(gc_arena::unsize!(Gc::new(&ctx, InstanceMethods) => dyn vm::UserDataMethods)));
+
+                            thread.exec_with(
+                                ctx,
+                                vm::Closure::new(
+                                    &ctx,
+                                    ctx.fetch(create_script),
+                                    ctx.stdlib(),
+                                    vm::Value::Undefined,
+                                )
+                                .unwrap(),
+                                instance_ud.into(),
+                            )?;
+                            Ok(())
+                        })
+                        .map_err(|e| e.into_inner())?;
+                }
             }
         }
 
         Ok(Game {
             interpreter,
             thread,
-            sprites,
-            objects,
-            rooms,
-            current_room,
-            instances,
+            root: Root {
+                sprites,
+                objects,
+                rooms,
+                current_room,
+                instances,
+            },
             textures,
             texture_pages,
         })
@@ -299,26 +312,32 @@ impl Game {
     pub fn tick(&mut self, render: &mut Render) -> Result<(), Error> {
         render.clear();
 
-        render.room_size = self.rooms[self.current_room].size;
+        render.room_size = self.root.rooms[self.root.current_room].size;
 
-        for instance in self.instances.values_mut() {
+        let to_update = self.root.instances.ids().collect::<Vec<_>>();
+
+        for instance_id in to_update {
             self.interpreter.enter(|ctx| -> Result<(), Error> {
-                if let Some((step_closure, instance_self)) = instance.step_closure.as_ref() {
-                    let instance_self = instance_self.clone();
+                if let Some(step_closure) = self.root.instances[instance_id].step_closure.as_ref() {
                     let thread = ctx.fetch(&self.thread);
                     let closure = ctx.fetch(step_closure);
-                    instance_self.set(instance, || {
+                    let instance_ud = vm::UserData::new_static(&ctx, instance_id);
+                    instance_ud.set_methods(&ctx, Some(gc_arena::unsize!(Gc::new(&ctx, InstanceMethods) => dyn vm::UserDataMethods)));
+
+                    Root::ctx_set(ctx, &mut self.root, || {
                         thread
-                            .exec(ctx, closure)
-                            .map_err(|e| Error::from_boxed(e.into_boxed_err()))
+                            .exec_with(ctx, closure, instance_ud.into())
+                            .map_err(|e| e.into_inner())
                     })?;
                 }
                 Ok(())
             })?;
 
-            let object = &self.objects[instance.object];
+            let instance = &self.root.instances[instance_id];
+
+            let object = &self.root.objects[instance.object];
             if let Some(sprite_id) = object.sprite {
-                let sprite = &self.sprites[sprite_id];
+                let sprite = &self.root.sprites[sprite_id];
                 if let Some(texture) = sprite.frames.first().copied() {
                     render.quads.push(Quad {
                         texture,
@@ -338,46 +357,6 @@ impl Game {
 const TICK_RATE: f64 = 60.0;
 const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
 
-new_id_type! {
-    struct ObjectId;
-    struct SpriteId;
-    struct RoomId;
-    struct InstanceId;
-}
-
-struct Sprite {
-    frames: Vec<TextureId>,
-}
-
-struct Object {
-    sprite: Option<SpriteId>,
-    event_scripts: HashMap<ObjectEvent, vm::StashedPrototype>,
-}
-
-struct InstanceTemplate {
-    object: ObjectId,
-    position: Vec2<f64>,
-}
-
-struct Layer {
-    depth: i32,
-    instances: Vec<InstanceTemplate>,
-}
-
-struct Room {
-    size: Vec2<u32>,
-    layers: HashMap<String, Layer>,
-}
-
-struct Instance {
-    object: ObjectId,
-    position: Vec2<f64>,
-    depth: i32,
-    step_closure: Option<(vm::StashedClosure, InstanceSelf)>,
-}
-
-type InstanceSelf = Rc<Frozen<Freeze![&'freeze mut Instance]>>;
-
 #[derive(Collect)]
 #[collect(require_static)]
 struct InstanceMethods;
@@ -385,30 +364,40 @@ struct InstanceMethods;
 impl<'gc> vm::UserDataMethods<'gc> for InstanceMethods {
     fn get_field(
         &self,
-        _ctx: vm::Context<'gc>,
+        ctx: vm::Context<'gc>,
         ud: vm::UserData<'gc>,
         key: vm::String<'gc>,
     ) -> Result<vm::Value<'gc>, vm::Error> {
-        let instance = ud.downcast_static::<InstanceSelf>()?;
-        instance.with(|instance| match key.as_str() {
-            "x" => Ok(vm::Value::Float(instance.position[0])),
-            "y" => Ok(vm::Value::Float(instance.position[1])),
-            _ => Err(vm::Error::msg("no such field")),
+        let instance_id = *ud.downcast_static::<InstanceId>()?;
+        Root::ctx_with(ctx, |root| -> Result<_, vm::Error> {
+            let instance = root
+                .instances
+                .get(instance_id)
+                .context("expired instance")?;
+            match key.as_str() {
+                "x" => Ok(vm::Value::Float(instance.position[0])),
+                "y" => Ok(vm::Value::Float(instance.position[1])),
+                _ => Err(vm::Error::msg("no such field")),
+            }
         })?
     }
 
     fn set_field(
         &self,
-        _ctx: vm::Context<'gc>,
+        ctx: vm::Context<'gc>,
         ud: vm::UserData<'gc>,
         key: vm::String<'gc>,
         value: vm::Value<'gc>,
     ) -> Result<(), vm::Error> {
-        let instance = ud.downcast_static::<InstanceSelf>()?;
+        let instance_id = *ud.downcast_static::<InstanceId>()?;
         let val = value
             .to_float()
             .ok_or_else(|| vm::Error::msg("field must be set to number"))?;
-        instance.with_mut(|instance| {
+        Root::ctx_with_mut(ctx, |root| -> Result<_, vm::Error> {
+            let instance = root
+                .instances
+                .get_mut(instance_id)
+                .context("expired instance")?;
             match key.as_str() {
                 "x" => {
                     instance.position[0] = val;

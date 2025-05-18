@@ -1,0 +1,1 @@
+global.obj_b = self;

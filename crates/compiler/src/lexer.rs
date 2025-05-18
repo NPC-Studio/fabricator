@@ -67,6 +67,8 @@ pub enum Token<S> {
     True,
     False,
 
+    This,
+
     Integer(u64),
     Float(f64),
     Identifier(S),
@@ -126,6 +128,7 @@ impl<S: AsRef<str>> Token<S> {
             Token::Undefined => Token::Undefined,
             Token::True => Token::True,
             Token::False => Token::False,
+            Token::This => Token::This,
             Token::Integer(i) => Token::Integer(*i),
             Token::Float(f) => Token::Float(*f),
             Token::Identifier(i) => Token::Identifier(i.as_ref()),
@@ -187,6 +190,7 @@ impl<S: PartialEq> PartialEq for Token<S> {
             (Token::Undefined, Token::Undefined) => true,
             (Token::True, Token::True) => true,
             (Token::False, Token::False) => true,
+            (Token::This, Token::This) => true,
             (Token::Integer(a), Token::Integer(b)) => a == b,
             (Token::Float(a), Token::Float(b)) => a.to_bits() == b.to_bits(),
             (Token::Identifier(a), Token::Identifier(b)) => a == b,
@@ -460,9 +464,10 @@ where
                     "repeat" => Some(Token::Repeat),
                     "return" => Some(Token::Return),
                     "exit" => Some(Token::Exit),
+                    "undefined" => Some(Token::Undefined),
                     "true" => Some(Token::True),
                     "false" => Some(Token::False),
-                    "undefined" => Some(Token::Undefined),
+                    "self" => Some(Token::This),
                     id => Some(Token::Identifier(self.interner.intern(id))),
                 }
             }

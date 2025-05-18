@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt};
+use std::fmt;
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -20,17 +20,14 @@ impl fmt::Display for Error {
     }
 }
 
-impl<E> From<E> for Error
-where
-    E: StdError + Send + Sync + 'static,
-{
+impl<E: Into<anyhow::Error>> From<E> for Error {
     fn from(error: E) -> Self {
         Self(error.into())
     }
 }
 
 impl Error {
-    pub fn new(err: impl StdError + Send + Sync + 'static) -> Self {
+    pub fn new(err: impl Into<anyhow::Error>) -> Self {
         Self(err.into())
     }
 
@@ -41,7 +38,7 @@ impl Error {
         Self(anyhow::Error::msg(message))
     }
 
-    pub fn into_boxed_err(self) -> Box<dyn StdError + Send + Sync + 'static> {
-        self.0.reallocate_into_boxed_dyn_error_without_backtrace()
+    pub fn into_inner(self) -> anyhow::Error {
+        self.0
     }
 }

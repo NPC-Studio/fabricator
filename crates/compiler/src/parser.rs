@@ -66,12 +66,12 @@ pub struct ForStatement<S> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<S> {
     Undefined,
-    True,
-    False,
+    Boolean(bool),
     Float(f64),
     Integer(u64),
     String(S),
     Name(S),
+    This,
     Group(Box<Expression<S>>),
     Object(Vec<(S, Expression<S>)>),
     Array(Vec<Expression<S>>),
@@ -477,11 +477,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             }
             (Token::True, _) => {
                 self.advance(1);
-                Ok(Expression::True)
+                Ok(Expression::Boolean(true))
             }
             (Token::False, _) => {
                 self.advance(1);
-                Ok(Expression::False)
+                Ok(Expression::Boolean(false))
             }
             (&Token::Float(f), _) => {
                 self.advance(1);
@@ -496,6 +496,10 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     unreachable!()
                 };
                 Ok(Expression::String(s))
+            }
+            (Token::This, _) => {
+                self.advance(1);
+                Ok(Expression::This)
             }
             (Token::Function, _) => {
                 self.advance(1);
@@ -840,6 +844,7 @@ fn token_indicator<S>(t: &Token<S>) -> &'static str {
         Token::Undefined => "undefined",
         Token::True => "true",
         Token::False => "false",
+        Token::This => "self",
         Token::Integer(_) => "<integer>",
         Token::Float(_) => "<float>",
         Token::Identifier(_) => "<identifier>",

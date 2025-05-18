@@ -16,6 +16,11 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
         impl<'gc> vm::Singleton<'gc> for StdlibSingleton<'gc> {
             fn create(ctx: fabricator_vm::Context<'gc>) -> Self {
                 let mut stdlib = vm::MagicSet::new();
+
+                stdlib
+                    .add_constant(&ctx, vm::String::new(&ctx, "global"), ctx.globals().into())
+                    .unwrap();
+
                 let method = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let Some(func) = stack.get(1).to_function() else {
                         return Err(vm::Error::msg(
@@ -39,6 +44,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 stdlib
                     .add_constant(&ctx, vm::String::new(&ctx, "method"), method.into())
                     .unwrap();
+
                 Self(Gc::new(&ctx, stdlib))
             }
         }

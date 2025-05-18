@@ -411,11 +411,8 @@ where
             parser::Expression::Undefined => {
                 self.push_instruction(ir::Instruction::Constant(Constant::Undefined))
             }
-            parser::Expression::True => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Boolean(true)))
-            }
-            parser::Expression::False => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Boolean(false)))
+            parser::Expression::Boolean(b) => {
+                self.push_instruction(ir::Instruction::Constant(Constant::Boolean(*b)))
             }
             parser::Expression::Float(f) => {
                 self.push_instruction(ir::Instruction::Constant(Constant::Float(*f)))
@@ -438,6 +435,7 @@ where
                     self.push_instruction(ir::Instruction::GetField { object: this, key })
                 }
             }
+            parser::Expression::This => self.push_instruction(ir::Instruction::This),
             parser::Expression::Group(expr) => self.commit_expression(expr)?,
             parser::Expression::Object(fields) => {
                 let object = self.push_instruction(ir::Instruction::NewObject);
