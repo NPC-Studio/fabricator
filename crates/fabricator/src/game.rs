@@ -9,6 +9,7 @@ use fabricator_vm as vm;
 use gc_arena::Gc;
 
 use crate::{
+    instance::InstanceUserData,
     maxrects::MaxRects,
     project::{ObjectEvent, Project, ScriptMode},
     state::{
@@ -66,7 +67,7 @@ impl Render {
 pub struct Game {
     interpreter: vm::Interpreter,
     thread: vm::StashedThread,
-    root: State,
+    state: State,
     textures: IdMap<TextureId, Texture>,
     texture_pages: IdMap<TexturePageId, TexturePage>,
 }
@@ -229,15 +230,21 @@ impl Game {
             .id_for_index(0)
             .context("must have at least one room defined")?;
 
+        let mut state = State {
+            sprites,
+            objects,
+            rooms,
+            current_room,
+            instances: IdMap::<InstanceId, Instance>::new(),
+        };
+
         let dummy_ud = interpreter.enter(|ctx| ctx.stash(vm::UserData::new_static(&ctx, ())));
 
-        let mut instances = IdMap::<InstanceId, Instance>::new();
-        for layer in rooms[current_room].layers.values() {
+        for layer in state.rooms[current_room].layers.clone().into_values() {
             for instance in &layer.instances {
-                let object = &objects[instance.object];
                 interpreter
                     .enter(|ctx| -> Result<_, vm::Error> {
-                        let instance_id = instances.insert(Instance {
+                        let instance_id = state.instances.insert(Instance {
                             object: instance.object,
                             position: instance.position,
                             depth: layer.depth,
@@ -245,12 +252,13 @@ impl Game {
                             step_closure: None,
                         });
 
-                        let this = vm::UserData::new_static(&ctx, instance_id);
-                        this.set_methods(&ctx, Some(State::instance_methods(ctx)));
+                        state.instances[instance_id].this =
+                            ctx.stash(InstanceUserData::create(ctx, instance_id));
 
-                        instances[instance_id].this = ctx.stash(this);
-
-                        if let Some(step_script) = object.event_scripts.get(&ObjectEvent::Step) {
+                        if let Some(step_script) = state.objects[instance.object]
+                            .event_scripts
+                            .get(&ObjectEvent::Step)
+                        {
                             let closure = ctx.stash(
                                 vm::Closure::new(
                                     &ctx,
@@ -260,24 +268,30 @@ impl Game {
                                 )
                                 .unwrap(),
                             );
-                            instances[instance_id].step_closure = Some(closure);
+                            state.instances[instance_id].step_closure = Some(closure);
                         };
 
-                        if let Some(create_script) = object.event_scripts.get(&ObjectEvent::Create)
+                        if let Some(create_script) = state.objects[instance.object]
+                            .event_scripts
+                            .get(&ObjectEvent::Create)
+                            .cloned()
                         {
                             let thread = ctx.fetch(&thread);
+                            let this = ctx.fetch(&state.instances[instance_id].this);
 
-                            thread.exec_with(
-                                ctx,
-                                vm::Closure::new(
-                                    &ctx,
-                                    ctx.fetch(create_script),
-                                    ctx.stdlib(),
-                                    vm::Value::Undefined,
+                            State::ctx_set(ctx, &mut state, || {
+                                thread.exec_with(
+                                    ctx,
+                                    vm::Closure::new(
+                                        &ctx,
+                                        ctx.fetch(&create_script),
+                                        ctx.stdlib(),
+                                        vm::Value::Undefined,
+                                    )
+                                    .unwrap(),
+                                    this.into(),
                                 )
-                                .unwrap(),
-                                ctx.fetch(&instances[instance_id].this).into(),
-                            )?;
+                            })?;
                         }
 
                         Ok(())
@@ -289,13 +303,7 @@ impl Game {
         Ok(Game {
             interpreter,
             thread,
-            root: State {
-                sprites,
-                objects,
-                rooms,
-                current_room,
-                instances,
-            },
+            state,
             textures,
             texture_pages,
         })
@@ -316,18 +324,19 @@ impl Game {
     pub fn tick(&mut self, render: &mut Render) -> Result<(), Error> {
         render.clear();
 
-        render.room_size = self.root.rooms[self.root.current_room].size;
+        render.room_size = self.state.rooms[self.state.current_room].size;
 
-        let to_update = self.root.instances.ids().collect::<Vec<_>>();
+        let to_update = self.state.instances.ids().collect::<Vec<_>>();
 
         for instance_id in to_update {
             self.interpreter.enter(|ctx| -> Result<(), Error> {
-                if let Some(step_closure) = self.root.instances[instance_id].step_closure.as_ref() {
+                if let Some(step_closure) = self.state.instances[instance_id].step_closure.as_ref()
+                {
                     let thread = ctx.fetch(&self.thread);
                     let closure = ctx.fetch(step_closure);
-                    let this = ctx.fetch(&self.root.instances[instance_id].this);
+                    let this = ctx.fetch(&self.state.instances[instance_id].this);
 
-                    State::ctx_set(ctx, &mut self.root, || {
+                    State::ctx_set(ctx, &mut self.state, || {
                         thread
                             .exec_with(ctx, closure, this.into())
                             .map_err(|e| e.into_inner())
@@ -336,11 +345,11 @@ impl Game {
                 Ok(())
             })?;
 
-            let instance = &self.root.instances[instance_id];
+            let instance = &self.state.instances[instance_id];
 
-            let object = &self.root.objects[instance.object];
+            let object = &self.state.objects[instance.object];
             if let Some(sprite_id) = object.sprite {
-                let sprite = &self.root.sprites[sprite_id];
+                let sprite = &self.state.sprites[sprite_id];
                 if let Some(texture) = sprite.frames.first().copied() {
                     render.quads.push(Quad {
                         texture,

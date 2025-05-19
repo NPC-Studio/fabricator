@@ -1,4 +1,5 @@
 pub mod game;
+pub mod instance;
 pub mod maxrects;
 pub mod project;
 pub mod state;

@@ -8,6 +8,21 @@ use gc_arena::{Collect, Gc, Mutation, Rootable, arena::Root, barrier};
 #[collect(require_static)]
 pub struct UserDataProperties<U: for<'a> Rootable<'a>> {
     properties: HashMap<String, Property<U>>,
+    read_custom: Box<
+        dyn for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+            vm::String<'gc>,
+        ) -> Result<Option<vm::Value<'gc>>, Error>,
+    >,
+    write_custom: Box<
+        dyn for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+            vm::String<'gc>,
+            vm::Value<'gc>,
+        ) -> Result<(), Error>,
+    >,
 }
 
 struct Property<U: for<'a> Rootable<'a>> {
@@ -25,6 +40,12 @@ impl<U: for<'a> Rootable<'a>> Default for UserDataProperties<U> {
     fn default() -> Self {
         Self {
             properties: Default::default(),
+            read_custom: Box::new(|_, _, name| {
+                Err(Error::msg(anyhow!("no such field {:?}", name)))
+            }),
+            write_custom: Box::new(|_, _, name, _| {
+                Err(Error::msg(anyhow!("no such field {:?}", name)))
+            }),
         }
     }
 }
@@ -76,6 +97,26 @@ where
         );
     }
 
+    pub fn enable_custom_properties(
+        &mut self,
+        read: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+            vm::String<'gc>,
+        ) -> Result<Option<vm::Value<'gc>>, Error>
+        + 'static,
+        write: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+            vm::String<'gc>,
+            vm::Value<'gc>,
+        ) -> Result<(), Error>
+        + 'static,
+    ) {
+        self.read_custom = Box::new(read);
+        self.write_custom = Box::new(write);
+    }
+
     pub fn into_methods<'gc>(self, mc: &Mutation<'gc>) -> Gc<'gc, dyn vm::UserDataMethods<'gc>> {
         gc_arena::unsize!(Gc::new(mc, self) => dyn vm::UserDataMethods)
     }
@@ -93,11 +134,12 @@ where
         key: fabricator_vm::String<'gc>,
     ) -> Result<fabricator_vm::Value<'gc>, fabricator_vm::Error> {
         let u = ud.downcast::<U>()?;
-        let prop = self
-            .properties
-            .get(key.as_str())
-            .with_context(|| anyhow!("no such field {:?}", key.as_str()))?;
-        Ok((prop.read)(ctx, u)?)
+        if let Some(prop) = self.properties.get(key.as_str()) {
+            Ok((prop.read)(ctx, u)?)
+        } else {
+            Ok((self.read_custom)(ctx, u, key)?
+                .with_context(|| anyhow!("missing field {:?}", key))?)
+        }
     }
 
     fn set_field(
@@ -108,11 +150,11 @@ where
         value: fabricator_vm::Value<'gc>,
     ) -> Result<(), fabricator_vm::Error> {
         let u = ud.downcast_write::<U>(&ctx)?;
-        let prop = self
-            .properties
-            .get(key.as_str())
-            .with_context(|| anyhow!("no such field {:?}", key.as_str()))?;
-        Ok((prop.write)(ctx, u, value)?)
+        if let Some(prop) = self.properties.get(key.as_str()) {
+            Ok((prop.write)(ctx, u, value)?)
+        } else {
+            Ok((self.write_custom)(ctx, u, key, value)?)
+        }
     }
 
     fn get_index(
@@ -174,5 +216,27 @@ impl<U: 'static> StaticUserDataProperties<U> {
 
     pub fn into_methods<'gc>(self, mc: &Mutation<'gc>) -> Gc<'gc, dyn vm::UserDataMethods<'gc>> {
         self.properties.into_methods(mc)
+    }
+
+    pub fn enable_custom_properties(
+        &mut self,
+        read: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &U,
+            vm::String<'gc>,
+        ) -> Result<Option<vm::Value<'gc>>, Error>
+        + 'static,
+        write: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &U,
+            vm::String<'gc>,
+            vm::Value<'gc>,
+        ) -> Result<(), Error>
+        + 'static,
+    ) {
+        self.properties.enable_custom_properties(
+            move |ctx, u, key| read(ctx, &u.0, key),
+            move |ctx, u, key, value| write(ctx, &u.0, key, value),
+        );
     }
 }

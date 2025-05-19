@@ -51,6 +51,24 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     .add_constant(&ctx, vm::String::new(&ctx, "pi"), f64::consts::PI.into())
                     .unwrap();
 
+                let cos = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                    let arg: f64 = stack.consume(ctx)?;
+                    stack.replace(ctx, arg.cos());
+                    Ok(())
+                });
+                stdlib
+                    .add_constant(&ctx, vm::String::new(&ctx, "cos"), cos.into())
+                    .unwrap();
+
+                let sin = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
+                    let arg: f64 = stack.consume(ctx)?;
+                    stack.replace(ctx, arg.sin());
+                    Ok(())
+                });
+                stdlib
+                    .add_constant(&ctx, vm::String::new(&ctx, "sin"), sin.into())
+                    .unwrap();
+
                 Self(Gc::new(&ctx, stdlib))
             }
         }
