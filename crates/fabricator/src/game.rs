@@ -1,31 +1,18 @@
-use std::{collections::HashMap, fs::File, io::Read as _, path::PathBuf};
+use std::collections::HashMap;
 
 use anyhow::{Context as _, Error, anyhow, bail};
-use fabricator_compiler as compiler;
 use fabricator_math::Vec2;
-use fabricator_stdlib::StdlibContext as _;
 use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
-use gc_arena::Gc;
 
 use crate::{
-    instance::InstanceUserData,
     maxrects::MaxRects,
-    project::{ObjectEvent, Project, ScriptMode},
-    state::{
-        AnimationFrame, Instance, InstanceId, InstanceTemplate, Layer, Object, ObjectId, Room,
-        RoomId, Sprite, SpriteId, State, TextureId,
-    },
+    project::Project,
+    state::{State, Texture, TextureId},
 };
 
 new_id_type! {
     pub struct TexturePageId;
-}
-
-#[derive(Debug)]
-pub struct Texture {
-    pub image_path: PathBuf,
-    pub size: Vec2<u32>,
 }
 
 #[derive(Debug)]
@@ -66,60 +53,22 @@ impl Render {
 
 pub struct Game {
     interpreter: vm::Interpreter,
-    thread: vm::StashedThread,
     state: State,
-    textures: IdMap<TextureId, Texture>,
     texture_pages: IdMap<TexturePageId, TexturePage>,
 }
 
 impl Game {
     pub fn new(project: Project) -> Result<Self, Error> {
         let mut interpreter = vm::Interpreter::new();
-        let thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
+        let state = State::create(&mut interpreter, &project)?;
 
-        let mut sprites = IdMap::<SpriteId, Sprite>::new();
-        let mut textures = IdMap::<TextureId, Texture>::new();
-
-        let mut sprite_dict = HashMap::<String, SpriteId>::new();
         let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
 
-        for (sprite_name, sprite) in project.sprites {
-            let size = Vec2::new(sprite.width, sprite.height);
-
-            let texture_group = texture_groups.entry(sprite.texture_group).or_default();
-
-            let mut frame_dict = HashMap::new();
-            for frame in sprite.frames.into_values() {
-                let texture_id = textures.insert(Texture {
-                    image_path: frame.image_path,
-                    size,
-                });
-                frame_dict.insert(frame.name, texture_id);
-                texture_group.push(texture_id);
-            }
-
-            let mut frames = Vec::new();
-            let mut start_time = 0.0;
-            for animation_frame in sprite.animation_frames {
-                frames.push(AnimationFrame {
-                    texture: frame_dict
-                        .get(&animation_frame.frame)
-                        .copied()
-                        .with_context(|| {
-                            anyhow!("invalid frame named {:?}", animation_frame.frame)
-                        })?,
-                    frame_start: start_time,
-                });
-                start_time += animation_frame.length;
-            }
-
-            let sprite_id = sprites.insert(Sprite {
-                playback_speed: sprite.playback_speed,
-                playback_length: sprite.playback_length,
-                origin: Vec2::new(sprite.origin_x, sprite.origin_y).cast(),
-                frames,
-            });
-            sprite_dict.insert(sprite_name, sprite_id);
+        for (texture_id, texture) in state.textures.iter() {
+            texture_groups
+                .entry(texture.texture_group.clone())
+                .or_default()
+                .push(texture_id);
         }
 
         let mut texture_pages = IdMap::<TexturePageId, TexturePage>::new();
@@ -141,7 +90,7 @@ impl Game {
                 let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
 
                 for texture_id in to_place.ids() {
-                    let padded_size = textures[texture_id].size + Vec2::splat(border * 2);
+                    let padded_size = state.textures[texture_id].size + Vec2::splat(border * 2);
                     if padded_size[0] > TEXTURE_PAGE_SIZE[0]
                         || padded_size[1] > TEXTURE_PAGE_SIZE[1]
                     {
@@ -176,156 +125,9 @@ impl Game {
             }
         }
 
-        let mut objects = IdMap::<ObjectId, Object>::new();
-        let mut object_dict = HashMap::<String, ObjectId>::new();
-
-        for (object_name, object) in project.objects {
-            let sprite = object
-                .sprite
-                .map(|sprite_name| {
-                    sprite_dict
-                        .get(&sprite_name)
-                        .copied()
-                        .with_context(|| anyhow!("missing sprite named {:?}", sprite_name))
-                })
-                .transpose()?;
-
-            let mut event_scripts = HashMap::new();
-
-            interpreter.enter(|ctx| -> Result<_, Error> {
-                let mut code = String::new();
-                for (&event, script) in &object.event_scripts {
-                    code.clear();
-                    File::open(&script.path)?.read_to_string(&mut code)?;
-                    let proto = match script.mode {
-                        ScriptMode::Compat => compiler::compile_compat(&ctx, ctx.stdlib(), &code)?,
-                        ScriptMode::Full => compiler::compile(&ctx, ctx.stdlib(), &code)?,
-                    };
-                    event_scripts.insert(event, ctx.stash(Gc::new(&ctx, proto)));
-                }
-
-                Ok(())
-            })?;
-
-            let object_id = objects.insert(Object {
-                sprite,
-                event_scripts,
-            });
-            object_dict.insert(object_name, object_id);
-        }
-
-        let mut rooms = IdMap::<RoomId, Room>::new();
-
-        for (_, room) in project.rooms {
-            let mut layers = HashMap::new();
-
-            for (layer_name, layer) in room.layers {
-                let mut instances = Vec::new();
-
-                for instance in layer.instances {
-                    instances.push(InstanceTemplate {
-                        object: *object_dict.get(&instance.object).with_context(|| {
-                            anyhow!("missing object named {:?}", instance.object)
-                        })?,
-                        position: Vec2::new(instance.x, instance.y),
-                    });
-                }
-
-                layers.insert(
-                    layer_name,
-                    Layer {
-                        depth: layer.depth,
-                        instances,
-                    },
-                );
-            }
-
-            rooms.insert(Room {
-                size: Vec2::new(room.width, room.height),
-                layers,
-            });
-        }
-
-        let current_room = rooms
-            .id_for_index(0)
-            .context("must have at least one room defined")?;
-
-        let mut state = State {
-            sprites,
-            objects,
-            rooms,
-            current_room,
-            instances: IdMap::<InstanceId, Instance>::new(),
-        };
-
-        let dummy_ud = interpreter.enter(|ctx| ctx.stash(vm::UserData::new_static(&ctx, ())));
-
-        for layer in state.rooms[current_room].layers.clone().into_values() {
-            for instance in &layer.instances {
-                interpreter
-                    .enter(|ctx| -> Result<_, vm::Error> {
-                        let instance_id = state.instances.insert(Instance {
-                            object: instance.object,
-                            position: instance.position,
-                            depth: layer.depth,
-                            this: dummy_ud.clone(),
-                            step_closure: None,
-                            animation_time: 0.0,
-                        });
-
-                        state.instances[instance_id].this =
-                            ctx.stash(InstanceUserData::create(ctx, instance_id));
-
-                        if let Some(step_script) = state.objects[instance.object]
-                            .event_scripts
-                            .get(&ObjectEvent::Step)
-                        {
-                            let closure = ctx.stash(
-                                vm::Closure::new(
-                                    &ctx,
-                                    ctx.fetch(step_script),
-                                    ctx.stdlib(),
-                                    vm::Value::Undefined,
-                                )
-                                .unwrap(),
-                            );
-                            state.instances[instance_id].step_closure = Some(closure);
-                        };
-
-                        if let Some(create_script) = state.objects[instance.object]
-                            .event_scripts
-                            .get(&ObjectEvent::Create)
-                            .cloned()
-                        {
-                            let thread = ctx.fetch(&thread);
-                            let this = ctx.fetch(&state.instances[instance_id].this);
-
-                            State::ctx_set(ctx, &mut state, || {
-                                thread.exec_with(
-                                    ctx,
-                                    vm::Closure::new(
-                                        &ctx,
-                                        ctx.fetch(&create_script),
-                                        ctx.stdlib(),
-                                        vm::Value::Undefined,
-                                    )
-                                    .unwrap(),
-                                    this.into(),
-                                )
-                            })?;
-                        }
-
-                        Ok(())
-                    })
-                    .map_err(|e| e.into_inner())?;
-            }
-        }
-
         Ok(Game {
             interpreter,
-            thread,
             state,
-            textures,
             texture_pages,
         })
     }
@@ -335,39 +137,20 @@ impl Game {
     }
 
     pub fn texture(&self, texture_id: TextureId) -> &Texture {
-        &self.textures[texture_id]
+        &self.state.textures[texture_id]
     }
 
     pub fn tick_rate(&self) -> f64 {
-        TICK_RATE
+        self.state.tick_rate
     }
 
     pub fn tick(&mut self, render: &mut Render) -> Result<(), Error> {
-        render.clear();
+        self.state.tick(&mut self.interpreter)?;
 
+        render.clear();
         render.room_size = self.state.rooms[self.state.current_room].size;
 
-        let to_update = self.state.instances.ids().collect::<Vec<_>>();
-
-        for instance_id in to_update {
-            self.interpreter.enter(|ctx| -> Result<(), Error> {
-                if let Some(step_closure) = self.state.instances[instance_id].step_closure.as_ref()
-                {
-                    let thread = ctx.fetch(&self.thread);
-                    let closure = ctx.fetch(step_closure);
-                    let this = ctx.fetch(&self.state.instances[instance_id].this);
-
-                    State::ctx_set(ctx, &mut self.state, || {
-                        thread
-                            .exec_with(ctx, closure, this.into())
-                            .map_err(|e| e.into_inner())
-                    })?;
-                }
-                Ok(())
-            })?;
-
-            let instance = &mut self.state.instances[instance_id];
-
+        for instance in self.state.instances.values() {
             let object = &self.state.objects[instance.object];
             if let Some(sprite_id) = object.sprite {
                 let sprite = &self.state.sprites[sprite_id];
@@ -384,10 +167,6 @@ impl Game {
                     position: (instance.position - sprite.origin).cast(),
                     depth: instance.depth,
                 });
-
-                instance.animation_time = (instance.animation_time
-                    + sprite.playback_speed / TICK_RATE)
-                    % sprite.playback_length;
             }
         }
 
@@ -395,7 +174,6 @@ impl Game {
     }
 }
 
-// TODO: Hard coded options which are normally configured by
+// TODO: Hard code texture page size normally configured by
 // 'options/<platform>/options_<platform>.yy'.
-const TICK_RATE: f64 = 60.0;
 const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);

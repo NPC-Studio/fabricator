@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, HashMap},
+    collections::{HashMap, hash_map},
     string::String as StdString,
 };
 
@@ -102,14 +102,10 @@ impl<'gc> MagicSet<'gc> {
         self.registered.get(index).copied()
     }
 
-    pub fn merge(&self, other: &MagicSet<'gc>) -> Result<MagicSet<'gc>, DuplicateMagicName> {
-        let mut new = MagicSet::new();
-        for (&name, &index) in &self.names {
-            new.add(name, self.registered[index])?;
-        }
+    pub fn merge(&mut self, other: &MagicSet<'gc>) -> Result<(), DuplicateMagicName> {
         for (&name, &index) in &other.names {
-            new.add(name, other.registered[index])?;
+            self.add(name, other.registered[index])?;
         }
-        Ok(new)
+        Ok(())
     }
 }

@@ -127,15 +127,6 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_function(self) -> Option<Function<'gc>> {
-        match self {
-            Value::Closure(closure) => Some(Function::Closure(closure)),
-            Value::Callback(callback) => Some(Function::Callback(callback)),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn to_bool(self) -> bool {
         match self {
             Value::Undefined => false,
@@ -162,6 +153,15 @@ impl<'gc> Value<'gc> {
             Value::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
             Value::Integer(i) => Some(i as f64),
             Value::Float(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn to_function(self) -> Option<Function<'gc>> {
+        match self {
+            Value::Closure(closure) => Some(Function::Closure(closure)),
+            Value::Callback(callback) => Some(Function::Callback(callback)),
             _ => None,
         }
     }

@@ -117,8 +117,9 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     .add_constant(&ctx, vm::String::new(&ctx, "black_box"), black_box.into())
                     .unwrap();
 
-                let stdlib = ctx.stdlib();
-                let combined = stdlib.merge(&testing_stdlib).unwrap();
+                let mut combined = vm::MagicSet::new();
+                combined.merge(&ctx.stdlib()).unwrap();
+                combined.merge(&testing_stdlib).unwrap();
 
                 Self(Gc::new(&ctx, combined))
             }

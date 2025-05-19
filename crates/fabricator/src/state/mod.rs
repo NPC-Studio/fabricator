@@ -1,4 +1,11 @@
-use std::collections::HashMap;
+pub mod create;
+pub mod instance;
+pub mod update;
+
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use fabricator_math::Vec2;
 use fabricator_util::{
@@ -9,21 +16,37 @@ use fabricator_vm as vm;
 
 use crate::project::ObjectEvent;
 
-pub struct State {
-    pub sprites: IdMap<SpriteId, Sprite>,
-    pub objects: IdMap<ObjectId, Object>,
-    pub rooms: IdMap<RoomId, Room>,
-
-    pub current_room: RoomId,
-    pub instances: IdMap<InstanceId, Instance>,
-}
-
 new_id_type! {
     pub struct TextureId;
     pub struct ObjectId;
     pub struct SpriteId;
+    pub struct InstanceTemplateId;
     pub struct RoomId;
     pub struct InstanceId;
+}
+
+pub struct State {
+    pub main_thread: vm::StashedThread,
+    pub magic: vm::StashedMagicSet,
+    pub tick_rate: f64,
+
+    pub textures: IdMap<TextureId, Texture>,
+    pub sprites: IdMap<SpriteId, Sprite>,
+    pub objects: IdMap<ObjectId, Object>,
+    pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
+    pub rooms: IdMap<RoomId, Room>,
+
+    pub current_room: RoomId,
+    pub next_room: Option<RoomId>,
+    pub persistent_instances: HashSet<InstanceTemplateId>,
+    pub instances: IdMap<InstanceId, Instance>,
+}
+
+#[derive(Debug)]
+pub struct Texture {
+    pub texture_group: String,
+    pub image_path: PathBuf,
+    pub size: Vec2<u32>,
 }
 
 pub struct AnimationFrame {
@@ -40,6 +63,7 @@ pub struct Sprite {
 
 pub struct Object {
     pub sprite: Option<SpriteId>,
+    pub persistent: bool,
     pub event_scripts: HashMap<ObjectEvent, vm::StashedPrototype>,
 }
 
@@ -52,7 +76,7 @@ pub struct InstanceTemplate {
 #[derive(Clone)]
 pub struct Layer {
     pub depth: i32,
-    pub instances: Vec<InstanceTemplate>,
+    pub instances: Vec<InstanceTemplateId>,
 }
 
 #[derive(Clone)]

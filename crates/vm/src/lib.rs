@@ -30,7 +30,8 @@ pub use self::{
     registry::{Registry, Singleton},
     stack::Stack,
     stash::{
-        Fetchable, Stashable, StashedClosure, StashedPrototype, StashedThread, StashedUserData,
+        Fetchable, Stashable, StashedClosure, StashedMagicSet, StashedPrototype, StashedThread,
+        StashedUserData, StashedUserDataMethods,
     },
     string::String,
     thread::Thread,
