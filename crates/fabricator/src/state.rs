@@ -26,8 +26,16 @@ new_id_type! {
     pub struct InstanceId;
 }
 
+pub struct AnimationFrame {
+    pub texture: TextureId,
+    pub frame_start: f64,
+}
+
 pub struct Sprite {
-    pub frames: Vec<TextureId>,
+    pub playback_speed: f64,
+    pub playback_length: f64,
+    pub origin: Vec2<f64>,
+    pub frames: Vec<AnimationFrame>,
 }
 
 pub struct Object {
@@ -59,6 +67,7 @@ pub struct Instance {
     pub depth: i32,
     pub this: vm::StashedUserData,
     pub step_closure: Option<vm::StashedClosure>,
+    pub animation_time: f64,
 }
 
 impl State {

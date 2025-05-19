@@ -13,8 +13,8 @@ use crate::{
     maxrects::MaxRects,
     project::{ObjectEvent, Project, ScriptMode},
     state::{
-        Instance, InstanceId, InstanceTemplate, Layer, Object, ObjectId, Room, RoomId, Sprite,
-        SpriteId, State, TextureId,
+        AnimationFrame, Instance, InstanceId, InstanceTemplate, Layer, Object, ObjectId, Room,
+        RoomId, Sprite, SpriteId, State, TextureId,
     },
 };
 
@@ -88,17 +88,37 @@ impl Game {
 
             let texture_group = texture_groups.entry(sprite.texture_group).or_default();
 
-            let mut frames = Vec::new();
-            for frame in sprite.frames {
+            let mut frame_dict = HashMap::new();
+            for frame in sprite.frames.into_values() {
                 let texture_id = textures.insert(Texture {
                     image_path: frame.image_path,
                     size,
                 });
+                frame_dict.insert(frame.name, texture_id);
                 texture_group.push(texture_id);
-                frames.push(texture_id);
             }
 
-            let sprite_id = sprites.insert(Sprite { frames });
+            let mut frames = Vec::new();
+            let mut start_time = 0.0;
+            for animation_frame in sprite.animation_frames {
+                frames.push(AnimationFrame {
+                    texture: frame_dict
+                        .get(&animation_frame.frame)
+                        .copied()
+                        .with_context(|| {
+                            anyhow!("invalid frame named {:?}", animation_frame.frame)
+                        })?,
+                    frame_start: start_time,
+                });
+                start_time += animation_frame.length;
+            }
+
+            let sprite_id = sprites.insert(Sprite {
+                playback_speed: sprite.playback_speed,
+                playback_length: sprite.playback_length,
+                origin: Vec2::new(sprite.origin_x, sprite.origin_y).cast(),
+                frames,
+            });
             sprite_dict.insert(sprite_name, sprite_id);
         }
 
@@ -250,6 +270,7 @@ impl Game {
                             depth: layer.depth,
                             this: dummy_ud.clone(),
                             step_closure: None,
+                            animation_time: 0.0,
                         });
 
                         state.instances[instance_id].this =
@@ -345,18 +366,28 @@ impl Game {
                 Ok(())
             })?;
 
-            let instance = &self.state.instances[instance_id];
+            let instance = &mut self.state.instances[instance_id];
 
             let object = &self.state.objects[instance.object];
             if let Some(sprite_id) = object.sprite {
                 let sprite = &self.state.sprites[sprite_id];
-                if let Some(texture) = sprite.frames.first().copied() {
-                    render.quads.push(Quad {
-                        texture,
-                        position: instance.position.cast(),
-                        depth: instance.depth,
-                    });
-                }
+                let frame_index = match sprite
+                    .frames
+                    .binary_search_by(|f| f.frame_start.total_cmp(&instance.animation_time))
+                {
+                    Ok(i) => i,
+                    Err(i) => i.checked_sub(1).unwrap(),
+                };
+
+                render.quads.push(Quad {
+                    texture: sprite.frames[frame_index].texture,
+                    position: (instance.position - sprite.origin).cast(),
+                    depth: instance.depth,
+                });
+
+                instance.animation_time = (instance.animation_time
+                    + sprite.playback_speed / TICK_RATE)
+                    % sprite.playback_length;
             }
         }
 
