@@ -13,11 +13,10 @@ use fabricator_vm as vm;
 use gc_arena::{Collect, Gc};
 
 use crate::{
-    project::{ObjectEvent, Project, ScriptMode},
+    project::{Project, ScriptMode},
     state::{
         AnimationFrame, Instance, InstanceId, InstanceTemplate, InstanceTemplateId, Layer, Object,
         ObjectId, Room, RoomId, Sprite, SpriteId, State, Texture, TextureId,
-        instance::InstanceUserData,
     },
 };
 
@@ -132,7 +131,7 @@ impl State {
         }
 
         let first_room = project.room_order.first().context("no first room")?;
-        let current_room = *room_dict
+        let first_room = *room_dict
             .get(first_room)
             .with_context(|| "no such room `{first_room:?}`")?;
 
@@ -216,7 +215,7 @@ impl State {
             })?;
         }
 
-        let mut state = State {
+        Ok(State {
             main_thread: thread.clone(),
             magic: magic.clone(),
             tick_rate: TICK_RATE,
@@ -224,82 +223,11 @@ impl State {
             objects,
             instance_templates,
             rooms,
-            current_room,
-            next_room: None,
+            current_room: None,
+            next_room: Some(first_room),
             persistent_instances: HashSet::new(),
             textures,
             instances: IdMap::<InstanceId, Instance>::new(),
-        };
-
-        let dummy_ud = interpreter.enter(|ctx| ctx.stash(vm::UserData::new_static(&ctx, ())));
-
-        for layer in state.rooms[current_room].layers.clone().into_values() {
-            for &template_id in &layer.instances {
-                interpreter
-                    .enter(|ctx| -> Result<_, vm::Error> {
-                        let instance_template = &state.instance_templates[template_id];
-
-                        let instance_id = state.instances.insert(Instance {
-                            object: instance_template.object,
-                            position: instance_template.position,
-                            depth: layer.depth,
-                            this: dummy_ud.clone(),
-                            step_closure: None,
-                            animation_time: 0.0,
-                        });
-
-                        state.instances[instance_id].this =
-                            ctx.stash(InstanceUserData::create(ctx, instance_id));
-
-                        if state.objects[instance_template.object].persistent {
-                            state.persistent_instances.insert(template_id);
-                        }
-
-                        if let Some(step_script) = state.objects[instance_template.object]
-                            .event_scripts
-                            .get(&ObjectEvent::Step)
-                        {
-                            let closure = ctx.stash(
-                                vm::Closure::new(
-                                    &ctx,
-                                    ctx.fetch(step_script),
-                                    ctx.fetch(&magic),
-                                    vm::Value::Undefined,
-                                )
-                                .unwrap(),
-                            );
-                            state.instances[instance_id].step_closure = Some(closure);
-                        };
-
-                        if let Some(create_script) = state.objects[instance_template.object]
-                            .event_scripts
-                            .get(&ObjectEvent::Create)
-                            .cloned()
-                        {
-                            let thread = ctx.fetch(&thread);
-                            let this = ctx.fetch(&state.instances[instance_id].this);
-
-                            State::ctx_set(ctx, &mut state, || {
-                                thread.exec_with(
-                                    ctx,
-                                    vm::Closure::new(
-                                        &ctx,
-                                        ctx.fetch(&create_script),
-                                        ctx.fetch(&magic),
-                                        vm::Value::Undefined,
-                                    )
-                                    .unwrap(),
-                                    this.into(),
-                                )
-                            })?;
-                        }
-
-                        Ok(())
-                    })
-                    .map_err(|e| e.into_inner())?;
-            }
-        }
-
-        Ok(state)
+        })
     }
 }

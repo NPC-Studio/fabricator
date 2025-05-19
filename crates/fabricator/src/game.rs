@@ -148,7 +148,7 @@ impl Game {
         self.state.tick(&mut self.interpreter)?;
 
         render.clear();
-        render.room_size = self.state.rooms[self.state.current_room].size;
+        render.room_size = self.state.rooms[self.state.current_room.unwrap()].size;
 
         for instance in self.state.instances.values() {
             let object = &self.state.objects[instance.object];

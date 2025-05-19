@@ -36,7 +36,7 @@ pub struct State {
     pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
     pub rooms: IdMap<RoomId, Room>,
 
-    pub current_room: RoomId,
+    pub current_room: Option<RoomId>,
     pub next_room: Option<RoomId>,
     pub persistent_instances: HashSet<InstanceTemplateId>,
     pub instances: IdMap<InstanceId, Instance>,

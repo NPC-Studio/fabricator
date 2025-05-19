@@ -9,12 +9,16 @@ impl State {
             self.instances
                 .retain(|_, instance| self.objects[instance.object].persistent);
 
-            self.current_room = next_room;
+            self.current_room = Some(next_room);
 
             let dummy_ud = interpreter.enter(|ctx| ctx.stash(vm::UserData::new_static(&ctx, ())));
             let magic = self.magic.clone();
 
-            for layer in self.rooms[self.current_room].layers.clone().into_values() {
+            for layer in self.rooms[self.current_room.unwrap()]
+                .layers
+                .clone()
+                .into_values()
+            {
                 for &template_id in &layer.instances {
                     interpreter
                         .enter(|ctx| -> Result<_, vm::Error> {
@@ -33,7 +37,11 @@ impl State {
                                 ctx.stash(InstanceUserData::create(ctx, instance_id));
 
                             if self.objects[instance_template.object].persistent {
-                                return Ok(());
+                                if self.persistent_instances.contains(&template_id) {
+                                    return Ok(());
+                                }
+
+                                self.persistent_instances.insert(template_id);
                             }
 
                             if let Some(step_script) = self.objects[instance_template.object]
