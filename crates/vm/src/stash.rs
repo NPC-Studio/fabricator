@@ -3,9 +3,11 @@ use core::fmt;
 use gc_arena::{DynamicRoot, DynamicRootSet, Gc, Mutation, Rootable};
 
 use crate::{
+    UserDataMethods,
     closure::{Closure, ClosureInner, Prototype},
     magic::MagicSet,
     thread::{Thread, ThreadInner},
+    userdata::{UserData, UserDataInner},
 };
 
 /// A trait for types that can be stashed into a [`DynamicRootSet`].
@@ -49,6 +51,62 @@ impl Fetchable for StashedClosure {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
         Closure::from_inner(roots.fetch(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedUserData(DynamicRoot<Rootable![UserDataInner<'_>]>);
+
+impl fmt::Debug for StashedUserData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StashedUserData")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+impl<'gc> Stashable<'gc> for UserData<'gc> {
+    type Stashed = StashedUserData;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedUserData(roots.stash::<Rootable![UserDataInner<'_>]>(mc, self.into_inner()))
+    }
+}
+
+impl Fetchable for StashedUserData {
+    type Fetched<'gc> = UserData<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        UserData::from_inner(roots.fetch(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedUserDataMethods(DynamicRoot<Rootable!['gc => dyn UserDataMethods<'gc> + 'gc]>);
+
+impl fmt::Debug for StashedUserDataMethods {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StashedUserDataMethods")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+impl<'gc> Stashable<'gc> for Gc<'gc, dyn UserDataMethods<'gc>> {
+    type Stashed = StashedUserDataMethods;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedUserDataMethods(
+            roots.stash::<Rootable!['_gc => dyn UserDataMethods<'_gc> + '_gc]>(mc, self),
+        )
+    }
+}
+
+impl Fetchable for StashedUserDataMethods {
+    type Fetched<'gc> = Gc<'gc, dyn UserDataMethods<'gc>>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        roots.fetch(&self.0)
     }
 }
 

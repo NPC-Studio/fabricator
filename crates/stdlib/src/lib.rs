@@ -1,3 +1,5 @@
+use std::f64;
+
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
@@ -43,6 +45,10 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 });
                 stdlib
                     .add_constant(&ctx, vm::String::new(&ctx, "method"), method.into())
+                    .unwrap();
+
+                stdlib
+                    .add_constant(&ctx, vm::String::new(&ctx, "pi"), f64::consts::PI.into())
                     .unwrap();
 
                 Self(Gc::new(&ctx, stdlib))
