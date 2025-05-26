@@ -643,11 +643,11 @@ dependencies = [
  "fabricator-stdlib",
  "fabricator-util",
  "fabricator-vm",
- "fabricator-yy-format",
  "gc-arena",
  "num",
  "rand",
  "serde",
+ "serde_json",
  "thiserror 2.0.12",
 ]
 
@@ -662,7 +662,6 @@ dependencies = [
  "fabricator-stdlib",
  "fabricator-util",
  "fabricator-vm",
- "fabricator-yy-format",
  "gc-arena",
 ]
 
@@ -725,14 +724,6 @@ dependencies = [
  "anyhow",
  "fabricator-util",
  "gc-arena",
- "thiserror 2.0.12",
-]
-
-[[package]]
-name = "fabricator-yy-format"
-version = "0.1.0"
-dependencies = [
- "serde",
  "thiserror 2.0.12",
 ]
 

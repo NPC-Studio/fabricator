@@ -11,7 +11,6 @@ fabricator-compiler.workspace = true
 fabricator-stdlib.workspace = true
 fabricator-util.workspace = true
 fabricator-vm.workspace = true
-fabricator-yy-format.workspace = true
 fabricator.workspace = true
 
 [dev-dependencies]

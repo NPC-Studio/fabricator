@@ -1,13 +1,15 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::Read,
+    io::BufReader,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context as _, Error, bail};
-use fabricator_yy_format as yy;
 use serde::Deserialize;
+use serde_json as json;
+
+use crate::strip_json_trailing_commas::StripJsonTrailingCommas;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -124,42 +126,13 @@ pub struct Project {
 
 impl Project {
     pub fn load(project_file: &Path) -> Result<Project, Error> {
-        fn load_yy_val(path: &Path) -> Result<yy::Value, Error> {
-            let mut file = File::open(path)?;
-            let mut buf = String::new();
-            file.read_to_string(&mut buf)?;
-            Ok(yy::Value::parse(&buf)?)
+        fn load_yy<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Error> {
+            Ok(json::from_reader(StripJsonTrailingCommas::new(
+                BufReader::new(File::open(path)?),
+            ))?)
         }
 
-        #[derive(Deserialize)]
-        struct YyResource {
-            id: YyId,
-        }
-
-        #[derive(Deserialize)]
-        struct YyRoomNode {
-            #[serde(rename = "roomId")]
-            room_id: YyId,
-        }
-
-        #[derive(Deserialize)]
-        struct YyTextureGroup {
-            name: String,
-            autocrop: bool,
-            border: u8,
-        }
-
-        #[derive(Deserialize)]
-        struct YyProject {
-            name: String,
-            resources: Vec<YyResource>,
-            #[serde(rename = "TextureGroups")]
-            texture_groups: Vec<YyTextureGroup>,
-            #[serde(rename = "RoomOrderNodes")]
-            room_order: Vec<YyRoomNode>,
-        }
-
-        let yy_project: YyProject = yy::from_value(load_yy_val(project_file)?)?;
+        let yy_project: YyProject = load_yy(project_file)?;
 
         let mut texture_groups = HashMap::new();
         for yytg in yy_project.texture_groups {
@@ -189,32 +162,22 @@ impl Project {
 
         for resource in &yy_project.resources {
             let resource_path = project.base_path.join(&resource.id.path);
-
-            let yy_resource = load_yy_val(&resource_path)?
-                .into_object()
-                .context("resource yy is not object")?;
-
             let base_path = resource_path.parent().expect("no base path").to_owned();
 
-            let resource_type = yy_resource
-                .get("resourceType")
-                .and_then(|v| v.as_string())
-                .context("'resourceType' field is not a string")?;
-
-            match resource_type.as_str() {
-                "GMSprite" => {
-                    let sprite = read_sprite(base_path, yy_resource)?;
+            match load_yy(&resource_path)? {
+                YyResource::Sprite(yy_sprite) => {
+                    let sprite = read_sprite(base_path, yy_sprite)?;
                     project.sprites.insert(sprite.name.clone(), sprite);
                 }
-                "GMObject" => {
-                    let object = read_object(base_path, yy_resource)?;
+                YyResource::Object(yy_object) => {
+                    let object = read_object(base_path, yy_object)?;
                     project.objects.insert(object.name.clone(), object);
                 }
-                "GMRoom" => {
-                    let room = read_room(base_path, yy_resource)?;
+                YyResource::Room(yy_room) => {
+                    let room = read_room(base_path, yy_room)?;
                     project.rooms.insert(room.name.clone(), room);
                 }
-                _ => {}
+                YyResource::Other => {}
             }
         }
 
@@ -228,61 +191,146 @@ struct YyId {
     name: String,
 }
 
-fn read_sprite(base_path: PathBuf, yy_resource: yy::Object) -> Result<Sprite, Error> {
-    #[derive(Deserialize)]
-    struct YyFrame {
-        name: String,
-    }
+#[derive(Deserialize)]
+struct YyResourceRef {
+    id: YyId,
+}
 
-    #[derive(Deserialize)]
-    struct YyKeyFrameChannel {
-        #[serde(rename = "Id")]
-        id: YyId,
-    }
+#[derive(Deserialize)]
+struct YyRoomNode {
+    #[serde(rename = "roomId")]
+    room_id: YyId,
+}
 
-    #[derive(Deserialize)]
-    struct YyKeyFrame {
-        #[serde(rename = "Length")]
-        length: f64,
-        #[serde(rename = "Channels")]
-        channels: HashMap<String, YyKeyFrameChannel>,
-    }
+#[derive(Deserialize)]
+struct YyTextureGroup {
+    name: String,
+    autocrop: bool,
+    border: u8,
+}
 
-    #[derive(Deserialize)]
-    struct YyKeyFramesStore {
-        #[serde(rename = "Keyframes")]
-        keyframes: Vec<YyKeyFrame>,
-    }
+#[derive(Deserialize)]
+struct YyProject {
+    name: String,
+    resources: Vec<YyResourceRef>,
+    #[serde(rename = "TextureGroups")]
+    texture_groups: Vec<YyTextureGroup>,
+    #[serde(rename = "RoomOrderNodes")]
+    room_order: Vec<YyRoomNode>,
+}
 
-    #[derive(Deserialize)]
-    struct YyTrack {
-        name: String,
-        keyframes: YyKeyFramesStore,
-    }
+#[derive(Deserialize)]
+struct YyFrame {
+    name: String,
+}
 
-    #[derive(Deserialize)]
-    struct YySequence {
-        #[serde(rename = "playbackSpeed")]
-        playback_speed: f64,
-        length: f64,
-        tracks: Vec<YyTrack>,
-        xorigin: u32,
-        yorigin: u32,
-    }
+#[derive(Deserialize)]
+struct YyKeyFrameChannel {
+    #[serde(rename = "Id")]
+    id: YyId,
+}
 
-    #[derive(Deserialize)]
-    struct YySprite {
-        name: String,
-        frames: Vec<YyFrame>,
-        width: u32,
-        height: u32,
-        #[serde(rename = "textureGroupId")]
-        texture_group: YyId,
-        sequence: YySequence,
-    }
+#[derive(Deserialize)]
+struct YyKeyFrame {
+    #[serde(rename = "Length")]
+    length: f64,
+    #[serde(rename = "Channels")]
+    channels: HashMap<String, YyKeyFrameChannel>,
+}
 
-    let yy_sprite: YySprite = yy::from_value(yy_resource.into())?;
+#[derive(Deserialize)]
+struct YyKeyFramesStore {
+    #[serde(rename = "Keyframes")]
+    keyframes: Vec<YyKeyFrame>,
+}
 
+#[derive(Deserialize)]
+struct YyTrack {
+    name: String,
+    keyframes: YyKeyFramesStore,
+}
+
+#[derive(Deserialize)]
+struct YySequence {
+    #[serde(rename = "playbackSpeed")]
+    playback_speed: f64,
+    length: f64,
+    tracks: Vec<YyTrack>,
+    xorigin: u32,
+    yorigin: u32,
+}
+
+#[derive(Deserialize)]
+struct YySprite {
+    name: String,
+    frames: Vec<YyFrame>,
+    width: u32,
+    height: u32,
+    #[serde(rename = "textureGroupId")]
+    texture_group: YyId,
+    sequence: YySequence,
+}
+
+#[derive(Deserialize)]
+struct YyObject {
+    name: String,
+    persistent: bool,
+    #[serde(rename = "spriteId")]
+    sprite_id: Option<YyId>,
+}
+
+#[derive(Deserialize)]
+struct YyInstance {
+    #[serde(rename = "objectId")]
+    object_id: YyId,
+    x: f64,
+    y: f64,
+    #[serde(rename = "scaleX")]
+    scale_x: f64,
+    #[serde(rename = "scaleY")]
+    scale_y: f64,
+    rotation: f64,
+}
+
+#[derive(Deserialize)]
+struct YyLayer {
+    name: String,
+    depth: i32,
+    visible: bool,
+    #[serde(default)]
+    instances: Vec<YyInstance>,
+}
+
+#[derive(Deserialize)]
+struct YyRoomSettings {
+    #[serde(rename = "Width")]
+    width: u32,
+    #[serde(rename = "Height")]
+    height: u32,
+}
+
+#[derive(Deserialize)]
+struct YyRoom {
+    name: String,
+    #[serde(rename = "roomSettings")]
+    room_settings: YyRoomSettings,
+    layers: Vec<YyLayer>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "resourceType")]
+enum YyResource {
+    #[serde(rename = "GMSprite")]
+    Sprite(YySprite),
+    #[serde(rename = "GMObject")]
+    Object(YyObject),
+    #[serde(rename = "GMRoom")]
+    Room(YyRoom),
+    #[serde(other)]
+    Other,
+}
+
+fn read_sprite(base_path: PathBuf, yy_sprite: YySprite) -> Result<Sprite, Error> {
     let mut frames = HashMap::new();
     for frame in yy_sprite.frames {
         let image_path = base_path.join(format!("{}.png", &frame.name));
@@ -333,17 +381,7 @@ fn read_sprite(base_path: PathBuf, yy_resource: yy::Object) -> Result<Sprite, Er
     })
 }
 
-fn read_object(base_path: PathBuf, yy_resource: yy::Object) -> Result<Object, Error> {
-    #[derive(Deserialize)]
-    struct YyObject {
-        name: String,
-        persistent: bool,
-        #[serde(rename = "spriteId")]
-        sprite_id: Option<YyId>,
-    }
-
-    let yy_object: YyObject = yy::from_value(yy_resource.into())?;
-
+fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error> {
     let mut event_scripts = HashMap::new();
     for event in ObjectEvent::all() {
         let path = base_path.join(event.path());
@@ -369,47 +407,7 @@ fn read_object(base_path: PathBuf, yy_resource: yy::Object) -> Result<Object, Er
     })
 }
 
-fn read_room(base_path: PathBuf, yy_resource: yy::Object) -> Result<Room, Error> {
-    #[derive(Deserialize)]
-    struct YyInstance {
-        #[serde(rename = "objectId")]
-        object_id: YyId,
-        x: f64,
-        y: f64,
-        #[serde(rename = "scaleX")]
-        scale_x: f64,
-        #[serde(rename = "scaleY")]
-        scale_y: f64,
-        rotation: f64,
-    }
-
-    #[derive(Deserialize)]
-    struct YyLayer {
-        name: String,
-        depth: i32,
-        visible: bool,
-        #[serde(default)]
-        instances: Vec<YyInstance>,
-    }
-
-    #[derive(Deserialize)]
-    struct YyRoomSettings {
-        #[serde(rename = "Width")]
-        width: u32,
-        #[serde(rename = "Height")]
-        height: u32,
-    }
-
-    #[derive(Deserialize)]
-    struct YyRoom {
-        name: String,
-        #[serde(rename = "roomSettings")]
-        room_settings: YyRoomSettings,
-        layers: Vec<YyLayer>,
-    }
-
-    let yy_room: YyRoom = yy::from_value(yy_resource.into())?;
-
+fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
     let mut layers = HashMap::new();
 
     for yy_layer in yy_room.layers {

@@ -21,6 +21,7 @@ log = "0.4"
 num = "0.4"
 rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 thiserror = "2.0"
 
 fabricator-compiler.path = "crates/compiler"
@@ -28,6 +29,5 @@ fabricator-math.path = "crates/math"
 fabricator-stdlib.path = "crates/stdlib"
 fabricator-util.path = "crates/util"
 fabricator-vm.path = "crates/vm"
-fabricator-yy-format.path = "crates/yy-format"
 fabricator.path = "crates/fabricator"
 
