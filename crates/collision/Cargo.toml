@@ -1,0 +1,11 @@
+[package]
+name = "fabricator-collision"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+arrayvec.workspace = true
+either.workspace = true
+num.workspace = true
+
+fabricator-math.workspace = true
