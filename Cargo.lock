@@ -673,6 +673,8 @@ dependencies = [
  "either",
  "fabricator-math",
  "num",
+ "rand",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

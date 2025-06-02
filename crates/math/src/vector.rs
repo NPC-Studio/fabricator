@@ -1,4 +1,4 @@
-use std::{array, ops};
+use std::{array, ops, slice};
 
 use crate::cast;
 
@@ -12,6 +12,24 @@ pub type Vec4<T> = Vector<T, 4>;
 impl<T, const N: usize> From<[T; N]> for Vector<T, N> {
     fn from(a: [T; N]) -> Self {
         Self(a)
+    }
+}
+
+impl<T, const N: usize> IntoIterator for Vector<T, N> {
+    type Item = T;
+    type IntoIter = array::IntoIter<T, N>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T, const N: usize> IntoIterator for &'a Vector<T, N> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -170,6 +188,10 @@ impl<T, const N: usize> Vector<T, N> {
         Self::from_fn(|_| t)
     }
 
+    pub fn iter(&self) -> slice::Iter<T> {
+        self.0.iter()
+    }
+
     pub fn map<U>(self, f: impl Fn(T) -> U) -> Vector<U, N> {
         Vector(self.0.map(f))
     }
@@ -261,11 +283,11 @@ impl<T: num::Float, const N: usize> Vector<T, N> {
 
     /// Returns the *unsigned* angle between this vector and the given vector.
     pub fn angle_between(self, rhs: Self) -> T {
-        let one = num::one::<T>();
+        let _1 = num::one::<T>();
         num::clamp(
             self.dot(rhs) / (self.length_squared() * rhs.length_squared()).sqrt(),
-            -one,
-            one,
+            -_1,
+            _1,
         )
         .acos()
     }

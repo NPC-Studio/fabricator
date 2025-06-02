@@ -7,5 +7,7 @@ edition.workspace = true
 arrayvec.workspace = true
 either.workspace = true
 num.workspace = true
+rand.workspace = true
+thiserror.workspace = true
 
 fabricator-math.workspace = true
