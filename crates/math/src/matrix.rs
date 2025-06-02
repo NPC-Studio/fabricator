@@ -1,4 +1,4 @@
-use std::{array, ops};
+use std::{array, ops, slice};
 
 use crate::{
     cast,
@@ -20,6 +20,24 @@ impl<T, const R: usize, const C: usize> From<[Vector<T, R>; C]> for Matrix<T, R,
 impl<T, const R: usize, const C: usize> From<[[T; R]; C]> for Matrix<T, R, C> {
     fn from(a: [[T; R]; C]) -> Self {
         Self::from_array(a)
+    }
+}
+
+impl<T, const R: usize, const C: usize> IntoIterator for Matrix<T, R, C> {
+    type Item = Vector<T, R>;
+    type IntoIter = array::IntoIter<Vector<T, R>, C>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T, const R: usize, const C: usize> IntoIterator for &'a Matrix<T, R, C> {
+    type Item = &'a Vector<T, R>;
+    type IntoIter = slice::Iter<'a, Vector<T, R>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -78,6 +96,14 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
 
     pub fn into_cols(self) -> [Vector<T, R>; C] {
         self.0
+    }
+
+    pub const fn as_cols(&self) -> &[Vector<T, R>; C] {
+        &self.0
+    }
+
+    pub fn iter_cols(&self) -> slice::Iter<Vector<T, R>> {
+        self.0.iter()
     }
 
     pub fn from_array(arr: [[T; R]; C]) -> Self {

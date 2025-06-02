@@ -177,6 +177,10 @@ impl<T, const N: usize> Vector<T, N> {
         &self.0
     }
 
+    pub fn iter(&self) -> slice::Iter<T> {
+        self.0.iter()
+    }
+
     pub fn from_fn(f: impl Fn(usize) -> T) -> Self {
         Self(array::from_fn(f))
     }
@@ -186,10 +190,6 @@ impl<T, const N: usize> Vector<T, N> {
         T: Copy,
     {
         Self::from_fn(|_| t)
-    }
-
-    pub fn iter(&self) -> slice::Iter<T> {
-        self.0.iter()
     }
 
     pub fn map<U>(self, f: impl Fn(T) -> U) -> Vector<U, N> {
@@ -246,7 +246,7 @@ impl<T: num::One, const N: usize> Vector<T, N> {
 
 impl<T, const N: usize> Vector<T, N>
 where
-    T: num::Zero + ops::Mul<T, Output = T> + ops::Sub<T, Output = T>,
+    T: num::Zero + ops::Mul<T, Output = T> + ops::Add<T, Output = T>,
 {
     pub fn dot(self, rhs: Self) -> T {
         (self * rhs)

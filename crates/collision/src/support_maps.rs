@@ -39,6 +39,30 @@ where
 }
 
 #[derive(Debug, Copy, Clone)]
+pub struct Line<N>(pub [Vec2<N>; 2]);
+
+impl<N> SupportMap<N> for Line<N>
+where
+    N: PartialOrd + num::Zero + ops::Mul<N, Output = N> + ops::Add<N, Output = N> + Copy,
+{
+    type Context = Vec2<N>;
+
+    fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
+        if ndir.dot(self.0[1]) > ndir.dot(self.0[0]) {
+            SupportPoint {
+                point: self.0[1],
+                context: self.0[1],
+            }
+        } else {
+            SupportPoint {
+                point: self.0[0],
+                context: self.0[0],
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct AABox<N>(pub Box2<N>);
 
 impl<N> SupportMap<N> for AABox<N>
