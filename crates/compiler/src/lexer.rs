@@ -312,6 +312,10 @@ where
             (Some(c), _) if c.is_ascii_whitespace() => {
                 unreachable!("whitespace should have been skipped")
             }
+            (Some('!'), Some('=')) => {
+                self.advance(2);
+                Some(Token::BangEqual)
+            }
             (Some('='), Some('=')) => {
                 self.advance(2);
                 Some(Token::DoubleEqual)
