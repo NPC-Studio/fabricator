@@ -16,12 +16,12 @@ use fabricator_math::{Affine2, Box2, Vec2, cast};
 use fabricator_util::typed_id_map::SecondaryMap;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
 
-struct State {
+struct AppState {
     window: Arc<Window>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -29,6 +29,7 @@ struct State {
     surface: wgpu::Surface<'static>,
     surface_format: wgpu::TextureFormat,
 
+    input: fab::InputState,
     game: fab::Game,
     render: fab::Render,
 
@@ -43,8 +44,8 @@ struct State {
     frames_behind: f64,
 }
 
-impl State {
-    async fn new(window: Arc<Window>, project_file: &Path) -> State {
+impl AppState {
+    async fn new(window: Arc<Window>, project_file: &Path) -> AppState {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -163,7 +164,7 @@ impl State {
             }
         }
 
-        let state = State {
+        let state = AppState {
             window,
             device,
             queue,
@@ -171,6 +172,7 @@ impl State {
             surface,
             surface_format,
             render: Default::default(),
+            input: Default::default(),
             game,
             pipeline,
             texture_page_bind_groups,
@@ -221,7 +223,7 @@ impl State {
         self.frames_behind = self.frames_behind.min(MAX_FRAMES_BEHIND as f64);
 
         while self.frames_behind >= 1.0 {
-            self.game.tick(&mut self.render).unwrap();
+            self.game.tick(&self.input, &mut self.render).unwrap();
             self.frames_behind -= 1.0;
         }
 
@@ -252,17 +254,17 @@ impl State {
         self.batches.clear();
 
         for quad in &self.render.quads {
-            let (texture_page_id, tex_size, tex_coords) = self.textures[quad.texture];
-            let screen_coords = Box2::with_size(quad.position, tex_size);
-
             let index_start = self.geometry.indices.len();
 
-            self.geometry.draw_quad([
-                pipeline::Vertex::new(screen_coords.eval([0.0, 0.0]), tex_coords.eval([0.0, 0.0])),
-                pipeline::Vertex::new(screen_coords.eval([0.0, 1.0]), tex_coords.eval([0.0, 1.0])),
-                pipeline::Vertex::new(screen_coords.eval([1.0, 1.0]), tex_coords.eval([1.0, 1.0])),
-                pipeline::Vertex::new(screen_coords.eval([1.0, 0.0]), tex_coords.eval([1.0, 0.0])),
-            ]);
+            let (texture_page_id, tex_size, tex_coords) = self.textures[quad.texture];
+            let vertexes = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]].map(|[x, y]| {
+                pipeline::Vertex::new(
+                    quad.transform
+                        .transform_point(Box2::with_size(Vec2::zero(), tex_size).eval([x, y])),
+                    tex_coords.eval([x, y]),
+                )
+            });
+            self.geometry.draw_quad(vertexes);
 
             self.batches.push((
                 cast::cast(index_start)..cast::cast(self.geometry.indices.len()),
@@ -321,7 +323,7 @@ impl State {
 
 struct App {
     project_file: PathBuf,
-    state: Option<State>,
+    app_state: Option<AppState>,
 }
 
 impl ApplicationHandler for App {
@@ -335,24 +337,49 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
 
-        let state = pollster::block_on(State::new(window.clone(), &self.project_file));
-        self.state = Some(state);
+        let state = pollster::block_on(AppState::new(window.clone(), &self.project_file));
+        self.app_state = Some(state);
 
         window.request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let state = self.state.as_mut().unwrap();
+        let app_state = self.app_state.as_mut().unwrap();
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                state.render();
-                state.get_window().request_redraw();
+                app_state.render();
+                app_state.get_window().request_redraw();
             }
             WindowEvent::Resized(size) => {
-                state.resize(size);
+                app_state.resize(size);
+            }
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                MouseButton::Left => {
+                    app_state
+                        .input
+                        .mouse_pressed
+                        .set(fab::MouseButtons::Left, state.is_pressed());
+                }
+                MouseButton::Right => {
+                    app_state
+                        .input
+                        .mouse_pressed
+                        .set(fab::MouseButtons::Right, state.is_pressed());
+                }
+                MouseButton::Middle => {
+                    app_state
+                        .input
+                        .mouse_pressed
+                        .set(fab::MouseButtons::Middle, state.is_pressed());
+                }
+                _ => {}
+            },
+            WindowEvent::CursorMoved { position, .. } => {
+                let logical = position.to_logical(app_state.window.scale_factor());
+                app_state.input.mouse_position = Vec2::new(logical.x, logical.y);
             }
             _ => (),
         }
@@ -374,7 +401,7 @@ fn main() {
 
     let mut app = App {
         project_file: cli.project_file,
-        state: None,
+        app_state: None,
     };
     event_loop.run_app(&mut app).unwrap();
 }

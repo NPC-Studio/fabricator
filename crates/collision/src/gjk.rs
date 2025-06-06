@@ -5,6 +5,7 @@ use crate::{
     support::SupportMap,
 };
 
+#[derive(Debug)]
 pub struct Settings<N> {
     pub tolerance: N,
     /// If the GJK algorithm has not otherwise terminated after this number of iterations, it will
@@ -21,6 +22,7 @@ pub struct Settings<N> {
 }
 
 /// The result of the GJK algorithm
+#[derive(Debug)]
 pub enum Result<N> {
     /// The origin was determined to be inside the support map, or on the surface within the given
     /// tolerance. If the terminating simplex is a triangle, then the origin is known to be

@@ -11,7 +11,7 @@ use fabricator_compiler::{
 };
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
-use gc_arena::{Gc, Mutation};
+use gc_arena::Gc;
 
 #[derive(Parser)]
 struct Cli {
@@ -33,7 +33,7 @@ fn main() {
             let mut code = StdString::new();
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
-            let prototype = compile(&ctx, ctx.testing_stdlib(), &code).unwrap();
+            let prototype = compile(ctx, ctx.testing_stdlib(), &code).unwrap();
             let closure = vm::Closure::new(
                 &ctx,
                 Gc::new(&ctx, prototype),
@@ -49,18 +49,18 @@ fn main() {
             let mut code = StdString::new();
             File::open(path).unwrap().read_to_string(&mut code).unwrap();
 
-            struct Interner<'a, 'gc>(&'a Mutation<'gc>);
+            struct Interner<'gc>(vm::Context<'gc>);
 
-            impl<'a, 'gc> StringInterner for Interner<'a, 'gc> {
+            impl<'gc> StringInterner for Interner<'gc> {
                 type String = vm::String<'gc>;
 
                 fn intern(&mut self, s: &str) -> vm::String<'gc> {
-                    vm::String::new(self.0, s)
+                    self.0.intern(s)
                 }
             }
 
             let parsed = ParseSettings::default()
-                .parse(&code, Interner(&ctx))
+                .parse(&code, Interner(ctx))
                 .unwrap();
 
             struct MDict<'gc>(Gc<'gc, vm::MagicSet<'gc>>);

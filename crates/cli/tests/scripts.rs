@@ -13,9 +13,9 @@ fn run_code(code: &str, compat: bool) -> Result<(), vm::Error> {
 
     interpreter.enter(|ctx| {
         let prototype = if compat {
-            compiler::compile_compat(&ctx, ctx.testing_stdlib(), &code)?
+            compiler::compile_compat(ctx, ctx.testing_stdlib(), &code)?
         } else {
-            compiler::compile(&ctx, ctx.testing_stdlib(), &code)?
+            compiler::compile(ctx, ctx.testing_stdlib(), &code)?
         };
         let closure = vm::Closure::new(
             &ctx,

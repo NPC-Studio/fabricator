@@ -1,15 +1,20 @@
+mod create;
+mod maxrects;
+mod tick;
+
 use std::collections::HashMap;
 
 use anyhow::{Context as _, Error, anyhow, bail};
-use fabricator_math::Vec2;
+use fabricator_math::{Affine2, Vec2};
 use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
 
 use crate::{
-    maxrects::MaxRects,
     project::Project,
-    state::{State, Texture, TextureId},
+    state::{DrawingState, DrawnSpriteFrame, InputState, State, Texture, TextureId},
 };
+
+use self::{create::create_state, maxrects::MaxRects, tick::tick_state};
 
 new_id_type! {
     pub struct TexturePageId;
@@ -25,7 +30,8 @@ pub struct TexturePage {
 #[derive(Debug)]
 pub struct Quad {
     pub texture: TextureId,
-    pub position: Vec2<f32>,
+    // Transforms the quad (0, 0, texture_width, texture_height) into room coordinates.
+    pub transform: Affine2<f32>,
     pub depth: i32,
 }
 
@@ -53,18 +59,26 @@ impl Render {
 
 pub struct Game {
     interpreter: vm::Interpreter,
+    main_thread: vm::StashedThread,
     state: State,
+    drawing_state: DrawingState,
     texture_pages: IdMap<TexturePageId, TexturePage>,
 }
 
 impl Game {
     pub fn new(project: Project) -> Result<Self, Error> {
+        // TODO: Hard code texture page size normally configured by
+        // 'options/<platform>/options_<platform>.yy'.
+        const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
+
         let mut interpreter = vm::Interpreter::new();
-        let state = State::create(&mut interpreter, &project)?;
+        let main_thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
+
+        let state = create_state(&mut interpreter, &project)?;
 
         let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
 
-        for (texture_id, texture) in state.textures.iter() {
+        for (texture_id, texture) in state.config.textures.iter() {
             texture_groups
                 .entry(texture.texture_group.clone())
                 .or_default()
@@ -90,7 +104,8 @@ impl Game {
                 let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
 
                 for texture_id in to_place.ids() {
-                    let padded_size = state.textures[texture_id].size + Vec2::splat(border * 2);
+                    let padded_size =
+                        state.config.textures[texture_id].size + Vec2::splat(border * 2);
                     if padded_size[0] > TEXTURE_PAGE_SIZE[0]
                         || padded_size[1] > TEXTURE_PAGE_SIZE[1]
                     {
@@ -127,7 +142,9 @@ impl Game {
 
         Ok(Game {
             interpreter,
+            main_thread,
             state,
+            drawing_state: DrawingState::default(),
             texture_pages,
         })
     }
@@ -137,23 +154,31 @@ impl Game {
     }
 
     pub fn texture(&self, texture_id: TextureId) -> &Texture {
-        &self.state.textures[texture_id]
+        &self.state.config.textures[texture_id]
     }
 
     pub fn tick_rate(&self) -> f64 {
-        self.state.tick_rate
+        self.state.config.tick_rate
     }
 
-    pub fn tick(&mut self, render: &mut Render) -> Result<(), Error> {
-        self.state.tick(&mut self.interpreter)?;
+    pub fn tick(&mut self, input: &InputState, render: &mut Render) -> Result<(), Error> {
+        self.drawing_state.clear();
+
+        tick_state(
+            &mut self.state,
+            &mut self.drawing_state,
+            input,
+            &mut self.interpreter,
+            &self.main_thread,
+        )?;
 
         render.clear();
-        render.room_size = self.state.rooms[self.state.current_room.unwrap()].size;
+        render.room_size = self.state.config.rooms[self.state.current_room.unwrap()].size;
 
         for instance in self.state.instances.values() {
-            let object = &self.state.objects[instance.object];
+            let object = &self.state.config.objects[instance.object];
             if let Some(sprite_id) = object.sprite {
-                let sprite = &self.state.sprites[sprite_id];
+                let sprite = &self.state.config.sprites[sprite_id];
                 let frame_index = match sprite
                     .frames
                     .binary_search_by(|f| f.frame_start.total_cmp(&instance.animation_time))
@@ -162,10 +187,47 @@ impl Game {
                     Err(i) => i.checked_sub(1).unwrap(),
                 };
 
+                let texture = sprite.frames[frame_index].texture;
+                let transform = Affine2::new()
+                    .translate(-sprite.origin)
+                    .rotate(instance.rotation)
+                    .translate(instance.position)
+                    .cast();
+                let depth = instance.depth;
+
                 render.quads.push(Quad {
-                    texture: sprite.frames[frame_index].texture,
-                    position: (instance.position - sprite.origin).cast(),
-                    depth: instance.depth,
+                    texture,
+                    transform,
+                    depth,
+                });
+            }
+        }
+
+        for drawn_sprite in &self.drawing_state.drawn_sprites {
+            let sprite = &self.state.config.sprites[drawn_sprite.sprite];
+            if let Some(instance) = self.state.instances.get(drawn_sprite.instance) {
+                let frame_index = match drawn_sprite.sub_img {
+                    DrawnSpriteFrame::CurrentAnimation => match sprite
+                        .frames
+                        .binary_search_by(|f| f.frame_start.total_cmp(&instance.animation_time))
+                    {
+                        Ok(i) => i,
+                        Err(i) => i.checked_sub(1).unwrap(),
+                    },
+                    DrawnSpriteFrame::Frame(i) => i % sprite.frames.len(),
+                };
+
+                let texture = sprite.frames[frame_index].texture;
+                let transform = Affine2::new()
+                    .translate(-sprite.origin)
+                    .translate(drawn_sprite.position)
+                    .cast();
+                let depth = instance.depth;
+
+                render.quads.push(Quad {
+                    texture,
+                    transform,
+                    depth,
                 });
             }
         }
@@ -173,7 +235,3 @@ impl Game {
         Ok(())
     }
 }
-
-// TODO: Hard code texture page size normally configured by
-// 'options/<platform>/options_<platform>.yy'.
-const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);

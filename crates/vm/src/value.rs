@@ -220,13 +220,21 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn equal(self, other: Value<'gc>) -> Option<bool> {
+    pub fn equal(self, other: Value<'gc>) -> bool {
         match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(a == b),
-            (Value::Integer(a), Value::Float(b)) => Some((a as f64) == b),
-            (Value::Float(a), Value::Integer(b)) => Some(a == b as f64),
-            (Value::Float(a), Value::Float(b)) => Some(a == b),
-            _ => None,
+            (Value::Undefined, Value::Undefined) => true,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::Integer(a), Value::Float(b)) => (a as f64) == b,
+            (Value::Float(a), Value::Integer(b)) => a == b as f64,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::Object(a), Value::Object(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Closure(a), Value::Closure(b)) => a == b,
+            (Value::Callback(a), Value::Callback(b)) => a == b,
+            (Value::UserData(a), Value::UserData(b)) => a == b,
+            _ => false,
         }
     }
 

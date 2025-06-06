@@ -670,7 +670,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.equal(arg2).ok_or(VmError::BadOp)?.into();
+            *dest = arg1.equal(arg2).into();
             Ok(())
         }
 
@@ -684,7 +684,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = (!arg1.equal(arg2).ok_or(VmError::BadOp)?).into();
+            *dest = (!arg1.equal(arg2)).into();
             Ok(())
         }
 

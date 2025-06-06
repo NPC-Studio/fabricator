@@ -5,12 +5,14 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bitflags.workspace = true
 gc-arena.workspace = true
 num.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+fabricator-collision.workspace = true
 fabricator-compiler.workspace = true
 fabricator-math.workspace = true
 fabricator-stdlib.workspace = true

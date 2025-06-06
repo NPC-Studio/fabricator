@@ -18,4 +18,4 @@ if mouse_dragging {
 }
 
 colliding_1 = collision_line(x - 32, y - 32, x + 32, y + 32, all, false, false) != noone;
-colliding_2 = collision_line(x + 32, y - 32, x - 32, y + 32, all, false, false) != noone;
+colliding_2 = collision_line(x - 32, y + 32, x + 32, y - 32, all, false, false) != noone;

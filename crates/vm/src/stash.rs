@@ -6,6 +6,7 @@ use crate::{
     UserDataMethods,
     closure::{Closure, ClosureInner, Prototype},
     magic::MagicSet,
+    object::{Object, ObjectInner},
     thread::{Thread, ThreadInner},
     userdata::{UserData, UserDataInner},
 };
@@ -25,6 +26,33 @@ pub trait Fetchable {
     type Fetched<'gc>;
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc>;
+}
+
+#[derive(Clone)]
+pub struct StashedObject(DynamicRoot<Rootable![ObjectInner<'_>]>);
+
+impl fmt::Debug for StashedObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StashedObject")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+impl<'gc> Stashable<'gc> for Object<'gc> {
+    type Stashed = StashedObject;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedObject(roots.stash::<Rootable![ObjectInner<'_>]>(mc, self.into_inner()))
+    }
+}
+
+impl Fetchable for StashedObject {
+    type Fetched<'gc> = Object<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        Object::from_inner(roots.fetch(&self.0))
+    }
 }
 
 #[derive(Clone)]

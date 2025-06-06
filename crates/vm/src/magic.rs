@@ -71,6 +71,19 @@ impl<'gc> MagicSet<'gc> {
         Ok(index)
     }
 
+    pub fn add_impl<M>(
+        &mut self,
+        mc: &Mutation<'gc>,
+        name: String<'gc>,
+        magic: M,
+    ) -> Result<usize, DuplicateMagicName>
+    where
+        M: Magic<'gc> + Collect<'gc> + 'gc,
+    {
+        let magic = gc_arena::unsize!(Gc::new(mc, magic) => dyn Magic);
+        self.add(name, magic)
+    }
+
     /// Add a read-only magic variable which always contains a constant value.
     pub fn add_constant(
         &mut self,
@@ -88,10 +101,7 @@ impl<'gc> MagicSet<'gc> {
             }
         }
 
-        self.add(
-            name,
-            gc_arena::unsize!(Gc::new(mc, MagicConstant(value)) => dyn Magic),
-        )
+        self.add_impl(mc, name, MagicConstant(value))
     }
 
     pub fn find(&self, name: &str) -> Option<usize> {

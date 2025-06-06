@@ -23,6 +23,22 @@ where
     }
 }
 
+impl<T: num::NumCast, const N: usize> Affine<T, N> {
+    pub fn cast<U: num::NumCast>(self) -> Affine<U, N> {
+        Affine {
+            matrix: self.matrix.cast(),
+            translation: self.translation.cast(),
+        }
+    }
+
+    pub fn try_cast<U: num::NumCast>(self) -> Option<Affine<U, N>> {
+        Some(Affine {
+            matrix: self.matrix.try_cast()?,
+            translation: self.translation.try_cast()?,
+        })
+    }
+}
+
 impl<T: num::Num + Copy, const N: usize> Affine<T, N> {
     pub fn then(self, other: Affine<T, N>) -> Self {
         Self {

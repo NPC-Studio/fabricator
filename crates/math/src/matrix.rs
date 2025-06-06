@@ -151,7 +151,7 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
 }
 
 impl<T: num::NumCast, const R: usize, const C: usize> Matrix<T, R, C> {
-    pub fn cast<U: num::NumCast>(self) -> Matrix<T, R, C> {
+    pub fn cast<U: num::NumCast>(self) -> Matrix<U, R, C> {
         self.map(cast::cast)
     }
 

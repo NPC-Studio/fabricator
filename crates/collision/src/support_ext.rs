@@ -1,8 +1,8 @@
-use fabricator_math::{Affine2, Box2, Vec2};
+use fabricator_math::{Box2, Vec2};
 
 use crate::{
     support::{SupportMap, SupportPoint},
-    support_maps::{Add, AffineTransform, Negate, Translate},
+    support_maps::{Add, Negate, Rotate, Translate},
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -66,12 +66,12 @@ pub trait SupportMapExt<N>: SupportMap<N> {
         Translate(self, offset)
     }
 
-    fn transform(self, transform: Affine2<N>) -> AffineTransform<Self, N>
+    fn rotate(self, angle: N) -> Rotate<Self, N>
     where
         Self: Sized,
         N: num::Float,
     {
-        AffineTransform::new(self, transform)
+        Rotate::new(self, angle)
     }
 
     /// Takes this support function (A) and a provided support (B) function and finds the support

@@ -46,6 +46,8 @@ macro_rules! __new_id_type {
 
     () => {}
 }
+
+#[doc(inline)]
 pub use crate::__new_id_type as new_id_type;
 
 pub struct IdMap<I, V> {

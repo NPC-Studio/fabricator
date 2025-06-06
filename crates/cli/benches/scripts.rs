@@ -13,8 +13,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
     let mut interpreter = vm::Interpreter::new();
 
     let (thread, closure) = interpreter.enter(|ctx| {
-        let prototype =
-            compiler::compile(&ctx, ctx.testing_stdlib(), &code).expect("compile error");
+        let prototype = compiler::compile(ctx, ctx.testing_stdlib(), &code).expect("compile error");
         let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),

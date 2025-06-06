@@ -61,6 +61,17 @@ pub struct Prototype<'gc> {
     pub heap_vars: Box<[HeapVarDescriptor]>,
 }
 
+impl<'gc> Prototype<'gc> {
+    pub fn has_upvalues(&self) -> bool {
+        for &h in &self.heap_vars {
+            if matches!(h, HeapVarDescriptor::UpValue(_)) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum HeapVar<'gc> {

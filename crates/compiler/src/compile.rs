@@ -1,4 +1,4 @@
-use gc_arena::{Gc, Mutation};
+use gc_arena::Gc;
 use thiserror::Error;
 
 use fabricator_vm as vm;
@@ -31,13 +31,13 @@ pub enum CompilerError {
     Frontend(#[from] FrontendError),
 }
 
-struct Interner<'a, 'gc>(&'a Mutation<'gc>);
+struct Interner<'gc>(vm::Context<'gc>);
 
-impl<'a, 'gc> StringInterner for Interner<'a, 'gc> {
+impl<'gc> StringInterner for Interner<'gc> {
     type String = vm::String<'gc>;
 
     fn intern(&mut self, s: &str) -> vm::String<'gc> {
-        vm::String::new(self.0, s)
+        self.0.intern(s)
     }
 }
 
@@ -60,25 +60,25 @@ impl<'gc> MagicDict<vm::String<'gc>> for MDict<'gc> {
 }
 
 pub fn compile<'gc>(
-    mc: &Mutation<'gc>,
+    ctx: vm::Context<'gc>,
     stdlib: Gc<'gc, vm::MagicSet<'gc>>,
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let parsed = ParseSettings::default().parse(src, Interner(mc))?;
+    let parsed = ParseSettings::default().parse(src, Interner(ctx))?;
     let mut ir = FrontendSettings::default().compile_ir(&parsed, MDict(stdlib))?;
 
     optimize_ir(&mut ir).expect("Internal Optimization Error");
-    let prototype = codegen(mc, &ir, MDict(stdlib)).expect("Internal Codegen Error");
+    let prototype = codegen(&ctx, &ir, MDict(stdlib)).expect("Internal Codegen Error");
 
     Ok(prototype)
 }
 
 pub fn compile_compat<'gc>(
-    mc: &Mutation<'gc>,
+    ctx: vm::Context<'gc>,
     stdlib: Gc<'gc, vm::MagicSet<'gc>>,
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let parsed = ParseSettings { strict: false }.parse(src, Interner(mc))?;
+    let parsed = ParseSettings { strict: false }.parse(src, Interner(ctx))?;
     let mut ir = FrontendSettings {
         lexical_scoping: false,
         allow_closures: false,
@@ -86,7 +86,7 @@ pub fn compile_compat<'gc>(
     .compile_ir(&parsed, MDict(stdlib))?;
 
     optimize_ir(&mut ir).expect("Internal Optimization Error");
-    let prototype = codegen(mc, &ir, MDict(stdlib)).expect("Internal Codegen Error");
+    let prototype = codegen(&ctx, &ir, MDict(stdlib)).expect("Internal Codegen Error");
 
     Ok(prototype)
 }

@@ -1,6 +1,6 @@
 use std::ops;
 
-use fabricator_math::{Affine2, Box2, Mat2, Vec2};
+use fabricator_math::{Box2, Vec2};
 
 use crate::support::{SupportMap, SupportPoint};
 
@@ -19,21 +19,22 @@ impl<N: Copy> SupportMap<N> for Point<N> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Circle<N> {
+pub struct Ellipse<N> {
     pub center: Vec2<N>,
-    pub radius: N,
+    pub radius: Vec2<N>,
 }
 
-impl<N> SupportMap<N> for Circle<N>
+impl<N> SupportMap<N> for Ellipse<N>
 where
     N: Copy + ops::Add<N, Output = N> + ops::Sub<N, Output = N> + ops::Mul<N, Output = N>,
 {
     type Context = Vec2<N>;
 
     fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
+        let point = self.center + ndir * self.radius;
         SupportPoint {
             point: self.center + ndir * self.radius,
-            context: ndir,
+            context: point,
         }
     }
 }
@@ -83,9 +84,11 @@ where
             self.0.min[1]
         };
 
+        let point = Vec2::new(x, y);
+
         SupportPoint {
-            point: Vec2::new(x, y),
-            context: Vec2::new(x, y),
+            point,
+            context: point,
         }
     }
 }
@@ -156,26 +159,18 @@ where
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct AffineTransform<S, N> {
-    pub support: S,
-    pub transform: Affine2<N>,
-    pub inverse: Mat2<N>,
-}
+pub struct Rotate<S, N>(S, Vec2<N>);
 
-impl<S, N> AffineTransform<S, N>
+impl<S, N> Rotate<S, N>
 where
     N: num::Float,
 {
-    pub fn new(support: S, transform: Affine2<N>) -> Self {
-        AffineTransform {
-            support,
-            transform,
-            inverse: transform.matrix.inverse(),
-        }
+    pub fn new(support_map: S, angle: N) -> Self {
+        Self(support_map, Vec2::from_angle(angle))
     }
 }
 
-impl<S, N> SupportMap<N> for AffineTransform<S, N>
+impl<S, N> SupportMap<N> for Rotate<S, N>
 where
     N: num::Float,
     S: SupportMap<N>,
@@ -183,10 +178,12 @@ where
     type Context = S::Context;
 
     fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
-        let ndir = (self.inverse * ndir).normalize();
-        let SupportPoint { point, context } = self.support.support_point(ndir);
+        let rot = self.1;
+        let inv_rot = Vec2::new(rot[0], -rot[1]);
+
+        let SupportPoint { point, context } = self.0.support_point(ndir.rotate(inv_rot));
         SupportPoint {
-            point: self.transform.transform_point(point),
+            point: point.rotate(rot),
             context,
         }
     }

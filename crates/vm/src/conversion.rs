@@ -87,19 +87,19 @@ impl_copy_into!(
 
 impl<'gc> IntoValue<'gc> for &'static str {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-        Value::String(String::new(&ctx, self))
+        Value::String(ctx.intern(self))
     }
 }
 
 impl<'gc> IntoValue<'gc> for StdString {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-        Value::String(String::new(&ctx, &self))
+        Value::String(ctx.intern(&self))
     }
 }
 
 impl<'a, 'gc> IntoValue<'gc> for &'a StdString {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-        Value::String(String::new(&ctx, self))
+        Value::String(ctx.intern(self))
     }
 }
 

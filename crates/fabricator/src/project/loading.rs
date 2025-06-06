@@ -9,180 +9,69 @@ use anyhow::{Context as _, Error, bail};
 use serde::Deserialize;
 use serde_json as json;
 
-use crate::strip_json_trailing_commas::StripJsonTrailingCommas;
+use crate::project::{
+    AnimationFrame, CollisionKind, EventScript, Frame, Instance, Layer, Object, ObjectEvent,
+    Project, Room, ScriptMode, Sprite, TextureGroup,
+    strip_json_trailing_commas::StripJsonTrailingCommas,
+};
 
-#[derive(Debug)]
-pub struct Frame {
-    pub name: String,
-    pub image_path: PathBuf,
-}
-
-#[derive(Debug)]
-pub struct AnimationFrame {
-    pub frame: String,
-    pub length: f64,
-}
-
-#[derive(Debug)]
-pub struct Sprite {
-    pub name: String,
-    pub base_path: PathBuf,
-    pub texture_group: String,
-    pub frames: HashMap<String, Frame>,
-    pub width: u32,
-    pub height: u32,
-    pub playback_speed: f64,
-    pub playback_length: f64,
-    pub origin_x: u32,
-    pub origin_y: u32,
-    pub animation_frames: Vec<AnimationFrame>,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum ObjectEvent {
-    Create,
-    Step,
-}
-
-impl ObjectEvent {
-    pub fn all() -> impl Iterator<Item = ObjectEvent> {
-        [Self::Create, Self::Step].into_iter()
+pub fn load_project(project_file: &Path) -> Result<Project, Error> {
+    fn load_yy<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Error> {
+        Ok(json::from_reader(StripJsonTrailingCommas::new(
+            BufReader::new(File::open(path)?),
+        ))?)
     }
 
-    pub fn path(self) -> &'static str {
-        match self {
-            Self::Create => "Create_0.gml",
-            Self::Step => "Step_0.gml",
-        }
-    }
-}
+    let yy_project: YyProject = load_yy(project_file)?;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum ScriptMode {
-    Compat,
-    Full,
-}
-
-#[derive(Debug)]
-pub struct EventScript {
-    pub event: ObjectEvent,
-    pub path: PathBuf,
-    pub mode: ScriptMode,
-}
-
-#[derive(Debug)]
-pub struct Object {
-    pub name: String,
-    pub base_path: PathBuf,
-    pub persistent: bool,
-    pub sprite: Option<String>,
-    pub event_scripts: HashMap<ObjectEvent, EventScript>,
-}
-
-#[derive(Debug)]
-pub struct Instance {
-    pub object: String,
-    pub x: f64,
-    pub y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub rotation: f64,
-}
-
-#[derive(Debug)]
-pub struct Layer {
-    pub name: String,
-    pub visible: bool,
-    pub depth: i32,
-    pub instances: Vec<Instance>,
-}
-
-#[derive(Debug)]
-pub struct Room {
-    pub name: String,
-    pub base_path: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub layers: HashMap<String, Layer>,
-}
-
-#[derive(Debug)]
-pub struct TextureGroup {
-    pub name: String,
-    pub auto_crop: bool,
-    pub border: u8,
-}
-
-#[derive(Debug)]
-pub struct Project {
-    pub name: String,
-    pub base_path: PathBuf,
-    pub texture_groups: HashMap<String, TextureGroup>,
-    pub sprites: HashMap<String, Sprite>,
-    pub objects: HashMap<String, Object>,
-    pub rooms: HashMap<String, Room>,
-    pub room_order: Vec<String>,
-}
-
-impl Project {
-    pub fn load(project_file: &Path) -> Result<Project, Error> {
-        fn load_yy<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, Error> {
-            Ok(json::from_reader(StripJsonTrailingCommas::new(
-                BufReader::new(File::open(path)?),
-            ))?)
-        }
-
-        let yy_project: YyProject = load_yy(project_file)?;
-
-        let mut texture_groups = HashMap::new();
-        for yytg in yy_project.texture_groups {
-            let tg = TextureGroup {
-                name: yytg.name,
-                auto_crop: yytg.autocrop,
-                border: yytg.border,
-            };
-            texture_groups.insert(tg.name.clone(), tg);
-        }
-
-        let room_order = yy_project
-            .room_order
-            .into_iter()
-            .map(|i| i.room_id.name)
-            .collect();
-
-        let mut project = Project {
-            name: yy_project.name,
-            base_path: project_file.parent().expect("no base path").to_owned(),
-            texture_groups,
-            sprites: HashMap::new(),
-            objects: HashMap::new(),
-            rooms: HashMap::new(),
-            room_order,
+    let mut texture_groups = HashMap::new();
+    for yytg in yy_project.texture_groups {
+        let tg = TextureGroup {
+            name: yytg.name,
+            auto_crop: yytg.autocrop,
+            border: yytg.border,
         };
-
-        for resource in &yy_project.resources {
-            let resource_path = project.base_path.join(&resource.id.path);
-            let base_path = resource_path.parent().expect("no base path").to_owned();
-
-            match load_yy(&resource_path)? {
-                YyResource::Sprite(yy_sprite) => {
-                    let sprite = read_sprite(base_path, yy_sprite)?;
-                    project.sprites.insert(sprite.name.clone(), sprite);
-                }
-                YyResource::Object(yy_object) => {
-                    let object = read_object(base_path, yy_object)?;
-                    project.objects.insert(object.name.clone(), object);
-                }
-                YyResource::Room(yy_room) => {
-                    let room = read_room(base_path, yy_room)?;
-                    project.rooms.insert(room.name.clone(), room);
-                }
-                YyResource::Other => {}
-            }
-        }
-
-        Ok(project)
+        texture_groups.insert(tg.name.clone(), tg);
     }
+
+    let room_order = yy_project
+        .room_order
+        .into_iter()
+        .map(|i| i.room_id.name)
+        .collect();
+
+    let mut project = Project {
+        name: yy_project.name,
+        base_path: project_file.parent().expect("no base path").to_owned(),
+        texture_groups,
+        sprites: HashMap::new(),
+        objects: HashMap::new(),
+        rooms: HashMap::new(),
+        room_order,
+    };
+
+    for resource in &yy_project.resources {
+        let resource_path = project.base_path.join(&resource.id.path);
+        let base_path = resource_path.parent().expect("no base path").to_owned();
+
+        match load_yy(&resource_path)? {
+            YyResource::Sprite(yy_sprite) => {
+                let sprite = read_sprite(base_path, yy_sprite)?;
+                project.sprites.insert(sprite.name.clone(), sprite);
+            }
+            YyResource::Object(yy_object) => {
+                let object = read_object(base_path, yy_object)?;
+                project.objects.insert(object.name.clone(), object);
+            }
+            YyResource::Room(yy_room) => {
+                let room = read_room(base_path, yy_room)?;
+                project.rooms.insert(room.name.clone(), room);
+            }
+            YyResource::Other => {}
+        }
+    }
+
+    Ok(project)
 }
 
 #[derive(Deserialize)]
@@ -266,6 +155,12 @@ struct YySprite {
     frames: Vec<YyFrame>,
     width: u32,
     height: u32,
+    #[serde(rename = "collisionKind")]
+    collision_kind: u32,
+    bbox_bottom: i32,
+    bbox_left: i32,
+    bbox_top: i32,
+    bbox_right: i32,
     #[serde(rename = "textureGroupId")]
     texture_group: YyId,
     sequence: YySequence,
@@ -366,6 +261,9 @@ fn read_sprite(base_path: PathBuf, yy_sprite: YySprite) -> Result<Sprite, Error>
         });
     }
 
+    let collision_kind = CollisionKind::from_code(yy_sprite.collision_kind)
+        .context("unrecognized sprite `collisionKind`")?;
+
     Ok(Sprite {
         name: yy_sprite.name,
         base_path,
@@ -377,6 +275,11 @@ fn read_sprite(base_path: PathBuf, yy_sprite: YySprite) -> Result<Sprite, Error>
         playback_length: yy_sprite.sequence.length,
         origin_x: yy_sprite.sequence.xorigin,
         origin_y: yy_sprite.sequence.yorigin,
+        collision_kind,
+        bbox_bottom: yy_sprite.bbox_bottom + 1,
+        bbox_left: yy_sprite.bbox_left,
+        bbox_top: yy_sprite.bbox_top,
+        bbox_right: yy_sprite.bbox_right + 1,
         animation_frames,
     })
 }

@@ -9,6 +9,12 @@ pub type Vec2<T> = Vector<T, 2>;
 pub type Vec3<T> = Vector<T, 3>;
 pub type Vec4<T> = Vector<T, 4>;
 
+impl<T: Default, const N: usize> Default for Vector<T, N> {
+    fn default() -> Self {
+        Self::from_fn(|_| Default::default())
+    }
+}
+
 impl<T, const N: usize> From<[T; N]> for Vector<T, N> {
     fn from(a: [T; N]) -> Self {
         Self(a)
@@ -334,7 +340,7 @@ impl<T> Vec2<T>
 where
     T: ops::Mul<T, Output = T> + ops::Add<T, Output = T> + ops::Sub<T, Output = T> + Copy,
 {
-    /// Rotate `rhs` by the angle of `self`, multiply `rhs` by the magnitude of `self`.
+    /// Rotate `self` by the angle of `rhs`, multiply `self` by the magnitude of `rhs`.
     pub fn rotate(self, rhs: Self) -> Self {
         let Self([x, y]) = self;
         let Self([rx, ry]) = rhs;
@@ -343,6 +349,7 @@ where
 }
 
 impl<T: num::Float> Vec2<T> {
+    /// Returns a unit vector with the given angle.
     pub fn from_angle(angle: T) -> Self {
         let (y, x) = angle.sin_cos();
         Self([x, y])

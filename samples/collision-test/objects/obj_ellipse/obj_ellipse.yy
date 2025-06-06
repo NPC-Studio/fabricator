@@ -1,9 +1,9 @@
 {
   "$GMObject":"",
-  "%Name":"obj_elipse",
+  "%Name":"obj_ellipse",
   "eventList":[],
   "managed":true,
-  "name":"obj_elipse",
+  "name":"obj_ellipse",
   "overriddenProperties":[],
   "parent":{
     "name":"Objects",
@@ -33,8 +33,8 @@
   "resourceVersion":"2.0",
   "solid":false,
   "spriteId":{
-    "name":"spr_collision_elipse",
-    "path":"sprites/spr_collision_elipse/spr_collision_elipse.yy",
+    "name":"spr_collision_ellipse",
+    "path":"sprites/spr_collision_ellipse/spr_collision_ellipse.yy",
   },
   "spriteMaskId":null,
   "visible":true,

@@ -6,6 +6,7 @@ use crate::{
     object::Object,
     registry::{Registry, Singleton},
     stash::{Fetchable, Stashable},
+    string::String,
 };
 
 #[derive(Copy, Clone)]
@@ -56,6 +57,10 @@ impl<'gc> Context<'gc> {
     /// Calls `ctx.registry().fetch(f)`.
     pub fn fetch<F: Fetchable + Fetchable>(self, f: &F) -> F::Fetched<'gc> {
         self.state.registry.fetch(f)
+    }
+
+    pub fn intern(self, s: &str) -> String<'gc> {
+        String::new(&self, s)
     }
 }
 
