@@ -19,12 +19,12 @@ impl<N: Copy> SupportMap<N> for Point<N> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Ellipse<N> {
+pub struct Circle<N> {
     pub center: Vec2<N>,
-    pub radius: Vec2<N>,
+    pub radius: N,
 }
 
-impl<N> SupportMap<N> for Ellipse<N>
+impl<N> SupportMap<N> for Circle<N>
 where
     N: Copy + ops::Add<N, Output = N> + ops::Sub<N, Output = N> + ops::Mul<N, Output = N>,
 {
@@ -33,7 +33,32 @@ where
     fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
         let point = self.center + ndir * self.radius;
         SupportPoint {
-            point: self.center + ndir * self.radius,
+            point,
+            context: point,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Ellipse<N> {
+    pub center: Vec2<N>,
+    pub radius: Vec2<N>,
+}
+
+impl<N> SupportMap<N> for Ellipse<N>
+where
+    N: num::Float,
+{
+    type Context = Vec2<N>;
+
+    fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
+        let ndir = (ndir * self.radius)
+            .normalize()
+            .rotate_angle(num::cast::<_, _>(-0.000).unwrap());
+        let point = self.center + ndir * self.radius;
+
+        SupportPoint {
+            point,
             context: point,
         }
     }

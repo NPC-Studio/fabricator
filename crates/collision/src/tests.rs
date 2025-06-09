@@ -4,9 +4,9 @@ use crate::{gjk, simplex::Simplex, support_ext::SupportMapExt, support_maps};
 
 #[test]
 fn test_gjk_point_circle() {
-    let circle = support_maps::Ellipse {
+    let circle = support_maps::Circle {
         center: Vec2::splat(2.0),
-        radius: Vec2::splat(1.0),
+        radius: 1.0,
     };
 
     let point_inside = support_maps::Point(Vec2::splat(2.5));
@@ -43,9 +43,9 @@ fn test_gjk_point_circle() {
 
 #[test]
 fn test_gjk_line_circle() {
-    let circle = support_maps::Ellipse {
+    let circle = support_maps::Circle {
         center: Vec2::splat(2.0),
-        radius: Vec2::splat(1.0),
+        radius: 1.0,
     };
 
     let intersecting_line = support_maps::Line([Vec2::new(1.5, 1.0), Vec2::new(3.5, 3.0)]);
