@@ -56,12 +56,12 @@ where
         // the ellipse is centered on the origin.
         //
         // Define `nx` and `ny` as the x and y component of our normalized direction vector `n`
-        // (`ndir).
+        // (`ndir`).
         //
         // Define the semi-major x-axis (`radius[0]`) as `a` and semi-major y-axis (`radius[1]`)
         // as `b`.
         //
-        // The equation for every point this ellipse is:
+        // The equation for every point on this ellipse is:
         //
         // 1) `x = a * cos(t)` and `y = `b * sin(t)`
         //
@@ -71,7 +71,8 @@ where
         // 2) `nx * a * cos(t) + ny * b * sin(t)`
         //
         // Since we are trying to maximize this value, we find the derivative and look for the point
-        // at which the derivative is 0. This equation for the derivative of the projection is:
+        // at which the derivative is 0. This equation for the derivative of the projection with
+        // respect to `t` is:
         //
         // 3) `nx * a * -sin(t) + ny * b * cos(t) = 0`
         //
@@ -88,8 +89,17 @@ where
         // 6) `cos(t) = nx * a / sqrt((nx * a)^2 + (ny * b)^2)`
         // 7) `sin(t) = ny * b / sqrt((nx * a)^2 + (ny * b)^2)`
         //
-        // We can plug both of these back into equation 1 and produce equations for both points `x`
-        // and `y`, which expressed in vector pseudo code is:
+        // Technically these systems of equations have *two* solutions, one for positive `a` and `b`
+        // and one for negative `-a` and `-b`. The negative solution *minimizes* the projection and
+        // the positive one maximizes it.
+        //
+        // Taking the solution that maximizes the projection and plugging in both of these back into
+        // equation 1 and produce equations for both points `x` and `y`:
+        //
+        // 8) `x = nx * a^2 / sqrt((nx * a)^2 + (ny * b)^2)`
+        // 9) `y = ny * b^2 / sqrt((nx * a)^2 + (ny * b)^2)`
+        //
+        // which expressed in vector pseudo code is:
         //
         // 8) `[a, b] * norm(n * [a, b])`
         //
