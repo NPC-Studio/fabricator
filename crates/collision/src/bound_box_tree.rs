@@ -1,5 +1,4 @@
 use fabricator_math::{Box2, Vec2};
-use rand::distr::uniform::SampleRange as _;
 
 /// A 4D k-d tree of 2D bound boxes, allowing for efficient bounds queries.
 ///
@@ -85,7 +84,10 @@ impl<N: num::Float, T> BoundBoxTree<N, T> {
                 }
             }));
 
-        self.root = build(&mut self.nodes, |a, b| a.partial_cmp(&b).unwrap().is_lt());
+        self.root = build(&mut self.nodes, |a, b| {
+            debug_assert!(!a.is_nan() && b.is_nan());
+            a < b
+        });
     }
 }
 
@@ -184,6 +186,7 @@ struct Node<N, T> {
 
 fn build<N, T>(nodes: &mut Vec<Node<N, T>>, less_than: impl Fn(&N, &N) -> bool) -> NodeIndex {
     fn build_sub<N, T>(
+        rng: &mut impl rand::Rng,
         nodes: &mut Vec<Node<N, T>>,
         depth: Depth,
         min: NodeIndex,
@@ -197,22 +200,24 @@ fn build<N, T>(nodes: &mut Vec<Node<N, T>>, less_than: impl Fn(&N, &N) -> bool) 
         let mid = min + (max - min) / 2;
         // Find the median element and partition the array based on the appropriate ordering for
         // this dimension. Each bound box is represented as the 4D point [xmin, ymin, xmax, ymax].
-        quickselect(&mut nodes[min..max], mid - min, |a, b| match depth % 4 {
-            0 => less_than(&a.bounds.min[0], &b.bounds.min[0]),
-            1 => less_than(&a.bounds.min[1], &b.bounds.min[1]),
-            2 => less_than(&a.bounds.max[0], &b.bounds.max[0]),
-            3 => less_than(&a.bounds.max[1], &b.bounds.max[1]),
-            _ => unreachable!(),
+        quickselect(rng, &mut nodes[min..max], mid - min, |a, b| {
+            match depth % 4 {
+                0 => less_than(&a.bounds.min[0], &b.bounds.min[0]),
+                1 => less_than(&a.bounds.min[1], &b.bounds.min[1]),
+                2 => less_than(&a.bounds.max[0], &b.bounds.max[0]),
+                3 => less_than(&a.bounds.max[1], &b.bounds.max[1]),
+                _ => unreachable!(),
+            }
         });
         let depth = depth.checked_add(1).unwrap();
 
-        nodes[mid].left = build_sub(nodes, depth, min, mid, less_than);
-        nodes[mid].right = build_sub(nodes, depth, mid + 1, max, less_than);
+        nodes[mid].left = build_sub(rng, nodes, depth, min, mid, less_than);
+        nodes[mid].right = build_sub(rng, nodes, depth, mid + 1, max, less_than);
 
         mid
     }
 
-    build_sub(nodes, 0, 0, nodes.len(), &less_than)
+    build_sub(&mut rand::rng(), nodes, 0, 0, nodes.len(), &less_than)
 }
 
 trait Query<N> {
@@ -329,7 +334,12 @@ where
 // Partially sort the given slice, making sure that the kth element is in the correct position.
 //
 // https://en.wikipedia.org/wiki/Quickselect
-fn quickselect<T>(list: &mut [T], k: usize, less_than: impl Fn(&T, &T) -> bool) {
+fn quickselect<T>(
+    rng: &mut impl rand::Rng,
+    list: &mut [T],
+    k: usize,
+    less_than: impl Fn(&T, &T) -> bool,
+) {
     assert!(k < list.len());
 
     let mut left = 0;
@@ -350,12 +360,10 @@ fn quickselect<T>(list: &mut [T], k: usize, less_than: impl Fn(&T, &T) -> bool) 
         store_index
     };
 
-    let mut rng = rand::rng();
-
     loop {
         // We pick a random pivot value here, which means that the quickselect algorithm has "almost
         // certain" linear time.
-        let mut pivot = (left..=right).sample_single(&mut rng).unwrap();
+        let mut pivot = rng.random_range(left..=right);
         pivot = partition(left, right, pivot);
 
         if k == pivot {

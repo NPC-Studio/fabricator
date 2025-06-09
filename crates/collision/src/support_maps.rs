@@ -90,7 +90,7 @@ where
         // 7) `sin(t) = ny * b / sqrt((nx * a)^2 + (ny * b)^2)`
         //
         // Technically these systems of equations have *two* solutions, one for positive `a` and `b`
-        // and one for negative `-a` and `-b`. The negative solution *minimizes* the projection and
+        // and one for negative `-a` and `-b`. The negative solution minimizes the projection and
         // the positive one maximizes it.
         //
         // Taking the solution that maximizes the projection and plugging in both of these back into
