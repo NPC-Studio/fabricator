@@ -349,8 +349,8 @@ where
 }
 
 impl<T: num::Float> Vec2<T> {
-    /// Returns a unit vector with the given angle.
-    pub fn from_angle(angle: T) -> Self {
+    /// Returns a unit vector with the given angle from the unit X vector.
+    pub fn from_unit_angle(angle: T) -> Self {
         let (y, x) = angle.sin_cos();
         Self([x, y])
     }
@@ -372,7 +372,7 @@ impl<T: num::Float> Vec2<T> {
     }
 
     pub fn rotate_angle(self, angle: T) -> Self {
-        self.rotate(Self::from_angle(angle))
+        self.rotate(Self::from_unit_angle(angle))
     }
 }
 

@@ -52,10 +52,50 @@ where
     type Context = Vec2<N>;
 
     fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context> {
-        let ndir = (ndir * self.radius)
-            .normalize()
-            .rotate_angle(num::cast::<_, _>(-0.000).unwrap());
-        let point = self.center + ndir * self.radius;
+        // Parameterize the elipse by an angle `t` (theta). For now, ignore the center and assume
+        // the ellipse is centered on the origin.
+        //
+        // Define `nx` and `ny` as the x and y component of our normalized direction vector `n`
+        // (`ndir).
+        //
+        // Define the semi-major x-axis (`radius[0]`) as `a` and semi-major y-axis (`radius[1]`)
+        // as `b`.
+        //
+        // The equation for every point this ellipse is:
+        //
+        // 1) `x = a * cos(t)` and `y = `b * sin(t)`
+        //
+        // for some theta `t`. We want to find a point on this ellipse that maximizes the projection
+        // onto `n`, and the equation for the projection onto `n` is:
+        //
+        // 2) `nx * a * cos(t) + ny * b * sin(t)`
+        //
+        // Since we are trying to maximize this value, we find the derivative and look for the point
+        // at which the derivative is 0. This equation for the derivative of the projection is:
+        //
+        // 3) `nx * a * -sin(t) + ny * b * cos(t) = 0`
+        //
+        // We can re-arrange this equation into:
+        //
+        // 4) `cos(t) / sin(t) = nx * a / ny * b`
+        //
+        // We also know that for any `t`:
+        //
+        // 5) `cos(t)^2 + sin(t)^2 = 1`
+        //
+        // so using both of these we can produce formulas for `cos(t)` and `sin(t)`:
+        //
+        // 6) `cos(t) = nx * a / sqrt((nx * a)^2 + (ny * b)^2)`
+        // 7) `sin(t) = ny * b / sqrt((nx * a)^2 + (ny * b)^2)`
+        //
+        // We can plug both of these back into equation 1 and produce equations for both points `x`
+        // and `y`, which expressed in vector pseudo code is:
+        //
+        // 8) `[a, b] * norm(n * [a, b])`
+        //
+        // Now we can just use this equation and make sure to add the center of the ellipse.
+
+        let point = self.center + (ndir * self.radius).normalize() * self.radius;
 
         SupportPoint {
             point,
@@ -191,7 +231,7 @@ where
     N: num::Float,
 {
     pub fn new(support_map: S, angle: N) -> Self {
-        Self(support_map, Vec2::from_angle(angle))
+        Self(support_map, Vec2::from_unit_angle(angle))
     }
 }
 
