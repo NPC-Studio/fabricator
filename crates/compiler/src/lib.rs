@@ -9,5 +9,6 @@ pub mod lexer;
 pub mod magic_dict;
 pub mod parser;
 pub mod string_interner;
+pub mod line_numbers;
 
 pub use compile::{CompilerError, compile, compile_compat};

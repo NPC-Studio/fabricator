@@ -320,7 +320,9 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
+            reference: ir::FunctionRef::Chunk,
             instructions,
+            spans: Default::default(),
             blocks,
             variables,
             shadow_vars: Default::default(),
@@ -368,7 +370,9 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
+            reference: ir::FunctionRef::Chunk,
             instructions,
+            spans: Default::default(),
             blocks,
             variables,
             shadow_vars: Default::default(),

@@ -29,9 +29,7 @@ pub fn room_api<'gc, 'a>(
         |ctx, value| {
             State::ctx_with_mut(ctx, |state| {
                 let room = match value {
-                    fabricator_vm::Value::UserData(user_data) => {
-                        *user_data.downcast_static::<RoomId>()?
-                    }
+                    vm::Value::UserData(user_data) => *user_data.downcast_static::<RoomId>()?,
                     _ => {
                         return Err(vm::Error::msg("cannot set room to non-room value"));
                     }

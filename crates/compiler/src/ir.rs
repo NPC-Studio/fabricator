@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fmt};
 
 use arrayvec::ArrayVec;
-use fabricator_util::typed_id_map::{IdMap, new_id_type};
+use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
+use fabricator_vm::Span;
 
 use crate::constant::Constant;
 
@@ -399,15 +400,25 @@ impl Default for Block {
 }
 
 pub type InstructionMap<S> = IdMap<InstId, Instruction<S>>;
+pub type SpanMap = SecondaryMap<InstId, Span>;
 pub type BlockMap = IdMap<BlockId, Block>;
 pub type VariableSet = IdMap<Variable, ()>;
 pub type ShadowVarSet = IdMap<ShadowVar, ()>;
 pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
 pub type UpValueMap = HashMap<Variable, Variable>;
 
+#[derive(Debug, Copy, Clone)]
+pub enum FunctionRef<S> {
+    Named(S, Span),
+    Expression(Span),
+    Chunk,
+}
+
 pub struct Function<S> {
     pub num_parameters: usize,
+    pub reference: FunctionRef<S>,
     pub instructions: InstructionMap<S>,
+    pub spans: SpanMap,
     pub blocks: BlockMap,
     pub variables: VariableSet,
     pub shadow_vars: ShadowVarSet,

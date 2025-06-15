@@ -1,13 +1,14 @@
+use fabricator_vm as vm;
 use gc_arena::Gc;
 use thiserror::Error;
-
-use fabricator_vm as vm;
 
 use crate::{
     analysis::{
         block_merge::merge_blocks,
-        cleanup::clean_unused_variables,
-        cleanup::{clean_instructions, clean_unreachable_blocks, clean_unused_functions},
+        cleanup::{
+            clean_instructions, clean_unreachable_blocks, clean_unused_functions,
+            clean_unused_variables,
+        },
         constant_folding::fold_constants,
         dead_code_elim::eliminate_dead_code,
         eliminate_copies::eliminate_copies,
@@ -18,9 +19,10 @@ use crate::{
     codegen::codegen,
     frontend::{FrontendError, FrontendSettings},
     ir,
+    line_numbers::LineNumbers,
     magic_dict::{MagicDict, MagicMode},
     parser::{ParseError, ParseSettings},
-    string_interner::StringInterner,
+    string_interner::VmInterner,
 };
 
 #[derive(Debug, Error)]
@@ -31,19 +33,40 @@ pub enum CompilerError {
     Frontend(#[from] FrontendError),
 }
 
-struct Interner<'gc>(vm::Context<'gc>);
+pub struct SourceChunk {
+    name: String,
+    line_numbers: LineNumbers,
+}
 
-impl<'gc> StringInterner for Interner<'gc> {
-    type String = vm::String<'gc>;
-
-    fn intern(&mut self, s: &str) -> vm::String<'gc> {
-        self.0.intern(s)
+impl SourceChunk {
+    pub fn new(name: &str, src: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            line_numbers: LineNumbers::new(src),
+        }
     }
 }
 
-struct MDict<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
+impl vm::ChunkData for SourceChunk {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
 
-impl<'gc> MagicDict<vm::String<'gc>> for MDict<'gc> {
+    fn line_number(&self, byte_offset: usize) -> vm::LineNumber {
+        self.line_numbers.line(byte_offset)
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct VmMagic<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
+
+impl<'gc> VmMagic<'gc> {
+    pub fn new(magic: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
+        Self(magic)
+    }
+}
+
+impl<'gc> MagicDict<vm::String<'gc>> for VmMagic<'gc> {
     fn magic_mode(&self, ident: &vm::String<'gc>) -> Option<MagicMode> {
         let index = self.0.find(ident.as_str())?;
         let magic = self.0.get(index).unwrap();
@@ -62,13 +85,19 @@ impl<'gc> MagicDict<vm::String<'gc>> for MDict<'gc> {
 pub fn compile<'gc>(
     ctx: vm::Context<'gc>,
     stdlib: Gc<'gc, vm::MagicSet<'gc>>,
+    chunk_name: &str,
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let parsed = ParseSettings::default().parse(src, Interner(ctx))?;
-    let mut ir = FrontendSettings::default().compile_ir(&parsed, MDict(stdlib))?;
+    let stdlib = VmMagic::new(stdlib);
 
+    let parsed = ParseSettings::default().parse(src, VmInterner(ctx))?;
+
+    let mut ir = FrontendSettings::default().compile_ir(&parsed, stdlib)?;
     optimize_ir(&mut ir).expect("Internal Optimization Error");
-    let prototype = codegen(&ctx, &ir, MDict(stdlib)).expect("Internal Codegen Error");
+
+    let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
+
+    let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
 
     Ok(prototype)
 }
@@ -76,17 +105,23 @@ pub fn compile<'gc>(
 pub fn compile_compat<'gc>(
     ctx: vm::Context<'gc>,
     stdlib: Gc<'gc, vm::MagicSet<'gc>>,
+    chunk_name: &str,
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let parsed = ParseSettings { strict: false }.parse(src, Interner(ctx))?;
+    let stdlib = VmMagic::new(stdlib);
+
+    let parsed = ParseSettings { strict: false }.parse(src, VmInterner(ctx))?;
+
     let mut ir = FrontendSettings {
         lexical_scoping: false,
         allow_closures: false,
     }
-    .compile_ir(&parsed, MDict(stdlib))?;
-
+    .compile_ir(&parsed, stdlib)?;
     optimize_ir(&mut ir).expect("Internal Optimization Error");
-    let prototype = codegen(&ctx, &ir, MDict(stdlib)).expect("Internal Codegen Error");
+
+    let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
+
+    let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
 
     Ok(prototype)
 }

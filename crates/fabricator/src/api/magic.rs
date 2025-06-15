@@ -44,11 +44,7 @@ pub fn create_magic_rw<'gc>(
             (self.read)(ctx)
         }
 
-        fn set(
-            &self,
-            ctx: fabricator_vm::Context<'gc>,
-            value: fabricator_vm::Value<'gc>,
-        ) -> Result<(), fabricator_vm::Error> {
+        fn set(&self, ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<(), vm::Error> {
             (self.write)(ctx, value)
         }
 

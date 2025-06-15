@@ -198,7 +198,7 @@ impl<V> IdMap<V> {
         self.occupancy == 0
     }
 
-    /// All indexes from every `Id` produced by this `IdMap` will be less than the returned `Index`.
+    /// All indexes for every `Id` produced by this `IdMap` will be less than the returned `Index`.
     #[inline]
     pub fn index_upper_bound(&self) -> Index {
         // The slots length always fits in `Index` (because `next_free` must always fit in `Index`)
@@ -487,6 +487,23 @@ impl<V> SecondaryMap<V> {
         self.occupancy == 0
     }
 
+    /// All indexes for every `Id` present in this `SecondaryMap` will be less than the returned
+    /// `Index`.
+    #[inline]
+    pub fn index_upper_bound(&self) -> Index {
+        self.slots.len().try_into().unwrap()
+    }
+
+    /// Returns the current live `Id` for the given index, if there is an live entry with this
+    /// index.
+    #[inline]
+    pub fn id_for_index(&self, index: Index) -> Option<Id> {
+        match self.slots.get(index as usize) {
+            Some(&SecondarySlot::Occupied { generation, .. }) => Some(Id { index, generation }),
+            _ => None,
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (Id, &V)> + '_ {
         self.slots.iter().enumerate().flat_map(|(index, slot)| {
             let SecondarySlot::Occupied { value, generation } = slot else {
@@ -545,6 +562,16 @@ impl<V> SecondaryMap<V> {
 
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.iter_mut().map(|(_, v)| v)
+    }
+
+    pub fn retain(&mut self, mut f: impl FnMut(Id, &mut V) -> bool) {
+        for index in 0..self.index_upper_bound() {
+            if let Some(id) = self.id_for_index(index) {
+                if !f(id, self.get_mut(id).unwrap()) {
+                    self.remove(id);
+                }
+            }
+        }
     }
 }
 

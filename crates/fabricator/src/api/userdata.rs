@@ -129,10 +129,10 @@ where
 {
     fn get_field(
         &self,
-        ctx: fabricator_vm::Context<'gc>,
-        ud: fabricator_vm::UserData<'gc>,
-        key: fabricator_vm::String<'gc>,
-    ) -> Result<fabricator_vm::Value<'gc>, fabricator_vm::Error> {
+        ctx: vm::Context<'gc>,
+        ud: vm::UserData<'gc>,
+        key: vm::String<'gc>,
+    ) -> Result<vm::Value<'gc>, vm::Error> {
         let u = ud.downcast::<U>()?;
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.read)(ctx, u)?)
@@ -144,11 +144,11 @@ where
 
     fn set_field(
         &self,
-        ctx: fabricator_vm::Context<'gc>,
-        ud: fabricator_vm::UserData<'gc>,
-        key: fabricator_vm::String<'gc>,
-        value: fabricator_vm::Value<'gc>,
-    ) -> Result<(), fabricator_vm::Error> {
+        ctx: vm::Context<'gc>,
+        ud: vm::UserData<'gc>,
+        key: vm::String<'gc>,
+        value: vm::Value<'gc>,
+    ) -> Result<(), vm::Error> {
         let u = ud.downcast_write::<U>(&ctx)?;
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.write)(ctx, u, value)?)
@@ -159,20 +159,20 @@ where
 
     fn get_index(
         &self,
-        _ctx: fabricator_vm::Context<'gc>,
-        _ud: fabricator_vm::UserData<'gc>,
-        _index: fabricator_vm::Value<'gc>,
-    ) -> Result<fabricator_vm::Value<'gc>, fabricator_vm::Error> {
+        _ctx: vm::Context<'gc>,
+        _ud: vm::UserData<'gc>,
+        _index: vm::Value<'gc>,
+    ) -> Result<vm::Value<'gc>, vm::Error> {
         Err(vm::Error::msg("no index access"))
     }
 
     fn set_index(
         &self,
-        _ctx: fabricator_vm::Context<'gc>,
-        _ud: fabricator_vm::UserData<'gc>,
-        _index: fabricator_vm::Value<'gc>,
-        _value: fabricator_vm::Value<'gc>,
-    ) -> Result<(), fabricator_vm::Error> {
+        _ctx: vm::Context<'gc>,
+        _ud: vm::UserData<'gc>,
+        _index: vm::Value<'gc>,
+        _value: vm::Value<'gc>,
+    ) -> Result<(), vm::Error> {
         Err(vm::Error::msg("no index access"))
     }
 }

@@ -173,9 +173,10 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
             for (&event, script) in &proj_object.event_scripts {
                 code.clear();
                 File::open(&script.path)?.read_to_string(&mut code)?;
+                let name = script.path.to_string_lossy();
                 let proto = match script.mode {
-                    ScriptMode::Compat => compiler::compile_compat(ctx, magic, &code)?,
-                    ScriptMode::Full => compiler::compile(ctx, magic, &code)?,
+                    ScriptMode::Compat => compiler::compile_compat(ctx, magic, name.as_ref(), &code)?,
+                    ScriptMode::Full => compiler::compile(ctx, magic, name.as_ref(), &code)?,
                 };
                 scripts
                     .object_events

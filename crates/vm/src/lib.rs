@@ -4,6 +4,7 @@ pub mod bytecode;
 pub mod callback;
 pub mod closure;
 pub mod conversion;
+pub mod debug;
 pub mod error;
 pub mod instructions;
 pub mod interpreter;
@@ -21,8 +22,9 @@ pub use self::{
     array::Array,
     bytecode::ByteCode,
     callback::{Callback, CallbackFn},
-    closure::{Closure, Constant, Prototype},
+    closure::{Closure, ClosureRef, Constant, Prototype},
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
+    debug::{Chunk, ChunkData, LineNumber, Span},
     error::{Error, TypeError},
     interpreter::{Context, Interpreter},
     magic::{Magic, MagicSet},

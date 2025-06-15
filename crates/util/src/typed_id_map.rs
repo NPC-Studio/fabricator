@@ -251,6 +251,16 @@ impl<I: Id, V> SecondaryMap<I, V> {
     }
 
     #[inline]
+    pub fn index_upper_bound(&self) -> Index {
+        self.map.index_upper_bound()
+    }
+
+    #[inline]
+    pub fn id_for_index(&self, index: Index) -> Option<I> {
+        Some(I::from_id(self.map.id_for_index(index)?))
+    }
+
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (I, &V)> + '_ {
         self.map.iter().map(|(id, v)| (I::from_id(id), v))
     }
@@ -278,6 +288,11 @@ impl<I: Id, V> SecondaryMap<I, V> {
     #[inline]
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> + '_ {
         self.iter_mut().map(|(_, v)| v)
+    }
+
+    #[inline]
+    pub fn retain(&mut self, mut f: impl FnMut(I, &mut V) -> bool) {
+        self.map.retain(move |id, val| f(I::from_id(id), val))
     }
 }
 

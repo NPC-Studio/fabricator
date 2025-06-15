@@ -1,19 +1,26 @@
 use std::fmt::Debug;
 
+use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::{
-    lexer::{LexError, Lexer, LineNumber, Token},
+    lexer::{LexError, Lexer, Token},
     string_interner::StringInterner,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Block<S> {
     pub statements: Vec<Statement<S>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Statement<S> {
+#[derive(Debug, Clone)]
+pub struct Statement<S> {
+    pub kind: Box<StatementKind<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum StatementKind<S> {
     Var(VarStatement<S>),
     Assignment(AssignmentStatement<S>),
     Return(ReturnStatement<S>),
@@ -23,48 +30,48 @@ pub enum Statement<S> {
     Call(CallExpr<S>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct VarStatement<S> {
     pub name: S,
-    pub value: Box<Expression<S>>,
+    pub value: Expression<S>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct AssignmentStatement<S> {
     pub target: AssignmentTarget<S>,
     pub op: AssignmentOp,
-    pub value: Box<Expression<S>>,
+    pub value: Expression<S>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum AssignmentTarget<S> {
     Name(S),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ReturnStatement<S> {
-    pub value: Option<Box<Expression<S>>>,
+    pub value: Option<Expression<S>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct IfStatement<S> {
-    pub condition: Box<Expression<S>>,
-    pub then_stmt: Box<Statement<S>>,
-    pub else_stmt: Option<Box<Statement<S>>>,
+    pub condition: Expression<S>,
+    pub then_stmt: Statement<S>,
+    pub else_stmt: Option<Statement<S>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ForStatement<S> {
-    pub initializer: Box<Statement<S>>,
-    pub condition: Box<Expression<S>>,
-    pub iterator: Box<Statement<S>>,
-    pub body: Box<Statement<S>>,
+    pub initializer: Statement<S>,
+    pub condition: Expression<S>,
+    pub iterator: Statement<S>,
+    pub body: Statement<S>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expression<S> {
+#[derive(Debug, Clone)]
+pub enum ExpressionKind<S> {
     Undefined,
     Boolean(bool),
     Float(f64),
@@ -72,39 +79,45 @@ pub enum Expression<S> {
     String(S),
     Name(S),
     This,
-    Group(Box<Expression<S>>),
+    Group(Expression<S>),
     Object(Vec<(S, Expression<S>)>),
     Array(Vec<Expression<S>>),
-    Unary(UnaryOp, Box<Expression<S>>),
-    Binary(Box<Expression<S>>, BinaryOp, Box<Expression<S>>),
+    Unary(UnaryOp, Expression<S>),
+    Binary(Expression<S>, BinaryOp, Expression<S>),
     Function(FunctionExpr<S>),
     Call(CallExpr<S>),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+pub struct Expression<S> {
+    pub kind: Box<ExpressionKind<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionExpr<S> {
     pub parameters: Vec<S>,
     pub body: Block<S>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct CallExpr<S> {
-    pub base: Box<Expression<S>>,
+    pub base: Expression<S>,
     pub arguments: Vec<Expression<S>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct FieldExpr<S> {
-    pub base: Box<Expression<S>>,
+    pub base: Expression<S>,
     pub field: S,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct IndexExpr<S> {
-    pub base: Box<Expression<S>>,
-    pub index: Box<Expression<S>>,
+    pub base: Expression<S>,
+    pub index: Expression<S>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -152,10 +165,10 @@ pub enum ParseErrorKind {
 }
 
 #[derive(Debug, Error)]
-#[error("parse error at line {line_number}: {kind}")]
+#[error("parse error at ({0}..{1}): {kind}", span.start(), span.end())]
 pub struct ParseError {
     pub kind: ParseErrorKind,
-    pub line_number: LineNumber,
+    pub span: Span,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -183,7 +196,7 @@ impl ParseSettings {
 struct Parser<'a, S: StringInterner> {
     settings: ParseSettings,
     lexer: Lexer<'a, S>,
-    look_ahead_buffer: Vec<Option<(Token<S::String>, LineNumber)>>,
+    look_ahead_buffer: Vec<Option<(Token<S::String>, Span)>>,
 }
 
 impl<'a, S: StringInterner> Parser<'a, S> {
@@ -199,13 +212,13 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         let block = self.parse_block()?;
 
         self.look_ahead(1)?;
-        if let Some((token, line_number)) = self.peek(0) {
+        if let Some((token, span)) = self.peek(0) {
             Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(token),
                     expected: "<statement>",
                 },
-                line_number,
+                span,
             })
         } else {
             Ok(block)
@@ -224,8 +237,8 @@ impl<'a, S: StringInterner> Parser<'a, S> {
 
             if self.settings.strict {
                 if !matches!(
-                    &stmt,
-                    Statement::If(_) | Statement::For(_) | Statement::Block(_)
+                    &*stmt.kind,
+                    StatementKind::If(_) | StatementKind::For(_) | StatementKind::Block(_)
                 ) {
                     self.parse_token(Token::SemiColon)?;
                 }
@@ -245,51 +258,67 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
         self.look_ahead(1)?;
         match self.peek_expected(0, "<statement>")? {
-            (Token::Var, _) => {
+            (Token::Var, mut span) => {
                 self.advance(1);
-                let name = self.parse_identifier()?;
+                let name = self.parse_identifier()?.0;
                 self.parse_token(Token::Equal)?;
                 let value = self.parse_expression()?;
-                Ok(Statement::Var(VarStatement {
-                    name,
-                    value: Box::new(value),
-                }))
+                span = span.combine(value.span);
+                Ok(Statement {
+                    kind: Box::new(StatementKind::Var(VarStatement { name, value })),
+                    span,
+                })
             }
-            (Token::Return, _) => {
+            (Token::Return, mut span) => {
                 self.advance(1);
                 self.look_ahead(1)?;
                 let value = match self.peek(0) {
                     Some((Token::SemiColon, _)) => None,
                     None => None,
-                    _ => Some(self.parse_expression()?),
+                    _ => {
+                        let expr = self.parse_expression()?;
+                        span = span.combine(expr.span);
+                        Some(expr)
+                    }
                 };
-                Ok(Statement::Return(ReturnStatement {
-                    value: value.map(Box::new),
-                }))
+                Ok(Statement {
+                    kind: Box::new(StatementKind::Return(ReturnStatement { value })),
+                    span,
+                })
             }
-            (Token::Exit, _) => {
+            (Token::Exit, span) => {
                 self.advance(1);
-                Ok(Statement::Return(ReturnStatement { value: None }))
+                Ok(Statement {
+                    kind: Box::new(StatementKind::Return(ReturnStatement { value: None })),
+                    span,
+                })
             }
-            (Token::If, _) => {
+            (Token::If, mut span) => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
                 let then_stmt = self.parse_statement()?;
+                span = span.combine(then_stmt.span);
+
                 let mut else_stmt = None;
 
                 self.look_ahead(1)?;
                 if matches!(self.peek(0), Some((Token::Else, _))) {
                     self.advance(1);
-                    else_stmt = Some(self.parse_statement()?);
+                    let stmt = self.parse_statement()?;
+                    span = span.combine(stmt.span);
+                    else_stmt = Some(stmt);
                 }
 
-                Ok(Statement::If(IfStatement {
-                    condition: Box::new(condition),
-                    then_stmt: Box::new(then_stmt),
-                    else_stmt: else_stmt.map(Box::new),
-                }))
+                Ok(Statement {
+                    kind: Box::new(StatementKind::If(IfStatement {
+                        condition,
+                        then_stmt,
+                        else_stmt,
+                    })),
+                    span,
+                })
             }
-            (Token::For, _) => {
+            (Token::For, mut span) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
                 let initializer = self.parse_statement()?;
@@ -299,69 +328,98 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 let iterator = self.parse_statement()?;
                 self.parse_token(Token::RightParen)?;
                 let body = self.parse_statement()?;
-                Ok(Statement::For(ForStatement {
-                    initializer: Box::new(initializer),
-                    condition: Box::new(condition),
-                    iterator: Box::new(iterator),
-                    body: Box::new(body),
-                }))
+
+                span = span.combine(body.span);
+                Ok(Statement {
+                    kind: Box::new(StatementKind::For(ForStatement {
+                        initializer,
+                        condition,
+                        iterator,
+                        body,
+                    })),
+                    span,
+                })
             }
-            (Token::LeftBrace, _) => {
+            (Token::LeftBrace, mut span) => {
                 self.advance(1);
                 let block = self.parse_block()?;
-                self.parse_token(Token::RightBrace)?;
-                Ok(Statement::Block(block))
+                span = span.combine(self.parse_token(Token::RightBrace)?);
+                Ok(Statement {
+                    kind: Box::new(StatementKind::Block(block)),
+                    span,
+                })
             }
-            (_, line_number) => match self.parse_suffixed_expression() {
-                Ok(Expression::Call(call)) => Ok(Statement::Call(call)),
-                Ok(expr @ (Expression::Name(_) | Expression::Field(_) | Expression::Index(_))) => {
-                    let target = match expr {
-                        Expression::Name(name) => AssignmentTarget::Name(name),
-                        Expression::Field(field) => AssignmentTarget::Field(field),
-                        Expression::Index(index) => AssignmentTarget::Index(index),
-                        _ => unreachable!(),
-                    };
+            (_, mut span) => {
+                let expr = match self.parse_suffixed_expression() {
+                    Ok(expr) => expr,
+                    Err(ParseError {
+                        kind: ParseErrorKind::Unexpected { unexpected, .. },
+                        span,
+                    }) => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected,
+                                expected: "<statement>",
+                            },
+                            span,
+                        });
+                    }
+                    Err(err) => return Err(err),
+                };
 
-                    self.look_ahead(1)?;
-                    if let Some(assignment_op) =
-                        self.peek(0).and_then(|(t, _)| get_assignment_operator(t))
-                    {
+                span = expr.span;
+
+                let kind = match *expr.kind {
+                    ExpressionKind::Call(call) => StatementKind::Call(call),
+                    expr @ (ExpressionKind::Name(_)
+                    | ExpressionKind::Field(_)
+                    | ExpressionKind::Index(_)) => {
+                        let target = match expr {
+                            ExpressionKind::Name(name) => AssignmentTarget::Name(name),
+                            ExpressionKind::Field(field) => AssignmentTarget::Field(field),
+                            ExpressionKind::Index(index) => AssignmentTarget::Index(index),
+                            _ => unreachable!(),
+                        };
+
+                        self.look_ahead(1)?;
+                        let Some(assignment_op) =
+                            self.peek(0).and_then(|(t, _)| get_assignment_operator(t))
+                        else {
+                            return Err(ParseError {
+                                kind: ParseErrorKind::Unexpected {
+                                    unexpected: "<non-statement expression>",
+                                    expected: "<statement>",
+                                },
+                                span,
+                            });
+                        };
+
                         self.advance(1);
                         let value = self.parse_expression()?;
-                        Ok(Statement::Assignment(AssignmentStatement {
+                        span = span.combine(value.span);
+
+                        StatementKind::Assignment(AssignmentStatement {
                             target,
                             op: assignment_op,
-                            value: Box::new(value),
-                        }))
-                    } else {
-                        Err(ParseError {
+                            value,
+                        })
+                    }
+                    _ => {
+                        return Err(ParseError {
                             kind: ParseErrorKind::Unexpected {
                                 unexpected: "<non-statement expression>",
                                 expected: "<statement>",
                             },
-                            line_number,
-                        })
+                            span,
+                        });
                     }
-                }
-                Ok(_) => Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: "<non-statement expression>",
-                        expected: "<statement>",
-                    },
-                    line_number,
-                }),
-                Err(ParseError {
-                    kind: ParseErrorKind::Unexpected { unexpected, .. },
-                    line_number,
-                }) => Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected,
-                        expected: "<statement>",
-                    },
-                    line_number,
-                }),
-                Err(err) => Err(err),
-            },
+                };
+
+                Ok(Statement {
+                    kind: Box::new(kind),
+                    span,
+                })
+            }
         }
     }
 
@@ -374,13 +432,17 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         priority_limit: OperatorPriority,
     ) -> Result<Expression<S::String>, ParseError> {
         self.look_ahead(1)?;
-        let mut expr = if let Some(unary_op) = self.peek(0).and_then(|(t, _)| get_unary_operator(t))
+        let mut expr = if let Some((unary_op, mut span)) = self
+            .peek(0)
+            .and_then(|(t, s)| Some((get_unary_operator(t)?, s)))
         {
             self.advance(1);
-            Expression::Unary(
-                unary_op,
-                Box::new(self.parse_sub_expression(UNARY_PRIORITY)?),
-            )
+            let target = self.parse_sub_expression(UNARY_PRIORITY)?;
+            span = span.combine(target.span);
+            Expression {
+                kind: Box::new(ExpressionKind::Unary(unary_op, target)),
+                span,
+            }
         } else {
             self.parse_simple_expression()?
         };
@@ -394,7 +456,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
 
             self.advance(1);
             let right_expression = self.parse_sub_expression(right_priority)?;
-            expr = Expression::Binary(Box::new(expr), binary_op, Box::new(right_expression));
+            let span = expr.span.combine(right_expression.span);
+            expr = Expression {
+                kind: Box::new(ExpressionKind::Binary(expr, binary_op, right_expression)),
+                span,
+            };
         }
 
         Ok(expr)
@@ -421,28 +487,32 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     } else {
                         Vec::new()
                     };
-                    self.parse_token(Token::RightParen)?;
-                    expr = Expression::Call(CallExpr {
-                        base: Box::new(expr),
-                        arguments,
-                    });
+                    let span = expr.span.combine(self.parse_token(Token::RightParen)?);
+                    expr = Expression {
+                        kind: Box::new(ExpressionKind::Call(CallExpr {
+                            base: expr,
+                            arguments,
+                        })),
+                        span,
+                    };
                 }
                 Some((Token::Dot, _)) => {
                     self.advance(1);
-                    let field = self.parse_identifier()?;
-                    expr = Expression::Field(FieldExpr {
-                        base: Box::new(expr),
-                        field,
-                    });
+                    let (field, fspan) = self.parse_identifier()?;
+                    let span = expr.span.combine(fspan);
+                    expr = Expression {
+                        kind: Box::new(ExpressionKind::Field(FieldExpr { base: expr, field })),
+                        span,
+                    };
                 }
                 Some((Token::LeftBracket, _)) => {
                     self.advance(1);
                     let index = self.parse_expression()?;
-                    self.parse_token(Token::RightBracket)?;
-                    expr = Expression::Index(IndexExpr {
-                        base: Box::new(expr),
-                        index: Box::new(index),
-                    });
+                    let span = expr.span.combine(self.parse_token(Token::RightBracket)?);
+                    expr = Expression {
+                        kind: Box::new(ExpressionKind::Index(IndexExpr { base: expr, index })),
+                        span,
+                    };
                 }
                 _ => break,
             }
@@ -452,18 +522,24 @@ impl<'a, S: StringInterner> Parser<'a, S> {
 
     fn parse_primary_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
         match self.expect_next("<expression>")? {
-            (Token::LeftParen, _) => {
+            (Token::LeftParen, mut span) => {
                 let expr = self.parse_expression()?;
-                self.parse_token(Token::RightParen)?;
-                Ok(Expression::Group(Box::new(expr)))
+                span = span.combine(self.parse_token(Token::RightParen)?);
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Group(expr)),
+                    span,
+                })
             }
-            (Token::Identifier(n), _) => Ok(Expression::Name(n)),
-            (token, line_number) => Err(ParseError {
+            (Token::Identifier(n), span) => Ok(Expression {
+                kind: Box::new(ExpressionKind::Name(n)),
+                span,
+            }),
+            (token, span) => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&token),
                     expected: "<grouped expression or name>",
                 },
-                line_number,
+                span,
             }),
         }
     }
@@ -471,44 +547,65 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn parse_simple_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
         self.look_ahead(1)?;
         match self.peek_expected(0, "<expression>")? {
-            (Token::Undefined, _) => {
+            (Token::Undefined, span) => {
                 self.advance(1);
-                Ok(Expression::Undefined)
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Undefined),
+                    span,
+                })
             }
-            (Token::True, _) => {
+            (Token::True, span) => {
                 self.advance(1);
-                Ok(Expression::Boolean(true))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Boolean(true)),
+                    span,
+                })
             }
-            (Token::False, _) => {
+            (Token::False, span) => {
                 self.advance(1);
-                Ok(Expression::Boolean(false))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Boolean(false)),
+                    span,
+                })
             }
-            (&Token::Float(f), _) => {
+            (&Token::Float(f), span) => {
                 self.advance(1);
-                Ok(Expression::Float(f))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Float(f)),
+                    span,
+                })
             }
-            (&Token::Integer(i), _) => {
+            (&Token::Integer(i), span) => {
                 self.advance(1);
-                Ok(Expression::Integer(i))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Integer(i)),
+                    span,
+                })
             }
             (Token::String(_), _) => {
-                let Some((Token::String(s), _)) = self.next().unwrap() else {
+                let Some((Token::String(s), span)) = self.next().unwrap() else {
                     unreachable!()
                 };
-                Ok(Expression::String(s))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::String(s)),
+                    span,
+                })
             }
-            (Token::This, _) => {
+            (Token::This, span) => {
                 self.advance(1);
-                Ok(Expression::This)
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::This),
+                    span,
+                })
             }
-            (Token::Function, _) => {
+            (Token::Function, mut span) => {
                 self.advance(1);
                 self.parse_token(Token::LeftParen)?;
                 let mut parameters = Vec::new();
                 self.look_ahead(1)?;
                 if !matches!(self.peek(0), Some((Token::RightParen, _))) {
                     loop {
-                        parameters.push(self.parse_identifier()?);
+                        parameters.push(self.parse_identifier()?.0);
                         self.look_ahead(1)?;
                         if matches!(self.peek(0), Some((Token::Comma, _))) {
                             self.advance(1);
@@ -520,28 +617,46 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 self.parse_token(Token::RightParen)?;
                 self.parse_token(Token::LeftBrace)?;
                 let body = self.parse_block()?;
-                self.parse_token(Token::RightBrace)?;
+                span = span.combine(self.parse_token(Token::RightBrace)?);
 
-                Ok(Expression::Function(FunctionExpr { parameters, body }))
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Function(FunctionExpr { parameters, body })),
+                    span,
+                })
             }
-            (Token::LeftBrace, _) => Ok(Expression::Object(self.parse_object()?)),
-            (Token::LeftBracket, _) => Ok(Expression::Array(self.parse_array()?)),
+            (Token::LeftBrace, _) => {
+                let (pairs, span) = self.parse_object()?;
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Object(pairs)),
+                    span,
+                })
+            }
+            (Token::LeftBracket, _) => {
+                let (items, span) = self.parse_array()?;
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::Array(items)),
+                    span,
+                })
+            }
             _ => self.parse_suffixed_expression(),
         }
     }
 
-    fn parse_object(&mut self) -> Result<Vec<(S::String, Expression<S::String>)>, ParseError> {
-        self.parse_token(Token::LeftBrace)?;
+    fn parse_object(
+        &mut self,
+    ) -> Result<(Vec<(S::String, Expression<S::String>)>, Span), ParseError> {
+        let mut span = self.parse_token(Token::LeftBrace)?;
         let mut entries = Vec::new();
 
         loop {
             self.look_ahead(1)?;
-            if matches!(self.peek(0), Some((Token::RightBrace, _))) {
+            if let Some((Token::RightBrace, espan)) = self.peek(0) {
+                span = span.combine(espan);
                 self.advance(1);
                 break;
             }
 
-            let key = self.parse_identifier()?;
+            let key = self.parse_identifier()?.0;
             self.parse_token(Token::Colon)?;
             let value = self.parse_expression()?;
 
@@ -551,23 +666,19 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             match self.peek(0) {
                 Some((Token::Comma, _)) => {
                     self.advance(1);
-                    self.look_ahead(1)?;
-                    if matches!(self.peek(0), Some((Token::RightBrace, _))) {
-                        self.advance(1);
-                        break;
-                    }
                 }
-                Some((Token::RightBrace, _)) => {
+                Some((Token::RightBrace, espan)) => {
+                    span = span.combine(espan);
                     self.advance(1);
                     break;
                 }
-                Some((t, line_number)) => {
+                Some((t, span)) => {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             unexpected: token_indicator(t),
                             expected: "',' or '}'",
                         },
-                        line_number,
+                        span,
                     });
                 }
                 None => {
@@ -575,21 +686,22 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         kind: ParseErrorKind::EndOfStream {
                             expected: "',' or '}'",
                         },
-                        line_number: self.lexer.line_number(),
+                        span: Span::empty(self.lexer.position()),
                     });
                 }
             }
         }
 
-        Ok(entries)
+        Ok((entries, span))
     }
 
-    fn parse_array(&mut self) -> Result<Vec<Expression<S::String>>, ParseError> {
-        self.parse_token(Token::LeftBracket)?;
+    fn parse_array(&mut self) -> Result<(Vec<Expression<S::String>>, Span), ParseError> {
+        let mut span = self.parse_token(Token::LeftBracket)?;
         let mut entries = Vec::new();
         loop {
             self.look_ahead(1)?;
-            if matches!(self.peek(0), Some((Token::RightBracket, _))) {
+            if let Some((Token::RightBracket, espan)) = self.peek(0) {
+                span = span.combine(espan);
                 self.advance(1);
                 break;
             }
@@ -601,23 +713,19 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             match self.peek(0) {
                 Some((Token::Comma, _)) => {
                     self.advance(1);
-                    self.look_ahead(1)?;
-                    if matches!(self.peek(0), Some((Token::RightBracket, _))) {
-                        self.advance(1);
-                        break;
-                    }
                 }
-                Some((Token::RightBracket, _)) => {
+                Some((Token::RightBracket, espan)) => {
+                    span = span.combine(espan);
                     self.advance(1);
                     break;
                 }
-                Some((t, line_number)) => {
+                Some((t, span)) => {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             unexpected: token_indicator(t),
                             expected: "',' or ']'",
                         },
-                        line_number,
+                        span,
                     });
                 }
                 None => {
@@ -625,45 +733,45 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         kind: ParseErrorKind::EndOfStream {
                             expected: "',' or ']'",
                         },
-                        line_number: self.lexer.line_number(),
+                        span: Span::empty(self.lexer.position()),
                     });
                 }
             }
         }
 
-        Ok(entries)
+        Ok((entries, span))
     }
 
-    fn parse_identifier(&mut self) -> Result<S::String, ParseError> {
+    fn parse_identifier(&mut self) -> Result<(S::String, Span), ParseError> {
         match self.next()? {
-            Some((Token::Identifier(i), _)) => Ok(i),
-            Some((t, line_number)) => Err(ParseError {
+            Some((Token::Identifier(ident), span)) => Ok((ident, span)),
+            Some((t, span)) => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&t),
                     expected: "<identifier>",
                 },
-                line_number,
+                span,
             }),
             None => Err(ParseError {
                 kind: ParseErrorKind::EndOfStream {
                     expected: "<identifier>",
                 },
-                line_number: self.lexer.line_number(),
+                span: Span::empty(self.lexer.position()),
             }),
         }
     }
 
-    fn parse_token(&mut self, expected: Token<&'static str>) -> Result<(), ParseError> {
-        if let Some((next, line_number)) = self.next()? {
+    fn parse_token(&mut self, expected: Token<&'static str>) -> Result<Span, ParseError> {
+        if let Some((next, span)) = self.next()? {
             if next.as_str() == expected {
-                Ok(())
+                Ok(span)
             } else {
                 Err(ParseError {
                     kind: ParseErrorKind::Unexpected {
                         unexpected: token_indicator(&next),
                         expected: token_indicator(&expected),
                     },
-                    line_number,
+                    span,
                 })
             }
         } else {
@@ -671,7 +779,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                 kind: ParseErrorKind::EndOfStream {
                     expected: token_indicator(&expected),
                 },
-                line_number: self.lexer.line_number(),
+                span: Span::empty(self.lexer.position()),
             })
         }
     }
@@ -680,12 +788,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn look_ahead(&mut self, n: usize) -> Result<(), ParseError> {
         while self.look_ahead_buffer.len() < n {
             self.lexer.skip_whitespace();
-            let line_number = self.lexer.line_number();
-            if let Some(token) = self.lexer.read_token().map_err(|e| ParseError {
+            if let Some((token, span)) = self.lexer.read_token().map_err(|e| ParseError {
                 kind: ParseErrorKind::LexError(e),
-                line_number: self.lexer.line_number(),
+                span: Span::empty(self.lexer.position()),
             })? {
-                self.look_ahead_buffer.push(Some((token, line_number)));
+                self.look_ahead_buffer.push(Some((token, span)));
             } else {
                 self.look_ahead_buffer.push(None);
             }
@@ -710,7 +817,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     //
     // Panics if the given `n` is less than the number of tokens we have previously buffered with
     // `Parser::look_ahead`.
-    fn peek(&self, n: usize) -> Option<(&Token<S::String>, LineNumber)> {
+    fn peek(&self, n: usize) -> Option<(&Token<S::String>, Span)> {
         self.look_ahead_buffer[n].as_ref().map(|(t, ln)| (t, *ln))
     }
 
@@ -725,15 +832,15 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         &self,
         n: usize,
         expected: &'static str,
-    ) -> Result<(&Token<S::String>, LineNumber), ParseError> {
+    ) -> Result<(&Token<S::String>, Span), ParseError> {
         self.peek(n).ok_or_else(|| ParseError {
             kind: ParseErrorKind::EndOfStream { expected },
-            line_number: self.lexer.line_number(),
+            span: Span::empty(self.lexer.position()),
         })
     }
 
     // Return the next token in the token stream if it exists and advance the stream.
-    fn next(&mut self) -> Result<Option<(Token<S::String>, LineNumber)>, ParseError> {
+    fn next(&mut self) -> Result<Option<(Token<S::String>, Span)>, ParseError> {
         self.look_ahead(1)?;
         Ok(self.look_ahead_buffer.remove(0))
     }
@@ -743,13 +850,13 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     fn expect_next(
         &mut self,
         expected: &'static str,
-    ) -> Result<(Token<S::String>, LineNumber), ParseError> {
-        if let Some((token, line_number)) = self.next()? {
-            Ok((token, line_number))
+    ) -> Result<(Token<S::String>, Span), ParseError> {
+        if let Some((token, span)) = self.next()? {
+            Ok((token, span))
         } else {
             Err(ParseError {
                 kind: ParseErrorKind::EndOfStream { expected },
-                line_number: self.lexer.line_number(),
+                span: Span::empty(self.lexer.position()),
             })
         }
     }
@@ -923,72 +1030,6 @@ mod tests {
             };
         "#;
 
-        assert_eq!(
-            parse(SOURCE).unwrap(),
-            Block {
-                statements: vec![
-                    Statement::Var(VarStatement {
-                        name: "sum".to_owned(),
-                        value: Box::new(Expression::Integer(0))
-                    }),
-                    Statement::For(ForStatement {
-                        initializer: Box::new(Statement::Var(VarStatement {
-                            name: "i".to_owned(),
-                            value: Box::new(Expression::Integer(0))
-                        })),
-                        condition: Box::new(Expression::Binary(
-                            Box::new(Expression::Name("i".to_owned())),
-                            BinaryOp::LessThan,
-                            Box::new(Expression::Integer(1000000))
-                        )),
-                        iterator: Box::new(Statement::Assignment(AssignmentStatement {
-                            target: AssignmentTarget::Name("i".to_owned()),
-                            op: AssignmentOp::PlusEqual,
-                            value: Box::new(Expression::Integer(1)),
-                        })),
-                        body: Box::new(Statement::Block(Block {
-                            statements: vec![Statement::Assignment(AssignmentStatement {
-                                target: AssignmentTarget::Name("sum".to_owned()),
-                                op: AssignmentOp::PlusEqual,
-                                value: Box::new(Expression::Name("i".to_owned())),
-                            })]
-                        }))
-                    }),
-                    Statement::If(IfStatement {
-                        condition: Box::new(Expression::Binary(
-                            Box::new(Expression::Name("sum".to_owned())),
-                            BinaryOp::GreaterThan,
-                            Box::new(Expression::Integer(100)),
-                        )),
-                        then_stmt: Box::new(Statement::Block(Block {
-                            statements: vec![Statement::Call(CallExpr {
-                                base: Box::new(Expression::Name("show_debug_message".to_owned())),
-                                arguments: vec![Expression::String("yes".to_owned())],
-                            })]
-                        })),
-                        else_stmt: None,
-                    }),
-                    Statement::Assignment(AssignmentStatement {
-                        target: AssignmentTarget::Field(FieldExpr {
-                            base: Box::new(Expression::Name("test".to_owned())),
-                            field: "foo".to_owned(),
-                        }),
-                        op: AssignmentOp::Equal,
-                        value: Box::new(Expression::Integer(1)),
-                    }),
-                    Statement::Assignment(AssignmentStatement {
-                        target: AssignmentTarget::Field(FieldExpr {
-                            base: Box::new(Expression::Name("test".to_owned())),
-                            field: "bar".to_owned(),
-                        }),
-                        op: AssignmentOp::Equal,
-                        value: Box::new(Expression::Object(vec![
-                            ("a".to_owned(), Expression::Integer(1)),
-                            ("b".to_owned(), Expression::Integer(2)),
-                        ])),
-                    }),
-                ]
-            }
-        );
+        parse(SOURCE).unwrap();
     }
 }

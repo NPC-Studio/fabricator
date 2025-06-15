@@ -2,7 +2,8 @@ use fabricator_util::index_containers::IndexSet;
 
 use crate::{graph::dfs::depth_first_search, ir};
 
-/// Remove all `NoOp` instructions and clear instructions not present in any block.
+/// Remove all `NoOp` instructions and clear instructions not present in any block, then clean all
+/// instruction spans for instructions that no longer exist.
 pub fn clean_instructions<S>(ir: &mut ir::Function<S>) {
     let mut used_instructions = IndexSet::new();
 
@@ -19,6 +20,8 @@ pub fn clean_instructions<S>(ir: &mut ir::Function<S>) {
 
     ir.instructions
         .retain(|id, _| used_instructions.contains(id.index() as usize));
+
+    ir.spans.retain(|id, _| ir.instructions.contains(id));
 }
 
 /// Remove any blocks that are not reachable from the `start_block`.

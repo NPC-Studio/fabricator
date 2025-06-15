@@ -10,13 +10,13 @@ pub trait StdlibContext<'gc> {
 }
 
 impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
-    fn stdlib(self) -> Gc<'gc, fabricator_vm::MagicSet<'gc>> {
+    fn stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>> {
         #[derive(Collect)]
         #[collect(no_drop)]
         struct StdlibSingleton<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
 
         impl<'gc> vm::Singleton<'gc> for StdlibSingleton<'gc> {
-            fn create(ctx: fabricator_vm::Context<'gc>) -> Self {
+            fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut stdlib = vm::MagicSet::new();
 
                 stdlib
@@ -93,7 +93,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
         struct TestingStdlibSingleton<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
 
         impl<'gc> vm::Singleton<'gc> for TestingStdlibSingleton<'gc> {
-            fn create(ctx: fabricator_vm::Context<'gc>) -> Self {
+            fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut testing_stdlib = vm::MagicSet::new();
                 let assert = vm::Callback::from_fn(&ctx, |_, _, stack| {
                     for i in 0..stack.len() {

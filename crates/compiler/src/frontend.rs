@@ -4,6 +4,7 @@ use std::{
     mem,
 };
 
+use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::{
@@ -94,6 +95,7 @@ where
 {
     fn new(settings: FrontendSettings, magic_dict: M) -> Self {
         let instructions = ir::InstructionMap::new();
+        let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
         let shadow_vars = ir::ShadowVarSet::new();
@@ -109,7 +111,9 @@ where
             current: Function {
                 function: ir::Function {
                     num_parameters: 0,
+                    reference: ir::FunctionRef::Chunk,
                     instructions,
+                    spans,
                     blocks,
                     variables,
                     shadow_vars,
@@ -143,17 +147,19 @@ where
     }
 
     fn statement(&mut self, statement: &parser::Statement<S>) -> Result<(), FrontendError> {
-        match statement {
-            parser::Statement::Var(var_statement) => self.var_statement(var_statement),
-            parser::Statement::Assignment(assignment_statement) => {
-                self.assignment_statement(assignment_statement)
+        match &*statement.kind {
+            parser::StatementKind::Var(var_statement) => {
+                self.var_statement(statement.span, var_statement)
             }
-            parser::Statement::Return(return_) => self.return_statement(return_),
-            parser::Statement::If(if_statement) => self.if_statement(if_statement),
-            parser::Statement::For(for_statement) => self.for_statement(for_statement),
-            parser::Statement::Block(block) => self.block(block),
-            parser::Statement::Call(function_call) => {
-                let _ = self.call_expr(function_call, false)?;
+            parser::StatementKind::Assignment(assignment_statement) => {
+                self.assignment_statement(statement.span, assignment_statement)
+            }
+            parser::StatementKind::Return(return_) => self.return_statement(return_),
+            parser::StatementKind::If(if_statement) => self.if_statement(if_statement),
+            parser::StatementKind::For(for_statement) => self.for_statement(for_statement),
+            parser::StatementKind::Block(block) => self.block(block),
+            parser::StatementKind::Call(function_call) => {
+                let _ = self.call_expr(statement.span, function_call, false)?;
                 Ok(())
             }
         }
@@ -161,16 +167,18 @@ where
 
     fn var_statement(
         &mut self,
+        span: Span,
         var_statement: &parser::VarStatement<S>,
     ) -> Result<(), FrontendError> {
         let var = self.declare_var(var_statement.name.clone());
         let inst_id = self.commit_expression(&var_statement.value)?;
-        self.push_instruction(ir::Instruction::SetVariable(var, inst_id));
+        self.push_instruction(span, ir::Instruction::SetVariable(var, inst_id));
         Ok(())
     }
 
     fn assignment_statement(
         &mut self,
+        span: Span,
         assignment_statement: &parser::AssignmentStatement<S>,
     ) -> Result<(), FrontendError> {
         enum Target<S> {
@@ -189,7 +197,7 @@ where
             Magic(S),
         }
 
-        let this = self.push_instruction(ir::Instruction::This);
+        let this = self.push_instruction(span, ir::Instruction::This);
 
         let (target, old) = match &assignment_statement.target {
             AssignmentTarget::Name(name) => {
@@ -204,9 +212,10 @@ where
                         ir::Instruction::GetMagic(name.clone()),
                     )
                 } else {
-                    let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
-                        name.clone(),
-                    )));
+                    let key = self.push_instruction(
+                        span,
+                        ir::Instruction::Constant(Constant::String(name.clone())),
+                    );
                     (
                         Target::This { key },
                         ir::Instruction::GetField { object: this, key },
@@ -215,9 +224,10 @@ where
             }
             AssignmentTarget::Field(field_expr) => {
                 let object = self.commit_expression(&field_expr.base)?;
-                let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
-                    field_expr.field.clone(),
-                )));
+                let key = self.push_instruction(
+                    span,
+                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                );
                 (
                     Target::Field { object, key },
                     ir::Instruction::GetField { object, key },
@@ -234,69 +244,91 @@ where
         };
 
         let val = self.commit_expression(&assignment_statement.value)?;
+
         let assign = match assignment_statement.op {
             parser::AssignmentOp::Equal => val,
             parser::AssignmentOp::PlusEqual => {
-                let old = self.push_instruction(old);
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Add,
-                })
+                let old = self.push_instruction(span, old);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left: old,
+                        right: val,
+                        op: ir::BinOp::Add,
+                    },
+                )
             }
             parser::AssignmentOp::MinusEqual => {
-                let old = self.push_instruction(old);
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Sub,
-                })
+                let old = self.push_instruction(span, old);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left: old,
+                        right: val,
+                        op: ir::BinOp::Sub,
+                    },
+                )
             }
             parser::AssignmentOp::MultEqual => {
-                let old = self.push_instruction(old);
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Mult,
-                })
+                let old = self.push_instruction(span, old);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left: old,
+                        right: val,
+                        op: ir::BinOp::Mult,
+                    },
+                )
             }
             parser::AssignmentOp::DivEqual => {
-                let old = self.push_instruction(old);
-                self.push_instruction(ir::Instruction::BinOp {
-                    left: old,
-                    right: val,
-                    op: ir::BinOp::Div,
-                })
+                let old = self.push_instruction(span, old);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left: old,
+                        right: val,
+                        op: ir::BinOp::Div,
+                    },
+                )
             }
         };
 
         match target {
             Target::Var(var) => {
-                self.push_instruction(ir::Instruction::SetVariable(var, assign));
+                self.push_instruction(span, ir::Instruction::SetVariable(var, assign));
             }
             Target::This { key } => {
-                self.push_instruction(ir::Instruction::SetField {
-                    object: this,
-                    key,
-                    value: assign,
-                });
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetField {
+                        object: this,
+                        key,
+                        value: assign,
+                    },
+                );
             }
             Target::Field { object, key } => {
-                self.push_instruction(ir::Instruction::SetField {
-                    object,
-                    key,
-                    value: assign,
-                });
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetField {
+                        object,
+                        key,
+                        value: assign,
+                    },
+                );
             }
             Target::Index { array, index } => {
-                self.push_instruction(ir::Instruction::SetIndex {
-                    array,
-                    index,
-                    value: assign,
-                });
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetIndex {
+                        array,
+                        index,
+                        value: assign,
+                    },
+                );
             }
             Target::Magic(magic) => {
-                self.push_instruction(ir::Instruction::SetMagic(magic, assign));
+                self.push_instruction(span, ir::Instruction::SetMagic(magic, assign));
             }
         }
 
@@ -407,61 +439,71 @@ where
         &mut self,
         expr: &parser::Expression<S>,
     ) -> Result<ir::InstId, FrontendError> {
-        Ok(match expr {
-            parser::Expression::Undefined => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Undefined))
+        let span = expr.span;
+        Ok(match &*expr.kind {
+            parser::ExpressionKind::Undefined => {
+                self.push_instruction(span, ir::Instruction::Constant(Constant::Undefined))
             }
-            parser::Expression::Boolean(b) => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Boolean(*b)))
+            parser::ExpressionKind::Boolean(b) => {
+                self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(*b)))
             }
-            parser::Expression::Float(f) => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Float(*f)))
+            parser::ExpressionKind::Float(f) => {
+                self.push_instruction(span, ir::Instruction::Constant(Constant::Float(*f)))
             }
-            parser::Expression::Integer(i) => {
-                self.push_instruction(ir::Instruction::Constant(Constant::Integer(*i as i128)))
+            parser::ExpressionKind::Integer(i) => self.push_instruction(
+                span,
+                ir::Instruction::Constant(Constant::Integer(*i as i128)),
+            ),
+            parser::ExpressionKind::String(s) => {
+                self.push_instruction(span, ir::Instruction::Constant(Constant::String(s.clone())))
             }
-            parser::Expression::String(s) => {
-                self.push_instruction(ir::Instruction::Constant(Constant::String(s.clone())))
-            }
-            parser::Expression::Name(s) => {
+            parser::ExpressionKind::Name(s) => {
                 if let Some(var) = self.get_var(s) {
-                    self.push_instruction(ir::Instruction::GetVariable(var))
+                    self.push_instruction(span, ir::Instruction::GetVariable(var))
                 } else if self.magic_dict.magic_mode(s).is_some() {
-                    self.push_instruction(ir::Instruction::GetMagic(s.clone()))
+                    self.push_instruction(span, ir::Instruction::GetMagic(s.clone()))
                 } else {
-                    let this = self.push_instruction(ir::Instruction::This);
-                    let key = self
-                        .push_instruction(ir::Instruction::Constant(Constant::String(s.clone())));
-                    self.push_instruction(ir::Instruction::GetField { object: this, key })
+                    let this = self.push_instruction(span, ir::Instruction::This);
+                    let key = self.push_instruction(
+                        span,
+                        ir::Instruction::Constant(Constant::String(s.clone())),
+                    );
+                    self.push_instruction(span, ir::Instruction::GetField { object: this, key })
                 }
             }
-            parser::Expression::This => self.push_instruction(ir::Instruction::This),
-            parser::Expression::Group(expr) => self.commit_expression(expr)?,
-            parser::Expression::Object(fields) => {
-                let object = self.push_instruction(ir::Instruction::NewObject);
+            parser::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
+            parser::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
+            parser::ExpressionKind::Object(fields) => {
+                let object = self.push_instruction(span, ir::Instruction::NewObject);
                 for (field, value) in fields {
                     let value = self.commit_expression(value)?;
-                    self.push_instruction(ir::Instruction::SetFieldConst {
-                        object,
-                        key: Constant::String(field.clone()),
-                        value,
-                    });
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::SetFieldConst {
+                            object,
+                            key: Constant::String(field.clone()),
+                            value,
+                        },
+                    );
                 }
                 object
             }
-            parser::Expression::Array(values) => {
-                let array = self.push_instruction(ir::Instruction::NewArray);
+            parser::ExpressionKind::Array(values) => {
+                let array = self.push_instruction(span, ir::Instruction::NewArray);
                 for (i, value) in values.iter().enumerate() {
                     let value = self.commit_expression(value)?;
-                    self.push_instruction(ir::Instruction::SetIndexConst {
-                        array,
-                        index: Constant::Integer(i as i128),
-                        value,
-                    });
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::SetIndexConst {
+                            array,
+                            index: Constant::Integer(i as i128),
+                            value,
+                        },
+                    );
                 }
                 array
             }
-            parser::Expression::Unary(op, expr) => {
+            parser::ExpressionKind::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
                     source: self.commit_expression(expr)?,
                     op: match op {
@@ -469,9 +511,9 @@ where
                         parser::UnaryOp::Minus => ir::UnOp::Neg,
                     },
                 };
-                self.push_instruction(inst)
+                self.push_instruction(span, inst)
             }
-            parser::Expression::Binary(left, op, right) => {
+            parser::ExpressionKind::Binary(left, op, right) => {
                 let left = self.commit_expression(left)?;
                 let right = self.commit_expression(right)?;
                 let op = match op {
@@ -488,35 +530,40 @@ where
                     parser::BinaryOp::And => ir::BinOp::And,
                     parser::BinaryOp::Or => ir::BinOp::Or,
                 };
-                self.push_instruction(ir::Instruction::BinOp { left, right, op })
+                self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
             }
-            parser::Expression::Function(func_expr) => {
-                self.push_function(&func_expr.parameters)?;
+            parser::ExpressionKind::Function(func_expr) => {
+                self.push_function(ir::FunctionRef::Expression(span), &func_expr.parameters)?;
                 self.block(&func_expr.body)?;
                 let func_id = self.pop_function();
-                self.push_instruction(ir::Instruction::Closure(func_id))
+                self.push_instruction(span, ir::Instruction::Closure(func_id))
             }
-            parser::Expression::Call(func) => self.call_expr(func, true)?,
-            parser::Expression::Field(field_expr) => {
+            parser::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
+            parser::ExpressionKind::Field(field_expr) => {
                 let base = self.commit_expression(&field_expr.base)?;
-                let field = self.push_instruction(ir::Instruction::Constant(Constant::String(
-                    field_expr.field.clone(),
-                )));
-                self.push_instruction(ir::Instruction::GetField {
-                    object: base,
-                    key: field,
-                })
+                let field = self.push_instruction(
+                    span,
+                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                );
+                self.push_instruction(
+                    span,
+                    ir::Instruction::GetField {
+                        object: base,
+                        key: field,
+                    },
+                )
             }
-            parser::Expression::Index(index_expr) => {
+            parser::ExpressionKind::Index(index_expr) => {
                 let base = self.commit_expression(&index_expr.base)?;
                 let index = self.commit_expression(&index_expr.index)?;
-                self.push_instruction(ir::Instruction::GetIndex { array: base, index })
+                self.push_instruction(span, ir::Instruction::GetIndex { array: base, index })
             }
         })
     }
 
     fn call_expr(
         &mut self,
+        span: Span,
         func: &parser::CallExpr<S>,
         return_value: bool,
     ) -> Result<ir::InstId, FrontendError> {
@@ -528,16 +575,19 @@ where
             },
         }
 
-        let call = match &*func.base {
-            parser::Expression::Field(field_expr) => {
-                let object = self.commit_expression(&field_expr.base)?;
-                let key = self.push_instruction(ir::Instruction::Constant(Constant::String(
-                    field_expr.field.clone(),
-                )));
-                let func = self.push_instruction(ir::Instruction::GetField { object, key });
-                Call::Method { func, object }
-            }
-            expr => Call::Function(self.commit_expression(expr)?),
+        // Function calls on fields are interpreted as "methods", and implicitly bind the containing
+        // object as `self` for the function call.
+        let call = if let parser::ExpressionKind::Field(field_expr) = &*func.base.kind {
+            let object = self.commit_expression(&field_expr.base)?;
+            let key = self.push_instruction(
+                func.base.span,
+                ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+            );
+            let func =
+                self.push_instruction(func.base.span, ir::Instruction::GetField { object, key });
+            Call::Method { func, object }
+        } else {
+            Call::Function(self.commit_expression(&func.base)?)
         };
 
         let mut args = Vec::new();
@@ -546,22 +596,33 @@ where
         }
 
         Ok(match call {
-            Call::Function(func) => self.push_instruction(ir::Instruction::Call {
-                func,
-                args,
-                return_value,
-            }),
-            Call::Method { func, object } => self.push_instruction(ir::Instruction::Method {
-                func,
-                this: object,
-                args,
-                return_value,
-            }),
+            Call::Function(func) => self.push_instruction(
+                span,
+                ir::Instruction::Call {
+                    func,
+                    args,
+                    return_value,
+                },
+            ),
+            Call::Method { func, object } => self.push_instruction(
+                span,
+                ir::Instruction::Method {
+                    func,
+                    this: object,
+                    args,
+                    return_value,
+                },
+            ),
         })
     }
 
-    fn push_function(&mut self, parameters: &[S]) -> Result<(), FrontendError> {
+    fn push_function(
+        &mut self,
+        reference: ir::FunctionRef<S>,
+        parameters: &[S],
+    ) -> Result<(), FrontendError> {
         let instructions = ir::InstructionMap::new();
+        let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
         let shadow_vars = ir::ShadowVarSet::new();
@@ -569,9 +630,17 @@ where
         let upvalues = ir::UpValueMap::new();
         let start_block = blocks.insert(ir::Block::default());
 
+        let span = match reference {
+            ir::FunctionRef::Named(_, span) => span,
+            ir::FunctionRef::Expression(span) => span,
+            ir::FunctionRef::Chunk => Span::null(),
+        };
+
         let function = ir::Function {
             num_parameters: parameters.len(),
+            reference,
             instructions,
+            spans,
             blocks,
             variables,
             shadow_vars,
@@ -600,12 +669,15 @@ where
 
         for (param_index, param_name) in parameters.iter().enumerate() {
             let param_var = self.declare_var(param_name.clone());
-            let pop_arg = self.push_instruction(ir::Instruction::Parameter(
-                param_index
-                    .try_into()
-                    .map_err(|_| FrontendError::ParameterOverflow)?,
-            ));
-            self.push_instruction(ir::Instruction::SetVariable(param_var, pop_arg));
+            let pop_arg = self.push_instruction(
+                span,
+                ir::Instruction::Parameter(
+                    param_index
+                        .try_into()
+                        .map_err(|_| FrontendError::ParameterOverflow)?,
+                ),
+            );
+            self.push_instruction(span, ir::Instruction::SetVariable(param_var, pop_arg));
         }
 
         Ok(())
@@ -638,7 +710,7 @@ where
                     if entry.get().is_empty() {
                         entry.remove();
                     }
-                    self.push_instruction(ir::Instruction::CloseVariable(var));
+                    self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var));
                 }
             }
         }
@@ -660,7 +732,7 @@ where
         variable_stack.push(var);
 
         if self.settings.lexical_scoping {
-            self.push_instruction(ir::Instruction::OpenVariable(var));
+            self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var));
         } else {
             // If we're not using lexical scoping, just open every variable at the very start of the
             // function. This keeps the IR well-formed even with no lexical scoping and no explicit
@@ -736,11 +808,14 @@ where
         }
     }
 
-    fn push_instruction(&mut self, inst: ir::Instruction<S>) -> ir::InstId {
+    fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {
         let inst_id = self.current.function.instructions.insert(inst);
         self.current.function.blocks[self.current.current_block]
             .instructions
             .push(inst_id);
+        if !span.is_null() {
+            self.current.function.spans.insert(inst_id, span);
+        }
         inst_id
     }
 }

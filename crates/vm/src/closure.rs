@@ -4,7 +4,8 @@ use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
 use crate::{
-    bytecode::ByteCode, instructions::HeapIdx, magic::MagicSet, string::String, value::Value,
+    Span, bytecode::ByteCode, debug::Chunk, instructions::HeapIdx, magic::MagicSet, string::String,
+    value::Value,
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Collect)]
@@ -51,9 +52,19 @@ pub enum HeapVarDescriptor {
     UpValue(HeapIdx),
 }
 
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
+pub enum ClosureRef<'gc> {
+    Named(String<'gc>, Span),
+    Expression(Span),
+    Chunk,
+}
+
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub struct Prototype<'gc> {
+    pub chunk: Chunk<'gc>,
+    pub reference: ClosureRef<'gc>,
     pub bytecode: ByteCode,
     pub constants: Box<[Constant<'gc>]>,
     pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,

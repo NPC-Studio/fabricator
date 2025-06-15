@@ -1,5 +1,4 @@
-use std::fmt;
-
+use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::string_interner::StringInterner;
@@ -214,25 +213,12 @@ pub enum LexError {
     BadNumber,
 }
 
-/// The current line number of the source input.
-///
-/// It is stored as 0-indexed internally, but will display as a more human-readable 1-indexed line
-/// number.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct LineNumber(pub usize);
-
-impl fmt::Display for LineNumber {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0 + 1)
-    }
-}
-
 pub struct Lexer<'a, S> {
     source: &'a str,
     interner: S,
     peek_buffer: Vec<char>,
     string_buffer: String,
-    line_number: usize,
+    position: usize,
 }
 
 impl<'a, S> Lexer<'a, S>
@@ -245,27 +231,24 @@ where
             interner,
             peek_buffer: Vec::new(),
             string_buffer: String::new(),
-            line_number: 0,
+            position: 0,
         }
     }
 
-    /// Returns the current line number of the source file.
-    pub fn line_number(&self) -> LineNumber {
-        LineNumber(self.line_number)
+    /// Returns the current byte position in the source file.
+    pub fn position(&self) -> usize {
+        self.position
     }
 
     /// Skips any leading whitespace before the next token in the stream.
     ///
-    /// It is not necessary to call this explicitly, but doing so will make the current line number
-    /// accurate for the start of the next returned token.
+    /// It is not necessary to call this explicitly, but doing so will make the current byte
+    /// position accurate for the start of the next returned token.
     pub fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek(0) {
             let nc = self.peek(1);
 
             match (c, nc) {
-                _ if is_newline(c) => {
-                    self.read_line_end();
-                }
                 _ if c.is_ascii_whitespace() => {
                     self.advance(1);
                 }
@@ -289,9 +272,6 @@ where
                                 self.advance(2);
                                 break;
                             }
-                            (Some(c), _) if is_newline(c) => {
-                                self.read_line_end();
-                            }
                             (None, _) => break,
                             _ => self.advance(1),
                         }
@@ -305,196 +285,181 @@ where
     /// Read and return the next token in the stream.
     ///
     /// Returns `None` once the token stream is finished.
-    pub fn read_token(&mut self) -> Result<Option<Token<S::String>>, LexError> {
+    pub fn read_token(&mut self) -> Result<Option<(Token<S::String>, Span)>, LexError> {
         self.skip_whitespace();
 
-        Ok(match (self.peek(0), self.peek(1)) {
+        let start = self.position;
+        let token = match (self.peek(0), self.peek(1)) {
             (Some(c), _) if c.is_ascii_whitespace() => {
                 unreachable!("whitespace should have been skipped")
             }
             (Some('!'), Some('=')) => {
                 self.advance(2);
-                Some(Token::BangEqual)
+                Token::BangEqual
             }
             (Some('='), Some('=')) => {
                 self.advance(2);
-                Some(Token::DoubleEqual)
+                Token::DoubleEqual
             }
             (Some('+'), Some('=')) => {
                 self.advance(2);
-                Some(Token::PlusEqual)
+                Token::PlusEqual
             }
             (Some('-'), Some('=')) => {
                 self.advance(2);
-                Some(Token::MinusEqual)
+                Token::MinusEqual
             }
             (Some('*'), Some('=')) => {
                 self.advance(2);
-                Some(Token::StarEqual)
+                Token::StarEqual
             }
             (Some('/'), Some('=')) => {
                 self.advance(2);
-                Some(Token::SlashEqual)
+                Token::SlashEqual
             }
             (Some('%'), Some('=')) => {
                 self.advance(2);
-                Some(Token::PercentEqual)
+                Token::PercentEqual
             }
             (Some('<'), Some('=')) => {
                 self.advance(2);
-                Some(Token::LessEqual)
+                Token::LessEqual
             }
             (Some('>'), Some('=')) => {
                 self.advance(2);
-                Some(Token::GreaterEqual)
+                Token::GreaterEqual
             }
             (Some('+'), Some('+')) => {
                 self.advance(2);
-                Some(Token::DoublePlus)
+                Token::DoublePlus
             }
             (Some('-'), Some('-')) => {
                 self.advance(2);
-                Some(Token::DoubleMinus)
+                Token::DoubleMinus
             }
             (Some('&'), Some('&')) => {
                 self.advance(2);
-                Some(Token::DoubleAmpersand)
+                Token::DoubleAmpersand
             }
             (Some('|'), Some('|')) => {
                 self.advance(2);
-                Some(Token::DoublePipe)
+                Token::DoublePipe
             }
             (Some('('), _) => {
                 self.advance(1);
-                Some(Token::LeftParen)
+                Token::LeftParen
             }
             (Some(')'), _) => {
                 self.advance(1);
-                Some(Token::RightParen)
+                Token::RightParen
             }
             (Some('['), _) => {
                 self.advance(1);
-                Some(Token::LeftBracket)
+                Token::LeftBracket
             }
             (Some(']'), _) => {
                 self.advance(1);
-                Some(Token::RightBracket)
+                Token::RightBracket
             }
             (Some('{'), _) => {
                 self.advance(1);
-                Some(Token::LeftBrace)
+                Token::LeftBrace
             }
             (Some('}'), _) => {
                 self.advance(1);
-                Some(Token::RightBrace)
+                Token::RightBrace
             }
             (Some(':'), _) => {
                 self.advance(1);
-                Some(Token::Colon)
+                Token::Colon
             }
             (Some(';'), _) => {
                 self.advance(1);
-                Some(Token::SemiColon)
+                Token::SemiColon
             }
             (Some(','), _) => {
                 self.advance(1);
-                Some(Token::Comma)
+                Token::Comma
             }
             (Some('.'), _) => {
                 self.advance(1);
-                Some(Token::Dot)
+                Token::Dot
             }
             (Some('+'), _) => {
                 self.advance(1);
-                Some(Token::Plus)
+                Token::Plus
             }
             (Some('-'), _) => {
                 self.advance(1);
-                Some(Token::Minus)
+                Token::Minus
             }
             (Some('!'), _) => {
                 self.advance(1);
-                Some(Token::Bang)
+                Token::Bang
             }
             (Some('/'), _) => {
                 self.advance(1);
-                Some(Token::Slash)
+                Token::Slash
             }
             (Some('*'), _) => {
                 self.advance(1);
-                Some(Token::Star)
+                Token::Star
             }
             (Some('%'), _) => {
                 self.advance(1);
-                Some(Token::Percent)
+                Token::Percent
             }
             (Some('&'), _) => {
                 self.advance(1);
-                Some(Token::Ampersand)
+                Token::Ampersand
             }
             (Some('|'), _) => {
                 self.advance(1);
-                Some(Token::Pipe)
+                Token::Pipe
             }
             (Some('='), _) => {
                 self.advance(1);
-                Some(Token::Equal)
+                Token::Equal
             }
             (Some('<'), _) => {
                 self.advance(1);
-                Some(Token::Less)
+                Token::Less
             }
             (Some('>'), _) => {
                 self.advance(1);
-                Some(Token::Greater)
+                Token::Greater
             }
             (Some('"'), _) => {
                 self.read_string()?;
-                Some(Token::String(
-                    self.interner.intern(self.string_buffer.as_str()),
-                ))
+                Token::String(self.interner.intern(self.string_buffer.as_str()))
             }
             (Some(c), _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
-                    "var" => Some(Token::Var),
-                    "function" => Some(Token::Function),
-                    "switch" => Some(Token::Switch),
-                    "case" => Some(Token::Case),
-                    "break" => Some(Token::Break),
-                    "if" => Some(Token::If),
-                    "else" => Some(Token::Else),
-                    "for" => Some(Token::For),
-                    "repeat" => Some(Token::Repeat),
-                    "return" => Some(Token::Return),
-                    "exit" => Some(Token::Exit),
-                    "undefined" => Some(Token::Undefined),
-                    "true" => Some(Token::True),
-                    "false" => Some(Token::False),
-                    "self" => Some(Token::This),
-                    id => Some(Token::Identifier(self.interner.intern(id))),
+                    "var" => Token::Var,
+                    "function" => Token::Function,
+                    "switch" => Token::Switch,
+                    "case" => Token::Case,
+                    "break" => Token::Break,
+                    "if" => Token::If,
+                    "else" => Token::Else,
+                    "for" => Token::For,
+                    "repeat" => Token::Repeat,
+                    "return" => Token::Return,
+                    "exit" => Token::Exit,
+                    "undefined" => Token::Undefined,
+                    "true" => Token::True,
+                    "false" => Token::False,
+                    "self" => Token::This,
+                    id => Token::Identifier(self.interner.intern(id)),
                 }
             }
-            (Some(c), _) if c.is_ascii_digit() => Some(self.read_numeral()?),
+            (Some(c), _) if c.is_ascii_digit() => self.read_numeral()?,
             (Some(c), _) => return Err(LexError::UnexpectedCharacter(c)),
-            (None, _) => None,
-        })
-    }
+            (None, _) => return Ok(None),
+        };
 
-    /// Read any of "\n", "\r", "\n\r", or "\r\n" as a single newline, and increment the current line
-    /// number.
-    fn read_line_end(&mut self) {
-        let newline = self.peek(0).unwrap();
-        assert!(is_newline(newline));
-        self.advance(1);
-
-        if let Some(next_newline) = self.peek(0) {
-            if is_newline(next_newline) && next_newline != newline {
-                self.advance(1);
-            }
-        }
-
-        self.line_number += 1;
+        Ok(Some((token, Span::new(start, self.position))))
     }
 
     /// Read an identifier into the string buffer.
@@ -685,6 +650,7 @@ where
             n <= self.peek_buffer.len(),
             "cannot advance over un-peeked characters"
         );
+        self.position += n;
         self.peek_buffer.drain(0..n);
     }
 }
@@ -738,7 +704,7 @@ mod tests {
 
         let mut tokens = Vec::new();
         let mut lexer = Lexer::new(source, SimpleInterner);
-        while let Some(token) = lexer.read_token()? {
+        while let Some((token, _)) = lexer.read_token()? {
             tokens.push(token);
         }
 

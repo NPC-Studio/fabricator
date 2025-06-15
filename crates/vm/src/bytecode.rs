@@ -1,15 +1,17 @@
 use std::{
-    fmt, iter,
+    fmt,
     mem::{self, MaybeUninit},
     ops::ControlFlow,
 };
 
-use fabricator_util::bit_containers::BitVec;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::instructions::{
-    ConstIdx, HeapIdx, Instruction, MagicIdx, ParamIdx, ProtoIdx, RegIdx, for_each_instruction,
+use crate::{
+    debug::Span,
+    instructions::{
+        ConstIdx, HeapIdx, Instruction, MagicIdx, ParamIdx, ProtoIdx, RegIdx, for_each_instruction,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -17,7 +19,7 @@ pub enum ByteCodeEncodingError {
     #[error("jump out of range")]
     JumpOutOfRange,
     #[error("no return or jump as last instruction")]
-    BadlastInstruction,
+    BadLastInstruction,
 }
 
 /// An encoded list of [`Instruction`]s.
@@ -26,13 +28,20 @@ pub enum ByteCodeEncodingError {
 #[derive(Collect)]
 #[collect(require_static)]
 pub struct ByteCode {
+    // Encoded bytecode, each instruction is serialized directly into the byte array and jump
+    // offsets are stored in byte offets.
     bytes: Box<[MaybeUninit<u8>]>,
-    inst_boundaries: BitVec,
+    // Maps each instruction bytecode start position to its original index.
+    inst_boundaries: Box<[(usize, usize)]>,
+    // Span data for each instruction.
+    inst_spans: Box<[Span]>,
 }
 
 impl ByteCode {
     /// Encode a list of instructions as bytecode.
-    pub fn encode(insts: &[Instruction]) -> Result<Self, ByteCodeEncodingError> {
+    pub fn encode(
+        insts: impl IntoIterator<Item = (Instruction, Span)>,
+    ) -> Result<Self, ByteCodeEncodingError> {
         fn opcode_for_inst(inst: Instruction) -> OpCode {
             macro_rules! match_inst {
                 ($(
@@ -59,6 +68,17 @@ impl ByteCode {
             for_each_instruction!(match_opcode)
         }
 
+        let insts_iter = insts.into_iter();
+        let size_hint = insts_iter.size_hint().0;
+
+        let mut inst_spans = Vec::with_capacity(size_hint);
+        let mut insts = Vec::with_capacity(size_hint);
+
+        for (inst, span) in insts_iter {
+            insts.push(inst);
+            inst_spans.push(span);
+        }
+
         let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
             Some(i) if i < insts.len() => Ok(()),
             _ => Err(ByteCodeEncodingError::JumpOutOfRange),
@@ -80,17 +100,15 @@ impl ByteCode {
             insts.last(),
             Some(Instruction::Jump { .. } | Instruction::Return { .. })
         ) {
-            return Err(ByteCodeEncodingError::BadlastInstruction);
+            return Err(ByteCodeEncodingError::BadLastInstruction);
         }
 
         let mut inst_positions = Vec::new();
         let mut pos = 0;
-        for &inst in insts {
+        for &inst in &insts {
             inst_positions.push(pos);
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
-        let mut inst_boundaries = BitVec::new();
-        inst_boundaries.resize(pos, false);
 
         let calc_jump = |cur: usize, offset: i16| {
             // Encode jumps from the end of the current instruction
@@ -103,9 +121,10 @@ impl ByteCode {
         };
 
         let mut bytes = Vec::new();
+        let mut inst_boundaries = Vec::with_capacity(size_hint);
         for (i, mut inst) in insts.iter().copied().enumerate() {
             assert_eq!(inst_positions[i], bytes.len());
-            inst_boundaries.set(bytes.len(), true);
+            inst_boundaries.push((bytes.len(), i));
 
             // Rewrite jump instruction offsets to be *bytecode* relative
             match &mut inst {
@@ -136,76 +155,79 @@ impl ByteCode {
 
         Ok(Self {
             bytes: bytes.into_boxed_slice(),
-            inst_boundaries,
+            inst_boundaries: inst_boundaries.into_boxed_slice(),
+            inst_spans: inst_spans.into_boxed_slice(),
         })
     }
 
-    pub fn decode(&self) -> impl Iterator<Item = Instruction> + '_ {
-        // Compute a table to go from bytecode positions back to instruction positions
-        let mut inst_positions = vec![None; self.inst_boundaries.len()];
-        let mut inst_count = 0;
-        for (i, boundary) in self.inst_boundaries.iter().enumerate() {
-            if boundary {
-                inst_positions[i] = Some(inst_count);
-                inst_count += 1;
-            }
-        }
+    /// Fetch a single instruction by its program counter value.
+    pub fn instruction_for_pc(&self, pc: usize) -> Option<(Instruction, Span)> {
+        let inst_index = self.inst_index_for_pc(pc)?;
+        let inst = unsafe { self.decode_instruction(pc, inst_index) };
+        let span = self.inst_spans[inst_index];
+        Some((inst, span))
+    }
 
-        let mut pc = 0;
-        let mut inst_count = 0;
-        let bytes = &self.bytes;
-        iter::from_fn(move || {
-            if pc == bytes.len() {
-                return None;
-            }
-
-            unsafe {
-                let mut ptr = bytes.as_ptr().add(pc);
-                let opcode: OpCode = bytecode_read(&mut ptr);
-
-                macro_rules! decode {
-                    (
-                        $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                        $(jump => $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
-                        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
-                    ) => {
-                        match opcode {
-                            $(OpCode::$simple_name => {
-                                let params::$simple_name { $($simple_field),* } = bytecode_read(&mut ptr);
-                                Instruction::$simple_name { $($simple_field),* }
-                            })*
-                            $(OpCode::$jump_name => {
-                                let params::$jump_name { mut offset $(, $jump_field)* } = bytecode_read(&mut ptr);
-                                let inst_pos = inst_positions[
-                                    (ptr.offset_from(bytes.as_ptr()) + offset as isize) as usize
-                                ].unwrap();
-                                offset = (inst_pos as isize - inst_count) as $jump_offset_ty;
-                                Instruction::$jump_name { offset $(, $jump_field)* }
-                            })*
-                            $(OpCode::$call_name => {
-                                let params::$call_name { $($call_field),* } = bytecode_read(&mut ptr);
-                                Instruction::$call_name { $($call_field),* }
-                            })*
-                        }
-                    };
-                }
-
-                let inst = for_each_instruction!(decode);
-                pc = ptr.offset_from(bytes.as_ptr()) as usize;
-                inst_count += 1;
-                Some(inst)
-            }
+    /// Decode instructions from bytecode.
+    pub fn decode(&self) -> impl Iterator<Item = (Instruction, Span)> + '_ {
+        self.inst_boundaries.iter().map(|&(pc, inst_index)| {
+            let inst = unsafe { self.decode_instruction(pc, inst_index) };
+            (inst, self.inst_spans[inst_index])
         })
     }
 
-    fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
-        for (i, inst) in self.decode().enumerate() {
+    pub fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
+        for (i, inst) in self.decode().map(|(i, _)| i).enumerate() {
             write!(f, "{:indent$}", "", indent = indent as usize)?;
             write!(f, "{}: ", i)?;
             inst.pretty_print(f)?;
             writeln!(f)?;
         }
         Ok(())
+    }
+
+    fn inst_index_for_pc(&self, pc: usize) -> Option<usize> {
+        let i = self
+            .inst_boundaries
+            .binary_search_by_key(&pc, |&(offset, _)| offset)
+            .ok()?;
+        Some(self.inst_boundaries[i].1)
+    }
+
+    unsafe fn decode_instruction(&self, pc: usize, inst_index: usize) -> Instruction {
+        unsafe {
+            let mut ptr = self.bytes.as_ptr().add(pc);
+            let opcode: OpCode = bytecode_read(&mut ptr);
+
+            macro_rules! decode {
+                (
+                    $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+                    $(jump => $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
+                    $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                ) => {
+                    match opcode {
+                        $(OpCode::$simple_name => {
+                            let params::$simple_name { $($simple_field),* } = bytecode_read(&mut ptr);
+                            Instruction::$simple_name { $($simple_field),* }
+                        })*
+                        $(OpCode::$jump_name => {
+                            let params::$jump_name { mut offset $(, $jump_field)* } = bytecode_read(&mut ptr);
+                            let target_index = self.inst_index_for_pc(
+                                (ptr.offset_from(self.bytes.as_ptr()) + offset as isize) as usize
+                            ).unwrap();
+                            offset = (target_index as isize - inst_index as isize) as $jump_offset_ty;
+                            Instruction::$jump_name { offset $(, $jump_field)* }
+                        })*
+                        $(OpCode::$call_name => {
+                            let params::$call_name { $($call_field),* } = bytecode_read(&mut ptr);
+                            Instruction::$call_name { $($call_field),* }
+                        })*
+                    }
+                };
+            }
+
+            for_each_instruction!(decode)
+        }
     }
 }
 
@@ -238,7 +260,7 @@ impl<'a> Dispatcher<'a> {
     /// always a valid program counter for the starting instruction.
     #[inline]
     pub fn new(bytecode: &'a ByteCode, pc: usize) -> Self {
-        assert!(pc == bytecode.bytes.len() || bytecode.inst_boundaries[pc]);
+        assert!(pc == bytecode.bytes.len() || bytecode.inst_index_for_pc(pc).is_some());
         Self {
             bytecode,
             ptr: unsafe { bytecode.bytes.as_ptr().add(pc) },
@@ -250,8 +272,12 @@ impl<'a> Dispatcher<'a> {
         self.bytecode
     }
 
-    /// Returns the current program counter. `Dispatcher` state can be completely restored by
-    /// constructing a new `Dispatcher` with the same [`ByteCode`] and a stored program counter.
+    /// Returns the current program counter.
+    ///
+    /// The "program counter" is the byte offset of the next instruction to execute in the bytecode.
+    ///
+    /// `Dispatcher` state can be completely restored by constructing a new `Dispatcher` with the
+    /// same [`ByteCode`] and a stored program counter.
     #[inline]
     pub fn pc(&self) -> usize {
         unsafe { self.ptr.offset_from(self.bytecode.bytes.as_ptr()) as usize }
@@ -275,7 +301,7 @@ impl<'a> Dispatcher<'a> {
         );
 
         loop {
-            debug_assert!(self.bytecode.inst_boundaries[self.pc()]);
+            debug_assert!(self.bytecode.inst_index_for_pc(self.pc()).is_some());
 
             unsafe {
                 let opcode: OpCode = bytecode_read(&mut self.ptr);
@@ -461,9 +487,8 @@ mod tests {
             Instruction::Return {},
         ];
 
-        let bytecode = ByteCode::encode(insts).unwrap();
-        let decoded = bytecode.decode().collect::<Vec<_>>();
-
+        let bytecode = ByteCode::encode(insts.iter().map(|&i| (i, Span::null()))).unwrap();
+        let decoded = bytecode.decode().map(|(i, _)| i).collect::<Vec<_>>();
         assert_eq!(insts, decoded.as_slice());
     }
 }
