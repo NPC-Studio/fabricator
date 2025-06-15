@@ -85,7 +85,7 @@ impl<N: num::Float, T> BoundBoxTree<N, T> {
             }));
 
         self.root = build(&mut self.nodes, |a, b| {
-            debug_assert!(!a.is_nan() && b.is_nan());
+            debug_assert!(!a.is_nan() && !b.is_nan());
             a < b
         });
     }
