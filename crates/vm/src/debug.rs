@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, ops, string::String as StdString, sync::Arc};
 
 use gc_arena::{Collect, Gc, Mutation, Rootable, arena::Root, barrier};
 
@@ -84,12 +84,38 @@ impl fmt::Display for LineNumber {
     }
 }
 
+/// A static, shared string for named references.
+///
+/// Static so that it can be stored within error types.
+#[derive(Debug, Clone)]
+pub struct RefName(Arc<StdString>);
+
+impl fmt::Display for RefName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl RefName {
+    pub fn new(name: impl Into<StdString>) -> Self {
+        Self(Arc::new(name.into()))
+    }
+}
+
+impl ops::Deref for RefName {
+    type Target = StdString;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// A trait for representing a single unit of GML source code, generally a single source file, for
 /// the purposes of displaying debug information.
 pub trait ChunkData {
     /// The name of this chunk, usually the name of the source code file.
     #[must_use]
-    fn name(&self) -> &str;
+    fn name(&self) -> &RefName;
 
     /// Returns the line number for a given byte offset.
     #[must_use]
@@ -97,7 +123,7 @@ pub trait ChunkData {
 }
 
 impl<T: ChunkData> ChunkData for gc_arena::Static<T> {
-    fn name(&self) -> &str {
+    fn name(&self) -> &RefName {
         self.0.name()
     }
 
@@ -108,7 +134,7 @@ impl<T: ChunkData> ChunkData for gc_arena::Static<T> {
 
 #[derive(Debug, Copy, Clone)]
 struct ChunkMethods {
-    name: for<'gc> fn(Any<'gc, ChunkMeta>) -> &'gc str,
+    name: for<'gc> fn(Any<'gc, ChunkMeta>) -> &'gc RefName,
     line_number: for<'gc> fn(Any<'gc, ChunkMeta>, usize) -> LineNumber,
 }
 
@@ -197,7 +223,7 @@ impl<'gc> Chunk<'gc> {
         self.downcast::<gc_arena::Static<T>>().map(|r| &r.0)
     }
 
-    pub fn name(self) -> &'gc str {
+    pub fn name(self) -> &'gc RefName {
         (self.0.metadata().methods.name)(self.0)
     }
 

@@ -2,8 +2,9 @@ use std::{fs::File, io::Read, path::PathBuf, string::String as StdString};
 
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
+    CompilerError,
     codegen::codegen,
-    compile::{SourceChunk, VmMagic, compile, optimize_ir},
+    compile::{CompilerErrorKind, SourceChunk, VmMagic, compile, optimize_ir},
     frontend::FrontendSettings,
     parser::ParseSettings,
     string_interner::VmInterner,
@@ -68,11 +69,25 @@ fn main() {
             );
 
             let parsed = ParseSettings::default()
-                .parse(&code, VmInterner(ctx))
+                .parse(&code, VmInterner::new(ctx))
+                .map_err(|e| {
+                    let line_number = chunk.line_number(e.span.start());
+                    CompilerError {
+                        kind: CompilerErrorKind::Parsing(e),
+                        line_number,
+                    }
+                })
                 .unwrap();
 
             let mut ir = FrontendSettings::default()
                 .compile_ir(&parsed, stdlib)
+                .map_err(|e| {
+                    let line_number = chunk.line_number(e.span.start());
+                    CompilerError {
+                        kind: CompilerErrorKind::Frontend(e),
+                        line_number,
+                    }
+                })
                 .unwrap();
 
             println!("Compiled IR: {ir:#?}");

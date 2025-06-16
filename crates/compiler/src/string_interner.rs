@@ -6,7 +6,13 @@ pub trait StringInterner {
     fn intern(&mut self, s: &str) -> Self::String;
 }
 
-pub struct VmInterner<'gc>(pub vm::Context<'gc>);
+pub struct VmInterner<'gc>(vm::Context<'gc>);
+
+impl<'gc> VmInterner<'gc> {
+    pub fn new(ctx: vm::Context<'gc>) -> Self {
+        Self(ctx)
+    }
+}
 
 impl<'gc> StringInterner for VmInterner<'gc> {
     type String = vm::String<'gc>;

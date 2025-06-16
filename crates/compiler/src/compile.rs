@@ -26,30 +26,38 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum CompilerError {
-    #[error(transparent)]
-    Parsing(#[from] ParseError),
-    #[error(transparent)]
-    Frontend(#[from] FrontendError),
+pub enum CompilerErrorKind {
+    #[error("parse error: {0}")]
+    Parsing(#[source] ParseError),
+    #[error("frontend error: {0}")]
+    Frontend(#[source] FrontendError),
+}
+
+#[derive(Debug, Error)]
+#[error("{kind} at line {line_number}")]
+pub struct CompilerError {
+    #[source]
+    pub kind: CompilerErrorKind,
+    pub line_number: vm::LineNumber,
 }
 
 pub struct SourceChunk {
-    name: String,
-    line_numbers: LineNumbers,
+    pub name: vm::RefName,
+    pub line_numbers: LineNumbers,
 }
 
 impl SourceChunk {
     pub fn new(name: &str, src: &str) -> Self {
         Self {
-            name: name.to_owned(),
+            name: vm::RefName::new(name),
             line_numbers: LineNumbers::new(src),
         }
     }
 }
 
 impl vm::ChunkData for SourceChunk {
-    fn name(&self) -> &str {
-        self.name.as_str()
+    fn name(&self) -> &vm::RefName {
+        &self.name
     }
 
     fn line_number(&self, byte_offset: usize) -> vm::LineNumber {
@@ -89,13 +97,29 @@ pub fn compile<'gc>(
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
     let stdlib = VmMagic::new(stdlib);
-
-    let parsed = ParseSettings::default().parse(src, VmInterner(ctx))?;
-
-    let mut ir = FrontendSettings::default().compile_ir(&parsed, stdlib)?;
-    optimize_ir(&mut ir).expect("Internal Optimization Error");
-
     let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
+
+    let parsed = ParseSettings::default()
+        .parse(src, VmInterner::new(ctx))
+        .map_err(|e| {
+            let line_number = chunk.line_number(e.span.start());
+            CompilerError {
+                kind: CompilerErrorKind::Parsing(e),
+                line_number,
+            }
+        })?;
+
+    let mut ir = FrontendSettings::default()
+        .compile_ir(&parsed, stdlib)
+        .map_err(|e| {
+            let line_number = chunk.line_number(e.span.start());
+            CompilerError {
+                kind: CompilerErrorKind::Frontend(e),
+                line_number,
+            }
+        })?;
+
+    optimize_ir(&mut ir).expect("Internal Optimization Error");
 
     let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
 
@@ -109,17 +133,32 @@ pub fn compile_compat<'gc>(
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
     let stdlib = VmMagic::new(stdlib);
+    let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
 
-    let parsed = ParseSettings { strict: false }.parse(src, VmInterner(ctx))?;
+    let parsed = ParseSettings { strict: false }
+        .parse(src, VmInterner::new(ctx))
+        .map_err(|e| {
+            let line_number = chunk.line_number(e.span.start());
+            CompilerError {
+                kind: CompilerErrorKind::Parsing(e),
+                line_number,
+            }
+        })?;
 
     let mut ir = FrontendSettings {
         lexical_scoping: false,
         allow_closures: false,
     }
-    .compile_ir(&parsed, stdlib)?;
-    optimize_ir(&mut ir).expect("Internal Optimization Error");
+    .compile_ir(&parsed, stdlib)
+    .map_err(|e| {
+        let line_number = chunk.line_number(e.span.start());
+        CompilerError {
+            kind: CompilerErrorKind::Frontend(e),
+            line_number,
+        }
+    })?;
 
-    let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
+    optimize_ir(&mut ir).expect("Internal Optimization Error");
 
     let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
 

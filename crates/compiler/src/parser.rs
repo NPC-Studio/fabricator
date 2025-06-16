@@ -165,7 +165,7 @@ pub enum ParseErrorKind {
 }
 
 #[derive(Debug, Error)]
-#[error("parse error at ({0}..{1}): {kind}", span.start(), span.end())]
+#[error("{kind}")]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     pub span: Span,

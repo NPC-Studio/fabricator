@@ -699,15 +699,9 @@ fn codegen_function<'gc>(
         })
         .collect::<Vec<_>>();
 
-    let reference = match ir.reference {
-        ir::FunctionRef::Named(name, span) => vm::ClosureRef::Named(name, span),
-        ir::FunctionRef::Expression(span) => vm::ClosureRef::Expression(span),
-        ir::FunctionRef::Chunk => vm::ClosureRef::Chunk,
-    };
-
     Ok(vm::Prototype {
         chunk,
-        reference,
+        reference: ir.reference.clone(),
         bytecode,
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),

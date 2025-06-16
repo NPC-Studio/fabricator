@@ -161,11 +161,13 @@ impl ByteCode {
     }
 
     /// Fetch a single instruction by its program counter value.
-    pub fn instruction_for_pc(&self, pc: usize) -> Option<(Instruction, Span)> {
+    ///
+    /// Returns the instruction index, instruction, and the debug span for that instruction.
+    pub fn instruction_for_pc(&self, pc: usize) -> Option<(usize, Instruction, Span)> {
         let inst_index = self.inst_index_for_pc(pc)?;
         let inst = unsafe { self.decode_instruction(pc, inst_index) };
         let span = self.inst_spans[inst_index];
-        Some((inst, span))
+        Some((inst_index, inst, span))
     }
 
     /// Decode instructions from bytecode.

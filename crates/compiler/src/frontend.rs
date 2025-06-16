@@ -4,7 +4,7 @@ use std::{
     mem,
 };
 
-use fabricator_vm::Span;
+use fabricator_vm::{FunctionRef, Span};
 use thiserror::Error;
 
 use crate::{
@@ -15,11 +15,19 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum FrontendError {
+pub enum FrontendErrorKind {
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("too many parameters")]
     ParameterOverflow,
+}
+
+#[derive(Debug, Error)]
+#[error("{kind}")]
+pub struct FrontendError {
+    #[source]
+    pub kind: FrontendErrorKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -111,7 +119,7 @@ where
             current: Function {
                 function: ir::Function {
                     num_parameters: 0,
-                    reference: ir::FunctionRef::Chunk,
+                    reference: FunctionRef::Chunk,
                     instructions,
                     spans,
                     blocks,
@@ -205,7 +213,10 @@ where
                     (Target::Var(var), ir::Instruction::GetVariable(var))
                 } else if let Some(mode) = self.magic_dict.magic_mode(name) {
                     if mode == MagicMode::ReadOnly {
-                        return Err(FrontendError::ReadOnlyMagic);
+                        return Err(FrontendError {
+                            kind: FrontendErrorKind::ReadOnlyMagic,
+                            span,
+                        });
                     }
                     (
                         Target::Magic(name.clone()),
@@ -533,7 +544,7 @@ where
                 self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
             }
             parser::ExpressionKind::Function(func_expr) => {
-                self.push_function(ir::FunctionRef::Expression(span), &func_expr.parameters)?;
+                self.push_function(FunctionRef::Expression(span), &func_expr.parameters)?;
                 self.block(&func_expr.body)?;
                 let func_id = self.pop_function();
                 self.push_instruction(span, ir::Instruction::Closure(func_id))
@@ -618,7 +629,7 @@ where
 
     fn push_function(
         &mut self,
-        reference: ir::FunctionRef<S>,
+        reference: FunctionRef,
         parameters: &[S],
     ) -> Result<(), FrontendError> {
         let instructions = ir::InstructionMap::new();
@@ -631,9 +642,9 @@ where
         let start_block = blocks.insert(ir::Block::default());
 
         let span = match reference {
-            ir::FunctionRef::Named(_, span) => span,
-            ir::FunctionRef::Expression(span) => span,
-            ir::FunctionRef::Chunk => Span::null(),
+            FunctionRef::Named(_, span) => span,
+            FunctionRef::Expression(span) => span,
+            FunctionRef::Chunk => Span::null(),
         };
 
         let function = ir::Function {
@@ -671,11 +682,10 @@ where
             let param_var = self.declare_var(param_name.clone());
             let pop_arg = self.push_instruction(
                 span,
-                ir::Instruction::Parameter(
-                    param_index
-                        .try_into()
-                        .map_err(|_| FrontendError::ParameterOverflow)?,
-                ),
+                ir::Instruction::Parameter(param_index.try_into().map_err(|_| FrontendError {
+                    kind: FrontendErrorKind::ParameterOverflow,
+                    span,
+                })?),
             );
             self.push_instruction(span, ir::Instruction::SetVariable(param_var, pop_arg));
         }

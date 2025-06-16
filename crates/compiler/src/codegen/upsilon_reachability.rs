@@ -99,6 +99,8 @@ pub struct UpsilonReach {
 
 #[cfg(test)]
 mod tests {
+    use fabricator_vm::FunctionRef;
+
     use crate::constant::Constant;
 
     use super::*;
@@ -140,7 +142,7 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            reference: ir::FunctionRef::Chunk,
+            reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
             blocks,
@@ -202,7 +204,7 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            reference: ir::FunctionRef::Chunk,
+            reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
             blocks,

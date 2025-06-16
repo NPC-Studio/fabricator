@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use std::{fmt, ops::ControlFlow};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
@@ -7,8 +7,9 @@ use crate::{
     array::Array,
     bytecode,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor},
+    debug::{LineNumber, RefName},
     error::Error,
-    instructions::{ConstIdx, HeapIdx, MagicIdx, ParamIdx, ProtoIdx, RegIdx},
+    instructions::{ConstIdx, HeapIdx, Instruction, MagicIdx, ParamIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
     stack::Stack,
@@ -17,7 +18,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum VmError {
+pub enum OpError {
     #[error("bad op")]
     BadOp,
     #[error("bad object")]
@@ -40,6 +41,26 @@ pub enum VmError {
     StackUnderflow,
     #[error("only owned heap values can be reset")]
     ResetHeapNotOwned,
+}
+
+#[derive(Debug, Error)]
+pub struct VmError {
+    #[source]
+    pub error: Error,
+    pub chunk_name: RefName,
+    pub instruction_index: usize,
+    pub instruction: Instruction,
+    pub line_number: LineNumber,
+}
+
+impl fmt::Display for VmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "VM error in {} at line {} instruction {}: {}",
+            self.chunk_name, self.line_number, self.instruction_index, self.error,
+        )
+    }
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -235,7 +256,7 @@ fn dispatch<'gc>(
     heap: &mut [OwnedHeapVar<'gc>],
     stack: Stack<'gc, '_>,
     num_params: usize,
-) -> Result<Next<'gc>, Error> {
+) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
@@ -276,15 +297,15 @@ fn dispatch<'gc>(
         #[inline]
         fn do_get_field(&mut self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
             match obj {
-                Value::Object(object) => object.get(key).ok_or(VmError::NoSuchField.into()),
+                Value::Object(object) => object.get(key).ok_or(OpError::NoSuchField.into()),
                 Value::UserData(user_data) => {
                     if let Some(methods) = user_data.methods() {
                         methods.get_field(self.ctx, user_data, key)
                     } else {
-                        Err(VmError::BadObject.into())
+                        Err(OpError::BadObject.into())
                     }
                 }
-                _ => Err(VmError::BadObject.into()),
+                _ => Err(OpError::BadObject.into()),
             }
         }
 
@@ -303,10 +324,10 @@ fn dispatch<'gc>(
                     if let Some(methods) = user_data.methods() {
                         methods.set_field(self.ctx, user_data, key, value)?;
                     } else {
-                        return Err(VmError::BadObject.into());
+                        return Err(OpError::BadObject.into());
                     }
                 }
-                _ => return Err(VmError::BadObject.into()),
+                _ => return Err(OpError::BadObject.into()),
             }
 
             Ok(())
@@ -323,17 +344,17 @@ fn dispatch<'gc>(
                     let index = index
                         .to_integer()
                         .and_then(|i| i.try_into().ok())
-                        .ok_or(VmError::BadIndex)?;
+                        .ok_or(OpError::BadIndex)?;
                     Ok(array.get(index))
                 }
                 Value::UserData(user_data) => {
                     if let Some(methods) = user_data.methods() {
                         methods.get_index(self.ctx, user_data, index)
                     } else {
-                        Err(VmError::BadArray.into())
+                        Err(OpError::BadArray.into())
                     }
                 }
-                _ => Err(VmError::BadArray.into()),
+                _ => Err(OpError::BadArray.into()),
             }
         }
 
@@ -349,7 +370,7 @@ fn dispatch<'gc>(
                     let index = index
                         .to_integer()
                         .and_then(|i| i.try_into().ok())
-                        .ok_or(VmError::BadIndex)?;
+                        .ok_or(OpError::BadIndex)?;
                     array.set(&self.ctx, index, value);
                     Ok(())
                 }
@@ -357,10 +378,10 @@ fn dispatch<'gc>(
                     if let Some(methods) = user_data.methods() {
                         methods.set_index(self.ctx, user_data, index, value)
                     } else {
-                        Err(VmError::BadObject.into())
+                        Err(OpError::BadObject.into())
                     }
                 }
-                _ => Err(VmError::BadArray.into()),
+                _ => Err(OpError::BadArray.into()),
             }
         }
     }
@@ -389,7 +410,7 @@ fn dispatch<'gc>(
                 .prototype()
                 .prototypes
                 .get(proto as usize)
-                .ok_or(VmError::BadClosureIdx)?;
+                .ok_or(OpError::BadClosureIdx)?;
 
             let mut heap = Vec::new();
             for &hd in &proto.heap_vars {
@@ -445,7 +466,7 @@ fn dispatch<'gc>(
                     self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
                     Ok(())
                 }
-                HeapVar::UpValue(_) => Err(VmError::ResetHeapNotOwned.into()),
+                HeapVar::UpValue(_) => Err(OpError::ResetHeapNotOwned.into()),
             }
         }
 
@@ -491,7 +512,7 @@ fn dispatch<'gc>(
             key: RegIdx,
         ) -> Result<(), Self::Error> {
             let Value::String(key) = self.registers[key as usize] else {
-                return Err(VmError::BadKey.into());
+                return Err(OpError::BadKey.into());
             };
 
             self.registers[dest as usize] =
@@ -507,7 +528,7 @@ fn dispatch<'gc>(
             value: RegIdx,
         ) -> Result<(), Self::Error> {
             let Value::String(key) = self.registers[key as usize] else {
-                return Err(VmError::BadKey.into());
+                return Err(OpError::BadKey.into());
             };
             self.do_set_field(
                 self.registers[object as usize],
@@ -524,7 +545,7 @@ fn dispatch<'gc>(
             key: ConstIdx,
         ) -> Result<(), Self::Error> {
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
-                return Err(VmError::BadKey.into());
+                return Err(OpError::BadKey.into());
             };
             self.registers[dest as usize] =
                 self.do_get_field(self.registers[object as usize], key)?;
@@ -539,7 +560,7 @@ fn dispatch<'gc>(
             value: RegIdx,
         ) -> Result<(), Self::Error> {
             let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
-                return Err(VmError::BadKey.into());
+                return Err(OpError::BadKey.into());
             };
             self.do_set_field(
                 self.registers[object as usize],
@@ -622,7 +643,7 @@ fn dispatch<'gc>(
         fn neg(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[arg as usize]
                 .negate()
-                .ok_or(VmError::BadOp)?;
+                .ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -631,7 +652,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.add(arg2).ok_or(VmError::BadOp)?;
+            *dest = arg1.add(arg2).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -640,7 +661,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.sub(arg2).ok_or(VmError::BadOp)?;
+            *dest = arg1.sub(arg2).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -648,7 +669,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.mult(arg2).ok_or(VmError::BadOp)?;
+            *dest = arg1.mult(arg2).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -656,7 +677,7 @@ fn dispatch<'gc>(
             let arg1 = self.registers[arg1 as usize];
             let arg2 = self.registers[arg2 as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.div(arg2).ok_or(VmError::BadOp)?;
+            *dest = arg1.div(arg2).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -697,7 +718,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[arg1 as usize]
                 .less_than(self.registers[arg2 as usize])
-                .ok_or(VmError::BadOp)?
+                .ok_or(OpError::BadOp)?
                 .into();
             Ok(())
         }
@@ -711,7 +732,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[arg1 as usize]
                 .less_equal(self.registers[arg2 as usize])
-                .ok_or(VmError::BadOp)?
+                .ok_or(OpError::BadOp)?
                 .into();
             Ok(())
         }
@@ -754,7 +775,7 @@ fn dispatch<'gc>(
                     .stack
                     .sub_stack(self.num_params)
                     .pop_back()
-                    .ok_or(VmError::StackUnderflow)?;
+                    .ok_or(OpError::StackUnderflow)?;
             }
             Ok(())
         }
@@ -765,7 +786,7 @@ fn dispatch<'gc>(
                 .closure
                 .magic()
                 .get(magic as usize)
-                .ok_or(VmError::BadMagicIdx)?;
+                .ok_or(OpError::BadMagicIdx)?;
             self.registers[dest as usize] = magic.get(self.ctx)?;
             Ok(())
         }
@@ -776,7 +797,7 @@ fn dispatch<'gc>(
                 .closure
                 .magic()
                 .get(magic as usize)
-                .ok_or(VmError::BadMagicIdx)?;
+                .ok_or(OpError::BadMagicIdx)?;
             magic.set(self.ctx, self.registers[source as usize])?;
             Ok(())
         }
@@ -789,7 +810,7 @@ fn dispatch<'gc>(
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
             let func = self.registers[func as usize]
                 .to_function()
-                .ok_or(VmError::BadCall)?;
+                .ok_or(OpError::BadCall)?;
 
             self.do_call(self.this, func, returns)
         }
@@ -804,7 +825,7 @@ fn dispatch<'gc>(
             let this = self.registers[this as usize];
             let func = self.registers[func as usize]
                 .to_function()
-                .ok_or(VmError::BadCall)?;
+                .ok_or(OpError::BadCall)?;
 
             self.do_call(this, func, returns)
         }
@@ -826,5 +847,19 @@ fn dispatch<'gc>(
         num_params,
     });
     *pc = dispatcher.pc();
-    ret
+
+    match ret {
+        Ok(next) => Ok(next),
+        Err(error) => {
+            let prototype = closure.prototype();
+            let (ind, inst, span) = prototype.bytecode.instruction_for_pc(*pc).unwrap();
+            Err(VmError {
+                error,
+                chunk_name: prototype.chunk.name().clone(),
+                instruction_index: ind,
+                instruction: inst,
+                line_number: prototype.chunk.line_number(span.start()),
+            })
+        }
+    }
 }

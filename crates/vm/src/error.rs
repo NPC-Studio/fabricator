@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, ops};
 
 use gc_arena::Collect;
 use thiserror::Error;
@@ -40,5 +40,13 @@ impl Error {
 
     pub fn into_inner(self) -> anyhow::Error {
         self.0
+    }
+}
+
+impl ops::Deref for Error {
+    type Target = anyhow::Error;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
