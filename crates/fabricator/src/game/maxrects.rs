@@ -15,7 +15,7 @@ pub struct PackedRect<N, I> {
 
 impl<N, I> MaxRects<N, I>
 where
-    N: Copy + num::Num + Ord + std::fmt::Debug,
+    N: Copy + num::Num + Ord,
 {
     pub fn new(size: Vec2<N>) -> Self {
         MaxRects {
