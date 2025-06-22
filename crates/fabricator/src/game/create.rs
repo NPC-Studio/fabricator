@@ -174,10 +174,16 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
                 code.clear();
                 File::open(&script.path)?.read_to_string(&mut code)?;
                 let name = script.path.to_string_lossy();
-                let proto = match script.mode {
-                    ScriptMode::Compat => compiler::compile_compat(ctx, magic, name.as_ref(), &code)?,
-                    ScriptMode::Full => compiler::compile(ctx, magic, name.as_ref(), &code)?,
-                };
+                let proto = compiler::compile(
+                    ctx,
+                    match script.mode {
+                        ScriptMode::Compat => compiler::CompileSettings::compat(),
+                        ScriptMode::Full => compiler::CompileSettings::full(),
+                    },
+                    magic,
+                    name.as_ref(),
+                    &code,
+                )?;
                 scripts
                     .object_events
                     .entry(object_dict[object_name])

@@ -10,9 +10,9 @@ use crate::{
             ShadowIncomingRange, ShadowLiveness, ShadowLivenessRange, ShadowOutgoingRange,
         },
     },
-    codegen::upsilon_reachability::compute_upsilon_reachability,
     graph::dfs::topological_order,
     ir,
+    proto_gen::upsilon_reachability::compute_upsilon_reachability,
 };
 
 #[derive(Debug)]

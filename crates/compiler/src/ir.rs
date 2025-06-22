@@ -40,8 +40,6 @@ pub enum BinOp {
 
 /// A single IR instruction.
 ///
-/// Instructions are only allowed to appear in *once* across an entire IR.
-///
 /// IR instructions are always in SSA (Single Static Assignment) form and thus have an implicit
 /// "output variable". Other instructions that use the output of a previous instruction will
 /// reference that instruction directly via `InstId`.

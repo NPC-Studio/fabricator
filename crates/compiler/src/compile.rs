@@ -16,13 +16,13 @@ use crate::{
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
     },
-    codegen::codegen,
-    frontend::{FrontendError, FrontendSettings},
     ir,
+    ir_gen::{IrGenError, IrGenSettings},
     lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
     magic_dict::{MagicDict, MagicMode},
     parser::{ParseError, ParseSettings},
+    proto_gen::gen_prototype,
     string_interner::VmInterner,
 };
 
@@ -32,8 +32,8 @@ pub enum CompilerErrorKind {
     Lexing(#[source] LexError),
     #[error("parse error: {0}")]
     Parsing(#[source] ParseError),
-    #[error("frontend error: {0}")]
-    Frontend(#[source] FrontendError),
+    #[error("IR gen error: {0}")]
+    IrGen(#[source] IrGenError),
 }
 
 #[derive(Debug, Error)]
@@ -42,6 +42,27 @@ pub struct CompilerError {
     #[source]
     pub kind: CompilerErrorKind,
     pub line_number: vm::LineNumber,
+}
+
+pub struct CompileSettings {
+    pub parse: ParseSettings,
+    pub ir_gen: IrGenSettings,
+}
+
+impl CompileSettings {
+    pub fn compat() -> Self {
+        Self {
+            parse: ParseSettings::compat(),
+            ir_gen: IrGenSettings::compat(),
+        }
+    }
+
+    pub fn full() -> Self {
+        Self {
+            parse: ParseSettings::strict(),
+            ir_gen: IrGenSettings::full(),
+        }
+    }
 }
 
 pub struct SourceChunk {
@@ -95,6 +116,7 @@ impl<'gc> MagicDict<vm::String<'gc>> for VmMagic<'gc> {
 
 pub fn compile<'gc>(
     ctx: vm::Context<'gc>,
+    settings: CompileSettings,
     stdlib: Gc<'gc, vm::MagicSet<'gc>>,
     chunk_name: &str,
     src: &str,
@@ -111,7 +133,7 @@ pub fn compile<'gc>(
         }
     })?;
 
-    let parsed = ParseSettings::default().parse(tokens).map_err(|e| {
+    let parsed = settings.parse.parse(tokens).map_err(|e| {
         let line_number = chunk.line_number(e.span.start());
         CompilerError {
             kind: CompilerErrorKind::Parsing(e),
@@ -119,65 +141,17 @@ pub fn compile<'gc>(
         }
     })?;
 
-    let mut ir = FrontendSettings::default()
-        .compile_ir(&parsed, stdlib)
-        .map_err(|e| {
-            let line_number = chunk.line_number(e.span.start());
-            CompilerError {
-                kind: CompilerErrorKind::Frontend(e),
-                line_number,
-            }
-        })?;
-
-    optimize_ir(&mut ir).expect("Internal Optimization Error");
-
-    let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
-
-    Ok(prototype)
-}
-
-pub fn compile_compat<'gc>(
-    ctx: vm::Context<'gc>,
-    stdlib: Gc<'gc, vm::MagicSet<'gc>>,
-    chunk_name: &str,
-    src: &str,
-) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let stdlib = VmMagic::new(stdlib);
-    let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
-
-    let mut tokens = Vec::new();
-    Lexer::tokenize(VmInterner::new(ctx), src, &mut tokens).map_err(|e| {
+    let mut ir = settings.ir_gen.gen_ir(&parsed, stdlib).map_err(|e| {
         let line_number = chunk.line_number(e.span.start());
         CompilerError {
-            kind: CompilerErrorKind::Lexing(e),
-            line_number,
-        }
-    })?;
-
-    let parsed = ParseSettings { strict: false }.parse(tokens).map_err(|e| {
-        let line_number = chunk.line_number(e.span.start());
-        CompilerError {
-            kind: CompilerErrorKind::Parsing(e),
-            line_number,
-        }
-    })?;
-
-    let mut ir = FrontendSettings {
-        lexical_scoping: false,
-        allow_closures: false,
-    }
-    .compile_ir(&parsed, stdlib)
-    .map_err(|e| {
-        let line_number = chunk.line_number(e.span.start());
-        CompilerError {
-            kind: CompilerErrorKind::Frontend(e),
+            kind: CompilerErrorKind::IrGen(e),
             line_number,
         }
     })?;
 
     optimize_ir(&mut ir).expect("Internal Optimization Error");
 
-    let prototype = codegen(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
+    let prototype = gen_prototype(&ctx, &ir, chunk, stdlib).expect("Internal Codegen Error");
 
     Ok(prototype)
 }

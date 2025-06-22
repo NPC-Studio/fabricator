@@ -164,13 +164,15 @@ pub struct ParseSettings {
     pub strict: bool,
 }
 
-impl Default for ParseSettings {
-    fn default() -> Self {
-        Self { strict: true }
-    }
-}
-
 impl ParseSettings {
+    pub fn strict() -> Self {
+        ParseSettings { strict: true }
+    }
+
+    pub fn compat() -> Self {
+        ParseSettings { strict: false }
+    }
+
     pub fn parse<I, S>(self, token_iter: I) -> Result<Block<S>, ParseError>
     where
         I: IntoIterator<Item = Token<S>>,
@@ -973,7 +975,7 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(SimpleInterner, source, &mut tokens).unwrap();
 
-        ParseSettings::default().parse(tokens)
+        ParseSettings::strict().parse(tokens)
     }
 
     #[test]

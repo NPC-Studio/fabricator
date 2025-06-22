@@ -12,11 +12,17 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
-        let prototype = if compat {
-            compiler::compile_compat(ctx, ctx.testing_stdlib(), name, &code)?
-        } else {
-            compiler::compile(ctx, ctx.testing_stdlib(), name, &code)?
-        };
+        let prototype = compiler::compile(
+            ctx,
+            if compat {
+                compiler::CompileSettings::compat()
+            } else {
+                compiler::CompileSettings::full()
+            },
+            ctx.testing_stdlib(),
+            name,
+            &code,
+        )?;
         let closure = vm::Closure::new(
             &ctx,
             Gc::new(&ctx, prototype),
@@ -39,9 +45,13 @@ fn run_tests(dir: &str) -> bool {
         let path = dir.expect("could not read dir entry").path();
         let code = io::read_to_string(File::open(&path).unwrap()).unwrap();
         if let Some(ext) = path.extension() {
-            if ext == "fml" || ext == "gml" {
+            if ext.eq_ignore_ascii_case("fml") || ext.eq_ignore_ascii_case("gml") {
                 let _ = writeln!(stdout(), "running {:?}", path);
-                if let Err(err) = run_code(path.to_string_lossy().as_ref(), &code, ext == "gml") {
+                if let Err(err) = run_code(
+                    path.to_string_lossy().as_ref(),
+                    &code,
+                    ext.eq_ignore_ascii_case("gml"),
+                ) {
                     let _ = writeln!(stdout(), "error encountered running {:?}: {:?}", path, err);
                     all_passed = false;
                 }

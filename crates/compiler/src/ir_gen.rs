@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
-pub enum FrontendErrorKind {
+pub enum IrGenErrorKind {
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("too many parameters")]
@@ -24,14 +24,14 @@ pub enum FrontendErrorKind {
 
 #[derive(Debug, Error)]
 #[error("{kind}")]
-pub struct FrontendError {
+pub struct IrGenError {
     #[source]
-    pub kind: FrontendErrorKind,
+    pub kind: IrGenErrorKind,
     pub span: Span,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct FrontendSettings {
+pub struct IrGenSettings {
     /// Use proper lexical scoping for variable declarations.
     ///
     /// if `false`, then all variable declarations will be visible until the end of the enclosing
@@ -55,21 +55,26 @@ pub struct FrontendSettings {
     pub allow_closures: bool,
 }
 
-impl Default for FrontendSettings {
-    fn default() -> Self {
-        Self {
+impl IrGenSettings {
+    pub fn full() -> Self {
+        IrGenSettings {
             lexical_scoping: true,
             allow_closures: true,
         }
     }
-}
 
-impl FrontendSettings {
-    pub fn compile_ir<S>(
+    pub fn compat() -> Self {
+        IrGenSettings {
+            lexical_scoping: false,
+            allow_closures: false,
+        }
+    }
+
+    pub fn gen_ir<S>(
         self,
         block: &parser::Block<S>,
         magic_dict: impl MagicDict<S>,
-    ) -> Result<ir::Function<S>, FrontendError>
+    ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone + AsRef<str>,
     {
@@ -90,7 +95,7 @@ struct Function<S> {
 }
 
 struct Compiler<S, M> {
-    settings: FrontendSettings,
+    settings: IrGenSettings,
     magic_dict: M,
     upper: Vec<Function<S>>,
     current: Function<S>,
@@ -101,7 +106,7 @@ where
     S: Eq + Hash + Clone + AsRef<str>,
     M: MagicDict<S>,
 {
-    fn new(settings: FrontendSettings, magic_dict: M) -> Self {
+    fn new(settings: IrGenSettings, magic_dict: M) -> Self {
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
@@ -141,7 +146,7 @@ where
         }
     }
 
-    fn block(&mut self, block: &parser::Block<S>) -> Result<(), FrontendError> {
+    fn block(&mut self, block: &parser::Block<S>) -> Result<(), IrGenError> {
         {
             self.push_scope();
 
@@ -154,7 +159,7 @@ where
         Ok(())
     }
 
-    fn statement(&mut self, statement: &parser::Statement<S>) -> Result<(), FrontendError> {
+    fn statement(&mut self, statement: &parser::Statement<S>) -> Result<(), IrGenError> {
         match &*statement.kind {
             parser::StatementKind::Var(var_statement) => {
                 self.var_statement(statement.span, var_statement)
@@ -177,7 +182,7 @@ where
         &mut self,
         span: Span,
         var_statement: &parser::VarStatement<S>,
-    ) -> Result<(), FrontendError> {
+    ) -> Result<(), IrGenError> {
         let var = self.declare_var(var_statement.name.clone());
         let inst_id = self.commit_expression(&var_statement.value)?;
         self.push_instruction(span, ir::Instruction::SetVariable(var, inst_id));
@@ -188,7 +193,7 @@ where
         &mut self,
         span: Span,
         assignment_statement: &parser::AssignmentStatement<S>,
-    ) -> Result<(), FrontendError> {
+    ) -> Result<(), IrGenError> {
         enum Target<S> {
             Var(ir::Variable),
             This {
@@ -213,8 +218,8 @@ where
                     (Target::Var(var), ir::Instruction::GetVariable(var))
                 } else if let Some(mode) = self.magic_dict.magic_mode(name) {
                     if mode == MagicMode::ReadOnly {
-                        return Err(FrontendError {
-                            kind: FrontendErrorKind::ReadOnlyMagic,
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ReadOnlyMagic,
                             span,
                         });
                     }
@@ -349,7 +354,7 @@ where
     fn return_statement(
         &mut self,
         return_statement: &parser::ReturnStatement<S>,
-    ) -> Result<(), FrontendError> {
+    ) -> Result<(), IrGenError> {
         let exit = if let Some(value) = &return_statement.value {
             let val = self.commit_expression(value)?;
             ir::Exit::Return { value: Some(val) }
@@ -361,7 +366,7 @@ where
         Ok(())
     }
 
-    fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), FrontendError> {
+    fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), IrGenError> {
         let cond = self.commit_expression(&if_statement.condition)?;
         let then_block = self.current.function.blocks.insert(ir::Block::default());
         let else_block = self.current.function.blocks.insert(ir::Block::default());
@@ -395,10 +400,7 @@ where
         Ok(())
     }
 
-    fn for_statement(
-        &mut self,
-        for_statement: &parser::ForStatement<S>,
-    ) -> Result<(), FrontendError> {
+    fn for_statement(&mut self, for_statement: &parser::ForStatement<S>) -> Result<(), IrGenError> {
         {
             self.push_scope();
 
@@ -449,7 +451,7 @@ where
     fn commit_expression(
         &mut self,
         expr: &parser::Expression<S>,
-    ) -> Result<ir::InstId, FrontendError> {
+    ) -> Result<ir::InstId, IrGenError> {
         let span = expr.span;
         Ok(match &*expr.kind {
             parser::ExpressionKind::Undefined => {
@@ -577,7 +579,7 @@ where
         span: Span,
         func: &parser::CallExpr<S>,
         return_value: bool,
-    ) -> Result<ir::InstId, FrontendError> {
+    ) -> Result<ir::InstId, IrGenError> {
         enum Call {
             Function(ir::InstId),
             Method {
@@ -631,7 +633,7 @@ where
         &mut self,
         reference: FunctionRef,
         parameters: &[S],
-    ) -> Result<(), FrontendError> {
+    ) -> Result<(), IrGenError> {
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
@@ -682,8 +684,8 @@ where
             let param_var = self.declare_var(param_name.clone());
             let pop_arg = self.push_instruction(
                 span,
-                ir::Instruction::Parameter(param_index.try_into().map_err(|_| FrontendError {
-                    kind: FrontendErrorKind::ParameterOverflow,
+                ir::Instruction::Parameter(param_index.try_into().map_err(|_| IrGenError {
+                    kind: IrGenErrorKind::ParameterOverflow,
                     span,
                 })?),
             );

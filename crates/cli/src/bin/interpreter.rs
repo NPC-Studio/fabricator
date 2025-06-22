@@ -2,12 +2,10 @@ use std::{fs::File, io::Read, path::PathBuf, string::String as StdString};
 
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
-    CompilerError,
-    codegen::codegen,
+    CompileSettings, CompilerError,
     compile::{CompilerErrorKind, SourceChunk, VmMagic, compile, optimize_ir},
-    frontend::FrontendSettings,
     lexer::Lexer,
-    parser::ParseSettings,
+    proto_gen::gen_prototype,
     string_interner::VmInterner,
 };
 use fabricator_stdlib::StdlibContext as _;
@@ -39,6 +37,7 @@ fn main() {
 
             let prototype = compile(
                 ctx,
+                CompileSettings::full(),
                 ctx.testing_stdlib(),
                 path.to_string_lossy().as_ref(),
                 &code,
@@ -69,6 +68,15 @@ fn main() {
                 SourceChunk::new(path.to_string_lossy().as_ref(), &code),
             );
 
+            let settings = if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("gml"))
+            {
+                CompileSettings::compat()
+            } else {
+                CompileSettings::full()
+            };
+
             let mut tokens = Vec::new();
             Lexer::tokenize(VmInterner::new(ctx), &code, &mut tokens)
                 .map_err(|e| {
@@ -80,7 +88,8 @@ fn main() {
                 })
                 .unwrap();
 
-            let parsed = ParseSettings::default()
+            let parsed = settings
+                .parse
                 .parse(tokens)
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
@@ -91,12 +100,13 @@ fn main() {
                 })
                 .unwrap();
 
-            let mut ir = FrontendSettings::default()
-                .compile_ir(&parsed, stdlib)
+            let mut ir = settings
+                .ir_gen
+                .gen_ir(&parsed, stdlib)
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
                     CompilerError {
-                        kind: CompilerErrorKind::Frontend(e),
+                        kind: CompilerErrorKind::IrGen(e),
                         line_number,
                     }
                 })
@@ -105,7 +115,7 @@ fn main() {
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = codegen(&ctx, &ir, chunk, stdlib).unwrap();
+            let prototype = gen_prototype(&ctx, &ir, chunk, stdlib).unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

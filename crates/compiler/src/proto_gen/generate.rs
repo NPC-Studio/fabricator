@@ -15,15 +15,15 @@ use crate::{
         shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         variable_liveness::{VariableLiveness, VariableVerificationError},
     },
-    codegen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
     constant::Constant,
     graph::dfs::topological_order,
     ir,
     magic_dict::MagicDict,
+    proto_gen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
 };
 
 #[derive(Debug, Error)]
-pub enum CodegenError {
+pub enum ProtoGenError {
     #[error(transparent)]
     InstructionVerification(#[from] InstructionVerificationError),
     #[error(transparent)]
@@ -48,12 +48,12 @@ pub enum CodegenError {
     MagicIndexOverflow,
 }
 
-pub fn codegen<'gc>(
+pub fn gen_prototype<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<vm::String<'gc>>,
     chunk: vm::Chunk<'gc>,
     magic_dict: impl MagicDict<vm::String<'gc>>,
-) -> Result<vm::Prototype<'gc>, CodegenError> {
+) -> Result<vm::Prototype<'gc>, ProtoGenError> {
     codegen_function(mc, ir, chunk, &magic_dict, &SecondaryMap::new())
 }
 
@@ -63,15 +63,15 @@ fn codegen_function<'gc>(
     chunk: vm::Chunk<'gc>,
     magic_dict: &impl MagicDict<vm::String<'gc>>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
-) -> Result<vm::Prototype<'gc>, CodegenError> {
+) -> Result<vm::Prototype<'gc>, ProtoGenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
     let variable_liveness = VariableLiveness::compute(ir)?;
 
     let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
-        .ok_or(CodegenError::RegisterOverflow)?;
+        .ok_or(ProtoGenError::RegisterOverflow)?;
     let heap_alloc = HeapAllocation::allocate(ir, &variable_liveness, parent_heap_indexes)
-        .ok_or(CodegenError::HeapVarOverflow)?;
+        .ok_or(ProtoGenError::HeapVarOverflow)?;
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, instructions::ProtoIdx> =
@@ -82,7 +82,7 @@ fn codegen_function<'gc>(
             prototypes
                 .len()
                 .try_into()
-                .map_err(|_| CodegenError::PrototypeOverflow)?,
+                .map_err(|_| ProtoGenError::PrototypeOverflow)?,
         );
         prototypes.push(Gc::new(
             mc,
@@ -101,7 +101,7 @@ fn codegen_function<'gc>(
                         constants
                             .len()
                             .try_into()
-                            .map_err(|_| CodegenError::ConstantOverflow)?,
+                            .map_err(|_| ProtoGenError::ConstantOverflow)?,
                     );
                     constants.push(c);
                 }
@@ -202,9 +202,9 @@ fn codegen_function<'gc>(
                 ir::Instruction::GetMagic(magic) => {
                     let magic = magic_dict
                         .magic_index(&magic)
-                        .ok_or(CodegenError::NoSuchMagic)?
+                        .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
-                        .map_err(|_| CodegenError::MagicIndexOverflow)?;
+                        .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
                     vm_instructions.push((
                         Instruction::GetMagic {
                             dest: reg_alloc.instruction_registers[inst_id],
@@ -216,9 +216,9 @@ fn codegen_function<'gc>(
                 ir::Instruction::SetMagic(magic, source) => {
                     let magic = magic_dict
                         .magic_index(&magic)
-                        .ok_or(CodegenError::NoSuchMagic)?
+                        .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
-                        .map_err(|_| CodegenError::MagicIndexOverflow)?;
+                        .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
                     vm_instructions.push((
                         Instruction::SetMagic {
                             magic,
@@ -668,7 +668,7 @@ fn codegen_function<'gc>(
     for (index, block_id) in block_vm_jumps {
         let jump_offset = (block_vm_starts[block_id] as isize - index as isize)
             .try_into()
-            .map_err(|_| CodegenError::JumpOutOfRange)?;
+            .map_err(|_| ProtoGenError::JumpOutOfRange)?;
         match &mut vm_instructions[index].0 {
             Instruction::Jump { offset } => {
                 *offset = jump_offset;
