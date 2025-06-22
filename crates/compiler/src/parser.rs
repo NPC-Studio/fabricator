@@ -1,12 +1,10 @@
 use std::fmt::Debug;
 
+use arrayvec::ArrayVec;
 use fabricator_vm::Span;
 use thiserror::Error;
 
-use crate::{
-    lexer::{LexError, Lexer, Token},
-    string_interner::StringInterner,
-};
+use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct Block<S> {
@@ -73,12 +71,12 @@ pub struct ForStatement<S> {
 #[derive(Debug, Clone)]
 pub enum ExpressionKind<S> {
     Undefined,
+    This,
     Boolean(bool),
     Float(f64),
     Integer(u64),
     String(S),
     Name(S),
-    This,
     Group(Expression<S>),
     Object(Vec<(S, Expression<S>)>),
     Array(Vec<Expression<S>>),
@@ -152,22 +150,10 @@ pub enum AssignmentOp {
 }
 
 #[derive(Debug, Error)]
-pub enum ParseErrorKind {
-    #[error("found {unexpected:?}, expected {expected:?}")]
-    Unexpected {
-        unexpected: &'static str,
-        expected: &'static str,
-    },
-    #[error("unexpected end of token stream, expected {expected:?}")]
-    EndOfStream { expected: &'static str },
-    #[error("lexer error")]
-    LexError(#[from] LexError),
-}
-
-#[derive(Debug, Error)]
-#[error("{kind}")]
+#[error("found {unexpected:?}, expected {expected:?}")]
 pub struct ParseError {
-    pub kind: ParseErrorKind,
+    pub unexpected: &'static str,
+    pub expected: &'static str,
     pub span: Span,
 }
 
@@ -185,51 +171,57 @@ impl Default for ParseSettings {
 }
 
 impl ParseSettings {
-    pub fn parse<S>(self, source: &str, interner: S) -> Result<Block<S::String>, ParseError>
+    pub fn parse<I, S>(self, token_iter: I) -> Result<Block<S>, ParseError>
     where
-        S: StringInterner,
+        I: IntoIterator<Item = Token<S>>,
     {
-        Parser::new(self, source, interner).parse()
+        Parser::new(self, token_iter.into_iter()).parse()
     }
 }
 
-struct Parser<'a, S: StringInterner> {
+struct Parser<I, S> {
     settings: ParseSettings,
-    lexer: Lexer<'a, S>,
-    look_ahead_buffer: Vec<Option<(Token<S::String>, Span)>>,
+    token_iter: I,
+    look_ahead_buffer: ArrayVec<Token<S>, 1>,
+    end_of_stream_span: Span,
 }
 
-impl<'a, S: StringInterner> Parser<'a, S> {
-    fn new(settings: ParseSettings, source: &'a str, interner: S) -> Self {
+impl<I, S> Parser<I, S>
+where
+    I: Iterator<Item = Token<S>>,
+{
+    fn new(settings: ParseSettings, token_iter: I) -> Self {
         Parser {
             settings,
-            lexer: Lexer::new(source, interner),
-            look_ahead_buffer: Vec::new(),
+            token_iter,
+            look_ahead_buffer: ArrayVec::new(),
+            end_of_stream_span: Span::null(),
         }
     }
 
-    fn parse(&mut self) -> Result<Block<S::String>, ParseError> {
+    fn parse(&mut self) -> Result<Block<S>, ParseError> {
         let block = self.parse_block()?;
 
-        self.look_ahead(1)?;
-        if let Some((token, span)) = self.peek(0) {
-            Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(token),
-                    expected: "<statement>",
-                },
-                span,
-            })
-        } else {
-            Ok(block)
+        self.look_ahead(1);
+        let last = self.peek(0);
+        match &last.kind {
+            TokenKind::EndOfStream => Ok(block),
+            _ => Err(ParseError {
+                unexpected: token_indicator(&last.kind),
+                expected: "<statement>",
+                span: last.span,
+            }),
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block<S::String>, ParseError> {
+    fn parse_block(&mut self) -> Result<Block<S>, ParseError> {
         let mut statements = Vec::new();
         loop {
-            self.look_ahead(1)?;
-            if matches!(self.peek(0), None | Some((Token::RightBrace, _))) {
+            self.look_ahead(1);
+            if matches!(
+                self.peek(0).kind,
+                TokenKind::RightBrace | TokenKind::EndOfStream
+            ) {
                 break;
             }
 
@@ -240,11 +232,11 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     &*stmt.kind,
                     StatementKind::If(_) | StatementKind::For(_) | StatementKind::Block(_)
                 ) {
-                    self.parse_token(Token::SemiColon)?;
+                    self.parse_token(TokenKind::SemiColon)?;
                 }
             } else {
-                self.look_ahead(1)?;
-                if matches!(self.peek(0), Some((Token::SemiColon, _))) {
+                self.look_ahead(1);
+                if matches!(self.peek(0).kind, TokenKind::SemiColon) {
                     self.advance(1);
                 }
             }
@@ -255,13 +247,14 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         Ok(Block { statements })
     }
 
-    fn parse_statement(&mut self) -> Result<Statement<S::String>, ParseError> {
-        self.look_ahead(1)?;
-        match self.peek_expected(0, "<statement>")? {
-            (Token::Var, mut span) => {
+    fn parse_statement(&mut self) -> Result<Statement<S>, ParseError> {
+        self.look_ahead(1);
+        let &Token { ref kind, mut span } = self.peek(0);
+        match kind {
+            TokenKind::Var => {
                 self.advance(1);
                 let name = self.parse_identifier()?.0;
-                self.parse_token(Token::Equal)?;
+                self.parse_token(TokenKind::Equal)?;
                 let value = self.parse_expression()?;
                 span = span.combine(value.span);
                 Ok(Statement {
@@ -269,31 +262,29 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     span,
                 })
             }
-            (Token::Return, mut span) => {
+            TokenKind::Return => {
                 self.advance(1);
-                self.look_ahead(1)?;
-                let value = match self.peek(0) {
-                    Some((Token::SemiColon, _)) => None,
-                    None => None,
-                    _ => {
-                        let expr = self.parse_expression()?;
-                        span = span.combine(expr.span);
-                        Some(expr)
-                    }
+                self.look_ahead(1);
+                let value = if matches!(self.peek(0).kind, TokenKind::SemiColon) {
+                    None
+                } else {
+                    let expr = self.parse_expression()?;
+                    span = span.combine(expr.span);
+                    Some(expr)
                 };
                 Ok(Statement {
                     kind: Box::new(StatementKind::Return(ReturnStatement { value })),
                     span,
                 })
             }
-            (Token::Exit, span) => {
+            TokenKind::Exit => {
                 self.advance(1);
                 Ok(Statement {
                     kind: Box::new(StatementKind::Return(ReturnStatement { value: None })),
                     span,
                 })
             }
-            (Token::If, mut span) => {
+            TokenKind::If => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
                 let then_stmt = self.parse_statement()?;
@@ -301,8 +292,10 @@ impl<'a, S: StringInterner> Parser<'a, S> {
 
                 let mut else_stmt = None;
 
-                self.look_ahead(1)?;
-                if matches!(self.peek(0), Some((Token::Else, _))) {
+                self.look_ahead(1);
+                let next = self.peek(0);
+                if matches!(next.kind, TokenKind::Else) {
+                    span = span.combine(next.span);
                     self.advance(1);
                     let stmt = self.parse_statement()?;
                     span = span.combine(stmt.span);
@@ -318,15 +311,15 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     span,
                 })
             }
-            (Token::For, mut span) => {
+            TokenKind::For => {
                 self.advance(1);
-                self.parse_token(Token::LeftParen)?;
+                self.parse_token(TokenKind::LeftParen)?;
                 let initializer = self.parse_statement()?;
-                self.parse_token(Token::SemiColon)?;
+                self.parse_token(TokenKind::SemiColon)?;
                 let condition = self.parse_expression()?;
-                self.parse_token(Token::SemiColon)?;
+                self.parse_token(TokenKind::SemiColon)?;
                 let iterator = self.parse_statement()?;
-                self.parse_token(Token::RightParen)?;
+                self.parse_token(TokenKind::RightParen)?;
                 let body = self.parse_statement()?;
 
                 span = span.combine(body.span);
@@ -340,31 +333,25 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     span,
                 })
             }
-            (Token::LeftBrace, mut span) => {
+            TokenKind::LeftBrace => {
                 self.advance(1);
                 let block = self.parse_block()?;
-                span = span.combine(self.parse_token(Token::RightBrace)?);
+                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
                 Ok(Statement {
                     kind: Box::new(StatementKind::Block(block)),
                     span,
                 })
             }
-            (_, mut span) => {
+            _ => {
                 let expr = match self.parse_suffixed_expression() {
                     Ok(expr) => expr,
-                    Err(ParseError {
-                        kind: ParseErrorKind::Unexpected { unexpected, .. },
-                        span,
-                    }) => {
+                    Err(err) => {
                         return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected,
-                                expected: "<statement>",
-                            },
-                            span,
+                            unexpected: err.unexpected,
+                            expected: "<statement>",
+                            span: err.span,
                         });
                     }
-                    Err(err) => return Err(err),
                 };
 
                 span = expr.span;
@@ -381,20 +368,17 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                             _ => unreachable!(),
                         };
 
-                        self.look_ahead(1)?;
-                        let Some(assignment_op) =
-                            self.peek(0).and_then(|(t, _)| get_assignment_operator(t))
+                        self.look_ahead(1);
+                        let Some(assignment_op) = get_assignment_operator(&self.peek(0).kind)
                         else {
                             return Err(ParseError {
-                                kind: ParseErrorKind::Unexpected {
-                                    unexpected: "<non-statement expression>",
-                                    expected: "<statement>",
-                                },
+                                unexpected: "<non-statement expression>",
+                                expected: "<statement>",
                                 span,
                             });
                         };
-
                         self.advance(1);
+
                         let value = self.parse_expression()?;
                         span = span.combine(value.span);
 
@@ -406,10 +390,8 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     }
                     _ => {
                         return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected: "<non-statement expression>",
-                                expected: "<statement>",
-                            },
+                            unexpected: "<non-statement expression>",
+                            expected: "<statement>",
                             span,
                         });
                     }
@@ -423,19 +405,18 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         }
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
+    fn parse_expression(&mut self) -> Result<Expression<S>, ParseError> {
         self.parse_sub_expression(MIN_PRIORITY)
     }
 
     fn parse_sub_expression(
         &mut self,
         priority_limit: OperatorPriority,
-    ) -> Result<Expression<S::String>, ParseError> {
-        self.look_ahead(1)?;
-        let mut expr = if let Some((unary_op, mut span)) = self
-            .peek(0)
-            .and_then(|(t, s)| Some((get_unary_operator(t)?, s)))
-        {
+    ) -> Result<Expression<S>, ParseError> {
+        self.look_ahead(1);
+        let next = self.peek(0);
+        let mut expr = if let Some(unary_op) = get_unary_operator(&next.kind) {
+            let mut span = next.span;
             self.advance(1);
             let target = self.parse_sub_expression(UNARY_PRIORITY)?;
             span = span.combine(target.span);
@@ -447,14 +428,19 @@ impl<'a, S: StringInterner> Parser<'a, S> {
             self.parse_simple_expression()?
         };
 
-        self.look_ahead(1)?;
-        while let Some(binary_op) = self.peek(0).and_then(|(t, _)| get_binary_operator(t)) {
+        loop {
+            self.look_ahead(1);
+            let Some(binary_op) = get_binary_operator(&self.peek(0).kind) else {
+                break;
+            };
+
             let (left_priority, right_priority) = binary_priority(binary_op);
             if left_priority <= priority_limit {
                 break;
             }
 
             self.advance(1);
+
             let right_expression = self.parse_sub_expression(right_priority)?;
             let span = expr.span.combine(right_expression.span);
             expr = Expression {
@@ -466,28 +452,43 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         Ok(expr)
     }
 
-    fn parse_suffixed_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
+    fn parse_suffixed_expression(&mut self) -> Result<Expression<S>, ParseError> {
         let mut expr = self.parse_primary_expression()?;
         loop {
-            self.look_ahead(1)?;
-            match self.peek(0) {
-                Some((Token::LeftParen, _)) => {
+            self.look_ahead(1);
+            match &self.peek(0).kind {
+                TokenKind::LeftParen => {
                     self.advance(1);
-                    self.look_ahead(1)?;
-                    let arguments = if !matches!(self.peek(0), Some((Token::RightParen, _))) {
-                        let mut expressions = Vec::new();
-                        expressions.push(self.parse_expression()?);
-                        self.look_ahead(1)?;
-                        while matches!(self.peek(0), Some((Token::Comma, _))) {
-                            self.advance(1);
-                            expressions.push(self.parse_expression()?);
-                            self.look_ahead(1)?;
+
+                    let mut arguments = Vec::new();
+                    loop {
+                        self.look_ahead(1);
+                        if matches!(self.peek(0).kind, TokenKind::RightParen) {
+                            break;
                         }
-                        expressions
-                    } else {
-                        Vec::new()
-                    };
-                    let span = expr.span.combine(self.parse_token(Token::RightParen)?);
+
+                        arguments.push(self.parse_expression()?);
+
+                        self.look_ahead(1);
+                        let next = self.peek(0);
+                        match &next.kind {
+                            TokenKind::Comma => {
+                                self.advance(1);
+                            }
+                            TokenKind::RightParen => {
+                                break;
+                            }
+                            _ => {
+                                return Err(ParseError {
+                                    unexpected: token_indicator(&next.kind),
+                                    expected: "',' or ')'",
+                                    span: next.span,
+                                });
+                            }
+                        }
+                    }
+
+                    let span = expr.span.combine(self.parse_token(TokenKind::RightParen)?);
                     expr = Expression {
                         kind: Box::new(ExpressionKind::Call(CallExpr {
                             base: expr,
@@ -496,7 +497,7 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         span,
                     };
                 }
-                Some((Token::Dot, _)) => {
+                TokenKind::Dot => {
                     self.advance(1);
                     let (field, fspan) = self.parse_identifier()?;
                     let span = expr.span.combine(fspan);
@@ -505,10 +506,12 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                         span,
                     };
                 }
-                Some((Token::LeftBracket, _)) => {
+                TokenKind::LeftBracket => {
                     self.advance(1);
                     let index = self.parse_expression()?;
-                    let span = expr.span.combine(self.parse_token(Token::RightBracket)?);
+                    let span = expr
+                        .span
+                        .combine(self.parse_token(TokenKind::RightBracket)?);
                     expr = Expression {
                         kind: Box::new(ExpressionKind::Index(IndexExpr { base: expr, index })),
                         span,
@@ -520,70 +523,81 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         Ok(expr)
     }
 
-    fn parse_primary_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
-        match self.expect_next("<expression>")? {
-            (Token::LeftParen, mut span) => {
+    fn parse_primary_expression(&mut self) -> Result<Expression<S>, ParseError> {
+        let Token { kind, mut span } = self.next();
+        match kind {
+            TokenKind::LeftParen => {
                 let expr = self.parse_expression()?;
-                span = span.combine(self.parse_token(Token::RightParen)?);
+                span = span.combine(self.parse_token(TokenKind::RightParen)?);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Group(expr)),
                     span,
                 })
             }
-            (Token::Identifier(n), span) => Ok(Expression {
+            TokenKind::Identifier(n) => Ok(Expression {
                 kind: Box::new(ExpressionKind::Name(n)),
                 span,
             }),
-            (token, span) => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&token),
-                    expected: "<grouped expression or name>",
-                },
+            token => Err(ParseError {
+                unexpected: token_indicator(&token),
+                expected: "<grouped expression or name>",
                 span,
             }),
         }
     }
 
-    fn parse_simple_expression(&mut self) -> Result<Expression<S::String>, ParseError> {
-        self.look_ahead(1)?;
-        match self.peek_expected(0, "<expression>")? {
-            (Token::Undefined, span) => {
+    fn parse_simple_expression(&mut self) -> Result<Expression<S>, ParseError> {
+        self.look_ahead(1);
+        let &Token { ref kind, mut span } = self.peek(0);
+        match kind {
+            TokenKind::Undefined => {
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Undefined),
                     span,
                 })
             }
-            (Token::True, span) => {
+            TokenKind::This => {
+                self.advance(1);
+                Ok(Expression {
+                    kind: Box::new(ExpressionKind::This),
+                    span,
+                })
+            }
+            TokenKind::True => {
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Boolean(true)),
                     span,
                 })
             }
-            (Token::False, span) => {
+            TokenKind::False => {
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Boolean(false)),
                     span,
                 })
             }
-            (&Token::Float(f), span) => {
+            &TokenKind::Float(f) => {
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Float(f)),
                     span,
                 })
             }
-            (&Token::Integer(i), span) => {
+            &TokenKind::Integer(i) => {
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Integer(i)),
                     span,
                 })
             }
-            (Token::String(_), _) => {
-                let Some((Token::String(s), span)) = self.next().unwrap() else {
+            TokenKind::String(_) => {
+                let Token {
+                    kind: TokenKind::String(s),
+                    ..
+                } = self.next()
+                else {
                     unreachable!()
                 };
                 Ok(Expression {
@@ -591,47 +605,57 @@ impl<'a, S: StringInterner> Parser<'a, S> {
                     span,
                 })
             }
-            (Token::This, span) => {
+            TokenKind::Function => {
                 self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::This),
-                    span,
-                })
-            }
-            (Token::Function, mut span) => {
-                self.advance(1);
-                self.parse_token(Token::LeftParen)?;
+                self.parse_token(TokenKind::LeftParen)?;
+
                 let mut parameters = Vec::new();
-                self.look_ahead(1)?;
-                if !matches!(self.peek(0), Some((Token::RightParen, _))) {
-                    loop {
-                        parameters.push(self.parse_identifier()?.0);
-                        self.look_ahead(1)?;
-                        if matches!(self.peek(0), Some((Token::Comma, _))) {
+                self.look_ahead(1);
+                loop {
+                    self.look_ahead(1);
+                    if matches!(self.peek(0).kind, TokenKind::RightParen) {
+                        break;
+                    }
+
+                    parameters.push(self.parse_identifier()?.0);
+
+                    self.look_ahead(1);
+                    let next = self.peek(0);
+                    match &next.kind {
+                        TokenKind::Comma => {
                             self.advance(1);
-                        } else {
+                        }
+                        TokenKind::RightParen => {
                             break;
+                        }
+                        _ => {
+                            return Err(ParseError {
+                                unexpected: token_indicator(&next.kind),
+                                expected: "',' or ')'",
+                                span: next.span,
+                            });
                         }
                     }
                 }
-                self.parse_token(Token::RightParen)?;
-                self.parse_token(Token::LeftBrace)?;
+
+                self.parse_token(TokenKind::RightParen)?;
+                self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block()?;
-                span = span.combine(self.parse_token(Token::RightBrace)?);
+                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
 
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Function(FunctionExpr { parameters, body })),
                     span,
                 })
             }
-            (Token::LeftBrace, _) => {
+            TokenKind::LeftBrace => {
                 let (pairs, span) = self.parse_object()?;
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Object(pairs)),
                     span,
                 })
             }
-            (Token::LeftBracket, _) => {
+            TokenKind::LeftBracket => {
                 let (items, span) = self.parse_array()?;
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Array(items)),
@@ -642,162 +666,133 @@ impl<'a, S: StringInterner> Parser<'a, S> {
         }
     }
 
-    fn parse_object(
-        &mut self,
-    ) -> Result<(Vec<(S::String, Expression<S::String>)>, Span), ParseError> {
-        let mut span = self.parse_token(Token::LeftBrace)?;
+    fn parse_object(&mut self) -> Result<(Vec<(S, Expression<S>)>, Span), ParseError> {
+        let mut span = self.parse_token(TokenKind::LeftBrace)?;
         let mut entries = Vec::new();
 
         loop {
-            self.look_ahead(1)?;
-            if let Some((Token::RightBrace, espan)) = self.peek(0) {
-                span = span.combine(espan);
-                self.advance(1);
+            self.look_ahead(1);
+            if matches!(self.peek(0).kind, TokenKind::RightBrace) {
                 break;
             }
 
             let key = self.parse_identifier()?.0;
-            self.parse_token(Token::Colon)?;
+            self.parse_token(TokenKind::Colon)?;
             let value = self.parse_expression()?;
 
             entries.push((key, value));
 
-            self.look_ahead(1)?;
-            match self.peek(0) {
-                Some((Token::Comma, _)) => {
+            self.look_ahead(1);
+            let next = self.peek(0);
+            match &next.kind {
+                TokenKind::Comma => {
                     self.advance(1);
                 }
-                Some((Token::RightBrace, espan)) => {
-                    span = span.combine(espan);
-                    self.advance(1);
+                TokenKind::RightBrace => {
                     break;
                 }
-                Some((t, span)) => {
+                _ => {
                     return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(t),
-                            expected: "',' or '}'",
-                        },
-                        span,
-                    });
-                }
-                None => {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::EndOfStream {
-                            expected: "',' or '}'",
-                        },
-                        span: Span::empty(self.lexer.position()),
+                        unexpected: token_indicator(&next.kind),
+                        expected: "',' or '}'",
+                        span: next.span,
                     });
                 }
             }
         }
 
+        span = span.combine(self.parse_token(TokenKind::RightBrace)?);
+
         Ok((entries, span))
     }
 
-    fn parse_array(&mut self) -> Result<(Vec<Expression<S::String>>, Span), ParseError> {
-        let mut span = self.parse_token(Token::LeftBracket)?;
+    fn parse_array(&mut self) -> Result<(Vec<Expression<S>>, Span), ParseError> {
+        let mut span = self.parse_token(TokenKind::LeftBracket)?;
         let mut entries = Vec::new();
         loop {
-            self.look_ahead(1)?;
-            if let Some((Token::RightBracket, espan)) = self.peek(0) {
-                span = span.combine(espan);
-                self.advance(1);
+            self.look_ahead(1);
+            if matches!(self.peek(0).kind, TokenKind::RightBracket) {
                 break;
             }
 
-            let value = self.parse_expression()?;
-            entries.push(value);
+            entries.push(self.parse_expression()?);
 
-            self.look_ahead(1)?;
-            match self.peek(0) {
-                Some((Token::Comma, _)) => {
+            self.look_ahead(1);
+            let next = self.peek(0);
+            match &next.kind {
+                TokenKind::Comma => {
                     self.advance(1);
                 }
-                Some((Token::RightBracket, espan)) => {
-                    span = span.combine(espan);
-                    self.advance(1);
+                TokenKind::RightBracket => {
                     break;
                 }
-                Some((t, span)) => {
+                _ => {
                     return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(t),
-                            expected: "',' or ']'",
-                        },
+                        unexpected: token_indicator(&next.kind),
+                        expected: "',' or ']'",
                         span,
-                    });
-                }
-                None => {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::EndOfStream {
-                            expected: "',' or ']'",
-                        },
-                        span: Span::empty(self.lexer.position()),
                     });
                 }
             }
         }
+
+        span = span.combine(self.parse_token(TokenKind::RightBracket)?);
 
         Ok((entries, span))
     }
 
-    fn parse_identifier(&mut self) -> Result<(S::String, Span), ParseError> {
-        match self.next()? {
-            Some((Token::Identifier(ident), span)) => Ok((ident, span)),
-            Some((t, span)) => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&t),
-                    expected: "<identifier>",
-                },
+    fn parse_identifier(&mut self) -> Result<(S, Span), ParseError> {
+        let Token { kind, span } = self.next();
+        match kind {
+            TokenKind::Identifier(ident) => Ok((ident, span)),
+            t => Err(ParseError {
+                unexpected: token_indicator(&t),
+                expected: "<identifier>",
                 span,
-            }),
-            None => Err(ParseError {
-                kind: ParseErrorKind::EndOfStream {
-                    expected: "<identifier>",
-                },
-                span: Span::empty(self.lexer.position()),
             }),
         }
     }
 
-    fn parse_token(&mut self, expected: Token<&'static str>) -> Result<Span, ParseError> {
-        if let Some((next, span)) = self.next()? {
-            if next.as_str() == expected {
-                Ok(span)
-            } else {
-                Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: token_indicator(&next),
-                        expected: token_indicator(&expected),
-                    },
-                    span,
-                })
-            }
+    fn parse_token(&mut self, expected: TokenKind<()>) -> Result<Span, ParseError> {
+        let Token { kind, span } = self.next();
+
+        if kind.as_string_ref().map_string(|_| ()) == expected {
+            Ok(span)
         } else {
             Err(ParseError {
-                kind: ParseErrorKind::EndOfStream {
-                    expected: token_indicator(&expected),
-                },
-                span: Span::empty(self.lexer.position()),
+                unexpected: token_indicator(&kind),
+                expected: token_indicator(&expected),
+                span,
             })
         }
     }
 
     // Look ahead `n` tokens in the lexer, making them available to peek methods.
-    fn look_ahead(&mut self, n: usize) -> Result<(), ParseError> {
+    fn look_ahead(&mut self, n: usize) {
         while self.look_ahead_buffer.len() < n {
-            self.lexer.skip_whitespace();
-            if let Some((token, span)) = self.lexer.read_token().map_err(|e| ParseError {
-                kind: ParseErrorKind::LexError(e),
-                span: Span::empty(self.lexer.position()),
-            })? {
-                self.look_ahead_buffer.push(Some((token, span)));
-            } else {
-                self.look_ahead_buffer.push(None);
+            match self.token_iter.next() {
+                Some(token) => {
+                    if matches!(token.kind, TokenKind::EndOfStream) {
+                        // If our token stream has a real `EndOfStream` token, record its span so
+                        // that all generated `EndOfStream` tokens will have the correct span.
+                        self.end_of_stream_span = token.span;
+                    }
+
+                    // Newlines are not observed at all in the parser at the moment.
+                    if !matches!(token.kind, TokenKind::Newline) {
+                        self.look_ahead_buffer.push(token);
+                    }
+                }
+                None => {
+                    // If the token stream does not generate an `EndOfStream` token, the span here
+                    // will be null.
+                    self.look_ahead_buffer.push(Token {
+                        kind: TokenKind::EndOfStream,
+                        span: self.end_of_stream_span,
+                    });
+                }
             }
         }
-        Ok(())
     }
 
     // Advance the token stream `n` tokens.
@@ -817,145 +812,114 @@ impl<'a, S: StringInterner> Parser<'a, S> {
     //
     // Panics if the given `n` is less than the number of tokens we have previously buffered with
     // `Parser::look_ahead`.
-    fn peek(&self, n: usize) -> Option<(&Token<S::String>, Span)> {
-        self.look_ahead_buffer[n].as_ref().map(|(t, ln)| (t, *ln))
-    }
-
-    // Equivalent to `Parser::peek`, except if the the `n`th token ahead in the token stream doesn't
-    // exist produces a `ParseErrorKind::EndOfStream` error.
-    //
-    // # Panics
-    //
-    // Panics if the given `n` is less than the number of tokens we have previously buffered with
-    // `Parser::look_ahead`.
-    fn peek_expected(
-        &self,
-        n: usize,
-        expected: &'static str,
-    ) -> Result<(&Token<S::String>, Span), ParseError> {
-        self.peek(n).ok_or_else(|| ParseError {
-            kind: ParseErrorKind::EndOfStream { expected },
-            span: Span::empty(self.lexer.position()),
-        })
+    fn peek(&self, n: usize) -> &Token<S> {
+        &self.look_ahead_buffer[n]
     }
 
     // Return the next token in the token stream if it exists and advance the stream.
-    fn next(&mut self) -> Result<Option<(Token<S::String>, Span)>, ParseError> {
-        self.look_ahead(1)?;
-        Ok(self.look_ahead_buffer.remove(0))
-    }
-
-    // Return the next token in the token stream, producing a `ParseErrorKind::EndOfStream` error if
-    // it doesn't exist.
-    fn expect_next(
-        &mut self,
-        expected: &'static str,
-    ) -> Result<(Token<S::String>, Span), ParseError> {
-        if let Some((token, span)) = self.next()? {
-            Ok((token, span))
-        } else {
-            Err(ParseError {
-                kind: ParseErrorKind::EndOfStream { expected },
-                span: Span::empty(self.lexer.position()),
-            })
-        }
+    fn next(&mut self) -> Token<S> {
+        self.look_ahead(1);
+        self.look_ahead_buffer.remove(0)
     }
 }
 
-fn get_unary_operator<S>(token: &Token<S>) -> Option<UnaryOp> {
+fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<UnaryOp> {
     match *token {
-        Token::Minus => Some(UnaryOp::Minus),
-        Token::Bang => Some(UnaryOp::Not),
+        TokenKind::Minus => Some(UnaryOp::Minus),
+        TokenKind::Bang => Some(UnaryOp::Not),
         _ => None,
     }
 }
 
-fn get_binary_operator<S>(token: &Token<S>) -> Option<BinaryOp> {
+fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<BinaryOp> {
     match *token {
-        Token::Star => Some(BinaryOp::Mult),
-        Token::Slash => Some(BinaryOp::Div),
-        Token::Plus => Some(BinaryOp::Add),
-        Token::Minus => Some(BinaryOp::Sub),
-        Token::DoubleEqual => Some(BinaryOp::Equal),
-        Token::BangEqual => Some(BinaryOp::NotEqual),
-        Token::Less => Some(BinaryOp::LessThan),
-        Token::LessEqual => Some(BinaryOp::LessEqual),
-        Token::Greater => Some(BinaryOp::GreaterThan),
-        Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
-        Token::DoubleAmpersand => Some(BinaryOp::And),
-        Token::DoublePipe => Some(BinaryOp::Or),
+        TokenKind::Star => Some(BinaryOp::Mult),
+        TokenKind::Slash => Some(BinaryOp::Div),
+        TokenKind::Plus => Some(BinaryOp::Add),
+        TokenKind::Minus => Some(BinaryOp::Sub),
+        TokenKind::DoubleEqual => Some(BinaryOp::Equal),
+        TokenKind::BangEqual => Some(BinaryOp::NotEqual),
+        TokenKind::Less => Some(BinaryOp::LessThan),
+        TokenKind::LessEqual => Some(BinaryOp::LessEqual),
+        TokenKind::Greater => Some(BinaryOp::GreaterThan),
+        TokenKind::GreaterEqual => Some(BinaryOp::GreaterEqual),
+        TokenKind::DoubleAmpersand => Some(BinaryOp::And),
+        TokenKind::DoublePipe => Some(BinaryOp::Or),
         _ => None,
     }
 }
 
-fn get_assignment_operator<S>(token: &Token<S>) -> Option<AssignmentOp> {
+fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<AssignmentOp> {
     match *token {
-        Token::Equal => Some(AssignmentOp::Equal),
-        Token::PlusEqual => Some(AssignmentOp::PlusEqual),
-        Token::MinusEqual => Some(AssignmentOp::MinusEqual),
-        Token::StarEqual => Some(AssignmentOp::MultEqual),
-        Token::SlashEqual => Some(AssignmentOp::DivEqual),
+        TokenKind::Equal => Some(AssignmentOp::Equal),
+        TokenKind::PlusEqual => Some(AssignmentOp::PlusEqual),
+        TokenKind::MinusEqual => Some(AssignmentOp::MinusEqual),
+        TokenKind::StarEqual => Some(AssignmentOp::MultEqual),
+        TokenKind::SlashEqual => Some(AssignmentOp::DivEqual),
         _ => None,
     }
 }
 
-fn token_indicator<S>(t: &Token<S>) -> &'static str {
+fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
     match *t {
-        Token::LeftParen => "(",
-        Token::RightParen => ")",
-        Token::LeftBracket => "[",
-        Token::RightBracket => "]",
-        Token::LeftBrace => "{",
-        Token::RightBrace => "}",
-        Token::Colon => ":",
-        Token::SemiColon => ";",
-        Token::Comma => ",",
-        Token::Dot => ".",
-        Token::Plus => "+",
-        Token::Minus => "-",
-        Token::Bang => "!",
-        Token::Slash => "/",
-        Token::Star => "*",
-        Token::Mod => "mod",
-        Token::Div => "div",
-        Token::Percent => "%",
-        Token::Ampersand => "&",
-        Token::Pipe => "|",
-        Token::Equal => "=",
-        Token::PlusEqual => "+=",
-        Token::MinusEqual => "-=",
-        Token::StarEqual => "*=",
-        Token::SlashEqual => "/=",
-        Token::PercentEqual => "%=",
-        Token::DoubleEqual => "==",
-        Token::BangEqual => "!=",
-        Token::Less => "<",
-        Token::LessEqual => "<=",
-        Token::Greater => ">",
-        Token::GreaterEqual => ">=",
-        Token::DoublePlus => "++",
-        Token::DoubleMinus => "--",
-        Token::DoubleAmpersand => "&&",
-        Token::DoublePipe => "--",
-        Token::Var => "var",
-        Token::Function => "function",
-        Token::Switch => "switch",
-        Token::Case => "case",
-        Token::Break => "break",
-        Token::If => "if",
-        Token::Else => "else",
-        Token::For => "for",
-        Token::Repeat => "repeat",
-        Token::Return => "return",
-        Token::Exit => "exit",
-        Token::Undefined => "undefined",
-        Token::True => "true",
-        Token::False => "false",
-        Token::This => "self",
-        Token::Integer(_) => "<integer>",
-        Token::Float(_) => "<float>",
-        Token::Identifier(_) => "<identifier>",
-        Token::String(_) => "<string>",
+        TokenKind::EndOfStream => "<eof>",
+        TokenKind::Newline => "\n",
+        TokenKind::Macro => "#macro",
+        TokenKind::LeftParen => "(",
+        TokenKind::RightParen => ")",
+        TokenKind::LeftBracket => "[",
+        TokenKind::RightBracket => "]",
+        TokenKind::LeftBrace => "{",
+        TokenKind::RightBrace => "}",
+        TokenKind::Colon => ":",
+        TokenKind::SemiColon => ";",
+        TokenKind::Comma => ",",
+        TokenKind::Dot => ".",
+        TokenKind::Plus => "+",
+        TokenKind::Minus => "-",
+        TokenKind::Bang => "!",
+        TokenKind::Slash => "/",
+        TokenKind::Star => "*",
+        TokenKind::Mod => "mod",
+        TokenKind::Div => "div",
+        TokenKind::Percent => "%",
+        TokenKind::Ampersand => "&",
+        TokenKind::Pipe => "|",
+        TokenKind::Equal => "=",
+        TokenKind::PlusEqual => "+=",
+        TokenKind::MinusEqual => "-=",
+        TokenKind::StarEqual => "*=",
+        TokenKind::SlashEqual => "/=",
+        TokenKind::PercentEqual => "%=",
+        TokenKind::DoubleEqual => "==",
+        TokenKind::BangEqual => "!=",
+        TokenKind::Less => "<",
+        TokenKind::LessEqual => "<=",
+        TokenKind::Greater => ">",
+        TokenKind::GreaterEqual => ">=",
+        TokenKind::DoublePlus => "++",
+        TokenKind::DoubleMinus => "--",
+        TokenKind::DoubleAmpersand => "&&",
+        TokenKind::DoublePipe => "--",
+        TokenKind::Var => "var",
+        TokenKind::Function => "function",
+        TokenKind::Switch => "switch",
+        TokenKind::Case => "case",
+        TokenKind::Break => "break",
+        TokenKind::If => "if",
+        TokenKind::Else => "else",
+        TokenKind::For => "for",
+        TokenKind::Repeat => "repeat",
+        TokenKind::Return => "return",
+        TokenKind::Exit => "exit",
+        TokenKind::Undefined => "undefined",
+        TokenKind::True => "true",
+        TokenKind::False => "false",
+        TokenKind::This => "self",
+        TokenKind::Integer(_) => "<integer>",
+        TokenKind::Float(_) => "<float>",
+        TokenKind::Identifier(_) => "<identifier>",
+        TokenKind::String(_) => "<string>",
     }
 }
 
@@ -993,6 +957,8 @@ fn binary_priority(operator: BinaryOp) -> (OperatorPriority, OperatorPriority) {
 mod tests {
     use super::*;
 
+    use crate::{lexer::Lexer, string_interner::StringInterner};
+
     fn parse(source: &str) -> Result<Block<String>, ParseError> {
         struct SimpleInterner;
 
@@ -1004,7 +970,10 @@ mod tests {
             }
         }
 
-        ParseSettings::default().parse(source, SimpleInterner)
+        let mut tokens = Vec::new();
+        Lexer::tokenize(SimpleInterner, source, &mut tokens).unwrap();
+
+        ParseSettings::default().parse(tokens)
     }
 
     #[test]

@@ -1,10 +1,18 @@
+use std::mem;
+
+use arrayvec::ArrayVec;
 use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::string_interner::StringInterner;
 
 #[derive(Debug, Copy, Clone)]
-pub enum Token<S> {
+pub enum TokenKind<S> {
+    EndOfStream,
+    Newline,
+
+    Macro,
+
     LeftParen,
     RightParen,
     LeftBracket,
@@ -74,149 +82,290 @@ pub enum Token<S> {
     String(S),
 }
 
-impl<S: AsRef<str>> Token<S> {
-    pub fn as_str(&self) -> Token<&str> {
+impl<S> TokenKind<S> {
+    pub fn as_string_ref(&self) -> TokenKind<&S> {
         match self {
-            Token::LeftParen => Token::LeftParen,
-            Token::RightParen => Token::RightParen,
-            Token::LeftBracket => Token::LeftBracket,
-            Token::RightBracket => Token::RightBracket,
-            Token::LeftBrace => Token::LeftBrace,
-            Token::RightBrace => Token::RightBrace,
-            Token::Colon => Token::Colon,
-            Token::SemiColon => Token::SemiColon,
-            Token::Comma => Token::Comma,
-            Token::Dot => Token::Dot,
-            Token::Plus => Token::Plus,
-            Token::Minus => Token::Minus,
-            Token::Bang => Token::Bang,
-            Token::Slash => Token::Slash,
-            Token::Star => Token::Star,
-            Token::Mod => Token::Mod,
-            Token::Div => Token::Div,
-            Token::Percent => Token::Percent,
-            Token::Ampersand => Token::Ampersand,
-            Token::Pipe => Token::Pipe,
-            Token::Equal => Token::Equal,
-            Token::PlusEqual => Token::PlusEqual,
-            Token::MinusEqual => Token::MinusEqual,
-            Token::StarEqual => Token::StarEqual,
-            Token::SlashEqual => Token::SlashEqual,
-            Token::PercentEqual => Token::PercentEqual,
-            Token::DoubleEqual => Token::DoubleEqual,
-            Token::BangEqual => Token::BangEqual,
-            Token::Less => Token::Less,
-            Token::LessEqual => Token::LessEqual,
-            Token::Greater => Token::Greater,
-            Token::GreaterEqual => Token::GreaterEqual,
-            Token::DoublePlus => Token::DoublePlus,
-            Token::DoubleMinus => Token::DoubleMinus,
-            Token::DoubleAmpersand => Token::DoubleAmpersand,
-            Token::DoublePipe => Token::DoublePipe,
-            Token::Var => Token::Var,
-            Token::Function => Token::Function,
-            Token::Switch => Token::Switch,
-            Token::Case => Token::Case,
-            Token::Break => Token::Break,
-            Token::If => Token::If,
-            Token::Else => Token::Else,
-            Token::For => Token::For,
-            Token::Repeat => Token::Repeat,
-            Token::Return => Token::Return,
-            Token::Exit => Token::Exit,
-            Token::Undefined => Token::Undefined,
-            Token::True => Token::True,
-            Token::False => Token::False,
-            Token::This => Token::This,
-            Token::Integer(i) => Token::Integer(*i),
-            Token::Float(f) => Token::Float(*f),
-            Token::Identifier(i) => Token::Identifier(i.as_ref()),
-            Token::String(s) => Token::String(s.as_ref()),
+            TokenKind::EndOfStream => TokenKind::EndOfStream,
+            TokenKind::Newline => TokenKind::Newline,
+            TokenKind::Macro => TokenKind::Macro,
+            TokenKind::LeftParen => TokenKind::LeftParen,
+            TokenKind::RightParen => TokenKind::RightParen,
+            TokenKind::LeftBracket => TokenKind::LeftBracket,
+            TokenKind::RightBracket => TokenKind::RightBracket,
+            TokenKind::LeftBrace => TokenKind::LeftBrace,
+            TokenKind::RightBrace => TokenKind::RightBrace,
+            TokenKind::Colon => TokenKind::Colon,
+            TokenKind::SemiColon => TokenKind::SemiColon,
+            TokenKind::Comma => TokenKind::Comma,
+            TokenKind::Dot => TokenKind::Dot,
+            TokenKind::Plus => TokenKind::Plus,
+            TokenKind::Minus => TokenKind::Minus,
+            TokenKind::Bang => TokenKind::Bang,
+            TokenKind::Slash => TokenKind::Slash,
+            TokenKind::Star => TokenKind::Star,
+            TokenKind::Mod => TokenKind::Mod,
+            TokenKind::Div => TokenKind::Div,
+            TokenKind::Percent => TokenKind::Percent,
+            TokenKind::Ampersand => TokenKind::Ampersand,
+            TokenKind::Pipe => TokenKind::Pipe,
+            TokenKind::Equal => TokenKind::Equal,
+            TokenKind::PlusEqual => TokenKind::PlusEqual,
+            TokenKind::MinusEqual => TokenKind::MinusEqual,
+            TokenKind::StarEqual => TokenKind::StarEqual,
+            TokenKind::SlashEqual => TokenKind::SlashEqual,
+            TokenKind::PercentEqual => TokenKind::PercentEqual,
+            TokenKind::DoubleEqual => TokenKind::DoubleEqual,
+            TokenKind::BangEqual => TokenKind::BangEqual,
+            TokenKind::Less => TokenKind::Less,
+            TokenKind::LessEqual => TokenKind::LessEqual,
+            TokenKind::Greater => TokenKind::Greater,
+            TokenKind::GreaterEqual => TokenKind::GreaterEqual,
+            TokenKind::DoublePlus => TokenKind::DoublePlus,
+            TokenKind::DoubleMinus => TokenKind::DoubleMinus,
+            TokenKind::DoubleAmpersand => TokenKind::DoubleAmpersand,
+            TokenKind::DoublePipe => TokenKind::DoublePipe,
+            TokenKind::Var => TokenKind::Var,
+            TokenKind::Function => TokenKind::Function,
+            TokenKind::Switch => TokenKind::Switch,
+            TokenKind::Case => TokenKind::Case,
+            TokenKind::Break => TokenKind::Break,
+            TokenKind::If => TokenKind::If,
+            TokenKind::Else => TokenKind::Else,
+            TokenKind::For => TokenKind::For,
+            TokenKind::Repeat => TokenKind::Repeat,
+            TokenKind::Return => TokenKind::Return,
+            TokenKind::Exit => TokenKind::Exit,
+            TokenKind::Undefined => TokenKind::Undefined,
+            TokenKind::True => TokenKind::True,
+            TokenKind::False => TokenKind::False,
+            TokenKind::This => TokenKind::This,
+            TokenKind::Integer(i) => TokenKind::Integer(*i),
+            TokenKind::Float(f) => TokenKind::Float(*f),
+            TokenKind::Identifier(i) => TokenKind::Identifier(i),
+            TokenKind::String(s) => TokenKind::String(s),
+        }
+    }
+
+    pub fn map_string<S2>(self, map: impl Fn(S) -> S2) -> TokenKind<S2> {
+        match self {
+            TokenKind::EndOfStream => TokenKind::EndOfStream,
+            TokenKind::Newline => TokenKind::Newline,
+            TokenKind::Macro => TokenKind::Macro,
+            TokenKind::LeftParen => TokenKind::LeftParen,
+            TokenKind::RightParen => TokenKind::RightParen,
+            TokenKind::LeftBracket => TokenKind::LeftBracket,
+            TokenKind::RightBracket => TokenKind::RightBracket,
+            TokenKind::LeftBrace => TokenKind::LeftBrace,
+            TokenKind::RightBrace => TokenKind::RightBrace,
+            TokenKind::Colon => TokenKind::Colon,
+            TokenKind::SemiColon => TokenKind::SemiColon,
+            TokenKind::Comma => TokenKind::Comma,
+            TokenKind::Dot => TokenKind::Dot,
+            TokenKind::Plus => TokenKind::Plus,
+            TokenKind::Minus => TokenKind::Minus,
+            TokenKind::Bang => TokenKind::Bang,
+            TokenKind::Slash => TokenKind::Slash,
+            TokenKind::Star => TokenKind::Star,
+            TokenKind::Mod => TokenKind::Mod,
+            TokenKind::Div => TokenKind::Div,
+            TokenKind::Percent => TokenKind::Percent,
+            TokenKind::Ampersand => TokenKind::Ampersand,
+            TokenKind::Pipe => TokenKind::Pipe,
+            TokenKind::Equal => TokenKind::Equal,
+            TokenKind::PlusEqual => TokenKind::PlusEqual,
+            TokenKind::MinusEqual => TokenKind::MinusEqual,
+            TokenKind::StarEqual => TokenKind::StarEqual,
+            TokenKind::SlashEqual => TokenKind::SlashEqual,
+            TokenKind::PercentEqual => TokenKind::PercentEqual,
+            TokenKind::DoubleEqual => TokenKind::DoubleEqual,
+            TokenKind::BangEqual => TokenKind::BangEqual,
+            TokenKind::Less => TokenKind::Less,
+            TokenKind::LessEqual => TokenKind::LessEqual,
+            TokenKind::Greater => TokenKind::Greater,
+            TokenKind::GreaterEqual => TokenKind::GreaterEqual,
+            TokenKind::DoublePlus => TokenKind::DoublePlus,
+            TokenKind::DoubleMinus => TokenKind::DoubleMinus,
+            TokenKind::DoubleAmpersand => TokenKind::DoubleAmpersand,
+            TokenKind::DoublePipe => TokenKind::DoublePipe,
+            TokenKind::Var => TokenKind::Var,
+            TokenKind::Function => TokenKind::Function,
+            TokenKind::Switch => TokenKind::Switch,
+            TokenKind::Case => TokenKind::Case,
+            TokenKind::Break => TokenKind::Break,
+            TokenKind::If => TokenKind::If,
+            TokenKind::Else => TokenKind::Else,
+            TokenKind::For => TokenKind::For,
+            TokenKind::Repeat => TokenKind::Repeat,
+            TokenKind::Return => TokenKind::Return,
+            TokenKind::Exit => TokenKind::Exit,
+            TokenKind::Undefined => TokenKind::Undefined,
+            TokenKind::True => TokenKind::True,
+            TokenKind::False => TokenKind::False,
+            TokenKind::This => TokenKind::This,
+            TokenKind::Integer(i) => TokenKind::Integer(i),
+            TokenKind::Float(f) => TokenKind::Float(f),
+            TokenKind::Identifier(i) => TokenKind::Identifier(map(i)),
+            TokenKind::String(s) => TokenKind::String(map(s)),
         }
     }
 }
 
-impl<S: PartialEq> PartialEq for Token<S> {
-    fn eq(&self, other: &Self) -> bool {
+impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
+    fn eq(&self, other: &TokenKind<R>) -> bool {
         match (self, other) {
-            (Token::LeftParen, Token::LeftParen) => true,
-            (Token::RightParen, Token::RightParen) => true,
-            (Token::LeftBracket, Token::LeftBracket) => true,
-            (Token::RightBracket, Token::RightBracket) => true,
-            (Token::LeftBrace, Token::LeftBrace) => true,
-            (Token::RightBrace, Token::RightBrace) => true,
-            (Token::Colon, Token::Colon) => true,
-            (Token::SemiColon, Token::SemiColon) => true,
-            (Token::Comma, Token::Comma) => true,
-            (Token::Dot, Token::Dot) => true,
-            (Token::Plus, Token::Plus) => true,
-            (Token::Minus, Token::Minus) => true,
-            (Token::Bang, Token::Bang) => true,
-            (Token::Slash, Token::Slash) => true,
-            (Token::Star, Token::Star) => true,
-            (Token::Mod, Token::Mod) => true,
-            (Token::Div, Token::Div) => true,
-            (Token::Percent, Token::Percent) => true,
-            (Token::Ampersand, Token::Ampersand) => true,
-            (Token::Pipe, Token::Pipe) => true,
-            (Token::Equal, Token::Equal) => true,
-            (Token::PlusEqual, Token::PlusEqual) => true,
-            (Token::MinusEqual, Token::MinusEqual) => true,
-            (Token::StarEqual, Token::StarEqual) => true,
-            (Token::SlashEqual, Token::SlashEqual) => true,
-            (Token::PercentEqual, Token::PercentEqual) => true,
-            (Token::DoubleEqual, Token::DoubleEqual) => true,
-            (Token::BangEqual, Token::BangEqual) => true,
-            (Token::Less, Token::Less) => true,
-            (Token::LessEqual, Token::LessEqual) => true,
-            (Token::Greater, Token::Greater) => true,
-            (Token::GreaterEqual, Token::GreaterEqual) => true,
-            (Token::DoublePlus, Token::DoublePlus) => true,
-            (Token::DoubleMinus, Token::DoubleMinus) => true,
-            (Token::DoubleAmpersand, Token::DoubleAmpersand) => true,
-            (Token::DoublePipe, Token::DoublePipe) => true,
-            (Token::Var, Token::Var) => true,
-            (Token::Function, Token::Function) => true,
-            (Token::Switch, Token::Switch) => true,
-            (Token::Case, Token::Case) => true,
-            (Token::Break, Token::Break) => true,
-            (Token::If, Token::If) => true,
-            (Token::Else, Token::Else) => true,
-            (Token::For, Token::For) => true,
-            (Token::Repeat, Token::Repeat) => true,
-            (Token::Return, Token::Return) => true,
-            (Token::Exit, Token::Exit) => true,
-            (Token::Undefined, Token::Undefined) => true,
-            (Token::True, Token::True) => true,
-            (Token::False, Token::False) => true,
-            (Token::This, Token::This) => true,
-            (Token::Integer(a), Token::Integer(b)) => a == b,
-            (Token::Float(a), Token::Float(b)) => a.to_bits() == b.to_bits(),
-            (Token::Identifier(a), Token::Identifier(b)) => a == b,
-            (Token::String(a), Token::String(b)) => a == b,
-            _ => false,
+            (TokenKind::EndOfStream, TokenKind::EndOfStream) => true,
+            (TokenKind::EndOfStream, _) => false,
+            (TokenKind::Newline, TokenKind::Newline) => true,
+            (TokenKind::Newline, _) => false,
+            (TokenKind::Macro, TokenKind::Macro) => true,
+            (TokenKind::Macro, _) => false,
+            (TokenKind::LeftParen, TokenKind::LeftParen) => true,
+            (TokenKind::LeftParen, _) => false,
+            (TokenKind::RightParen, TokenKind::RightParen) => true,
+            (TokenKind::RightParen, _) => false,
+            (TokenKind::LeftBracket, TokenKind::LeftBracket) => true,
+            (TokenKind::LeftBracket, _) => false,
+            (TokenKind::RightBracket, TokenKind::RightBracket) => true,
+            (TokenKind::RightBracket, _) => false,
+            (TokenKind::LeftBrace, TokenKind::LeftBrace) => true,
+            (TokenKind::LeftBrace, _) => false,
+            (TokenKind::RightBrace, TokenKind::RightBrace) => true,
+            (TokenKind::RightBrace, _) => false,
+            (TokenKind::Colon, TokenKind::Colon) => true,
+            (TokenKind::Colon, _) => false,
+            (TokenKind::SemiColon, TokenKind::SemiColon) => true,
+            (TokenKind::SemiColon, _) => false,
+            (TokenKind::Comma, TokenKind::Comma) => true,
+            (TokenKind::Comma, _) => false,
+            (TokenKind::Dot, TokenKind::Dot) => true,
+            (TokenKind::Dot, _) => false,
+            (TokenKind::Plus, TokenKind::Plus) => true,
+            (TokenKind::Plus, _) => false,
+            (TokenKind::Minus, TokenKind::Minus) => true,
+            (TokenKind::Minus, _) => false,
+            (TokenKind::Bang, TokenKind::Bang) => true,
+            (TokenKind::Bang, _) => false,
+            (TokenKind::Slash, TokenKind::Slash) => true,
+            (TokenKind::Slash, _) => false,
+            (TokenKind::Star, TokenKind::Star) => true,
+            (TokenKind::Star, _) => false,
+            (TokenKind::Mod, TokenKind::Mod) => true,
+            (TokenKind::Mod, _) => false,
+            (TokenKind::Div, TokenKind::Div) => true,
+            (TokenKind::Div, _) => false,
+            (TokenKind::Percent, TokenKind::Percent) => true,
+            (TokenKind::Percent, _) => false,
+            (TokenKind::Ampersand, TokenKind::Ampersand) => true,
+            (TokenKind::Ampersand, _) => false,
+            (TokenKind::Pipe, TokenKind::Pipe) => true,
+            (TokenKind::Pipe, _) => false,
+            (TokenKind::Equal, TokenKind::Equal) => true,
+            (TokenKind::Equal, _) => false,
+            (TokenKind::PlusEqual, TokenKind::PlusEqual) => true,
+            (TokenKind::PlusEqual, _) => false,
+            (TokenKind::MinusEqual, TokenKind::MinusEqual) => true,
+            (TokenKind::MinusEqual, _) => false,
+            (TokenKind::StarEqual, TokenKind::StarEqual) => true,
+            (TokenKind::StarEqual, _) => false,
+            (TokenKind::SlashEqual, TokenKind::SlashEqual) => true,
+            (TokenKind::SlashEqual, _) => false,
+            (TokenKind::PercentEqual, TokenKind::PercentEqual) => true,
+            (TokenKind::PercentEqual, _) => false,
+            (TokenKind::DoubleEqual, TokenKind::DoubleEqual) => true,
+            (TokenKind::DoubleEqual, _) => false,
+            (TokenKind::BangEqual, TokenKind::BangEqual) => true,
+            (TokenKind::BangEqual, _) => false,
+            (TokenKind::Less, TokenKind::Less) => true,
+            (TokenKind::Less, _) => false,
+            (TokenKind::LessEqual, TokenKind::LessEqual) => true,
+            (TokenKind::LessEqual, _) => false,
+            (TokenKind::Greater, TokenKind::Greater) => true,
+            (TokenKind::Greater, _) => false,
+            (TokenKind::GreaterEqual, TokenKind::GreaterEqual) => true,
+            (TokenKind::GreaterEqual, _) => false,
+            (TokenKind::DoublePlus, TokenKind::DoublePlus) => true,
+            (TokenKind::DoublePlus, _) => false,
+            (TokenKind::DoubleMinus, TokenKind::DoubleMinus) => true,
+            (TokenKind::DoubleMinus, _) => false,
+            (TokenKind::DoubleAmpersand, TokenKind::DoubleAmpersand) => true,
+            (TokenKind::DoubleAmpersand, _) => false,
+            (TokenKind::DoublePipe, TokenKind::DoublePipe) => true,
+            (TokenKind::DoublePipe, _) => false,
+            (TokenKind::Var, TokenKind::Var) => true,
+            (TokenKind::Var, _) => false,
+            (TokenKind::Function, TokenKind::Function) => true,
+            (TokenKind::Function, _) => false,
+            (TokenKind::Switch, TokenKind::Switch) => true,
+            (TokenKind::Switch, _) => false,
+            (TokenKind::Case, TokenKind::Case) => true,
+            (TokenKind::Case, _) => false,
+            (TokenKind::Break, TokenKind::Break) => true,
+            (TokenKind::Break, _) => false,
+            (TokenKind::If, TokenKind::If) => true,
+            (TokenKind::If, _) => false,
+            (TokenKind::Else, TokenKind::Else) => true,
+            (TokenKind::Else, _) => false,
+            (TokenKind::For, TokenKind::For) => true,
+            (TokenKind::For, _) => false,
+            (TokenKind::Repeat, TokenKind::Repeat) => true,
+            (TokenKind::Repeat, _) => false,
+            (TokenKind::Return, TokenKind::Return) => true,
+            (TokenKind::Return, _) => false,
+            (TokenKind::Exit, TokenKind::Exit) => true,
+            (TokenKind::Exit, _) => false,
+            (TokenKind::Undefined, TokenKind::Undefined) => true,
+            (TokenKind::Undefined, _) => false,
+            (TokenKind::True, TokenKind::True) => true,
+            (TokenKind::True, _) => false,
+            (TokenKind::False, TokenKind::False) => true,
+            (TokenKind::False, _) => false,
+            (TokenKind::This, TokenKind::This) => true,
+            (TokenKind::This, _) => false,
+            (TokenKind::Integer(a), TokenKind::Integer(b)) => a == b,
+            (TokenKind::Integer(_), _) => false,
+            (TokenKind::Float(a), TokenKind::Float(b)) => a.to_bits() == b.to_bits(),
+            (TokenKind::Float(_), _) => false,
+            (TokenKind::Identifier(a), TokenKind::Identifier(b)) => a == b,
+            (TokenKind::Identifier(_), _) => false,
+            (TokenKind::String(a), TokenKind::String(b)) => a == b,
+            (TokenKind::String(_), _) => false,
         }
     }
 }
 
-impl<S: Eq> Eq for Token<S> {}
+impl<S: Eq> Eq for TokenKind<S> {}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Token<S> {
+    pub kind: TokenKind<S>,
+    pub span: Span,
+}
 
 #[derive(Debug, Error)]
-pub enum LexError {
+pub enum LexErrorKind {
     #[error("expected matching '\"' for string")]
     UnfinishedString,
-    #[error("invalid string escape sequence")]
-    InvalidStringEscape,
+    #[error("invalid string escape char {0:?}")]
+    InvalidStringEscape(char),
     #[error("unexpected character: {0:?}")]
     UnexpectedCharacter(char),
+    #[error("no such # directive \"#{0}\"")]
+    BadDirective(String),
     #[error("malformed number")]
     BadNumber,
 }
 
+#[derive(Debug, Error)]
+#[error("{kind}")]
+pub struct LexError {
+    pub kind: LexErrorKind,
+    pub span: Span,
+}
+
 pub struct Lexer<'a, S> {
-    source: &'a str,
     interner: S,
-    peek_buffer: Vec<char>,
+    source: &'a str,
+    peek_buffer: ArrayVec<char, 2>,
     string_buffer: String,
     position: usize,
 }
@@ -225,11 +374,31 @@ impl<'a, S> Lexer<'a, S>
 where
     S: StringInterner,
 {
-    pub fn new(source: &'a str, interner: S) -> Lexer<'a, S> {
+    /// Lexes the provided source completely, placing lexed tokens into the provided buffer.
+    ///
+    /// Always pushes a single [`TokenKind::EndOfStream`] token at the end of the stream.
+    pub fn tokenize(
+        interner: S,
+        source: &'a str,
+        tokens: &mut Vec<Token<S::String>>,
+    ) -> Result<(), LexError> {
+        let mut this = Self::new(interner, source);
+        loop {
+            let token = this.read_token()?;
+            let at_end = matches!(token.kind, TokenKind::EndOfStream);
+            tokens.push(token);
+            if at_end {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn new(interner: S, source: &'a str) -> Lexer<'a, S> {
         Lexer {
-            source,
             interner,
-            peek_buffer: Vec::new(),
+            source,
+            peek_buffer: ArrayVec::new(),
             string_buffer: String::new(),
             position: 0,
         }
@@ -249,9 +418,6 @@ where
             let nc = self.peek(1);
 
             match (c, nc) {
-                _ if c.is_ascii_whitespace() => {
-                    self.advance(1);
-                }
                 ('/', Some('/')) => {
                     self.advance(2);
                     // Read until end of line
@@ -277,6 +443,9 @@ where
                         }
                     }
                 }
+                _ if c.is_ascii_whitespace() && !is_newline(c) => {
+                    self.advance(1);
+                }
                 _ => break,
             }
         }
@@ -284,182 +453,213 @@ where
 
     /// Read and return the next token in the stream.
     ///
-    /// Returns `None` once the token stream is finished.
-    pub fn read_token(&mut self) -> Result<Option<(Token<S::String>, Span)>, LexError> {
+    /// Returns `TokenKind::EndOfStream` once the token stream is finished.
+    pub fn read_token(&mut self) -> Result<Token<S::String>, LexError> {
         self.skip_whitespace();
 
-        let start = self.position;
-        let token = match (self.peek(0), self.peek(1)) {
+        let start_position = self.position;
+        let kind = match (self.peek(0), self.peek(1)) {
+            (Some(c), n) if is_newline(c) => {
+                self.advance(1);
+                // If we have a second newline character immediately following the first one and
+                // it is a *different* newline character, then lex the pair "\n\r" or "\r\n" as a
+                // single newline.
+                if n.is_some_and(|nc| is_newline(nc) && nc != c) {
+                    self.advance(1);
+                }
+                TokenKind::Newline
+            }
             (Some(c), _) if c.is_ascii_whitespace() => {
                 unreachable!("whitespace should have been skipped")
             }
+            (Some(c), _) if c == '#' => {
+                self.advance(1);
+                self.read_identifier();
+                match self.string_buffer.as_str() {
+                    "macro" => TokenKind::Macro,
+                    _ => {
+                        return Err(LexError {
+                            kind: LexErrorKind::BadDirective(mem::take(&mut self.string_buffer)),
+                            span: Span::new(start_position, self.position),
+                        });
+                    }
+                }
+            }
             (Some('!'), Some('=')) => {
                 self.advance(2);
-                Token::BangEqual
+                TokenKind::BangEqual
             }
             (Some('='), Some('=')) => {
                 self.advance(2);
-                Token::DoubleEqual
+                TokenKind::DoubleEqual
             }
             (Some('+'), Some('=')) => {
                 self.advance(2);
-                Token::PlusEqual
+                TokenKind::PlusEqual
             }
             (Some('-'), Some('=')) => {
                 self.advance(2);
-                Token::MinusEqual
+                TokenKind::MinusEqual
             }
             (Some('*'), Some('=')) => {
                 self.advance(2);
-                Token::StarEqual
+                TokenKind::StarEqual
             }
             (Some('/'), Some('=')) => {
                 self.advance(2);
-                Token::SlashEqual
+                TokenKind::SlashEqual
             }
             (Some('%'), Some('=')) => {
                 self.advance(2);
-                Token::PercentEqual
+                TokenKind::PercentEqual
             }
             (Some('<'), Some('=')) => {
                 self.advance(2);
-                Token::LessEqual
+                TokenKind::LessEqual
             }
             (Some('>'), Some('=')) => {
                 self.advance(2);
-                Token::GreaterEqual
+                TokenKind::GreaterEqual
             }
             (Some('+'), Some('+')) => {
                 self.advance(2);
-                Token::DoublePlus
+                TokenKind::DoublePlus
             }
             (Some('-'), Some('-')) => {
                 self.advance(2);
-                Token::DoubleMinus
+                TokenKind::DoubleMinus
             }
             (Some('&'), Some('&')) => {
                 self.advance(2);
-                Token::DoubleAmpersand
+                TokenKind::DoubleAmpersand
             }
             (Some('|'), Some('|')) => {
                 self.advance(2);
-                Token::DoublePipe
+                TokenKind::DoublePipe
             }
             (Some('('), _) => {
                 self.advance(1);
-                Token::LeftParen
+                TokenKind::LeftParen
             }
             (Some(')'), _) => {
                 self.advance(1);
-                Token::RightParen
+                TokenKind::RightParen
             }
             (Some('['), _) => {
                 self.advance(1);
-                Token::LeftBracket
+                TokenKind::LeftBracket
             }
             (Some(']'), _) => {
                 self.advance(1);
-                Token::RightBracket
+                TokenKind::RightBracket
             }
             (Some('{'), _) => {
                 self.advance(1);
-                Token::LeftBrace
+                TokenKind::LeftBrace
             }
             (Some('}'), _) => {
                 self.advance(1);
-                Token::RightBrace
+                TokenKind::RightBrace
             }
             (Some(':'), _) => {
                 self.advance(1);
-                Token::Colon
+                TokenKind::Colon
             }
             (Some(';'), _) => {
                 self.advance(1);
-                Token::SemiColon
+                TokenKind::SemiColon
             }
             (Some(','), _) => {
                 self.advance(1);
-                Token::Comma
+                TokenKind::Comma
             }
             (Some('.'), _) => {
                 self.advance(1);
-                Token::Dot
+                TokenKind::Dot
             }
             (Some('+'), _) => {
                 self.advance(1);
-                Token::Plus
+                TokenKind::Plus
             }
             (Some('-'), _) => {
                 self.advance(1);
-                Token::Minus
+                TokenKind::Minus
             }
             (Some('!'), _) => {
                 self.advance(1);
-                Token::Bang
+                TokenKind::Bang
             }
             (Some('/'), _) => {
                 self.advance(1);
-                Token::Slash
+                TokenKind::Slash
             }
             (Some('*'), _) => {
                 self.advance(1);
-                Token::Star
+                TokenKind::Star
             }
             (Some('%'), _) => {
                 self.advance(1);
-                Token::Percent
+                TokenKind::Percent
             }
             (Some('&'), _) => {
                 self.advance(1);
-                Token::Ampersand
+                TokenKind::Ampersand
             }
             (Some('|'), _) => {
                 self.advance(1);
-                Token::Pipe
+                TokenKind::Pipe
             }
             (Some('='), _) => {
                 self.advance(1);
-                Token::Equal
+                TokenKind::Equal
             }
             (Some('<'), _) => {
                 self.advance(1);
-                Token::Less
+                TokenKind::Less
             }
             (Some('>'), _) => {
                 self.advance(1);
-                Token::Greater
+                TokenKind::Greater
             }
             (Some('"'), _) => {
                 self.read_string()?;
-                Token::String(self.interner.intern(self.string_buffer.as_str()))
+                TokenKind::String(self.interner.intern(self.string_buffer.as_str()))
             }
             (Some(c), _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
-                    "var" => Token::Var,
-                    "function" => Token::Function,
-                    "switch" => Token::Switch,
-                    "case" => Token::Case,
-                    "break" => Token::Break,
-                    "if" => Token::If,
-                    "else" => Token::Else,
-                    "for" => Token::For,
-                    "repeat" => Token::Repeat,
-                    "return" => Token::Return,
-                    "exit" => Token::Exit,
-                    "undefined" => Token::Undefined,
-                    "true" => Token::True,
-                    "false" => Token::False,
-                    "self" => Token::This,
-                    id => Token::Identifier(self.interner.intern(id)),
+                    "var" => TokenKind::Var,
+                    "function" => TokenKind::Function,
+                    "switch" => TokenKind::Switch,
+                    "case" => TokenKind::Case,
+                    "break" => TokenKind::Break,
+                    "if" => TokenKind::If,
+                    "else" => TokenKind::Else,
+                    "for" => TokenKind::For,
+                    "repeat" => TokenKind::Repeat,
+                    "return" => TokenKind::Return,
+                    "exit" => TokenKind::Exit,
+                    "undefined" => TokenKind::Undefined,
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
+                    "self" => TokenKind::This,
+                    id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }
             (Some(c), _) if c.is_ascii_digit() => self.read_numeral()?,
-            (Some(c), _) => return Err(LexError::UnexpectedCharacter(c)),
-            (None, _) => return Ok(None),
+            (Some(c), _) => {
+                return Err(LexError {
+                    kind: LexErrorKind::UnexpectedCharacter(c),
+                    span: Span::new(start_position, start_position + 1),
+                });
+            }
+            (None, _) => TokenKind::EndOfStream,
         };
 
-        Ok(Some((token, Span::new(start, self.position))))
+        Ok(Token {
+            kind,
+            span: Span::new(start_position, self.position),
+        })
     }
 
     /// Read an identifier into the string buffer.
@@ -492,16 +692,25 @@ where
             let c = if let Some(c) = self.peek(0) {
                 c
             } else {
-                return Err(LexError::UnfinishedString);
+                return Err(LexError {
+                    kind: LexErrorKind::UnfinishedString,
+                    span: Span::empty(self.position),
+                });
             };
 
             if is_newline(c) {
-                return Err(LexError::UnfinishedString);
+                return Err(LexError {
+                    kind: LexErrorKind::UnfinishedString,
+                    span: Span::empty(self.position),
+                });
             }
 
             self.advance(1);
             if c == '\\' {
-                match self.peek(0).ok_or(LexError::UnfinishedString)? {
+                match self.peek(0).ok_or(LexError {
+                    kind: LexErrorKind::UnfinishedString,
+                    span: Span::empty(self.position),
+                })? {
                     'n' => {
                         self.advance(1);
                         self.string_buffer.push('\n');
@@ -527,8 +736,11 @@ where
                         self.string_buffer.push('"');
                     }
 
-                    _ => {
-                        return Err(LexError::InvalidStringEscape);
+                    c => {
+                        return Err(LexError {
+                            kind: LexErrorKind::InvalidStringEscape(c),
+                            span: Span::new(self.position - 1, self.position + 1),
+                        });
                     }
                 }
             } else if c == '"' {
@@ -544,7 +756,9 @@ where
     /// Reads a hex or decimal integer or floating point number. Allows decimal integers (123), hex
     /// integers (0xdeadbeef), and decimal floating point with optional exponent and exponent sign
     /// (3.21e+1).
-    fn read_numeral(&mut self) -> Result<Token<S::String>, LexError> {
+    fn read_numeral(&mut self) -> Result<TokenKind<S::String>, LexError> {
+        let start_position = self.position;
+
         let p1 = self.peek(0).unwrap();
         assert!(p1.is_ascii_digit());
 
@@ -603,13 +817,15 @@ where
             }
         }
 
+        let span = Span::new(start_position, self.position);
+
         if !has_exp && !has_radix {
             if let Some(i) = if is_hex {
                 read_hex_integer(&self.string_buffer)
             } else {
                 read_dec_integer(&self.string_buffer)
             } {
-                return Ok(Token::Integer(i));
+                return Ok(TokenKind::Integer(i));
             }
 
             // Fall back to parsing as a float if parsing as an integer fails...
@@ -617,10 +833,16 @@ where
 
         if is_hex {
             // Hex floats are not supported
-            Err(LexError::BadNumber)
+            Err(LexError {
+                kind: LexErrorKind::BadNumber,
+                span,
+            })
         } else {
-            Ok(Token::Float(
-                read_dec_float(&self.string_buffer).ok_or(LexError::BadNumber)?,
+            Ok(TokenKind::Float(
+                read_dec_float(&self.string_buffer).ok_or(LexError {
+                    kind: LexErrorKind::BadNumber,
+                    span,
+                })?,
             ))
         }
     }
@@ -691,7 +913,7 @@ pub fn read_dec_float(s: &str) -> Option<f64> {
 mod tests {
     use super::*;
 
-    fn lex(source: &str) -> Result<Vec<Token<String>>, LexError> {
+    fn lex(source: &str) -> Result<Vec<TokenKind<String>>, LexError> {
         struct SimpleInterner;
 
         impl StringInterner for SimpleInterner {
@@ -703,9 +925,16 @@ mod tests {
         }
 
         let mut tokens = Vec::new();
-        let mut lexer = Lexer::new(source, SimpleInterner);
-        while let Some((token, _)) = lexer.read_token()? {
-            tokens.push(token);
+        let mut lexer = Lexer::new(SimpleInterner, source);
+        loop {
+            let token = lexer.read_token()?;
+            match &token.kind {
+                TokenKind::Newline => {}
+                TokenKind::EndOfStream => break,
+                _ => {
+                    tokens.push(token.kind);
+                }
+            }
         }
 
         Ok(tokens)
@@ -727,31 +956,31 @@ mod tests {
         assert_eq!(
             lex(SOURCE).unwrap(),
             vec![
-                Token::Var,
-                Token::Identifier("sum".to_owned()),
-                Token::Equal,
-                Token::Integer(0),
-                Token::SemiColon,
-                Token::For,
-                Token::LeftParen,
-                Token::Var,
-                Token::Identifier("i".to_owned()),
-                Token::Equal,
-                Token::Integer(0),
-                Token::SemiColon,
-                Token::Identifier("i".to_owned()),
-                Token::Less,
-                Token::Integer(1000000),
-                Token::SemiColon,
-                Token::DoublePlus,
-                Token::Identifier("i".to_owned()),
-                Token::RightParen,
-                Token::LeftBrace,
-                Token::Identifier("sum".to_owned()),
-                Token::PlusEqual,
-                Token::Identifier("i".to_owned()),
-                Token::SemiColon,
-                Token::RightBrace,
+                TokenKind::Var,
+                TokenKind::Identifier("sum".to_owned()),
+                TokenKind::Equal,
+                TokenKind::Integer(0),
+                TokenKind::SemiColon,
+                TokenKind::For,
+                TokenKind::LeftParen,
+                TokenKind::Var,
+                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Equal,
+                TokenKind::Integer(0),
+                TokenKind::SemiColon,
+                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Less,
+                TokenKind::Integer(1000000),
+                TokenKind::SemiColon,
+                TokenKind::DoublePlus,
+                TokenKind::Identifier("i".to_owned()),
+                TokenKind::RightParen,
+                TokenKind::LeftBrace,
+                TokenKind::Identifier("sum".to_owned()),
+                TokenKind::PlusEqual,
+                TokenKind::Identifier("i".to_owned()),
+                TokenKind::SemiColon,
+                TokenKind::RightBrace,
             ]
         );
     }

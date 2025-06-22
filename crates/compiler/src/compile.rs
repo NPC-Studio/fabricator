@@ -19,6 +19,7 @@ use crate::{
     codegen::codegen,
     frontend::{FrontendError, FrontendSettings},
     ir,
+    lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
     magic_dict::{MagicDict, MagicMode},
     parser::{ParseError, ParseSettings},
@@ -27,6 +28,8 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum CompilerErrorKind {
+    #[error("lex error: {0}")]
+    Lexing(#[source] LexError),
     #[error("parse error: {0}")]
     Parsing(#[source] ParseError),
     #[error("frontend error: {0}")]
@@ -99,15 +102,22 @@ pub fn compile<'gc>(
     let stdlib = VmMagic::new(stdlib);
     let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
 
-    let parsed = ParseSettings::default()
-        .parse(src, VmInterner::new(ctx))
-        .map_err(|e| {
-            let line_number = chunk.line_number(e.span.start());
-            CompilerError {
-                kind: CompilerErrorKind::Parsing(e),
-                line_number,
-            }
-        })?;
+    let mut tokens = Vec::new();
+    Lexer::tokenize(VmInterner::new(ctx), src, &mut tokens).map_err(|e| {
+        let line_number = chunk.line_number(e.span.start());
+        CompilerError {
+            kind: CompilerErrorKind::Lexing(e),
+            line_number,
+        }
+    })?;
+
+    let parsed = ParseSettings::default().parse(tokens).map_err(|e| {
+        let line_number = chunk.line_number(e.span.start());
+        CompilerError {
+            kind: CompilerErrorKind::Parsing(e),
+            line_number,
+        }
+    })?;
 
     let mut ir = FrontendSettings::default()
         .compile_ir(&parsed, stdlib)
@@ -135,15 +145,22 @@ pub fn compile_compat<'gc>(
     let stdlib = VmMagic::new(stdlib);
     let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
 
-    let parsed = ParseSettings { strict: false }
-        .parse(src, VmInterner::new(ctx))
-        .map_err(|e| {
-            let line_number = chunk.line_number(e.span.start());
-            CompilerError {
-                kind: CompilerErrorKind::Parsing(e),
-                line_number,
-            }
-        })?;
+    let mut tokens = Vec::new();
+    Lexer::tokenize(VmInterner::new(ctx), src, &mut tokens).map_err(|e| {
+        let line_number = chunk.line_number(e.span.start());
+        CompilerError {
+            kind: CompilerErrorKind::Lexing(e),
+            line_number,
+        }
+    })?;
+
+    let parsed = ParseSettings { strict: false }.parse(tokens).map_err(|e| {
+        let line_number = chunk.line_number(e.span.start());
+        CompilerError {
+            kind: CompilerErrorKind::Parsing(e),
+            line_number,
+        }
+    })?;
 
     let mut ir = FrontendSettings {
         lexical_scoping: false,

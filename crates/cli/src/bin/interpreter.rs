@@ -6,6 +6,7 @@ use fabricator_compiler::{
     codegen::codegen,
     compile::{CompilerErrorKind, SourceChunk, VmMagic, compile, optimize_ir},
     frontend::FrontendSettings,
+    lexer::Lexer,
     parser::ParseSettings,
     string_interner::VmInterner,
 };
@@ -68,8 +69,19 @@ fn main() {
                 SourceChunk::new(path.to_string_lossy().as_ref(), &code),
             );
 
+            let mut tokens = Vec::new();
+            Lexer::tokenize(VmInterner::new(ctx), &code, &mut tokens)
+                .map_err(|e| {
+                    let line_number = chunk.line_number(e.span.start());
+                    CompilerError {
+                        kind: CompilerErrorKind::Lexing(e),
+                        line_number,
+                    }
+                })
+                .unwrap();
+
             let parsed = ParseSettings::default()
-                .parse(&code, VmInterner::new(ctx))
+                .parse(tokens)
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
                     CompilerError {

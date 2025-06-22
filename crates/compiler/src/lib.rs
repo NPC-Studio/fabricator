@@ -6,9 +6,10 @@ pub mod frontend;
 pub mod graph;
 pub mod ir;
 pub mod lexer;
+pub mod line_numbers;
+pub mod macros;
 pub mod magic_dict;
 pub mod parser;
 pub mod string_interner;
-pub mod line_numbers;
 
 pub use compile::{CompilerError, compile, compile_compat};

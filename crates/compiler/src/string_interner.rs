@@ -1,7 +1,7 @@
 use fabricator_vm as vm;
 
 pub trait StringInterner {
-    type String: AsRef<str> + Clone;
+    type String;
 
     fn intern(&mut self, s: &str) -> Self::String;
 }
