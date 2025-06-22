@@ -91,7 +91,7 @@ impl<T> VecChangeSet<T> {
             }) {
                 assert!(insert_index <= old_len);
 
-                while new_vec.len() < insert_index + offset {
+                while new_vec.len() < (insert_index as isize + offset) as usize {
                     new_vec.push(old_items.next().unwrap());
                 }
                 new_vec.push(element);
@@ -101,7 +101,7 @@ impl<T> VecChangeSet<T> {
                 assert!(remove_index < old_len);
                 assert!(last_removed != Some(remove_index));
 
-                while new_vec.len() < remove_index + offset {
+                while new_vec.len() < (remove_index as isize + offset) as usize {
                     new_vec.push(old_items.next().unwrap());
                 }
                 let _skipped = old_items.next().unwrap();
@@ -190,6 +190,30 @@ mod tests {
         array_changes.apply(&mut array);
 
         for i in 0..10 {
+            assert_eq!(array[i], i);
+        }
+    }
+
+    #[test]
+    fn test_vec_change_set_remove() {
+        let mut array = Vec::new();
+
+        array.push(0);
+        array.push(0);
+        array.push(1);
+        array.push(1);
+        array.push(2);
+        array.push(2);
+
+        let mut array_changes = VecChangeSet::new();
+
+        array_changes.remove(0);
+        array_changes.remove(3);
+        array_changes.remove(4);
+
+        array_changes.apply(&mut array);
+
+        for i in 0..3 {
             assert_eq!(array[i], i);
         }
     }
