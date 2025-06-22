@@ -18,7 +18,6 @@ use crate::{
     constant::Constant,
     graph::dfs::topological_order,
     ir,
-    magic_dict::MagicDict,
     proto_gen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
 };
 
@@ -52,16 +51,16 @@ pub fn gen_prototype<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<vm::String<'gc>>,
     chunk: vm::Chunk<'gc>,
-    magic_dict: impl MagicDict<vm::String<'gc>>,
+    magic: Gc<'gc, vm::MagicSet<'gc>>,
 ) -> Result<vm::Prototype<'gc>, ProtoGenError> {
-    codegen_function(mc, ir, chunk, &magic_dict, &SecondaryMap::new())
+    codegen_function(mc, ir, chunk, magic, &SecondaryMap::new())
 }
 
 fn codegen_function<'gc>(
     mc: &Mutation<'gc>,
     ir: &ir::Function<vm::String<'gc>>,
     chunk: vm::Chunk<'gc>,
-    magic_dict: &impl MagicDict<vm::String<'gc>>,
+    magic: Gc<'gc, vm::MagicSet<'gc>>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
 ) -> Result<vm::Prototype<'gc>, ProtoGenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
@@ -86,7 +85,7 @@ fn codegen_function<'gc>(
         );
         prototypes.push(Gc::new(
             mc,
-            codegen_function(mc, func, chunk, magic_dict, &heap_alloc.heap_indexes)?,
+            codegen_function(mc, func, chunk, magic, &heap_alloc.heap_indexes)?,
         ));
     }
 
@@ -199,29 +198,29 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::GetMagic(magic) => {
-                    let magic = magic_dict
-                        .magic_index(&magic)
+                ir::Instruction::GetMagic(magic_var) => {
+                    let magic_idx = magic
+                        .find(&magic_var)
                         .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
                         .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
                     vm_instructions.push((
                         Instruction::GetMagic {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            magic,
+                            magic: magic_idx,
                         },
                         span,
                     ));
                 }
-                ir::Instruction::SetMagic(magic, source) => {
-                    let magic = magic_dict
-                        .magic_index(&magic)
+                ir::Instruction::SetMagic(magic_var, source) => {
+                    let magic_idx = magic
+                        .find(&magic_var)
                         .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
                         .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
                     vm_instructions.push((
                         Instruction::SetMagic {
-                            magic,
+                            magic: magic_idx,
                             source: reg_alloc.instruction_registers[source],
                         },
                         span,
@@ -702,6 +701,7 @@ fn codegen_function<'gc>(
     Ok(vm::Prototype {
         chunk,
         reference: ir.reference.clone(),
+        magic,
         bytecode,
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),

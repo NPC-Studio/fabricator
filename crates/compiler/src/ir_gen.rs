@@ -10,9 +10,19 @@ use thiserror::Error;
 use crate::{
     constant::Constant,
     ir,
-    magic_dict::{MagicDict, MagicMode},
     parser::{self, AssignmentTarget},
 };
+
+/// Descriptor for magic values available to the IR generator.
+///
+/// Reading and writing to magic values compiles as separate kinds of IR instructions. If the
+/// magic variable is `MagicMode::ReadOnly`, then assigning to such a variable is a compiler
+/// error.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MagicMode {
+    ReadOnly,
+    ReadWrite,
+}
 
 #[derive(Debug, Error)]
 pub enum IrGenErrorKind {
@@ -73,12 +83,12 @@ impl IrGenSettings {
     pub fn gen_ir<S>(
         self,
         block: &parser::Block<S>,
-        magic_dict: impl MagicDict<S>,
+        find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone + AsRef<str>,
     {
-        let mut compiler = Compiler::new(self, magic_dict);
+        let mut compiler = Compiler::new(self, find_magic);
         compiler.block(block)?;
         Ok(compiler.current.function)
     }
@@ -96,7 +106,7 @@ struct Function<S> {
 
 struct Compiler<S, M> {
     settings: IrGenSettings,
-    magic_dict: M,
+    find_magic: M,
     upper: Vec<Function<S>>,
     current: Function<S>,
 }
@@ -104,9 +114,9 @@ struct Compiler<S, M> {
 impl<S, M> Compiler<S, M>
 where
     S: Eq + Hash + Clone + AsRef<str>,
-    M: MagicDict<S>,
+    M: Fn(&S) -> Option<MagicMode>,
 {
-    fn new(settings: IrGenSettings, magic_dict: M) -> Self {
+    fn new(settings: IrGenSettings, find_magic: M) -> Self {
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
@@ -119,7 +129,7 @@ where
 
         Self {
             settings,
-            magic_dict,
+            find_magic,
             upper: Vec::new(),
             current: Function {
                 function: ir::Function {
@@ -216,7 +226,7 @@ where
             AssignmentTarget::Name(name) => {
                 if let Some(var) = self.get_var(name) {
                     (Target::Var(var), ir::Instruction::GetVariable(var))
-                } else if let Some(mode) = self.magic_dict.magic_mode(name) {
+                } else if let Some(mode) = (self.find_magic)(name) {
                     if mode == MagicMode::ReadOnly {
                         return Err(IrGenError {
                             kind: IrGenErrorKind::ReadOnlyMagic,
@@ -473,7 +483,7 @@ where
             parser::ExpressionKind::Name(s) => {
                 if let Some(var) = self.get_var(s) {
                     self.push_instruction(span, ir::Instruction::GetVariable(var))
-                } else if self.magic_dict.magic_mode(s).is_some() {
+                } else if (self.find_magic)(s).is_some() {
                     self.push_instruction(span, ir::Instruction::GetMagic(s.clone()))
                 } else {
                     let this = self.push_instruction(span, ir::Instruction::This);

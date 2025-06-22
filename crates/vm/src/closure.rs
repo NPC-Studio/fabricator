@@ -70,6 +70,7 @@ pub enum FunctionRef {
 pub struct Prototype<'gc> {
     pub chunk: Chunk<'gc>,
     pub reference: FunctionRef,
+    pub magic: Gc<'gc, MagicSet<'gc>>,
     pub bytecode: ByteCode,
     pub constants: Box<[Constant<'gc>]>,
     pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
@@ -113,7 +114,6 @@ pub struct Closure<'gc>(Gc<'gc, ClosureInner<'gc>>);
 #[collect(no_drop)]
 pub struct ClosureInner<'gc> {
     proto: Gc<'gc, Prototype<'gc>>,
-    magic: Gc<'gc, MagicSet<'gc>>,
     this: Value<'gc>,
     heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
 }
@@ -141,7 +141,6 @@ impl<'gc> Closure<'gc> {
     pub fn new(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
-        magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
     ) -> Result<Self, MissingUpValue> {
         let mut heap = Vec::new();
@@ -155,26 +154,17 @@ impl<'gc> Closure<'gc> {
                 }
             }
         }
-        Self::from_parts(mc, proto, magic, this, Gc::new(mc, heap.into_boxed_slice()))
+        Self::from_parts(mc, proto, this, Gc::new(mc, heap.into_boxed_slice()))
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
     pub fn from_parts(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
-        magic: Gc<'gc, MagicSet<'gc>>,
         this: Value<'gc>,
         heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
     ) -> Result<Self, MissingUpValue> {
-        Ok(Self(Gc::new(
-            mc,
-            ClosureInner {
-                proto,
-                magic,
-                this,
-                heap,
-            },
-        )))
+        Ok(Self(Gc::new(mc, ClosureInner { proto, this, heap })))
     }
 
     #[inline]
@@ -190,11 +180,6 @@ impl<'gc> Closure<'gc> {
     #[inline]
     pub fn prototype(self) -> Gc<'gc, Prototype<'gc>> {
         self.0.proto
-    }
-
-    /// Return the set of magic values that this closure was created with.
-    pub fn magic(self) -> Gc<'gc, MagicSet<'gc>> {
-        self.0.magic
     }
 
     /// Returns the currently bound `this` object.
@@ -216,7 +201,6 @@ impl<'gc> Closure<'gc> {
                 proto: self.0.proto,
                 heap: self.0.heap,
                 this,
-                magic: self.0.magic,
             },
         ))
     }

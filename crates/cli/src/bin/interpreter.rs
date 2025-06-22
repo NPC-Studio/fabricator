@@ -3,7 +3,8 @@ use std::{fs::File, io::Read, path::PathBuf, string::String as StdString};
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
     CompileSettings, CompilerError,
-    compile::{CompilerErrorKind, SourceChunk, VmMagic, compile, optimize_ir},
+    compiler::{CompilerErrorKind, SourceChunk, compile, optimize_ir},
+    ir_gen::MagicMode,
     lexer::Lexer,
     proto_gen::gen_prototype,
     string_interner::VmInterner,
@@ -43,20 +44,13 @@ fn main() {
                 &code,
             )
             .unwrap();
-            let closure = vm::Closure::new(
-                &ctx,
-                Gc::new(&ctx, prototype),
-                ctx.testing_stdlib(),
-                vm::Value::Undefined,
-            )
-            .unwrap();
+            let closure =
+                vm::Closure::new(&ctx, Gc::new(&ctx, prototype), vm::Value::Undefined).unwrap();
 
             let thread = vm::Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(ctx, closure).unwrap());
         }
         Command::Dump { path } => {
-            let stdlib = VmMagic::new(ctx.stdlib());
-
             let mut code = StdString::new();
             File::open(&path)
                 .unwrap()
@@ -102,7 +96,14 @@ fn main() {
 
             let mut ir = settings
                 .ir_gen
-                .gen_ir(&parsed, stdlib)
+                .gen_ir(&parsed, |m| {
+                    let i = ctx.stdlib().find(m)?;
+                    Some(if ctx.stdlib().get(i).unwrap().read_only() {
+                        MagicMode::ReadOnly
+                    } else {
+                        MagicMode::ReadWrite
+                    })
+                })
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
                     CompilerError {
@@ -115,7 +116,7 @@ fn main() {
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = gen_prototype(&ctx, &ir, chunk, stdlib).unwrap();
+            let prototype = gen_prototype(&ctx, &ir, chunk, ctx.stdlib()).unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

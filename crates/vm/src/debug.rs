@@ -160,7 +160,10 @@ pub struct ChunkMeta {
 
 pub type ChunkInner = AnyInner<ChunkMeta>;
 
-/// A handle to a `ChunkData` impl.
+/// A handle to metadata for a single unit of GML source code, for the purposes of displaying debug
+/// information.
+///
+/// Internally holds an implementation of `ChunkData` and allows for downcasting.
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Chunk<'gc>(Any<'gc, ChunkMeta>);

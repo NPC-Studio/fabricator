@@ -73,30 +73,21 @@ pub struct Configuration {
 #[derive(Clone)]
 pub struct ScriptPrototype {
     prototype: vm::StashedPrototype,
-    magic: vm::StashedMagicSet,
 }
 
 impl ScriptPrototype {
     pub fn new<'gc>(
         ctx: vm::Context<'gc>,
         prototype: Gc<'gc, vm::Prototype<'gc>>,
-        magic: Gc<'gc, vm::MagicSet<'gc>>,
     ) -> ScriptPrototype {
         assert!(!prototype.has_upvalues());
         ScriptPrototype {
             prototype: ctx.stash(prototype),
-            magic: ctx.stash(magic),
         }
     }
 
     pub fn create_closure<'gc>(&self, ctx: vm::Context<'gc>) -> vm::Closure<'gc> {
-        vm::Closure::new(
-            &ctx,
-            ctx.fetch(&self.prototype),
-            ctx.fetch(&self.magic),
-            vm::Value::Undefined,
-        )
-        .unwrap()
+        vm::Closure::new(&ctx, ctx.fetch(&self.prototype), vm::Value::Undefined).unwrap()
     }
 }
 

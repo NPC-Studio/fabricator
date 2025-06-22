@@ -188,10 +188,7 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
                     .object_events
                     .entry(object_dict[object_name])
                     .or_default()
-                    .insert(
-                        event,
-                        ScriptPrototype::new(ctx, Gc::new(&ctx, proto), magic),
-                    );
+                    .insert(event, ScriptPrototype::new(ctx, Gc::new(&ctx, proto)));
             }
         }
 

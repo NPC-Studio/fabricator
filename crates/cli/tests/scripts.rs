@@ -23,13 +23,8 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
             name,
             &code,
         )?;
-        let closure = vm::Closure::new(
-            &ctx,
-            Gc::new(&ctx, prototype),
-            ctx.testing_stdlib(),
-            vm::Value::Undefined,
-        )
-        .unwrap();
+        let closure =
+            vm::Closure::new(&ctx, Gc::new(&ctx, prototype), vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
         thread.exec(ctx, closure)?;

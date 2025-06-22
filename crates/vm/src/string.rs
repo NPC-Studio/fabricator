@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, string::String as StdString};
+use std::{borrow::Borrow, ops::Deref, string::String as StdString};
 
 use gc_arena::{Collect, Gc, Mutation};
 
@@ -25,5 +25,13 @@ impl<'gc> AsRef<str> for String<'gc> {
 impl<'gc> Borrow<str> for String<'gc> {
     fn borrow(&self) -> &str {
         self.as_ref()
+    }
+}
+
+impl<'gc> Deref for String<'gc> {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
     }
 }

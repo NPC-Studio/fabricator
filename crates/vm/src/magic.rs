@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, hash_map},
+    fmt,
     string::String as StdString,
 };
 
@@ -50,6 +51,26 @@ pub struct DuplicateMagicName(StdString);
 pub struct MagicSet<'gc> {
     registered: Vec<Gc<'gc, dyn Magic<'gc>>>,
     names: HashMap<String<'gc>, usize>,
+}
+
+impl<'gc> fmt::Debug for MagicSet<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct MagicSetDebug<'a, 'gc>(&'a HashMap<String<'gc>, usize>);
+
+        impl<'a, 'gc> fmt::Debug for MagicSetDebug<'a, 'gc> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut m = f.debug_map();
+                for (name, index) in self.0 {
+                    m.entry(&index, &name.as_str());
+                }
+                m.finish()
+            }
+        }
+
+        f.debug_tuple("MagicSet")
+            .field(&MagicSetDebug(&self.names))
+            .finish()
+    }
 }
 
 impl<'gc> MagicSet<'gc> {

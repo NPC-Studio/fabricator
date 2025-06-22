@@ -17,10 +17,9 @@ use crate::{
         ssa_conversion::convert_to_ssa,
     },
     ir,
-    ir_gen::{IrGenError, IrGenSettings},
+    ir_gen::{IrGenError, IrGenSettings, MagicMode},
     lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
-    magic_dict::{MagicDict, MagicMode},
     parser::{ParseError, ParseSettings},
     proto_gen::gen_prototype,
     string_interner::VmInterner,
@@ -44,6 +43,7 @@ pub struct CompilerError {
     pub line_number: vm::LineNumber,
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct CompileSettings {
     pub parse: ParseSettings,
     pub ir_gen: IrGenSettings,
@@ -89,31 +89,6 @@ impl vm::ChunkData for SourceChunk {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct VmMagic<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
-
-impl<'gc> VmMagic<'gc> {
-    pub fn new(magic: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
-        Self(magic)
-    }
-}
-
-impl<'gc> MagicDict<vm::String<'gc>> for VmMagic<'gc> {
-    fn magic_mode(&self, ident: &vm::String<'gc>) -> Option<MagicMode> {
-        let index = self.0.find(ident.as_str())?;
-        let magic = self.0.get(index).unwrap();
-        Some(if magic.read_only() {
-            MagicMode::ReadOnly
-        } else {
-            MagicMode::ReadWrite
-        })
-    }
-
-    fn magic_index(&self, ident: &vm::String<'gc>) -> Option<usize> {
-        self.0.find(ident.as_str())
-    }
-}
-
 pub fn compile<'gc>(
     ctx: vm::Context<'gc>,
     settings: CompileSettings,
@@ -121,7 +96,6 @@ pub fn compile<'gc>(
     chunk_name: &str,
     src: &str,
 ) -> Result<vm::Prototype<'gc>, CompilerError> {
-    let stdlib = VmMagic::new(stdlib);
     let chunk = vm::Chunk::new_static(&ctx, SourceChunk::new(chunk_name, src));
 
     let mut tokens = Vec::new();
@@ -141,13 +115,23 @@ pub fn compile<'gc>(
         }
     })?;
 
-    let mut ir = settings.ir_gen.gen_ir(&parsed, stdlib).map_err(|e| {
-        let line_number = chunk.line_number(e.span.start());
-        CompilerError {
-            kind: CompilerErrorKind::IrGen(e),
-            line_number,
-        }
-    })?;
+    let mut ir = settings
+        .ir_gen
+        .gen_ir(&parsed, |m| {
+            let i = stdlib.find(m)?;
+            Some(if stdlib.get(i).unwrap().read_only() {
+                MagicMode::ReadOnly
+            } else {
+                MagicMode::ReadWrite
+            })
+        })
+        .map_err(|e| {
+            let line_number = chunk.line_number(e.span.start());
+            CompilerError {
+                kind: CompilerErrorKind::IrGen(e),
+                line_number,
+            }
+        })?;
 
     optimize_ir(&mut ir).expect("Internal Optimization Error");
 

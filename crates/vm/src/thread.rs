@@ -432,7 +432,6 @@ fn dispatch<'gc>(
             self.registers[dest as usize] = Closure::from_parts(
                 &self.ctx,
                 proto,
-                self.closure.magic(),
                 self.this,
                 Gc::new(&self.ctx, heap.into_boxed_slice()),
             )?
@@ -784,7 +783,8 @@ fn dispatch<'gc>(
         fn get_magic(&mut self, dest: RegIdx, magic: MagicIdx) -> Result<(), Self::Error> {
             let magic = self
                 .closure
-                .magic()
+                .prototype()
+                .magic
                 .get(magic as usize)
                 .ok_or(OpError::BadMagicIdx)?;
             self.registers[dest as usize] = magic.get(self.ctx)?;
@@ -795,7 +795,8 @@ fn dispatch<'gc>(
         fn set_magic(&mut self, magic: MagicIdx, source: RegIdx) -> Result<(), Self::Error> {
             let magic = self
                 .closure
-                .magic()
+                .prototype()
+                .magic
                 .get(magic as usize)
                 .ok_or(OpError::BadMagicIdx)?;
             magic.set(self.ctx, self.registers[source as usize])?;
