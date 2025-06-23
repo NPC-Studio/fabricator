@@ -11,4 +11,4 @@ pub mod parser;
 pub mod proto_gen;
 pub mod string_interner;
 
-pub use compiler::{CompileSettings, CompilerError, compile};
+pub use compiler::{CompileError, CompileSettings, Compiler, GlobalItems};

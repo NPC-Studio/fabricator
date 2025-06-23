@@ -1,17 +1,17 @@
-use std::{fs::File, io::Read, path::PathBuf, string::String as StdString};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
-    CompileSettings, CompilerError,
-    compiler::{CompilerErrorKind, SourceChunk, compile, optimize_ir},
+    CompileError, CompileSettings,
+    compiler::{CompileErrorKind, Compiler, GlobalItems, SourceChunk, optimize_ir},
     ir_gen::MagicMode,
     lexer::Lexer,
+    line_numbers::LineNumbers,
     proto_gen::gen_prototype,
     string_interner::VmInterner,
 };
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
-use gc_arena::Gc;
 
 #[derive(Parser)]
 struct Cli {
@@ -30,53 +30,51 @@ fn main() {
     let mut interpreter = vm::Interpreter::new();
     interpreter.enter(|ctx| match cli.command {
         Command::Run { path } => {
-            let mut code = StdString::new();
+            let mut code = String::new();
             File::open(&path)
                 .unwrap()
                 .read_to_string(&mut code)
                 .unwrap();
 
-            let prototype = compile(
+            let (prototype, _) = Compiler::compile_chunk(
                 ctx,
+                GlobalItems::from_magic(ctx.testing_stdlib()),
                 CompileSettings::full(),
-                ctx.testing_stdlib(),
-                path.to_string_lossy().as_ref(),
+                path.to_string_lossy().into_owned(),
                 &code,
             )
             .unwrap();
-            let closure =
-                vm::Closure::new(&ctx, Gc::new(&ctx, prototype), vm::Value::Undefined).unwrap();
+            let closure = vm::Closure::new(&ctx, prototype, vm::Value::Undefined).unwrap();
 
             let thread = vm::Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(ctx, closure).unwrap());
         }
         Command::Dump { path } => {
-            let mut code = StdString::new();
+            let mut code = String::new();
             File::open(&path)
                 .unwrap()
                 .read_to_string(&mut code)
                 .unwrap();
 
+            let chunk_name = vm::RefName::new(path.to_string_lossy().into_owned());
+
             let chunk = vm::Chunk::new_static(
                 &ctx,
-                SourceChunk::new(path.to_string_lossy().as_ref(), &code),
+                SourceChunk {
+                    name: chunk_name.clone(),
+                    line_numbers: LineNumbers::new(&code),
+                },
             );
 
-            let settings = if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("gml"))
-            {
-                CompileSettings::compat()
-            } else {
-                CompileSettings::full()
-            };
+            let settings = CompileSettings::from_path(&path);
 
             let mut tokens = Vec::new();
             Lexer::tokenize(VmInterner::new(ctx), &code, &mut tokens)
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
-                    CompilerError {
-                        kind: CompilerErrorKind::Lexing(e),
+                    CompileError {
+                        kind: CompileErrorKind::Lexing(e),
+                        chunk_name: chunk_name.clone(),
                         line_number,
                     }
                 })
@@ -87,8 +85,9 @@ fn main() {
                 .parse(tokens)
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
-                    CompilerError {
-                        kind: CompilerErrorKind::Parsing(e),
+                    CompileError {
+                        kind: CompileErrorKind::Parsing(e),
+                        chunk_name: chunk_name.clone(),
                         line_number,
                     }
                 })
@@ -106,8 +105,9 @@ fn main() {
                 })
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
-                    CompilerError {
-                        kind: CompilerErrorKind::IrGen(e),
+                    CompileError {
+                        kind: CompileErrorKind::IrGen(e),
+                        chunk_name: chunk_name.clone(),
                         line_number,
                     }
                 })

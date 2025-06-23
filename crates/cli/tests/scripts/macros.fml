@@ -1,0 +1,4 @@
+#macro TWO ONE + ONE
+#macro ONE 1
+
+assert(TWO == 2);

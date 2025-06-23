@@ -1,0 +1,1 @@
+#macro ONE 1;

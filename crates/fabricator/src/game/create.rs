@@ -174,21 +174,21 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
                 code.clear();
                 File::open(&script.path)?.read_to_string(&mut code)?;
                 let name = script.path.to_string_lossy();
-                let proto = compiler::compile(
+                let (proto, _) = compiler::Compiler::compile_chunk(
                     ctx,
+                    compiler::GlobalItems::from_magic(magic),
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Full => compiler::CompileSettings::full(),
                     },
-                    magic,
-                    name.as_ref(),
+                    name.into_owned(),
                     &code,
                 )?;
                 scripts
                     .object_events
                     .entry(object_dict[object_name])
                     .or_default()
-                    .insert(event, ScriptPrototype::new(ctx, Gc::new(&ctx, proto)));
+                    .insert(event, ScriptPrototype::new(ctx, proto));
             }
         }
 

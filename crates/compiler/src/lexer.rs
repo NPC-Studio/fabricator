@@ -2,11 +2,13 @@ use std::mem;
 
 use arrayvec::ArrayVec;
 use fabricator_vm::Span;
+use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::string_interner::StringInterner;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
 pub enum TokenKind<S> {
     EndOfStream,
     Newline,
@@ -335,7 +337,8 @@ impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
 
 impl<S: Eq> Eq for TokenKind<S> {}
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Collect)]
+#[collect(no_drop)]
 pub struct Token<S> {
     pub kind: TokenKind<S>,
     pub span: Span,

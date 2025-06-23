@@ -6,25 +6,23 @@ use std::{
 use fabricator_compiler as compiler;
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
-use gc_arena::Gc;
 
 fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
-        let prototype = compiler::compile(
+        let (prototype, _) = compiler::Compiler::compile_chunk(
             ctx,
+            compiler::GlobalItems::from_magic(ctx.testing_stdlib()),
             if compat {
                 compiler::CompileSettings::compat()
             } else {
                 compiler::CompileSettings::full()
             },
-            ctx.testing_stdlib(),
             name,
-            &code,
+            code,
         )?;
-        let closure =
-            vm::Closure::new(&ctx, Gc::new(&ctx, prototype), vm::Value::Undefined).unwrap();
+        let closure = vm::Closure::new(&ctx, prototype, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
         thread.exec(ctx, closure)?;

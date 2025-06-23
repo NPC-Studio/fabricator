@@ -1,13 +1,23 @@
 use std::{
     borrow::Borrow,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, hash_map},
     hash::Hash,
 };
 
+use fabricator_util::index_containers::{IndexMap, IndexSet};
 use fabricator_vm::Span;
+use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::lexer::{Token, TokenKind};
+
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct Macro<S> {
+    pub name: S,
+    pub tokens: Vec<Token<S>>,
+    pub span: Span,
+}
 
 #[derive(Debug, Error)]
 pub enum MacroErrorKind {
@@ -15,6 +25,8 @@ pub enum MacroErrorKind {
     TrailingMacro,
     #[error("bad or missing macro name, must be an identifier")]
     BadMacroName,
+    #[error("macro name is a duplicate of macro #{0}")]
+    DuplicateMacro(usize),
 }
 
 #[derive(Debug, Error)]
@@ -25,30 +37,57 @@ pub struct MacroError {
 }
 
 #[derive(Debug, Error)]
-#[error("macro {macro_name:?} depends on itself recursively")]
-pub struct RecursiveMacro<S> {
-    pub macro_name: S,
+#[error("macro #{0} depends on itself recursively")]
+pub struct RecursiveMacro(pub usize);
+
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct MacroSet<S> {
+    macros: Vec<Macro<S>>,
+    macro_dict: HashMap<S, usize>,
 }
 
-pub struct Macros<S> {
-    macros: HashMap<S, Vec<Token<S>>>,
-}
-
-impl<S> Default for Macros<S> {
+impl<S> Default for MacroSet<S> {
     fn default() -> Self {
         Self {
-            macros: HashMap::new(),
+            macros: Vec::new(),
+            macro_dict: HashMap::new(),
         }
     }
 }
 
-impl<S> Macros<S> {
-    pub fn macro_names(&self) -> impl Iterator<Item = &S> + '_ {
-        self.macros.keys()
+impl<S> MacroSet<S> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The current count of extracted macros.
+    ///
+    /// Each macro is assigned a sequential index for identification starting from zero. Checking
+    /// the current macro count can be used to determine which macros are extracted from which calls
+    /// to [`MacroBuilder::extract_macros`].
+    pub fn len(&self) -> usize {
+        self.macros.len()
+    }
+
+    /// Get an extracted macro.
+    pub fn get(&self, index: usize) -> Option<&Macro<S>> {
+        self.macros.get(index)
     }
 }
 
-impl<S: Eq + Hash> Macros<S> {
+impl<S: Eq + Hash> MacroSet<S> {
+    /// Find a macro index by macro name.
+    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    where
+        S: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.macro_dict.get(name).copied()
+    }
+}
+
+impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// Extract macros from the given token list and store them.
     ///
     /// This wiill extract all `#macro NAME <TOKENS>` directives from the token list. Macros must
@@ -57,7 +96,7 @@ impl<S: Eq + Hash> Macros<S> {
     /// including the trailing newline or eof.
     ///
     /// If an error is encountered, the provided token buffer will be in an unspecified state.
-    pub fn extract_macros(&mut self, tokens: &mut Vec<Token<S>>) -> Result<(), MacroError> {
+    pub fn extract(&mut self, tokens: &mut Vec<Token<S>>) -> Result<(), MacroError> {
         let mut token_iter = tokens.drain(..).peekable();
         let mut filtered_tokens = Vec::new();
         let mut prev_token_was_newline = true;
@@ -71,11 +110,15 @@ impl<S: Eq + Hash> Macros<S> {
                     });
                 }
 
+                let mut macro_span = token.span;
+
                 match token_iter.next() {
                     Some(Token {
                         kind: TokenKind::Identifier(macro_name),
-                        ..
+                        span: name_span,
                     }) => {
+                        macro_span = macro_span.combine(name_span);
+
                         let mut macro_tokens = Vec::new();
                         loop {
                             match token_iter.peek() {
@@ -84,14 +127,32 @@ impl<S: Eq + Hash> Macros<S> {
                                     {
                                         break;
                                     } else {
-                                        macro_tokens.push(token_iter.next().unwrap());
+                                        let token = token_iter.next().unwrap();
+                                        macro_span = macro_span.combine(token.span);
+                                        macro_tokens.push(token);
                                     }
                                 }
                                 None => break,
                             }
                         }
 
-                        self.macros.insert(macro_name, macro_tokens);
+                        match self.macro_dict.entry(macro_name.clone()) {
+                            hash_map::Entry::Occupied(occupied) => {
+                                return Err(MacroError {
+                                    kind: MacroErrorKind::DuplicateMacro(*occupied.get()),
+                                    span: macro_span,
+                                });
+                            }
+                            hash_map::Entry::Vacant(vacant) => {
+                                vacant.insert(self.macros.len());
+                            }
+                        }
+
+                        self.macros.push(Macro {
+                            name: macro_name,
+                            tokens: macro_tokens,
+                            span: macro_span,
+                        });
                     }
                     t => {
                         return Err(MacroError {
@@ -112,60 +173,80 @@ impl<S: Eq + Hash> Macros<S> {
         Ok(())
     }
 
-    pub fn find_macro<Q: ?Sized>(&self, name: &Q) -> Option<&[Token<S>]>
-    where
-        S: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        Some(self.macros.get(name)?.as_slice())
-    }
-}
+    /// Resolve all inter-macro dependencies.
+    ///
+    /// After a successful call here, macros are guaranteed to be fully recursively expanded. All
+    /// instances of `Token::Identifier` that reference another macro in the set will be replaced
+    /// with the fully expanded macro that the identifier references.
+    ///
+    /// Will return `Err` if any macro depends on itself recursively.
+    pub fn resolve_dependencies(&mut self) -> Result<(), RecursiveMacro> {
+        // Determine a proper macro evaluation order.
+        //
+        // Add all of the macro indexes we need to evaluate to a stack.
+        //
+        // Take the top entry off of the stack and check to see if it has any un-evaluated
+        // dependencies. If it does, then push the popped macro back onto the stack, followed
+        // by all of its un-evaluated dependencies. Otherwise if the macro has no un-evaluated
+        // dependencies, then it can be evaluated next.
+        //
+        // We also keep track of in-progress *evaluating* dependencies (un-evaluated dependencies
+        // that we have encountered before and pushed onto our stack but are not yet evaluated). If
+        // we encounter one of these dependencies more than once without it becoming evaluated, then
+        // we know we have a recursive macro.
 
-impl<S: Clone + Eq + Hash> Macros<S> {
-    pub fn resolve_dependencies(&mut self) -> Result<(), RecursiveMacro<S>> {
-        let mut dependent_stack = self.macros.keys().collect::<Vec<_>>();
-        let mut resolving_dependencies = HashSet::new();
-        let mut resolved_dependencies = HashSet::new();
-        let mut resolve_order = Vec::new();
+        let mut eval_stack = (0..self.macros.len()).collect::<Vec<_>>();
+        let mut evaluating_dependencies = IndexSet::new();
+        let mut evaluated_dependencies = IndexSet::new();
+        let mut eval_order = Vec::new();
 
         'outer: loop {
-            let Some(macro_name) = dependent_stack.pop() else {
+            let Some(macro_index) = eval_stack.pop() else {
                 break;
             };
 
-            if resolved_dependencies.contains(macro_name) {
+            if evaluated_dependencies.contains(macro_index) {
                 continue;
             }
 
-            for token in &self.macros[macro_name] {
+            let makro = &self.macros[macro_index];
+            for token in &makro.tokens {
                 if let TokenKind::Identifier(i) = &token.kind {
-                    if self.macros.contains_key(i) && !resolved_dependencies.contains(i) {
-                        if !resolving_dependencies.insert(macro_name) {
-                            return Err(RecursiveMacro {
-                                macro_name: macro_name.clone(),
-                            });
+                    if let Some(&ind) = self.macro_dict.get(i) {
+                        if !evaluated_dependencies.contains(ind) {
+                            if !evaluating_dependencies.insert(macro_index) {
+                                return Err(RecursiveMacro(macro_index));
+                            }
+                            eval_stack.push(macro_index);
+                            eval_stack.push(ind);
+                            continue 'outer;
                         }
-                        dependent_stack.push(macro_name);
-                        dependent_stack.push(i);
-                        continue 'outer;
                     }
                 }
             }
 
-            resolved_dependencies.insert(macro_name);
-            resolve_order.push(macro_name);
+            evaluated_dependencies.insert(macro_index);
+            eval_order.push(macro_index);
         }
 
-        resolve_order.reverse();
+        // Once we have a known-good evaluation order, we can evaluate our interdependent macros in
+        // this order and all references should be present.
 
-        let mut resolved_macros: HashMap<S, Vec<Token<S>>> = HashMap::new();
+        let mut resolved_macros = IndexMap::<Macro<S>>::new();
 
-        while let Some(macro_name) = resolve_order.pop() {
+        for macro_index in eval_order {
             let mut expanded_tokens = Vec::new();
-            for token in &self.macros[&macro_name] {
+            let makro = &self.macros[macro_index];
+            for token in &makro.tokens {
                 match &token.kind {
-                    TokenKind::Identifier(i) if self.macros.contains_key(i) => {
-                        expanded_tokens.extend_from_slice(&resolved_macros[i]);
+                    TokenKind::Identifier(i) if self.macro_dict.contains_key(i) => {
+                        let ind = self.macro_dict[i];
+                        expanded_tokens.extend_from_slice(
+                            &resolved_macros
+                                .get(ind)
+                                .expect("bad macro evaluation order")
+                                .tokens,
+                        );
                     }
                     _ => {
                         expanded_tokens.push(token.clone());
@@ -173,12 +254,41 @@ impl<S: Clone + Eq + Hash> Macros<S> {
                 }
             }
 
-            resolved_macros.insert(macro_name.clone(), expanded_tokens);
+            resolved_macros.insert(
+                macro_index,
+                Macro {
+                    name: makro.name.clone(),
+                    tokens: expanded_tokens,
+                    span: makro.span,
+                },
+            );
         }
 
-        self.macros = resolved_macros;
-
+        self.macros = (0..self.macros.len())
+            .map(|i| resolved_macros.remove(i).unwrap())
+            .collect();
         Ok(())
+    }
+
+    /// Expand all macros in the given token list.
+    pub fn expand(&mut self, tokens: &mut Vec<Token<S>>) {
+        let mut expanded_tokens = Vec::new();
+
+        for token in tokens.drain(..) {
+            let macro_index = if let TokenKind::Identifier(i) = &token.kind {
+                self.find(i)
+            } else {
+                None
+            };
+
+            if let Some(macro_index) = macro_index {
+                expanded_tokens.extend_from_slice(&self.macros[macro_index].tokens);
+            } else {
+                expanded_tokens.push(token);
+            }
+        }
+
+        *tokens = expanded_tokens;
     }
 }
 
@@ -210,14 +320,19 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
 
-        let mut macros = Macros::default();
+        let mut macros = MacroSet::new();
 
-        macros.extract_macros(&mut tokens).unwrap();
+        macros.extract(&mut tokens).unwrap();
         macros.resolve_dependencies().unwrap();
 
-        let four = macros.find_macro("FOUR").unwrap();
         assert_eq!(
-            four.iter().map(|t| t.kind.clone()).collect::<Vec<_>>(),
+            macros
+                .get(macros.find("FOUR").unwrap())
+                .unwrap()
+                .tokens
+                .iter()
+                .map(|t| t.kind.clone())
+                .collect::<Vec<_>>(),
             [
                 TokenKind::<String>::Integer(1),
                 TokenKind::<String>::Plus,
@@ -240,9 +355,9 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
 
-        let mut macros = Macros::default();
+        let mut macros = MacroSet::default();
 
-        macros.extract_macros(&mut tokens).unwrap();
+        macros.extract(&mut tokens).unwrap();
         assert!(macros.resolve_dependencies().is_err());
     }
 }

@@ -87,7 +87,7 @@ impl fmt::Display for LineNumber {
 /// A static, shared string for named references.
 ///
 /// Static so that it can be stored within error types.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RefName(Arc<StdString>);
 
 impl fmt::Display for RefName {
