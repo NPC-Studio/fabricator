@@ -18,6 +18,7 @@ use crate::{
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
     },
+    enums::{BadEnumVariant, EnumError, EnumSet},
     ir,
     ir_gen::{IrGenError, IrGenSettings, MagicMode},
     lexer::{LexError, Lexer, Token},
@@ -36,6 +37,10 @@ pub enum CompileErrorKind {
     Macro(#[source] MacroError),
     #[error("recursive macro: {0}")]
     RecursiveMacro(#[source] RecursiveMacro),
+    #[error("enum error: {0}")]
+    Enum(#[source] EnumError),
+    #[error("enum error: {0}")]
+    BadEnumVariant(#[source] BadEnumVariant),
     #[error("parse error: {0}")]
     Parsing(#[source] ParseError),
     #[error("IR gen error: {0}")]
@@ -285,7 +290,7 @@ impl<'gc> Compiler<'gc> {
             });
         }
 
-        let mut prototypes = Vec::new();
+        let mut parsed_chunks = Vec::new();
 
         for chunk in chunks {
             let Chunk {
@@ -304,7 +309,7 @@ impl<'gc> Compiler<'gc> {
                 },
             );
 
-            let parsed = compile_settings.parse.parse(tokens).map_err(|e| {
+            let block = compile_settings.parse.parse(tokens).map_err(|e| {
                 let line_number = chunk.line_number(e.span.start());
                 CompileError {
                     kind: CompileErrorKind::Parsing(e),
@@ -313,9 +318,37 @@ impl<'gc> Compiler<'gc> {
                 }
             })?;
 
+            parsed_chunks.push((chunk, block, compile_settings));
+        }
+
+        let mut enums = EnumSet::new();
+
+        for (chunk, block, _) in &mut parsed_chunks {
+            if let Err(err) = enums.extract(block) {
+                let line_number = chunk.line_number(err.span.start());
+                return Err(CompileError {
+                    kind: CompileErrorKind::Enum(err),
+                    chunk_name: chunk.name().clone(),
+                    line_number,
+                });
+            }
+        }
+
+        let mut prototypes = Vec::new();
+
+        for (chunk, mut block, compile_settings) in parsed_chunks {
+            if let Err(err) = enums.expand_block(&mut block) {
+                let line_number = chunk.line_number(err.span.start());
+                return Err(CompileError {
+                    kind: CompileErrorKind::BadEnumVariant(err),
+                    chunk_name: chunk.name().clone(),
+                    line_number,
+                });
+            }
+
             let mut ir = compile_settings
                 .ir_gen
-                .gen_ir(&parsed, |m| {
+                .gen_ir(&block, |m| {
                     let i = magic.find(m)?;
                     Some(if magic.get(i).unwrap().read_only() {
                         MagicMode::ReadOnly
@@ -327,7 +360,7 @@ impl<'gc> Compiler<'gc> {
                     let line_number = chunk.line_number(e.span.start());
                     CompileError {
                         kind: CompileErrorKind::IrGen(e),
-                        chunk_name: name.clone(),
+                        chunk_name: chunk.name().clone(),
                         line_number,
                     }
                 })?;

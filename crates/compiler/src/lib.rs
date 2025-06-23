@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod compiler;
 pub mod constant;
+pub mod enums;
 pub mod graph;
 pub mod ir;
 pub mod ir_gen;

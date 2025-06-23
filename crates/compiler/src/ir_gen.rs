@@ -26,6 +26,8 @@ pub enum MagicMode {
 
 #[derive(Debug, Error)]
 pub enum IrGenErrorKind {
+    #[error("enum statements are only allowed at the top-level")]
+    MisplacedEnum,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("too many parameters")]
@@ -171,6 +173,12 @@ where
 
     fn statement(&mut self, statement: &parser::Statement<S>) -> Result<(), IrGenError> {
         match &*statement.kind {
+            parser::StatementKind::Enum(_) => {
+                return Err(IrGenError {
+                    kind: IrGenErrorKind::MisplacedEnum,
+                    span: statement.span,
+                });
+            }
             parser::StatementKind::Var(var_statement) => {
                 self.var_statement(statement.span, var_statement)
             }
@@ -464,21 +472,8 @@ where
     ) -> Result<ir::InstId, IrGenError> {
         let span = expr.span;
         Ok(match &*expr.kind {
-            parser::ExpressionKind::Undefined => {
-                self.push_instruction(span, ir::Instruction::Constant(Constant::Undefined))
-            }
-            parser::ExpressionKind::Boolean(b) => {
-                self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(*b)))
-            }
-            parser::ExpressionKind::Float(f) => {
-                self.push_instruction(span, ir::Instruction::Constant(Constant::Float(*f)))
-            }
-            parser::ExpressionKind::Integer(i) => self.push_instruction(
-                span,
-                ir::Instruction::Constant(Constant::Integer(*i as i128)),
-            ),
-            parser::ExpressionKind::String(s) => {
-                self.push_instruction(span, ir::Instruction::Constant(Constant::String(s.clone())))
+            parser::ExpressionKind::Constant(c) => {
+                self.push_instruction(span, ir::Instruction::Constant(c.clone()))
             }
             parser::ExpressionKind::Name(s) => {
                 if let Some(var) = self.get_var(s) {

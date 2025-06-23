@@ -1,0 +1,6 @@
+enum Test {
+  One = 1,
+  Two = 2,
+}
+
+assert(Test.One == 1);
