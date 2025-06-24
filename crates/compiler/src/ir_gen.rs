@@ -514,7 +514,7 @@ where
                         span,
                         ir::Instruction::SetIndexConst {
                             array,
-                            index: Constant::Integer(i as i128),
+                            index: Constant::Integer(i as i64),
                             value,
                         },
                     );

@@ -686,13 +686,7 @@ fn codegen_function<'gc>(
         .map(|c| match c {
             Constant::Undefined => vm::Constant::Undefined,
             Constant::Boolean(b) => vm::Constant::Boolean(b),
-            Constant::Integer(i) => {
-                if let Ok(i) = i.try_into() {
-                    vm::Constant::Integer(i)
-                } else {
-                    vm::Constant::Float(i as f64)
-                }
-            }
+            Constant::Integer(i) => vm::Constant::Integer(i),
             Constant::Float(f) => vm::Constant::Float(f),
             Constant::String(s) => vm::Constant::String(s),
         })

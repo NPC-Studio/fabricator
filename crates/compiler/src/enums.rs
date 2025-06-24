@@ -1,6 +1,5 @@
 use std::{borrow::Borrow, collections::HashMap, hash::Hash, ops::ControlFlow};
 
-use fabricator_util::index_containers::IndexSet;
 use fabricator_vm::Span;
 use gc_arena::Collect;
 use thiserror::Error;
@@ -95,8 +94,12 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             });
 
         for stmt in enums {
-            let mut implicit_variants = Vec::new();
-            let mut explicit_variants = Vec::new();
+            let mut enom = Enum {
+                name: stmt.name,
+                variants: HashMap::new(),
+            };
+
+            let mut implicit_index = 0;
             for (name, value) in stmt.variants {
                 if let Some(expr) = value {
                     let span = expr.span;
@@ -104,36 +107,12 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
                     })?;
-                    explicit_variants.push((name, value));
+                    enom.variants.insert(name, value);
                 } else {
-                    implicit_variants.push(name);
+                    enom.variants
+                        .insert(name, Constant::Integer(implicit_index));
+                    implicit_index += 1;
                 };
-            }
-
-            let mut enom = Enum {
-                name: stmt.name,
-                variants: HashMap::new(),
-            };
-
-            let mut used_indexes = IndexSet::new();
-            for (name, value) in explicit_variants {
-                if let Constant::Integer(i) = value {
-                    if let Ok(i) = i.try_into() {
-                        used_indexes.insert(i);
-                    }
-                }
-                enom.variants.insert(name, value);
-            }
-
-            let mut auto_index = 0;
-            for name in implicit_variants {
-                while used_indexes.contains(auto_index) {
-                    auto_index += 1;
-                }
-                used_indexes.insert(auto_index);
-
-                enom.variants
-                    .insert(name, Constant::Integer(auto_index as i128));
             }
 
             self.enum_dict.insert(enom.name.clone(), self.enums.len());

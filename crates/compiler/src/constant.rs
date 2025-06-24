@@ -7,7 +7,7 @@ use gc_arena::Collect;
 pub enum Constant<S> {
     Undefined,
     Boolean(bool),
-    Integer(#[collect(require_static)] i128),
+    Integer(i64),
     Float(f64),
     String(S),
 }
@@ -68,11 +68,7 @@ impl<S> Constant<S> {
     #[inline]
     pub fn negate(&self) -> Option<Constant<S>> {
         match *self {
-            Constant::Integer(i) => Some(if let Some(i) = i.checked_neg() {
-                Constant::Integer(i)
-            } else {
-                Constant::Float(-(i as f64))
-            }),
+            Constant::Integer(i) => Some(Constant::Integer(i.wrapping_neg())),
             Constant::Float(f) => Some(Constant::Float(-f)),
             _ => None,
         }

@@ -79,7 +79,7 @@ pub enum TokenKind<S> {
 
     This,
 
-    Integer(u64),
+    Integer(i64),
     Float(f64),
     Identifier(S),
     String(S),
@@ -898,11 +898,11 @@ fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-fn read_dec_integer(s: &str) -> Option<u64> {
-    u64::from_str_radix(s, 10).ok()
+fn read_dec_integer(s: &str) -> Option<i64> {
+    i64::from_str_radix(s, 10).ok()
 }
 
-fn read_hex_integer(s: &str) -> Option<u64> {
+fn read_hex_integer(s: &str) -> Option<i64> {
     let mut chars = s.chars();
     let c0 = chars.next()?;
     let c1 = chars.next()?;
@@ -911,7 +911,7 @@ fn read_hex_integer(s: &str) -> Option<u64> {
         return None;
     }
 
-    u64::from_str_radix(chars.as_str(), 16).ok()
+    i64::from_str_radix(chars.as_str(), 16).ok()
 }
 
 pub fn read_dec_float(s: &str) -> Option<f64> {

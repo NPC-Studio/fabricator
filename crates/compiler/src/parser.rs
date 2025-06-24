@@ -779,7 +779,7 @@ where
             &TokenKind::Integer(i) => {
                 self.advance(1);
                 Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Integer(i as i128))),
+                    kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
                     span,
                 })
             }
