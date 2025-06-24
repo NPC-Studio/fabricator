@@ -296,17 +296,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 mod tests {
     use super::*;
 
-    use crate::{lexer::Lexer, string_interner::StringInterner};
-
-    struct SimpleInterner;
-
-    impl StringInterner for SimpleInterner {
-        type String = String;
-
-        fn intern(&mut self, s: &str) -> Self::String {
-            s.to_owned()
-        }
-    }
+    use crate::{lexer::Lexer, string_interner::StdStringInterner};
 
     #[test]
     fn test_macro_dependencies() {
@@ -318,7 +308,7 @@ mod tests {
         "#;
 
         let mut tokens = Vec::new();
-        Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
+        Lexer::tokenize(StdStringInterner, SOURCE, &mut tokens).unwrap();
 
         let mut macros = MacroSet::new();
 
@@ -334,13 +324,13 @@ mod tests {
                 .map(|t| t.kind.clone())
                 .collect::<Vec<_>>(),
             [
-                TokenKind::<String>::Integer(1),
-                TokenKind::<String>::Plus,
-                TokenKind::<String>::Integer(1),
-                TokenKind::<String>::Plus,
-                TokenKind::<String>::Integer(1),
-                TokenKind::<String>::Plus,
-                TokenKind::<String>::Integer(1),
+                TokenKind::Integer("1"),
+                TokenKind::Plus,
+                TokenKind::Integer("1"),
+                TokenKind::Plus,
+                TokenKind::Integer("1"),
+                TokenKind::Plus,
+                TokenKind::Integer("1"),
             ]
         )
     }
@@ -353,7 +343,7 @@ mod tests {
         "#;
 
         let mut tokens = Vec::new();
-        Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
+        Lexer::tokenize(StdStringInterner, SOURCE, &mut tokens).unwrap();
 
         let mut macros = MacroSet::default();
 

@@ -79,8 +79,9 @@ pub enum TokenKind<S> {
 
     This,
 
-    Integer(i64),
-    Float(f64),
+    Integer(S),
+    HexInteger(S),
+    Float(S),
     Identifier(S),
     String(S),
 }
@@ -143,8 +144,9 @@ impl<S> TokenKind<S> {
             TokenKind::True => TokenKind::True,
             TokenKind::False => TokenKind::False,
             TokenKind::This => TokenKind::This,
-            TokenKind::Integer(i) => TokenKind::Integer(*i),
-            TokenKind::Float(f) => TokenKind::Float(*f),
+            TokenKind::Integer(i) => TokenKind::Integer(i),
+            TokenKind::HexInteger(i) => TokenKind::HexInteger(i),
+            TokenKind::Float(f) => TokenKind::Float(f),
             TokenKind::Identifier(i) => TokenKind::Identifier(i),
             TokenKind::String(s) => TokenKind::String(s),
         }
@@ -207,8 +209,9 @@ impl<S> TokenKind<S> {
             TokenKind::True => TokenKind::True,
             TokenKind::False => TokenKind::False,
             TokenKind::This => TokenKind::This,
-            TokenKind::Integer(i) => TokenKind::Integer(i),
-            TokenKind::Float(f) => TokenKind::Float(f),
+            TokenKind::Integer(i) => TokenKind::Integer(map(i)),
+            TokenKind::HexInteger(i) => TokenKind::HexInteger(map(i)),
+            TokenKind::Float(f) => TokenKind::Float(map(f)),
             TokenKind::Identifier(i) => TokenKind::Identifier(map(i)),
             TokenKind::String(s) => TokenKind::String(map(s)),
         }
@@ -330,7 +333,9 @@ impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
             (TokenKind::This, _) => false,
             (TokenKind::Integer(a), TokenKind::Integer(b)) => a == b,
             (TokenKind::Integer(_), _) => false,
-            (TokenKind::Float(a), TokenKind::Float(b)) => a.to_bits() == b.to_bits(),
+            (TokenKind::HexInteger(a), TokenKind::HexInteger(b)) => a == b,
+            (TokenKind::HexInteger(_), _) => false,
+            (TokenKind::Float(a), TokenKind::Float(b)) => a == b,
             (TokenKind::Float(_), _) => false,
             (TokenKind::Identifier(a), TokenKind::Identifier(b)) => a == b,
             (TokenKind::Identifier(_), _) => false,
@@ -359,8 +364,6 @@ pub enum LexErrorKind {
     UnexpectedCharacter(char),
     #[error("no such # directive \"#{0}\"")]
     BadDirective(String),
-    #[error("malformed number")]
-    BadNumber,
 }
 
 #[derive(Debug, Error)]
@@ -655,7 +658,7 @@ where
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }
-            (Some(c), _) if c.is_ascii_digit() => self.read_numeral()?,
+            (Some(c), _) if c.is_ascii_digit() => self.read_numeral(),
             (Some(c), _) => {
                 return Err(LexError {
                     kind: LexErrorKind::UnexpectedCharacter(c),
@@ -762,12 +765,10 @@ where
         Ok(())
     }
 
-    /// Reads a hex or decimal integer or floating point number. Allows decimal integers (123), hex
-    /// integers (0xdeadbeef), and decimal floating point with optional exponent and exponent sign
-    /// (3.21e+1).
-    fn read_numeral(&mut self) -> Result<TokenKind<S::String>, LexError> {
-        let start_position = self.position;
-
+    // Reads a hex or decimal integer or floating point number. Allows decimal integers (123),
+    // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
+    // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
+    fn read_numeral(&mut self) -> TokenKind<S::String> {
         let p1 = self.peek(0).unwrap();
         assert!(p1.is_ascii_digit());
 
@@ -776,8 +777,8 @@ where
         self.advance(1);
 
         let mut is_hex = false;
-        match (p1, self.peek(1)) {
-            ('0', Some(p2)) if p2 == 'x' || p2 == 'X' => {
+        match (p1, self.peek(0)) {
+            ('0', Some(p2)) if p2.eq_ignore_ascii_case(&'x') => {
                 is_hex = true;
                 self.string_buffer.push(p2);
                 self.advance(1);
@@ -787,11 +788,14 @@ where
 
         let mut has_radix = false;
         while let Some(c) = self.peek(0) {
-            if c == '.' && !has_radix {
+            if !is_hex && c == '.' && !has_radix {
                 self.string_buffer.push('.');
                 has_radix = true;
                 self.advance(1);
-            } else if (!is_hex && c.is_ascii_digit()) || (is_hex && c.is_ascii_hexdigit()) {
+            } else if c == '_'
+                || (!is_hex && c.is_ascii_digit())
+                || (is_hex && c.is_ascii_hexdigit())
+            {
                 self.string_buffer.push(c);
                 self.advance(1);
             } else {
@@ -802,7 +806,9 @@ where
         let mut has_exp = false;
         if !is_hex {
             if let Some(exp_begin) = self.peek(0) {
-                if exp_begin == 'e' || exp_begin == 'E' {
+                if (is_hex && exp_begin.eq_ignore_ascii_case(&'p'))
+                    || (!is_hex && exp_begin.eq_ignore_ascii_case(&'e'))
+                {
                     self.string_buffer.push(exp_begin);
                     has_exp = true;
                     self.advance(1);
@@ -826,33 +832,17 @@ where
             }
         }
 
-        let span = Span::new(start_position, self.position);
-
+        dbg!(&self.string_buffer);
+        let s = self.interner.intern(&self.string_buffer);
         if !has_exp && !has_radix {
-            if let Some(i) = if is_hex {
-                read_hex_integer(&self.string_buffer)
+            if is_hex {
+                TokenKind::HexInteger(s)
             } else {
-                read_dec_integer(&self.string_buffer)
-            } {
-                return Ok(TokenKind::Integer(i));
+                TokenKind::Integer(s)
             }
-
-            // Fall back to parsing as a float if parsing as an integer fails...
-        }
-
-        if is_hex {
-            // Hex floats are not supported
-            Err(LexError {
-                kind: LexErrorKind::BadNumber,
-                span,
-            })
         } else {
-            Ok(TokenKind::Float(
-                read_dec_float(&self.string_buffer).ok_or(LexError {
-                    kind: LexErrorKind::BadNumber,
-                    span,
-                })?,
-            ))
+            assert!(!is_hex);
+            TokenKind::Float(s)
         }
     }
 
@@ -898,26 +888,6 @@ fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-fn read_dec_integer(s: &str) -> Option<i64> {
-    i64::from_str_radix(s, 10).ok()
-}
-
-fn read_hex_integer(s: &str) -> Option<i64> {
-    let mut chars = s.chars();
-    let c0 = chars.next()?;
-    let c1 = chars.next()?;
-
-    if c0 != '0' || (c1 != 'x' && c1 != 'X') || s.is_empty() {
-        return None;
-    }
-
-    i64::from_str_radix(chars.as_str(), 16).ok()
-}
-
-pub fn read_dec_float(s: &str) -> Option<f64> {
-    str::parse(s).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -960,36 +930,49 @@ mod tests {
                 */
                 sum += i;
             }
+
+            var hex = 0xdeadbeef;
+            var flt = 3.21e+1;
         "#;
 
         assert_eq!(
             lex(SOURCE).unwrap(),
             vec![
                 TokenKind::Var,
-                TokenKind::Identifier("sum".to_owned()),
+                TokenKind::Identifier("sum"),
                 TokenKind::Equal,
-                TokenKind::Integer(0),
+                TokenKind::Integer("0"),
                 TokenKind::SemiColon,
                 TokenKind::For,
                 TokenKind::LeftParen,
                 TokenKind::Var,
-                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Identifier("i"),
                 TokenKind::Equal,
-                TokenKind::Integer(0),
+                TokenKind::Integer("0"),
                 TokenKind::SemiColon,
-                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Identifier("i"),
                 TokenKind::Less,
-                TokenKind::Integer(1000000),
+                TokenKind::Integer("1000000"),
                 TokenKind::SemiColon,
                 TokenKind::DoublePlus,
-                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Identifier("i"),
                 TokenKind::RightParen,
                 TokenKind::LeftBrace,
-                TokenKind::Identifier("sum".to_owned()),
+                TokenKind::Identifier("sum"),
                 TokenKind::PlusEqual,
-                TokenKind::Identifier("i".to_owned()),
+                TokenKind::Identifier("i"),
                 TokenKind::SemiColon,
                 TokenKind::RightBrace,
+                TokenKind::Var,
+                TokenKind::Identifier("hex"),
+                TokenKind::Equal,
+                TokenKind::HexInteger("0xdeadbeef"),
+                TokenKind::SemiColon,
+                TokenKind::Var,
+                TokenKind::Identifier("flt"),
+                TokenKind::Equal,
+                TokenKind::Float("3.21e+1"),
+                TokenKind::SemiColon,
             ]
         );
     }

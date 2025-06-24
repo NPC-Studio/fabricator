@@ -280,10 +280,20 @@ pub enum AssignmentOp {
 }
 
 #[derive(Debug, Error)]
-#[error("found {unexpected:?}, expected {expected:?}")]
+pub enum ParseErrorKind {
+    #[error("found {unexpected:?}, expected {expected:?}")]
+    Unexpected {
+        unexpected: &'static str,
+        expected: &'static str,
+    },
+    #[error("invalid numeric literal")]
+    BadNumber,
+}
+
+#[derive(Debug, Error)]
+#[error("{kind}")]
 pub struct ParseError {
-    pub unexpected: &'static str,
-    pub expected: &'static str,
+    pub kind: ParseErrorKind,
     pub span: Span,
 }
 
@@ -306,6 +316,7 @@ impl ParseSettings {
     pub fn parse<I, S>(self, token_iter: I) -> Result<Block<S>, ParseError>
     where
         I: IntoIterator<Item = Token<S>>,
+        S: AsRef<str>,
     {
         Parser::new(self, token_iter.into_iter()).parse()
     }
@@ -321,6 +332,7 @@ struct Parser<I, S> {
 impl<I, S> Parser<I, S>
 where
     I: Iterator<Item = Token<S>>,
+    S: AsRef<str>,
 {
     fn new(settings: ParseSettings, token_iter: I) -> Self {
         Parser {
@@ -339,8 +351,10 @@ where
         match &last.kind {
             TokenKind::EndOfStream => Ok(block),
             _ => Err(ParseError {
-                unexpected: token_indicator(&last.kind),
-                expected: "<statement>",
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: token_indicator(&last.kind),
+                    expected: "<statement>",
+                },
                 span: last.span,
             }),
         }
@@ -487,13 +501,19 @@ where
             _ => {
                 let expr = match self.parse_suffixed_expression() {
                     Ok(expr) => expr,
-                    Err(err) => {
+                    Err(ParseError {
+                        kind: ParseErrorKind::Unexpected { unexpected, .. },
+                        span,
+                    }) => {
                         return Err(ParseError {
-                            unexpected: err.unexpected,
-                            expected: "<statement>",
-                            span: err.span,
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected,
+                                expected: "<statement>",
+                            },
+                            span,
                         });
                     }
+                    Err(err) => return Err(err),
                 };
 
                 span = expr.span;
@@ -514,8 +534,10 @@ where
                         let Some(assignment_op) = get_assignment_operator(&self.peek(0).kind)
                         else {
                             return Err(ParseError {
-                                unexpected: "<non-statement expression>",
-                                expected: "<statement>",
+                                kind: ParseErrorKind::Unexpected {
+                                    unexpected: "<non-statement expression>",
+                                    expected: "<statement>",
+                                },
                                 span,
                             });
                         };
@@ -532,8 +554,10 @@ where
                     }
                     _ => {
                         return Err(ParseError {
-                            unexpected: "<non-statement expression>",
-                            expected: "<statement>",
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: "<non-statement expression>",
+                                expected: "<statement>",
+                            },
                             span,
                         });
                     }
@@ -583,8 +607,10 @@ where
                 }
                 _ => {
                     return Err(ParseError {
-                        unexpected: token_indicator(&next.kind),
-                        expected: "',' or '}'",
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(&next.kind),
+                            expected: "',' or '}'",
+                        },
                         span: next.span,
                     });
                 }
@@ -671,8 +697,10 @@ where
                             }
                             _ => {
                                 return Err(ParseError {
-                                    unexpected: token_indicator(&next.kind),
-                                    expected: "',' or ')'",
+                                    kind: ParseErrorKind::Unexpected {
+                                        unexpected: token_indicator(&next.kind),
+                                        expected: "',' or ')'",
+                                    },
                                     span: next.span,
                                 });
                             }
@@ -730,8 +758,10 @@ where
                 span,
             }),
             token => Err(ParseError {
-                unexpected: token_indicator(&token),
-                expected: "<grouped expression or name>",
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: token_indicator(&token),
+                    expected: "<grouped expression or name>",
+                },
                 span,
             }),
         }
@@ -769,19 +799,62 @@ where
                     span,
                 })
             }
-            &TokenKind::Float(f) => {
-                self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Float(f))),
-                    span,
-                })
+            TokenKind::Integer(_) => {
+                let Token {
+                    kind: TokenKind::Integer(i),
+                    ..
+                } = self.next()
+                else {
+                    unreachable!()
+                };
+                match read_dec_integer(i.as_ref()) {
+                    Some(i) => Ok(Expression {
+                        kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
+                        span,
+                    }),
+                    None => Err(ParseError {
+                        kind: ParseErrorKind::BadNumber,
+                        span,
+                    }),
+                }
             }
-            &TokenKind::Integer(i) => {
-                self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
-                    span,
-                })
+            TokenKind::HexInteger(_) => {
+                let Token {
+                    kind: TokenKind::HexInteger(i),
+                    ..
+                } = self.next()
+                else {
+                    unreachable!()
+                };
+                match read_hex_integer(i.as_ref()) {
+                    Some(i) => Ok(Expression {
+                        kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
+                        span,
+                    }),
+                    None => Err(ParseError {
+                        kind: ParseErrorKind::BadNumber,
+                        span,
+                    }),
+                }
+            }
+            TokenKind::Float(_) => {
+                let Token {
+                    kind: TokenKind::Float(f),
+                    ..
+                } = self.next()
+                else {
+                    unreachable!()
+                };
+                match read_dec_float(f.as_ref()) {
+                    Some(f) => Ok(Expression {
+                        kind: Box::new(ExpressionKind::Constant(Constant::Float(f))),
+                        span,
+                    }),
+                    None => Err(ParseError {
+                        kind: ParseErrorKind::BadNumber,
+                        span,
+                    }),
+                }
             }
             TokenKind::String(_) => {
                 let Token {
@@ -821,8 +894,10 @@ where
                         }
                         _ => {
                             return Err(ParseError {
-                                unexpected: token_indicator(&next.kind),
-                                expected: "',' or ')'",
+                                kind: ParseErrorKind::Unexpected {
+                                    unexpected: token_indicator(&next.kind),
+                                    expected: "',' or ')'",
+                                },
                                 span: next.span,
                             });
                         }
@@ -884,8 +959,10 @@ where
                 }
                 _ => {
                     return Err(ParseError {
-                        unexpected: token_indicator(&next.kind),
-                        expected: "',' or '}'",
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(&next.kind),
+                            expected: "',' or '}'",
+                        },
                         span: next.span,
                     });
                 }
@@ -919,8 +996,10 @@ where
                 }
                 _ => {
                     return Err(ParseError {
-                        unexpected: token_indicator(&next.kind),
-                        expected: "',' or ']'",
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(&next.kind),
+                            expected: "',' or ']'",
+                        },
                         span,
                     });
                 }
@@ -937,8 +1016,10 @@ where
         match kind {
             TokenKind::Identifier(ident) => Ok((ident, span)),
             t => Err(ParseError {
-                unexpected: token_indicator(&t),
-                expected: "<identifier>",
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: token_indicator(&t),
+                    expected: "<identifier>",
+                },
                 span,
             }),
         }
@@ -951,8 +1032,10 @@ where
             Ok(span)
         } else {
             Err(ParseError {
-                unexpected: token_indicator(&kind),
-                expected: token_indicator(&expected),
+                kind: ParseErrorKind::Unexpected {
+                    unexpected: token_indicator(&kind),
+                    expected: token_indicator(&expected),
+                },
                 span,
             })
         }
@@ -1109,6 +1192,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::False => "false",
         TokenKind::This => "self",
         TokenKind::Integer(_) => "<integer>",
+        TokenKind::HexInteger(_) => "<hex_integer>",
         TokenKind::Float(_) => "<float>",
         TokenKind::Identifier(_) => "<identifier>",
         TokenKind::String(_) => "<string>",
@@ -1143,6 +1227,30 @@ fn binary_priority(operator: BinaryOp) -> (OperatorPriority, OperatorPriority) {
         BinaryOp::And => (2, 2),
         BinaryOp::Or => (1, 1),
     }
+}
+
+fn read_dec_integer(s: &str) -> Option<i64> {
+    let s = s.replace('_', "");
+    i64::from_str_radix(&s, 10).ok()
+}
+
+fn read_hex_integer(s: &str) -> Option<i64> {
+    let s = s.replace('_', "");
+
+    let mut chars = s.chars();
+    let c0 = chars.next()?;
+    let c1 = chars.next()?;
+
+    if c0 != '0' || (c1 != 'x' && c1 != 'X') || chars.as_str().is_empty() {
+        return None;
+    }
+
+    i64::from_str_radix(chars.as_str(), 16).ok()
+}
+
+pub fn read_dec_float(s: &str) -> Option<f64> {
+    let s = s.replace('_', "");
+    str::parse(&s).ok()
 }
 
 #[cfg(test)]
@@ -1189,6 +1297,8 @@ mod tests {
                 a: 1,
                 b: 2,
             };
+
+            var i = 1_234;
         "#;
 
         parse(SOURCE).unwrap();

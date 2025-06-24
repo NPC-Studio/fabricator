@@ -21,3 +21,14 @@ impl<'gc> StringInterner for VmInterner<'gc> {
         self.0.intern(s)
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct StdStringInterner;
+
+impl StringInterner for StdStringInterner {
+    type String = String;
+
+    fn intern(&mut self, s: &str) -> Self::String {
+        s.to_owned()
+    }
+}
