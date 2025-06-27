@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod ast;
 pub mod compiler;
 pub mod constant;
 pub mod enums;
@@ -11,5 +12,6 @@ pub mod macros;
 pub mod parser;
 pub mod proto_gen;
 pub mod string_interner;
+pub mod tokens;
 
 pub use compiler::{CompileError, CompileSettings, Compiler, GlobalItems};

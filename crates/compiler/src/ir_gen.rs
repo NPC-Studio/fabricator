@@ -7,11 +7,7 @@ use std::{
 use fabricator_vm::{FunctionRef, Span};
 use thiserror::Error;
 
-use crate::{
-    constant::Constant,
-    ir,
-    parser::{self, AssignmentTarget},
-};
+use crate::{ast, constant::Constant, ir};
 
 /// Descriptor for magic values available to the IR generator.
 ///
@@ -28,6 +24,8 @@ pub enum MagicMode {
 pub enum IrGenErrorKind {
     #[error("enum statements are only allowed at the top-level")]
     MisplacedEnum,
+    #[error("function statements are only allowed at the top-level")]
+    MisplacedFunctionStmt,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("too many parameters")]
@@ -84,7 +82,7 @@ impl IrGenSettings {
 
     pub fn gen_ir<S>(
         self,
-        block: &parser::Block<S>,
+        block: &ast::Block<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
@@ -158,7 +156,7 @@ where
         }
     }
 
-    fn block(&mut self, block: &parser::Block<S>) -> Result<(), IrGenError> {
+    fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
         {
             self.push_scope();
 
@@ -171,25 +169,31 @@ where
         Ok(())
     }
 
-    fn statement(&mut self, statement: &parser::Statement<S>) -> Result<(), IrGenError> {
+    fn statement(&mut self, statement: &ast::Statement<S>) -> Result<(), IrGenError> {
         match &*statement.kind {
-            parser::StatementKind::Enum(_) => {
+            ast::StatementKind::Enum(_) => {
                 return Err(IrGenError {
                     kind: IrGenErrorKind::MisplacedEnum,
                     span: statement.span,
                 });
             }
-            parser::StatementKind::Var(var_statement) => {
+            ast::StatementKind::Function(_) => {
+                return Err(IrGenError {
+                    kind: IrGenErrorKind::MisplacedFunctionStmt,
+                    span: statement.span,
+                });
+            }
+            ast::StatementKind::Var(var_statement) => {
                 self.var_statement(statement.span, var_statement)
             }
-            parser::StatementKind::Assignment(assignment_statement) => {
+            ast::StatementKind::Assignment(assignment_statement) => {
                 self.assignment_statement(statement.span, assignment_statement)
             }
-            parser::StatementKind::Return(return_) => self.return_statement(return_),
-            parser::StatementKind::If(if_statement) => self.if_statement(if_statement),
-            parser::StatementKind::For(for_statement) => self.for_statement(for_statement),
-            parser::StatementKind::Block(block) => self.block(block),
-            parser::StatementKind::Call(function_call) => {
+            ast::StatementKind::Return(return_) => self.return_statement(return_),
+            ast::StatementKind::If(if_statement) => self.if_statement(if_statement),
+            ast::StatementKind::For(for_statement) => self.for_statement(for_statement),
+            ast::StatementKind::Block(block) => self.block(block),
+            ast::StatementKind::Call(function_call) => {
                 let _ = self.call_expr(statement.span, function_call, false)?;
                 Ok(())
             }
@@ -199,7 +203,7 @@ where
     fn var_statement(
         &mut self,
         span: Span,
-        var_statement: &parser::VarStatement<S>,
+        var_statement: &ast::VarStatement<S>,
     ) -> Result<(), IrGenError> {
         let var = self.declare_var(var_statement.name.clone());
         let inst_id = self.commit_expression(&var_statement.value)?;
@@ -210,7 +214,7 @@ where
     fn assignment_statement(
         &mut self,
         span: Span,
-        assignment_statement: &parser::AssignmentStatement<S>,
+        assignment_statement: &ast::AssignmentStatement<S>,
     ) -> Result<(), IrGenError> {
         enum Target<S> {
             Var(ir::Variable),
@@ -231,7 +235,7 @@ where
         let this = self.push_instruction(span, ir::Instruction::This);
 
         let (target, old) = match &assignment_statement.target {
-            AssignmentTarget::Name(name) => {
+            ast::AssignmentTarget::Name(name) => {
                 if let Some(var) = self.get_var(name) {
                     (Target::Var(var), ir::Instruction::GetVariable(var))
                 } else if let Some(mode) = (self.find_magic)(name) {
@@ -256,7 +260,7 @@ where
                     )
                 }
             }
-            AssignmentTarget::Field(field_expr) => {
+            ast::AssignmentTarget::Field(field_expr) => {
                 let object = self.commit_expression(&field_expr.base)?;
                 let key = self.push_instruction(
                     span,
@@ -267,7 +271,7 @@ where
                     ir::Instruction::GetField { object, key },
                 )
             }
-            AssignmentTarget::Index(index_expr) => {
+            ast::AssignmentTarget::Index(index_expr) => {
                 let array = self.commit_expression(&index_expr.base)?;
                 let index = self.commit_expression(&index_expr.index)?;
                 (
@@ -280,8 +284,8 @@ where
         let val = self.commit_expression(&assignment_statement.value)?;
 
         let assign = match assignment_statement.op {
-            parser::AssignmentOp::Equal => val,
-            parser::AssignmentOp::PlusEqual => {
+            ast::AssignmentOp::Equal => val,
+            ast::AssignmentOp::PlusEqual => {
                 let old = self.push_instruction(span, old);
                 self.push_instruction(
                     span,
@@ -292,7 +296,7 @@ where
                     },
                 )
             }
-            parser::AssignmentOp::MinusEqual => {
+            ast::AssignmentOp::MinusEqual => {
                 let old = self.push_instruction(span, old);
                 self.push_instruction(
                     span,
@@ -303,7 +307,7 @@ where
                     },
                 )
             }
-            parser::AssignmentOp::MultEqual => {
+            ast::AssignmentOp::MultEqual => {
                 let old = self.push_instruction(span, old);
                 self.push_instruction(
                     span,
@@ -314,7 +318,7 @@ where
                     },
                 )
             }
-            parser::AssignmentOp::DivEqual => {
+            ast::AssignmentOp::DivEqual => {
                 let old = self.push_instruction(span, old);
                 self.push_instruction(
                     span,
@@ -371,7 +375,7 @@ where
 
     fn return_statement(
         &mut self,
-        return_statement: &parser::ReturnStatement<S>,
+        return_statement: &ast::ReturnStatement<S>,
     ) -> Result<(), IrGenError> {
         let exit = if let Some(value) = &return_statement.value {
             let val = self.commit_expression(value)?;
@@ -384,7 +388,7 @@ where
         Ok(())
     }
 
-    fn if_statement(&mut self, if_statement: &parser::IfStatement<S>) -> Result<(), IrGenError> {
+    fn if_statement(&mut self, if_statement: &ast::IfStatement<S>) -> Result<(), IrGenError> {
         let cond = self.commit_expression(&if_statement.condition)?;
         let then_block = self.current.function.blocks.insert(ir::Block::default());
         let else_block = self.current.function.blocks.insert(ir::Block::default());
@@ -418,7 +422,7 @@ where
         Ok(())
     }
 
-    fn for_statement(&mut self, for_statement: &parser::ForStatement<S>) -> Result<(), IrGenError> {
+    fn for_statement(&mut self, for_statement: &ast::ForStatement<S>) -> Result<(), IrGenError> {
         {
             self.push_scope();
 
@@ -466,16 +470,13 @@ where
         Ok(())
     }
 
-    fn commit_expression(
-        &mut self,
-        expr: &parser::Expression<S>,
-    ) -> Result<ir::InstId, IrGenError> {
+    fn commit_expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
         let span = expr.span;
         Ok(match &*expr.kind {
-            parser::ExpressionKind::Constant(c) => {
+            ast::ExpressionKind::Constant(c) => {
                 self.push_instruction(span, ir::Instruction::Constant(c.clone()))
             }
-            parser::ExpressionKind::Name(s) => {
+            ast::ExpressionKind::Name(s) => {
                 if let Some(var) = self.get_var(s) {
                     self.push_instruction(span, ir::Instruction::GetVariable(var))
                 } else if (self.find_magic)(s).is_some() {
@@ -489,9 +490,9 @@ where
                     self.push_instruction(span, ir::Instruction::GetField { object: this, key })
                 }
             }
-            parser::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
-            parser::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
-            parser::ExpressionKind::Object(fields) => {
+            ast::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
+            ast::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
+            ast::ExpressionKind::Object(fields) => {
                 let object = self.push_instruction(span, ir::Instruction::NewObject);
                 for (field, value) in fields {
                     let value = self.commit_expression(value)?;
@@ -506,7 +507,7 @@ where
                 }
                 object
             }
-            parser::ExpressionKind::Array(values) => {
+            ast::ExpressionKind::Array(values) => {
                 let array = self.push_instruction(span, ir::Instruction::NewArray);
                 for (i, value) in values.iter().enumerate() {
                     let value = self.commit_expression(value)?;
@@ -521,43 +522,43 @@ where
                 }
                 array
             }
-            parser::ExpressionKind::Unary(op, expr) => {
+            ast::ExpressionKind::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
                     source: self.commit_expression(expr)?,
                     op: match op {
-                        parser::UnaryOp::Not => ir::UnOp::Not,
-                        parser::UnaryOp::Minus => ir::UnOp::Neg,
+                        ast::UnaryOp::Not => ir::UnOp::Not,
+                        ast::UnaryOp::Minus => ir::UnOp::Neg,
                     },
                 };
                 self.push_instruction(span, inst)
             }
-            parser::ExpressionKind::Binary(left, op, right) => {
+            ast::ExpressionKind::Binary(left, op, right) => {
                 let left = self.commit_expression(left)?;
                 let right = self.commit_expression(right)?;
                 let op = match op {
-                    parser::BinaryOp::Add => ir::BinOp::Add,
-                    parser::BinaryOp::Sub => ir::BinOp::Sub,
-                    parser::BinaryOp::Mult => ir::BinOp::Mult,
-                    parser::BinaryOp::Div => ir::BinOp::Div,
-                    parser::BinaryOp::Equal => ir::BinOp::Equal,
-                    parser::BinaryOp::NotEqual => ir::BinOp::NotEqual,
-                    parser::BinaryOp::LessThan => ir::BinOp::LessThan,
-                    parser::BinaryOp::LessEqual => ir::BinOp::LessEqual,
-                    parser::BinaryOp::GreaterThan => ir::BinOp::GreaterThan,
-                    parser::BinaryOp::GreaterEqual => ir::BinOp::GreaterEqual,
-                    parser::BinaryOp::And => ir::BinOp::And,
-                    parser::BinaryOp::Or => ir::BinOp::Or,
+                    ast::BinaryOp::Add => ir::BinOp::Add,
+                    ast::BinaryOp::Sub => ir::BinOp::Sub,
+                    ast::BinaryOp::Mult => ir::BinOp::Mult,
+                    ast::BinaryOp::Div => ir::BinOp::Div,
+                    ast::BinaryOp::Equal => ir::BinOp::Equal,
+                    ast::BinaryOp::NotEqual => ir::BinOp::NotEqual,
+                    ast::BinaryOp::LessThan => ir::BinOp::LessThan,
+                    ast::BinaryOp::LessEqual => ir::BinOp::LessEqual,
+                    ast::BinaryOp::GreaterThan => ir::BinOp::GreaterThan,
+                    ast::BinaryOp::GreaterEqual => ir::BinOp::GreaterEqual,
+                    ast::BinaryOp::And => ir::BinOp::And,
+                    ast::BinaryOp::Or => ir::BinOp::Or,
                 };
                 self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
             }
-            parser::ExpressionKind::Function(func_expr) => {
+            ast::ExpressionKind::Function(func_expr) => {
                 self.push_function(FunctionRef::Expression(span), &func_expr.parameters)?;
                 self.block(&func_expr.body)?;
                 let func_id = self.pop_function();
                 self.push_instruction(span, ir::Instruction::Closure(func_id))
             }
-            parser::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
-            parser::ExpressionKind::Field(field_expr) => {
+            ast::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
+            ast::ExpressionKind::Field(field_expr) => {
                 let base = self.commit_expression(&field_expr.base)?;
                 let field = self.push_instruction(
                     span,
@@ -571,7 +572,7 @@ where
                     },
                 )
             }
-            parser::ExpressionKind::Index(index_expr) => {
+            ast::ExpressionKind::Index(index_expr) => {
                 let base = self.commit_expression(&index_expr.base)?;
                 let index = self.commit_expression(&index_expr.index)?;
                 self.push_instruction(span, ir::Instruction::GetIndex { array: base, index })
@@ -582,7 +583,7 @@ where
     fn call_expr(
         &mut self,
         span: Span,
-        func: &parser::CallExpr<S>,
+        func: &ast::CallExpr<S>,
         return_value: bool,
     ) -> Result<ir::InstId, IrGenError> {
         enum Call {
@@ -595,7 +596,7 @@ where
 
         // Function calls on fields are interpreted as "methods", and implicitly bind the containing
         // object as `self` for the function call.
-        let call = if let parser::ExpressionKind::Field(field_expr) = &*func.base.kind {
+        let call = if let ast::ExpressionKind::Field(field_expr) = &*func.base.kind {
             let object = self.commit_expression(&field_expr.base)?;
             let key = self.push_instruction(
                 func.base.span,

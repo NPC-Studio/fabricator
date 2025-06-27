@@ -4,7 +4,7 @@ use fabricator_vm::Span;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{constant::Constant, parser};
+use crate::{ast, constant::Constant};
 
 #[derive(Debug, Error)]
 pub enum EnumErrorKind {
@@ -22,9 +22,17 @@ pub struct EnumError {
 }
 
 #[derive(Debug, Error)]
-#[error("reference to enum #{index} with an invalid variant")]
-pub struct BadEnumVariant {
-    pub index: usize,
+pub enum EnumEvaluationErrorKind {
+    #[error("reference to enum #{0} with an invalid variant")]
+    BadVariant(usize),
+    #[error("declaration would shadow enum #{0}")]
+    ShadowsEnum(usize),
+}
+
+#[derive(Debug, Error)]
+#[error("{kind}")]
+pub struct EnumEvaluationError {
+    pub kind: EnumEvaluationErrorKind,
     pub span: Span,
 }
 
@@ -84,12 +92,12 @@ impl<S: Eq + Hash> EnumSet<S> {
 
 impl<S: Clone + Eq + Hash> EnumSet<S> {
     /// Extract all top-level enum statements from a block.
-    pub fn extract(&mut self, block: &mut parser::Block<S>) -> Result<(), EnumError> {
+    pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
         let enums = block
             .statements
-            .extract_if(.., |s| matches!(*s.kind, parser::StatementKind::Enum(_)))
+            .extract_if(.., |s| matches!(*s.kind, ast::StatementKind::Enum(_)))
             .map(|s| match *s.kind {
-                parser::StatementKind::Enum(es) => es,
+                ast::StatementKind::Enum(es) => es,
                 _ => unreachable!(),
             });
 
@@ -123,35 +131,70 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     }
 
     /// Expand all enum values referenced anywhere in the given block.
-    pub fn expand_block(&mut self, block: &mut parser::Block<S>) -> Result<(), BadEnumVariant> {
-        if let ControlFlow::Break(err) = block.for_each_expr(|expr| {
-            match &mut *expr.kind {
-                parser::ExpressionKind::Name(ident) => {
-                    if let Some(&index) = self.enum_dict.get(ident) {
-                        return ControlFlow::Break(BadEnumVariant {
-                            index,
-                            span: expr.span,
-                        });
+    pub fn expand_block(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumEvaluationError> {
+        struct EnumExpander<'a, S>(&'a EnumSet<S>);
+
+        impl<'a, S: Clone + Eq + Hash> ast::VisitorMut<S> for EnumExpander<'a, S> {
+            type Break = EnumEvaluationError;
+
+            fn visit_stmt_mut(&mut self, stmt: &mut ast::Statement<S>) -> ControlFlow<Self::Break> {
+                let shadows = match stmt.kind.as_ref() {
+                    ast::StatementKind::Enum(enum_stmt) => self.0.enum_dict.get(&enum_stmt.name),
+                    ast::StatementKind::Function(func_stmt) => {
+                        self.0.enum_dict.get(&func_stmt.name)
                     }
+                    ast::StatementKind::Var(var_stmt) => self.0.enum_dict.get(&var_stmt.name),
+                    _ => None,
                 }
-                parser::ExpressionKind::Field(field_expr) => {
-                    if let parser::ExpressionKind::Name(ident) = &*field_expr.base.kind {
-                        if let Some(&index) = self.enum_dict.get(ident) {
-                            if let Some(var) = self.enums[index].variants.get(&field_expr.field) {
-                                *expr.kind = parser::ExpressionKind::Constant(var.clone());
-                            } else {
-                                return ControlFlow::Break(BadEnumVariant {
-                                    index,
-                                    span: expr.span,
-                                });
+                .copied();
+
+                if let Some(index) = shadows {
+                    ControlFlow::Break(EnumEvaluationError {
+                        kind: EnumEvaluationErrorKind::ShadowsEnum(index),
+                        span: stmt.span,
+                    })
+                } else {
+                    stmt.walk_mut(self)
+                }
+            }
+
+            fn visit_expr_mut(
+                &mut self,
+                expr: &mut ast::Expression<S>,
+            ) -> ControlFlow<Self::Break> {
+                match &mut *expr.kind {
+                    ast::ExpressionKind::Name(ident) => {
+                        if let Some(&index) = self.0.enum_dict.get(ident) {
+                            return ControlFlow::Break(EnumEvaluationError {
+                                kind: EnumEvaluationErrorKind::BadVariant(index),
+                                span: expr.span,
+                            });
+                        }
+                    }
+                    ast::ExpressionKind::Field(field_expr) => {
+                        if let ast::ExpressionKind::Name(ident) = &*field_expr.base.kind {
+                            if let Some(&index) = self.0.enum_dict.get(ident) {
+                                if let Some(var) =
+                                    self.0.enums[index].variants.get(&field_expr.field)
+                                {
+                                    *expr.kind = ast::ExpressionKind::Constant(var.clone());
+                                } else {
+                                    return ControlFlow::Break(EnumEvaluationError {
+                                        kind: EnumEvaluationErrorKind::BadVariant(index),
+                                        span: expr.span,
+                                    });
+                                }
                             }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
+
+                expr.walk_mut(self)
             }
-            ControlFlow::Continue(())
-        }) {
+        }
+
+        if let ControlFlow::Break(err) = block.walk_mut(&mut EnumExpander(self)) {
             Err(err)
         } else {
             Ok(())
@@ -159,31 +202,31 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     }
 }
 
-fn fold_constant_expr<S>(expr: parser::Expression<S>) -> Option<Constant<S>> {
+fn fold_constant_expr<S>(expr: ast::Expression<S>) -> Option<Constant<S>> {
     match *expr.kind {
-        parser::ExpressionKind::Constant(c) => Some(c),
-        parser::ExpressionKind::Group(expr) => fold_constant_expr(expr),
-        parser::ExpressionKind::Unary(unary_op, expr) => match unary_op {
-            parser::UnaryOp::Not => Some(Constant::Boolean(!fold_constant_expr(expr)?.to_bool())),
-            parser::UnaryOp::Minus => fold_constant_expr(expr)?.negate(),
+        ast::ExpressionKind::Constant(c) => Some(c),
+        ast::ExpressionKind::Group(expr) => fold_constant_expr(expr),
+        ast::ExpressionKind::Unary(unary_op, expr) => match unary_op {
+            ast::UnaryOp::Not => Some(Constant::Boolean(!fold_constant_expr(expr)?.to_bool())),
+            ast::UnaryOp::Minus => fold_constant_expr(expr)?.negate(),
         },
-        parser::ExpressionKind::Binary(l, op, r) => {
+        ast::ExpressionKind::Binary(l, op, r) => {
             let l = fold_constant_expr(l)?;
             let r = fold_constant_expr(r)?;
 
             match op {
-                parser::BinaryOp::Add => l.add(r),
-                parser::BinaryOp::Sub => l.sub(r),
-                parser::BinaryOp::Mult => l.mult(r),
-                parser::BinaryOp::Div => l.div(r),
-                parser::BinaryOp::Equal => l.equal(r).map(Constant::Boolean),
-                parser::BinaryOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
-                parser::BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
-                parser::BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
-                parser::BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
-                parser::BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
-                parser::BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
-                parser::BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
+                ast::BinaryOp::Add => l.add(r),
+                ast::BinaryOp::Sub => l.sub(r),
+                ast::BinaryOp::Mult => l.mult(r),
+                ast::BinaryOp::Div => l.div(r),
+                ast::BinaryOp::Equal => l.equal(r).map(Constant::Boolean),
+                ast::BinaryOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
+                ast::BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
+                ast::BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
+                ast::BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
+                ast::BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
+                ast::BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
+                ast::BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
             }
         }
         _ => None,

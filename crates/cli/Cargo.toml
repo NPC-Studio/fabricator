@@ -14,7 +14,7 @@ fabricator-vm.workspace = true
 fabricator.workspace = true
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.6"
 
 [[bench]]
 name = "scripts"

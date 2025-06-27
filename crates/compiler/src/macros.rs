@@ -9,7 +9,7 @@ use fabricator_vm::Span;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::lexer::{Token, TokenKind};
+use crate::tokens::{Token, TokenKind};
 
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]

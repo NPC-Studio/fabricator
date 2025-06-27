@@ -18,15 +18,16 @@ use crate::{
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
     },
-    enums::{BadEnumVariant, EnumError, EnumSet},
+    enums::{EnumError, EnumEvaluationError, EnumSet},
     ir,
     ir_gen::{IrGenError, IrGenSettings, MagicMode},
-    lexer::{LexError, Lexer, Token},
+    lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
     macros::{MacroError, MacroSet, RecursiveMacro},
     parser::{ParseError, ParseSettings},
     proto_gen::gen_prototype,
     string_interner::VmInterner,
+    tokens::Token,
 };
 
 #[derive(Debug, Error)]
@@ -40,7 +41,7 @@ pub enum CompileErrorKind {
     #[error("enum error: {0}")]
     Enum(#[source] EnumError),
     #[error("enum error: {0}")]
-    BadEnumVariant(#[source] BadEnumVariant),
+    EnumEvaluation(#[source] EnumEvaluationError),
     #[error("parse error: {0}")]
     Parsing(#[source] ParseError),
     #[error("IR gen error: {0}")]
@@ -340,7 +341,7 @@ impl<'gc> Compiler<'gc> {
             if let Err(err) = enums.expand_block(&mut block) {
                 let line_number = chunk.line_number(err.span.start());
                 return Err(CompileError {
-                    kind: CompileErrorKind::BadEnumVariant(err),
+                    kind: CompileErrorKind::EnumEvaluation(err),
                     chunk_name: chunk.name().clone(),
                     line_number,
                 });

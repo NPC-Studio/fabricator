@@ -1,283 +1,18 @@
-use std::{fmt::Debug, ops::ControlFlow};
+use std::fmt::Debug;
 
 use arrayvec::ArrayVec;
 use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::{
+    ast::{
+        AssignmentOp, AssignmentStatement, AssignmentTarget, BinaryOp, Block, CallExpr,
+        EnumStatement, Expression, ExpressionKind, FieldExpr, ForStatement, FunctionExpr,
+        IfStatement, IndexExpr, ReturnStatement, Statement, StatementKind, UnaryOp, VarStatement,
+    },
     constant::Constant,
-    lexer::{Token, TokenKind},
+    tokens::{Token, TokenKind},
 };
-
-#[derive(Debug, Clone)]
-pub struct Block<S> {
-    pub statements: Vec<Statement<S>>,
-}
-
-impl<S> Block<S> {
-    /// Visits each expression in this block.
-    ///
-    /// Expressions are guaranteed to be visited in a depth-first, first to last order (in order of
-    /// appearance in the original source file).
-    ///
-    /// If an expression is modified by the given callback, then the callback will be called on any
-    /// sub-expressions present *after* modification.
-    pub fn for_each_expr<B>(
-        &mut self,
-        mut f: impl Fn(&mut Expression<S>) -> ControlFlow<B>,
-    ) -> ControlFlow<B> {
-        fn block_each_expr<S, B>(
-            f: &mut dyn Fn(&mut Expression<S>) -> ControlFlow<B>,
-            block: &mut Block<S>,
-        ) -> ControlFlow<B> {
-            for stmt in &mut block.statements {
-                stmt_each_expr(f, stmt)?;
-            }
-            ControlFlow::Continue(())
-        }
-
-        fn stmt_each_expr<S, B>(
-            f: &mut dyn Fn(&mut Expression<S>) -> ControlFlow<B>,
-            stmt: &mut Statement<S>,
-        ) -> ControlFlow<B> {
-            match stmt.kind.as_mut() {
-                StatementKind::Enum(_) => {}
-                StatementKind::Var(var_statement) => {
-                    expr_each_expr(f, &mut var_statement.value)?;
-                }
-                StatementKind::Assignment(assignment_statement) => {
-                    match &mut assignment_statement.target {
-                        AssignmentTarget::Name(_) => {}
-                        AssignmentTarget::Field(field_expr) => {
-                            expr_each_expr(f, &mut field_expr.base)?;
-                        }
-                        AssignmentTarget::Index(index_expr) => {
-                            expr_each_expr(f, &mut index_expr.base)?;
-                            expr_each_expr(f, &mut index_expr.index)?;
-                        }
-                    }
-                    expr_each_expr(f, &mut assignment_statement.value)?;
-                }
-                StatementKind::Return(ret_statement) => {
-                    if let Some(val) = &mut ret_statement.value {
-                        expr_each_expr(f, val)?;
-                    }
-                }
-                StatementKind::If(if_statement) => {
-                    expr_each_expr(f, &mut if_statement.condition)?;
-                    stmt_each_expr(f, &mut if_statement.then_stmt)?;
-                    if let Some(else_stmt) = &mut if_statement.else_stmt {
-                        stmt_each_expr(f, else_stmt)?;
-                    }
-                }
-                StatementKind::For(for_statement) => {
-                    stmt_each_expr(f, &mut for_statement.initializer)?;
-                    expr_each_expr(f, &mut for_statement.condition)?;
-                    stmt_each_expr(f, &mut for_statement.iterator)?;
-                    stmt_each_expr(f, &mut for_statement.body)?;
-                }
-                StatementKind::Block(block) => block_each_expr(f, block)?,
-                StatementKind::Call(call_expr) => {
-                    expr_each_expr(f, &mut call_expr.base)?;
-                    for arg in &mut call_expr.arguments {
-                        expr_each_expr(f, arg)?;
-                    }
-                }
-            }
-            ControlFlow::Continue(())
-        }
-
-        fn expr_each_expr<S, B>(
-            f: &mut dyn Fn(&mut Expression<S>) -> ControlFlow<B>,
-            expr: &mut Expression<S>,
-        ) -> ControlFlow<B> {
-            f(expr)?;
-
-            match expr.kind.as_mut() {
-                ExpressionKind::Name(_) => {}
-                ExpressionKind::Group(expr) => expr_each_expr(f, expr)?,
-                ExpressionKind::Object(items) => {
-                    for (_, item) in items {
-                        expr_each_expr(f, item)?;
-                    }
-                }
-                ExpressionKind::Array(items) => {
-                    for item in items {
-                        expr_each_expr(f, item)?;
-                    }
-                }
-                ExpressionKind::Unary(_, expr) => {
-                    expr_each_expr(f, expr)?;
-                }
-                ExpressionKind::Binary(left, _, right) => {
-                    expr_each_expr(f, left)?;
-                    expr_each_expr(f, right)?;
-                }
-                ExpressionKind::Function(func_expr) => {
-                    block_each_expr(f, &mut func_expr.body)?;
-                }
-                ExpressionKind::Call(call_expr) => {
-                    expr_each_expr(f, &mut call_expr.base)?;
-                    for arg in &mut call_expr.arguments {
-                        expr_each_expr(f, arg)?;
-                    }
-                }
-                ExpressionKind::Field(field_expr) => {
-                    expr_each_expr(f, &mut field_expr.base)?;
-                }
-                ExpressionKind::Index(index_expr) => {
-                    expr_each_expr(f, &mut index_expr.base)?;
-                    expr_each_expr(f, &mut index_expr.index)?;
-                }
-                _ => {}
-            }
-            ControlFlow::Continue(())
-        }
-
-        block_each_expr(&mut f, self)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Statement<S> {
-    pub kind: Box<StatementKind<S>>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum StatementKind<S> {
-    Enum(EnumStatement<S>),
-    Var(VarStatement<S>),
-    Assignment(AssignmentStatement<S>),
-    Return(ReturnStatement<S>),
-    If(IfStatement<S>),
-    For(ForStatement<S>),
-    Block(Block<S>),
-    Call(CallExpr<S>),
-}
-
-#[derive(Debug, Clone)]
-pub struct VarStatement<S> {
-    pub name: S,
-    pub value: Expression<S>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AssignmentStatement<S> {
-    pub target: AssignmentTarget<S>,
-    pub op: AssignmentOp,
-    pub value: Expression<S>,
-}
-
-#[derive(Debug, Clone)]
-pub enum AssignmentTarget<S> {
-    Name(S),
-    Field(FieldExpr<S>),
-    Index(IndexExpr<S>),
-}
-
-#[derive(Debug, Clone)]
-pub struct ReturnStatement<S> {
-    pub value: Option<Expression<S>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct IfStatement<S> {
-    pub condition: Expression<S>,
-    pub then_stmt: Statement<S>,
-    pub else_stmt: Option<Statement<S>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ForStatement<S> {
-    pub initializer: Statement<S>,
-    pub condition: Expression<S>,
-    pub iterator: Statement<S>,
-    pub body: Statement<S>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnumStatement<S> {
-    pub name: S,
-    pub variants: Vec<(S, Option<Expression<S>>)>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ExpressionKind<S> {
-    This,
-    Constant(Constant<S>),
-    Name(S),
-    Group(Expression<S>),
-    Object(Vec<(S, Expression<S>)>),
-    Array(Vec<Expression<S>>),
-    Unary(UnaryOp, Expression<S>),
-    Binary(Expression<S>, BinaryOp, Expression<S>),
-    Function(FunctionExpr<S>),
-    Call(CallExpr<S>),
-    Field(FieldExpr<S>),
-    Index(IndexExpr<S>),
-}
-
-#[derive(Debug, Clone)]
-pub struct Expression<S> {
-    pub kind: Box<ExpressionKind<S>>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionExpr<S> {
-    pub parameters: Vec<S>,
-    pub body: Block<S>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CallExpr<S> {
-    pub base: Expression<S>,
-    pub arguments: Vec<Expression<S>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldExpr<S> {
-    pub base: Expression<S>,
-    pub field: S,
-}
-
-#[derive(Debug, Clone)]
-pub struct IndexExpr<S> {
-    pub base: Expression<S>,
-    pub index: Expression<S>,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum UnaryOp {
-    Not,
-    Minus,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum BinaryOp {
-    Mult,
-    Div,
-    Add,
-    Sub,
-    Equal,
-    NotEqual,
-    LessThan,
-    LessEqual,
-    GreaterThan,
-    GreaterEqual,
-    And,
-    Or,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum AssignmentOp {
-    Equal,
-    PlusEqual,
-    MinusEqual,
-    MultEqual,
-    DivEqual,
-}
 
 #[derive(Debug, Error)]
 pub enum ParseErrorKind {
@@ -376,10 +111,10 @@ where
             if self.settings.strict {
                 if !matches!(
                     &*stmt.kind,
-                    StatementKind::Enum(_)
+                    StatementKind::Block(_)
+                        | StatementKind::Enum(_)
                         | StatementKind::If(_)
                         | StatementKind::For(_)
-                        | StatementKind::Block(_)
                 ) {
                     self.parse_token(TokenKind::SemiColon)?;
                 }
@@ -1185,6 +920,8 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Else => "else",
         TokenKind::For => "for",
         TokenKind::Repeat => "repeat",
+        TokenKind::While => "While",
+        TokenKind::With => "With",
         TokenKind::Return => "return",
         TokenKind::Exit => "exit",
         TokenKind::Undefined => "undefined",
