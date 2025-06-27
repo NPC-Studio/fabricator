@@ -8,7 +8,8 @@ use crate::{
     ast::{
         AssignmentOp, AssignmentStatement, AssignmentTarget, BinaryOp, Block, CallExpr,
         EnumStatement, Expression, ExpressionKind, FieldExpr, ForStatement, FunctionExpr,
-        IfStatement, IndexExpr, ReturnStatement, Statement, StatementKind, UnaryOp, VarStatement,
+        FunctionStatement, IfStatement, IndexExpr, ReturnStatement, Statement, StatementKind,
+        UnaryOp, VarStatement,
     },
     constant::Constant,
     tokens::{Token, TokenKind},
@@ -113,6 +114,7 @@ where
                     &*stmt.kind,
                     StatementKind::Block(_)
                         | StatementKind::Enum(_)
+                        | StatementKind::Function(_)
                         | StatementKind::If(_)
                         | StatementKind::For(_)
                 ) {
@@ -139,6 +141,33 @@ where
                 let (stmt, span) = self.parse_enum_statement()?;
                 Ok(Statement {
                     kind: Box::new(StatementKind::Enum(stmt)),
+                    span,
+                })
+            }
+            TokenKind::Function => {
+                self.advance(1);
+                let name = self.parse_identifier()?.0;
+
+                let mut parameters = Vec::new();
+                self.parse_comma_separated_list(
+                    TokenKind::LeftParen,
+                    TokenKind::RightParen,
+                    |this| {
+                        parameters.push(this.parse_identifier()?.0);
+                        Ok(())
+                    },
+                )?;
+
+                self.parse_token(TokenKind::LeftBrace)?;
+                let body = self.parse_block()?;
+                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
+
+                Ok(Statement {
+                    kind: Box::new(StatementKind::Function(FunctionStatement {
+                        name,
+                        parameters,
+                        body,
+                    })),
                     span,
                 })
             }
@@ -309,50 +338,28 @@ where
     fn parse_enum_statement(&mut self) -> Result<(EnumStatement<S>, Span), ParseError> {
         let mut span = self.parse_token(TokenKind::Enum)?;
         let name = self.parse_identifier()?.0;
-        span = span.combine(self.parse_token(TokenKind::LeftBrace)?);
 
         let mut variants = Vec::new();
 
-        loop {
-            self.look_ahead(1);
-            if matches!(self.peek(0).kind, TokenKind::RightBrace) {
-                break;
-            }
+        span = span.combine(self.parse_comma_separated_list(
+            TokenKind::LeftBrace,
+            TokenKind::RightBrace,
+            |this| {
+                let key = this.parse_identifier()?.0;
 
-            let key = self.parse_identifier()?.0;
+                this.look_ahead(1);
+                let value = if matches!(this.peek(0).kind, TokenKind::Equal) {
+                    this.advance(1);
+                    Some(this.parse_expression()?)
+                } else {
+                    None
+                };
 
-            self.look_ahead(1);
-            let value = if matches!(self.peek(0).kind, TokenKind::Equal) {
-                self.advance(1);
-                Some(self.parse_expression()?)
-            } else {
-                None
-            };
+                variants.push((key, value));
 
-            variants.push((key, value));
-
-            self.look_ahead(1);
-            let next = self.peek(0);
-            match &next.kind {
-                TokenKind::Comma => {
-                    self.advance(1);
-                }
-                TokenKind::RightBrace => {
-                    break;
-                }
-                _ => {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(&next.kind),
-                            expected: "',' or '}'",
-                        },
-                        span: next.span,
-                    });
-                }
-            }
-        }
-
-        span = span.combine(self.parse_token(TokenKind::RightBrace)?);
+                Ok(())
+            },
+        )?);
 
         Ok((EnumStatement { name, variants }, span))
     }
@@ -410,39 +417,17 @@ where
             self.look_ahead(1);
             match &self.peek(0).kind {
                 TokenKind::LeftParen => {
-                    self.advance(1);
-
                     let mut arguments = Vec::new();
-                    loop {
-                        self.look_ahead(1);
-                        if matches!(self.peek(0).kind, TokenKind::RightParen) {
-                            break;
-                        }
 
-                        arguments.push(self.parse_expression()?);
+                    let span = expr.span.combine(self.parse_comma_separated_list(
+                        TokenKind::LeftParen,
+                        TokenKind::RightParen,
+                        |this| {
+                            arguments.push(this.parse_expression()?);
+                            Ok(())
+                        },
+                    )?);
 
-                        self.look_ahead(1);
-                        let next = self.peek(0);
-                        match &next.kind {
-                            TokenKind::Comma => {
-                                self.advance(1);
-                            }
-                            TokenKind::RightParen => {
-                                break;
-                            }
-                            _ => {
-                                return Err(ParseError {
-                                    kind: ParseErrorKind::Unexpected {
-                                        unexpected: token_indicator(&next.kind),
-                                        expected: "',' or ')'",
-                                    },
-                                    span: next.span,
-                                });
-                            }
-                        }
-                    }
-
-                    let span = expr.span.combine(self.parse_token(TokenKind::RightParen)?);
                     expr = Expression {
                         kind: Box::new(ExpressionKind::Call(CallExpr {
                             base: expr,
@@ -606,40 +591,17 @@ where
             }
             TokenKind::Function => {
                 self.advance(1);
-                self.parse_token(TokenKind::LeftParen)?;
 
                 let mut parameters = Vec::new();
-                self.look_ahead(1);
-                loop {
-                    self.look_ahead(1);
-                    if matches!(self.peek(0).kind, TokenKind::RightParen) {
-                        break;
-                    }
+                self.parse_comma_separated_list(
+                    TokenKind::LeftParen,
+                    TokenKind::RightParen,
+                    |this| {
+                        parameters.push(this.parse_identifier()?.0);
+                        Ok(())
+                    },
+                )?;
 
-                    parameters.push(self.parse_identifier()?.0);
-
-                    self.look_ahead(1);
-                    let next = self.peek(0);
-                    match &next.kind {
-                        TokenKind::Comma => {
-                            self.advance(1);
-                        }
-                        TokenKind::RightParen => {
-                            break;
-                        }
-                        _ => {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::Unexpected {
-                                    unexpected: token_indicator(&next.kind),
-                                    expected: "',' or ')'",
-                                },
-                                span: next.span,
-                            });
-                        }
-                    }
-                }
-
-                self.parse_token(TokenKind::RightParen)?;
                 self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block()?;
                 span = span.combine(self.parse_token(TokenKind::RightBrace)?);
@@ -668,20 +630,58 @@ where
     }
 
     fn parse_object(&mut self) -> Result<(Vec<(S, Expression<S>)>, Span), ParseError> {
-        let mut span = self.parse_token(TokenKind::LeftBrace)?;
         let mut entries = Vec::new();
+
+        let span =
+            self.parse_comma_separated_list(TokenKind::LeftBrace, TokenKind::RightBrace, |this| {
+                let key = this.parse_identifier()?.0;
+                this.parse_token(TokenKind::Colon)?;
+                let value = this.parse_expression()?;
+
+                entries.push((key, value));
+
+                Ok(())
+            })?;
+
+        Ok((entries, span))
+    }
+
+    fn parse_array(&mut self) -> Result<(Vec<Expression<S>>, Span), ParseError> {
+        let mut entries = Vec::new();
+
+        let span = self.parse_comma_separated_list(
+            TokenKind::LeftBracket,
+            TokenKind::RightBracket,
+            |this| {
+                entries.push(this.parse_expression()?);
+                Ok(())
+            },
+        )?;
+
+        Ok((entries, span))
+    }
+
+    /// Parse a comma separated list of items surrounded by paired left / right delimiters.
+    ///
+    /// Takes a callback to parse whatever the *item* is.
+    fn parse_comma_separated_list(
+        &mut self,
+        left_delimiter: TokenKind<()>,
+        right_delimiter: TokenKind<()>,
+        mut read_item: impl FnMut(&mut Self) -> Result<(), ParseError>,
+    ) -> Result<Span, ParseError> {
+        let mut span = self.parse_token(left_delimiter)?;
+
+        let is_right_delimiter =
+            |kind: &TokenKind<S>| kind.as_string_ref().map_string(|_| ()) == right_delimiter;
 
         loop {
             self.look_ahead(1);
-            if matches!(self.peek(0).kind, TokenKind::RightBrace) {
+            if is_right_delimiter(&self.peek(0).kind) {
                 break;
             }
 
-            let key = self.parse_identifier()?.0;
-            self.parse_token(TokenKind::Colon)?;
-            let value = self.parse_expression()?;
-
-            entries.push((key, value));
+            read_item(self)?;
 
             self.look_ahead(1);
             let next = self.peek(0);
@@ -689,7 +689,7 @@ where
                 TokenKind::Comma => {
                     self.advance(1);
                 }
-                TokenKind::RightBrace => {
+                kind if is_right_delimiter(kind) => {
                     break;
                 }
                 _ => {
@@ -704,46 +704,9 @@ where
             }
         }
 
-        span = span.combine(self.parse_token(TokenKind::RightBrace)?);
+        span = span.combine(self.parse_token(right_delimiter)?);
 
-        Ok((entries, span))
-    }
-
-    fn parse_array(&mut self) -> Result<(Vec<Expression<S>>, Span), ParseError> {
-        let mut span = self.parse_token(TokenKind::LeftBracket)?;
-        let mut entries = Vec::new();
-        loop {
-            self.look_ahead(1);
-            if matches!(self.peek(0).kind, TokenKind::RightBracket) {
-                break;
-            }
-
-            entries.push(self.parse_expression()?);
-
-            self.look_ahead(1);
-            let next = self.peek(0);
-            match &next.kind {
-                TokenKind::Comma => {
-                    self.advance(1);
-                }
-                TokenKind::RightBracket => {
-                    break;
-                }
-                _ => {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(&next.kind),
-                            expected: "',' or ']'",
-                        },
-                        span,
-                    });
-                }
-            }
-        }
-
-        span = span.combine(self.parse_token(TokenKind::RightBracket)?);
-
-        Ok((entries, span))
+        Ok(span)
     }
 
     fn parse_identifier(&mut self) -> Result<(S, Span), ParseError> {
