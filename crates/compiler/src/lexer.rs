@@ -489,7 +489,6 @@ where
             }
         }
 
-        dbg!(&self.string_buffer);
         let s = self.interner.intern(&self.string_buffer);
         if !has_exp && !has_radix {
             if is_hex {
