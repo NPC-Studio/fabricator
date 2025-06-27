@@ -1,14 +1,15 @@
 use fabricator_math::Vec2;
 use fabricator_vm as vm;
 
-use crate::state::{
-    Configuration, DrawingState, DrawnSprite, DrawnSpriteFrame, InstanceState, SpriteId,
+use crate::{
+    api::magic::{DuplicateMagicName, MagicExt as _},
+    state::{Configuration, DrawingState, DrawnSprite, DrawnSpriteFrame, InstanceState, SpriteId},
 };
 
 pub fn drawing_api<'gc>(
     ctx: vm::Context<'gc>,
     config: &Configuration,
-) -> Result<vm::MagicSet<'gc>, vm::magic::DuplicateMagicName> {
+) -> Result<vm::MagicSet<'gc>, DuplicateMagicName> {
     let mut magic = vm::MagicSet::new();
 
     for (sprite_id, sprite) in config.sprites.iter() {

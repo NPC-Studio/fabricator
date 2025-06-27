@@ -458,7 +458,7 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "undefined()")?;
                     }
                     Instruction::Constant(constant) => {
-                        writeln!(f, "constant({:?})", constant.as_ref())?;
+                        writeln!(f, "constant({:?})", constant.as_str())?;
                     }
                     Instruction::Closure(closure) => {
                         writeln!(f, "closure(F{})", closure.index())?;
@@ -515,7 +515,7 @@ impl<S: AsRef<str>> Function<S> {
                             f,
                             "get_field(object = I{}, key = {:?})",
                             object.index(),
-                            key.as_ref(),
+                            key.as_str(),
                         )?;
                     }
                     Instruction::SetFieldConst { object, key, value } => {
@@ -523,7 +523,7 @@ impl<S: AsRef<str>> Function<S> {
                             f,
                             "set_field(object = I{}, key = {:?}, value = I{})",
                             object.index(),
-                            key.as_ref(),
+                            key.as_str(),
                             value.index()
                         )?;
                     }
@@ -553,7 +553,7 @@ impl<S: AsRef<str>> Function<S> {
                             f,
                             "get_index(array = I{}, index = {:?})",
                             array.index(),
-                            index.as_ref(),
+                            index.as_str(),
                         )?;
                     }
                     Instruction::SetIndexConst {
@@ -565,7 +565,7 @@ impl<S: AsRef<str>> Function<S> {
                             f,
                             "set_index(array = I{}, index = {:?}, value = I{})",
                             array.index(),
-                            index.as_ref(),
+                            index.as_str(),
                             value.index()
                         )?;
                     }

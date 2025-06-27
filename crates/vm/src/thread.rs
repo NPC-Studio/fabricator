@@ -17,7 +17,7 @@ use crate::{
     value::{Function, Value},
 };
 
-#[derive(Debug, Error)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum OpError {
     #[error("bad op")]
     BadOp,
@@ -786,7 +786,7 @@ fn dispatch<'gc>(
                 .prototype()
                 .magic
                 .get(magic as usize)
-                .ok_or(OpError::BadMagicIdx)?;
+                .map_err(|_| OpError::BadMagicIdx)?;
             self.registers[dest as usize] = magic.get(self.ctx)?;
             Ok(())
         }
@@ -798,7 +798,7 @@ fn dispatch<'gc>(
                 .prototype()
                 .magic
                 .get(magic as usize)
-                .ok_or(OpError::BadMagicIdx)?;
+                .map_err(|_| OpError::BadMagicIdx)?;
             magic.set(self.ctx, self.registers[source as usize])?;
             Ok(())
         }

@@ -160,8 +160,30 @@ impl<S> Constant<S> {
     }
 }
 
+impl<S> Constant<S> {
+    pub fn as_string_ref(&self) -> Constant<&S> {
+        match self {
+            Constant::Undefined => Constant::Undefined,
+            Constant::Boolean(b) => Constant::Boolean(*b),
+            Constant::Integer(i) => Constant::Integer(*i),
+            Constant::Float(f) => Constant::Float(*f),
+            Constant::String(s) => Constant::String(&s),
+        }
+    }
+
+    pub fn map_string<S2>(self, map: impl Fn(S) -> S2) -> Constant<S2> {
+        match self {
+            Constant::Undefined => Constant::Undefined,
+            Constant::Boolean(b) => Constant::Boolean(b),
+            Constant::Integer(i) => Constant::Integer(i),
+            Constant::Float(f) => Constant::Float(f),
+            Constant::String(s) => Constant::String(map(s)),
+        }
+    }
+}
+
 impl<S: AsRef<str>> Constant<S> {
-    pub fn as_ref(&self) -> Constant<&str> {
+    pub fn as_str(&self) -> Constant<&str> {
         match self {
             Constant::Undefined => Constant::Undefined,
             Constant::Boolean(b) => Constant::Boolean(*b),

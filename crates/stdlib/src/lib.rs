@@ -1,6 +1,6 @@
 use std::f64;
 
-use fabricator_vm as vm;
+use fabricator_vm::{self as vm, magic::MagicConstant};
 use gc_arena::{Collect, Gc, Rootable};
 
 pub trait StdlibContext<'gc> {
@@ -19,9 +19,10 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut stdlib = vm::MagicSet::new();
 
-                stdlib
-                    .add_constant(&ctx, ctx.intern("global"), ctx.globals().into())
-                    .unwrap();
+                stdlib.insert(
+                    ctx.intern("global"),
+                    MagicConstant::new_ptr(&ctx, ctx.globals().into()),
+                );
 
                 let method = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let Some(func) = stack.get(1).to_function() else {
@@ -43,40 +44,36 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                         )),
                     }
                 });
-                stdlib
-                    .add_constant(&ctx, ctx.intern("method"), method.into())
-                    .unwrap();
+                stdlib.insert(
+                    ctx.intern("method"),
+                    MagicConstant::new_ptr(&ctx, method.into()),
+                );
 
-                stdlib
-                    .add_constant(&ctx, ctx.intern("pi"), f64::consts::PI.into())
-                    .unwrap();
+                stdlib.insert(
+                    ctx.intern("pi"),
+                    MagicConstant::new_ptr(&ctx, f64::consts::PI.into()),
+                );
 
                 let cos = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let arg: f64 = stack.consume(ctx)?;
                     stack.replace(ctx, arg.cos());
                     Ok(())
                 });
-                stdlib
-                    .add_constant(&ctx, ctx.intern("cos"), cos.into())
-                    .unwrap();
+                stdlib.insert(ctx.intern("cos"), MagicConstant::new_ptr(&ctx, cos.into()));
 
                 let sin = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let arg: f64 = stack.consume(ctx)?;
                     stack.replace(ctx, arg.sin());
                     Ok(())
                 });
-                stdlib
-                    .add_constant(&ctx, ctx.intern("sin"), sin.into())
-                    .unwrap();
+                stdlib.insert(ctx.intern("sin"), MagicConstant::new_ptr(&ctx, sin.into()));
 
                 let abs = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let arg: f64 = stack.consume(ctx)?;
                     stack.replace(ctx, arg.abs());
                     Ok(())
                 });
-                stdlib
-                    .add_constant(&ctx, ctx.intern("abs"), abs.into())
-                    .unwrap();
+                stdlib.insert(ctx.intern("abs"), MagicConstant::new_ptr(&ctx, abs.into()));
 
                 Self(Gc::new(&ctx, stdlib))
             }
@@ -103,9 +100,10 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     }
                     Ok(())
                 });
-                testing_stdlib
-                    .add_constant(&ctx, ctx.intern("assert"), assert.into())
-                    .unwrap();
+                testing_stdlib.insert(
+                    ctx.intern("assert"),
+                    MagicConstant::new_ptr(&ctx, assert.into()),
+                );
 
                 let print = vm::Callback::from_fn(&ctx, |_, _, stack| {
                     for i in 0..stack.len() {
@@ -117,18 +115,20 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     println!();
                     Ok(())
                 });
-                testing_stdlib
-                    .add_constant(&ctx, ctx.intern("print"), print.into())
-                    .unwrap();
+                testing_stdlib.insert(
+                    ctx.intern("print"),
+                    MagicConstant::new_ptr(&ctx, print.into()),
+                );
 
                 let black_box = vm::Callback::from_fn(&ctx, |_, _, _| Ok(()));
-                testing_stdlib
-                    .add_constant(&ctx, ctx.intern("black_box"), black_box.into())
-                    .unwrap();
+                testing_stdlib.insert(
+                    ctx.intern("black_box"),
+                    MagicConstant::new_ptr(&ctx, black_box.into()),
+                );
 
                 let mut combined = vm::MagicSet::new();
-                combined.merge(&ctx.stdlib()).unwrap();
-                combined.merge(&testing_stdlib).unwrap();
+                combined.merge(&ctx.stdlib());
+                combined.merge(&testing_stdlib);
 
                 Self(Gc::new(&ctx, combined))
             }

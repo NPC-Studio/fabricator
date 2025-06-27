@@ -83,40 +83,52 @@ impl IrGenSettings {
     pub fn gen_ir<S>(
         self,
         block: &ast::Block<S>,
+        func_ref: FunctionRef,
+        parameters: &[S],
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone + AsRef<str>,
     {
-        let mut compiler = Compiler::new(self, find_magic);
-        compiler.block(block)?;
-        Ok(compiler.current.function)
+        IrCompiler::compile_function(self, block, func_ref, parameters, find_magic)
     }
 }
 
 struct Function<S> {
     function: ir::Function<S>,
     current_block: ir::BlockId,
-    variables: HashMap<S, Vec<ir::Variable>>,
     scopes: Vec<HashSet<S>>,
+    variables: HashMap<S, Vec<ir::Variable>>,
     // Either a `Some` for an upvalue, or a `None` as a negative cache for no upper function having
     // such a variable.
     upvalues: HashMap<S, Option<ir::Variable>>,
 }
 
-struct Compiler<S, M> {
+struct IrCompiler<S, M> {
     settings: IrGenSettings,
     find_magic: M,
     upper: Vec<Function<S>>,
     current: Function<S>,
 }
 
-impl<S, M> Compiler<S, M>
+impl<S, M> IrCompiler<S, M>
 where
     S: Eq + Hash + Clone + AsRef<str>,
     M: Fn(&S) -> Option<MagicMode>,
 {
-    fn new(settings: IrGenSettings, find_magic: M) -> Self {
+    fn compile_function(
+        settings: IrGenSettings,
+        block: &ast::Block<S>,
+        func_ref: FunctionRef,
+        parameters: &[S],
+        find_magic: M,
+    ) -> Result<ir::Function<S>, IrGenError> {
+        // Create a blank placeholder initial top-level function.
+        //
+        // We do this to avoid repeating the same code from `IrCompiler::push_function` here.
+        // This is also less painful than dealing with `self.current` being `Option` or having the
+        // current function be at the top of the function stack.
+
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
@@ -125,9 +137,10 @@ where
         let functions = ir::FunctionMap::new();
         let upvalues = ir::UpValueMap::new();
 
-        let start_block = blocks.insert(ir::Block::default());
+        let missing_block = blocks.insert(ir::Block::default());
+        blocks.remove(missing_block);
 
-        Self {
+        let mut this = Self {
             settings,
             find_magic,
             upper: Vec::new(),
@@ -142,18 +155,25 @@ where
                     shadow_vars,
                     functions,
                     upvalues,
-                    start_block,
+                    start_block: missing_block,
                 },
-                current_block: start_block,
+                current_block: missing_block,
+                scopes: vec![],
                 variables: Default::default(),
-                scopes: if settings.lexical_scoping {
-                    Vec::new()
-                } else {
-                    vec![HashSet::new()]
-                },
                 upvalues: HashMap::new(),
             },
-        }
+        };
+
+        this.push_function(func_ref, parameters)?;
+        this.block(block)?;
+        let func_id = this.pop_function();
+        let func = this.current.function.functions.remove(func_id).unwrap();
+
+        assert!(this.current.function.instructions.is_empty());
+        assert!(this.current.scopes.is_empty());
+        assert!(this.current.variables.is_empty());
+
+        Ok(func)
     }
 
     fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
@@ -647,7 +667,15 @@ where
         let shadow_vars = ir::ShadowVarSet::new();
         let functions = ir::FunctionMap::new();
         let upvalues = ir::UpValueMap::new();
+
+        // We leave the start block completely empty except for a jump to the "real" start block.
+        //
+        // This is so that we can use the start block as a place to put non-lexically scoped
+        // variable declaration instructions that need to be before any other generated IR, and
+        // avoid being O(n^2) in the number of variable declarations.
         let start_block = blocks.insert(ir::Block::default());
+        let first_block = blocks.insert(ir::Block::default());
+        blocks[start_block].exit = ir::Exit::Jump(first_block);
 
         let span = match reference {
             FunctionRef::Named(_, span) => span,
@@ -672,19 +700,14 @@ where
             &mut self.current,
             Function {
                 function,
-                current_block: start_block,
+                current_block: first_block,
                 variables: Default::default(),
-                scopes: if self.settings.lexical_scoping {
-                    Vec::new()
-                } else {
-                    vec![HashSet::new()]
-                },
+                // Even with no lexical scoping, all functions must have one top-level scope.
+                scopes: vec![HashSet::new()],
                 upvalues: Default::default(),
             },
         );
         self.upper.push(upper);
-
-        self.push_scope();
 
         for (param_index, param_name) in parameters.iter().enumerate() {
             let param_var = self.declare_var(param_name.clone());
@@ -755,6 +778,9 @@ where
             // If we're not using lexical scoping, just open every variable at the very start of the
             // function. This keeps the IR well-formed even with no lexical scoping and no explicit
             // `CloseVariable` instructions.
+            //
+            // We push this instruction to `start_block`, which is kept otherwise empty for this
+            // purpose.
             let inst_id = self
                 .current
                 .function
@@ -762,7 +788,7 @@ where
                 .insert(ir::Instruction::OpenVariable(var));
             self.current.function.blocks[self.current.function.start_block]
                 .instructions
-                .insert(0, inst_id);
+                .push(inst_id);
         }
 
         var

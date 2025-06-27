@@ -14,7 +14,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
     let (thread, closure) = interpreter.enter(|ctx| {
         let (prototype, _) = compiler::Compiler::compile_chunk(
             ctx,
-            compiler::GlobalItems::from_magic(ctx.testing_stdlib()),
+            compiler::ImportItems::from_magic(ctx.testing_stdlib()),
             compiler::CompileSettings::full(),
             name,
             code,

@@ -65,7 +65,7 @@ pub enum FunctionRef {
     Chunk,
 }
 
-#[derive(Debug, Collect)]
+#[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Prototype<'gc> {
     pub chunk: Chunk<'gc>,

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, hash_map};
+use std::{
+    collections::{HashMap, hash_map},
+    hash::Hash,
+};
 
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
@@ -6,7 +9,6 @@ use fabricator_vm::{
     debug::Span,
     instructions::{self, Instruction},
 };
-use gc_arena::{Gc, Mutation};
 use thiserror::Error;
 
 use crate::{
@@ -15,10 +17,12 @@ use crate::{
         shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         variable_liveness::{VariableLiveness, VariableVerificationError},
     },
+    code_gen::{
+        heap_alloc::HeapAllocation, prototype::Prototype, register_alloc::RegisterAllocation,
+    },
     constant::Constant,
     graph::dfs::topological_order,
     ir,
-    proto_gen::{heap_alloc::HeapAllocation, register_alloc::RegisterAllocation},
 };
 
 #[derive(Debug, Error)]
@@ -47,22 +51,18 @@ pub enum ProtoGenError {
     MagicIndexOverflow,
 }
 
-pub fn gen_prototype<'gc>(
-    mc: &Mutation<'gc>,
-    ir: &ir::Function<vm::String<'gc>>,
-    chunk: vm::Chunk<'gc>,
-    magic: Gc<'gc, vm::MagicSet<'gc>>,
-) -> Result<vm::Prototype<'gc>, ProtoGenError> {
-    codegen_function(mc, ir, chunk, magic, &SecondaryMap::new())
+pub fn gen_prototype<S: Clone + Eq + Hash>(
+    ir: &ir::Function<S>,
+    magic_index: impl Fn(&S) -> Option<usize>,
+) -> Result<Prototype<S>, ProtoGenError> {
+    codegen_function(ir, &magic_index, &SecondaryMap::new())
 }
 
-fn codegen_function<'gc>(
-    mc: &Mutation<'gc>,
-    ir: &ir::Function<vm::String<'gc>>,
-    chunk: vm::Chunk<'gc>,
-    magic: Gc<'gc, vm::MagicSet<'gc>>,
+fn codegen_function<S: Clone + Eq + Hash>(
+    ir: &ir::Function<S>,
+    magic_index: &impl Fn(&S) -> Option<usize>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
-) -> Result<vm::Prototype<'gc>, ProtoGenError> {
+) -> Result<Prototype<S>, ProtoGenError> {
     let instruction_liveness = InstructionLiveness::compute(ir)?;
     let shadow_liveness = ShadowLiveness::compute(ir)?;
     let variable_liveness = VariableLiveness::compute(ir)?;
@@ -83,26 +83,27 @@ fn codegen_function<'gc>(
                 .try_into()
                 .map_err(|_| ProtoGenError::PrototypeOverflow)?,
         );
-        prototypes.push(Gc::new(
-            mc,
-            codegen_function(mc, func, chunk, magic, &heap_alloc.heap_indexes)?,
-        ));
+        prototypes.push(codegen_function(
+            func,
+            magic_index,
+            &heap_alloc.heap_indexes,
+        )?);
     }
 
     let mut constants = Vec::new();
-    let mut constant_indexes = HashMap::<Constant<vm::String<'gc>>, instructions::ConstIdx>::new();
+    let mut constant_indexes = HashMap::<Constant<S>, instructions::ConstIdx>::new();
 
     for block in ir.blocks.values() {
         for &inst_id in &block.instructions {
-            for &c in ir.instructions[inst_id].constants() {
-                if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c) {
+            for c in ir.instructions[inst_id].constants() {
+                if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c.clone()) {
                     vacant.insert(
                         constants
                             .len()
                             .try_into()
                             .map_err(|_| ProtoGenError::ConstantOverflow)?,
                     );
-                    constants.push(c);
+                    constants.push(c.clone());
                 }
             }
         }
@@ -150,11 +151,11 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::Constant(c) => {
+                ir::Instruction::Constant(ref c) => {
                     vm_instructions.push((
                         Instruction::LoadConstant {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            constant: constant_indexes[&c],
+                            constant: constant_indexes[c],
                         },
                         span,
                     ));
@@ -198,9 +199,8 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::GetMagic(magic_var) => {
-                    let magic_idx = magic
-                        .find(&magic_var)
+                ir::Instruction::GetMagic(ref magic_var) => {
+                    let magic_idx = magic_index(magic_var)
                         .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
                         .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
@@ -212,9 +212,8 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::SetMagic(magic_var, source) => {
-                    let magic_idx = magic
-                        .find(&magic_var)
+                ir::Instruction::SetMagic(ref magic_var, source) => {
+                    let magic_idx = magic_index(magic_var)
                         .ok_or(ProtoGenError::NoSuchMagic)?
                         .try_into()
                         .map_err(|_| ProtoGenError::MagicIndexOverflow)?;
@@ -279,21 +278,25 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::GetFieldConst { object, key } => {
+                ir::Instruction::GetFieldConst { object, ref key } => {
                     vm_instructions.push((
                         Instruction::GetFieldConst {
                             dest: reg_alloc.instruction_registers[inst_id],
                             object: reg_alloc.instruction_registers[object],
-                            key: constant_indexes[&key],
+                            key: constant_indexes[key],
                         },
                         span,
                     ));
                 }
-                ir::Instruction::SetFieldConst { object, key, value } => {
+                ir::Instruction::SetFieldConst {
+                    object,
+                    ref key,
+                    value,
+                } => {
                     vm_instructions.push((
                         Instruction::SetFieldConst {
                             object: reg_alloc.instruction_registers[object],
-                            key: constant_indexes[&key],
+                            key: constant_indexes[key],
                             value: reg_alloc.instruction_registers[value],
                         },
                         span,
@@ -323,25 +326,25 @@ fn codegen_function<'gc>(
                         span,
                     ));
                 }
-                ir::Instruction::GetIndexConst { array, index } => {
+                ir::Instruction::GetIndexConst { array, ref index } => {
                     vm_instructions.push((
                         Instruction::GetIndexConst {
                             dest: reg_alloc.instruction_registers[inst_id],
                             array: reg_alloc.instruction_registers[array],
-                            index: constant_indexes[&index],
+                            index: constant_indexes[index],
                         },
                         span,
                     ));
                 }
                 ir::Instruction::SetIndexConst {
                     array,
-                    index,
+                    ref index,
                     value,
                 } => {
                     vm_instructions.push((
                         Instruction::SetIndexConst {
                             array: reg_alloc.instruction_registers[array],
-                            index: constant_indexes[&index],
+                            index: constant_indexes[index],
                             value: reg_alloc.instruction_registers[value],
                         },
                         span,
@@ -681,21 +684,8 @@ fn codegen_function<'gc>(
 
     let bytecode = vm::ByteCode::encode(vm_instructions.into_iter())?;
 
-    let constants = constants
-        .into_iter()
-        .map(|c| match c {
-            Constant::Undefined => vm::Constant::Undefined,
-            Constant::Boolean(b) => vm::Constant::Boolean(b),
-            Constant::Integer(i) => vm::Constant::Integer(i),
-            Constant::Float(f) => vm::Constant::Float(f),
-            Constant::String(s) => vm::Constant::String(s),
-        })
-        .collect::<Vec<_>>();
-
-    Ok(vm::Prototype {
-        chunk,
+    Ok(Prototype {
         reference: ir.reference.clone(),
-        magic,
         bytecode,
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),

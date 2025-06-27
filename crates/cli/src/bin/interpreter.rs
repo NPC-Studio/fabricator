@@ -3,11 +3,11 @@ use std::{fs::File, io::Read, path::PathBuf};
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
     CompileError, CompileSettings,
-    compiler::{CompileErrorKind, Compiler, GlobalItems, SourceChunk, optimize_ir},
+    code_gen::gen_prototype,
+    compiler::{CompileErrorKind, Compiler, ImportItems, SourceChunk, optimize_ir},
     ir_gen::MagicMode,
     lexer::Lexer,
     line_numbers::LineNumbers,
-    proto_gen::gen_prototype,
     string_interner::VmInterner,
 };
 use fabricator_stdlib::StdlibContext as _;
@@ -38,7 +38,7 @@ fn main() {
 
             let (prototype, _) = Compiler::compile_chunk(
                 ctx,
-                GlobalItems::from_magic(ctx.testing_stdlib()),
+                ImportItems::from_magic(ctx.testing_stdlib()),
                 CompileSettings::full(),
                 path.to_string_lossy().into_owned(),
                 &code,
@@ -95,7 +95,7 @@ fn main() {
 
             let mut ir = settings
                 .ir_gen
-                .gen_ir(&parsed, |m| {
+                .gen_ir(&parsed, vm::FunctionRef::Chunk, &[], |m| {
                     let i = ctx.stdlib().find(m)?;
                     Some(if ctx.stdlib().get(i).unwrap().read_only() {
                         MagicMode::ReadOnly
@@ -116,7 +116,7 @@ fn main() {
             println!("Compiled IR: {ir:#?}");
             optimize_ir(&mut ir).expect("Internal Compiler Error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = gen_prototype(&ctx, &ir, chunk, ctx.stdlib()).unwrap();
+            let prototype = gen_prototype(&ir, |m| ctx.stdlib().find(m)).unwrap();
             println!("Bytecode: {prototype:#?}");
         }
     });

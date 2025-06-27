@@ -1,0 +1,9 @@
+assert(my_fun_1() == 2);
+
+function my_fun_1() {
+	return my_fun_2();
+}
+
+function my_fun_2() {
+	return 2;
+}

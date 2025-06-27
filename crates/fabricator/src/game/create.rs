@@ -9,7 +9,10 @@ use fabricator_vm as vm;
 use gc_arena::Gc;
 
 use crate::{
-    api::{collision::collision_api, drawing::drawing_api, platform::platform_api, room::room_api},
+    api::{
+        collision::collision_api, drawing::drawing_api, magic::MagicExt as _,
+        platform::platform_api, room::room_api,
+    },
     project::{CollisionKind, Project, ScriptMode},
     state::{
         AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
@@ -159,12 +162,12 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
     interpreter.enter(|ctx| -> Result<_, Error> {
         let mut magic = vm::MagicSet::new();
 
-        magic.merge(&ctx.stdlib())?;
+        magic.merge_unique(&ctx.stdlib())?;
 
-        magic.merge(&platform_api(ctx))?;
-        magic.merge(&collision_api(ctx))?;
-        magic.merge(&room_api(ctx, &config)?)?;
-        magic.merge(&drawing_api(ctx, &config)?)?;
+        magic.merge_unique(&platform_api(ctx))?;
+        magic.merge_unique(&collision_api(ctx))?;
+        magic.merge_unique(&room_api(ctx, &config)?)?;
+        magic.merge_unique(&drawing_api(ctx, &config)?)?;
 
         let magic = Gc::new(&ctx, magic);
 
@@ -176,7 +179,7 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
                 let name = script.path.to_string_lossy();
                 let (proto, _) = compiler::Compiler::compile_chunk(
                     ctx,
-                    compiler::GlobalItems::from_magic(magic),
+                    compiler::ImportItems::from_magic(magic),
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Full => compiler::CompileSettings::full(),

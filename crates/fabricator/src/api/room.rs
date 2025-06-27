@@ -1,14 +1,14 @@
 use fabricator_vm as vm;
 
 use crate::{
-    api::magic::create_magic_rw,
+    api::magic::{DuplicateMagicName, MagicExt as _, create_magic_rw},
     state::{Configuration, RoomId, State},
 };
 
 pub fn room_api<'gc, 'a>(
     ctx: vm::Context<'gc>,
     config: &Configuration,
-) -> Result<vm::MagicSet<'gc>, vm::magic::DuplicateMagicName> {
+) -> Result<vm::MagicSet<'gc>, DuplicateMagicName> {
     let mut magic = vm::MagicSet::new();
 
     for (room_id, room) in config.rooms.iter() {

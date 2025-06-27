@@ -1,5 +1,6 @@
-use fabricator_vm as vm;
+use fabricator_vm::{self as vm, magic::MagicConstant};
 use gc_arena::{Collect, Gc, Mutation};
+use thiserror::Error;
 
 pub fn create_magic_ro<'gc>(
     mc: &Mutation<'gc>,
@@ -54,4 +55,94 @@ pub fn create_magic_rw<'gc>(
     }
 
     gc_arena::unsize!(Gc::new(mc, Magic { read, write }) => dyn vm::Magic)
+}
+
+#[derive(Debug, Error)]
+#[error("magic variable name {0:?} is not unique")]
+pub struct DuplicateMagicName(String);
+
+pub trait MagicExt<'gc> {
+    /// Add a new magic variable to this `MagicSet`.
+    ///
+    /// If an existing magic variable already exists with this name, does nothing and returns
+    /// `Err(DuplicateMagicName)`
+    fn add(
+        &mut self,
+        name: vm::String<'gc>,
+        value: Gc<'gc, dyn vm::Magic<'gc>>,
+    ) -> Result<usize, DuplicateMagicName>;
+
+    /// Convenience method to add any value that implements the `Magic` trait.
+    fn add_impl<M>(
+        &mut self,
+        mc: &Mutation<'gc>,
+        name: vm::String<'gc>,
+        magic: M,
+    ) -> Result<usize, DuplicateMagicName>
+    where
+        M: vm::Magic<'gc> + Collect<'gc> + 'gc;
+
+    /// Convenience method to add a read-only magic variable which always contains a constant value.
+    fn add_constant(
+        &mut self,
+        mc: &Mutation<'gc>,
+        name: vm::String<'gc>,
+        value: vm::Value<'gc>,
+    ) -> Result<usize, DuplicateMagicName>;
+
+    /// Merge the given `MagicSet` if and only if every name in it is unique, otherwise, does
+    /// nothing and returns `Err(DuplicateMagicName)`
+    ///
+    /// All existing variables will not change their index, all merged variables will be assigned
+    /// new indexes.
+    fn merge_unique(&mut self, other: &vm::MagicSet<'gc>) -> Result<(), DuplicateMagicName>;
+}
+
+impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
+    fn add(
+        &mut self,
+        name: fabricator_vm::String<'gc>,
+        value: Gc<'gc, dyn fabricator_vm::Magic<'gc>>,
+    ) -> Result<usize, DuplicateMagicName> {
+        if self.find(&name).is_some() {
+            return Err(DuplicateMagicName(name.as_str().to_owned()));
+        }
+
+        let (index, _) = self.insert(name, value);
+        Ok(index)
+    }
+
+    fn add_impl<M>(
+        &mut self,
+        mc: &Mutation<'gc>,
+        name: fabricator_vm::String<'gc>,
+        magic: M,
+    ) -> Result<usize, DuplicateMagicName>
+    where
+        M: fabricator_vm::Magic<'gc> + Collect<'gc> + 'gc,
+    {
+        self.add(name, gc_arena::unsize!(Gc::new(mc, magic) => dyn vm::Magic))
+    }
+
+    fn add_constant(
+        &mut self,
+        mc: &Mutation<'gc>,
+        name: fabricator_vm::String<'gc>,
+        value: fabricator_vm::Value<'gc>,
+    ) -> Result<usize, DuplicateMagicName> {
+        self.add(name, MagicConstant::new_ptr(mc, value))
+    }
+
+    fn merge_unique(&mut self, other: &vm::MagicSet<'gc>) -> Result<(), DuplicateMagicName> {
+        for (name, _) in other.names() {
+            if self.find(&name).is_some() {
+                return Err(DuplicateMagicName(name.as_str().to_owned()));
+            }
+        }
+
+        for (name, index) in other.names() {
+            self.add(name, other.get(index).unwrap()).unwrap();
+        }
+        Ok(())
+    }
 }

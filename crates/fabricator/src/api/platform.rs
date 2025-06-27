@@ -1,7 +1,7 @@
 use fabricator_vm::{self as vm, IntoValue as _};
 
 use crate::{
-    api::magic::create_magic_ro,
+    api::magic::{MagicExt as _, create_magic_ro},
     state::{InputState, MouseButtons},
 };
 

@@ -25,7 +25,7 @@ pub enum ByteCodeEncodingError {
 /// An encoded list of [`Instruction`]s.
 ///
 /// Stored in a variable-length, optimized bytecode format internally.
-#[derive(Collect)]
+#[derive(Clone, Collect)]
 #[collect(require_static)]
 pub struct ByteCode {
     // Encoded bytecode, each instruction is serialized directly into the byte array and jump

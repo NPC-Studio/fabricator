@@ -13,7 +13,7 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
     interpreter.enter(|ctx| {
         let (prototype, _) = compiler::Compiler::compile_chunk(
             ctx,
-            compiler::GlobalItems::from_magic(ctx.testing_stdlib()),
+            compiler::ImportItems::from_magic(ctx.testing_stdlib()),
             if compat {
                 compiler::CompileSettings::compat()
             } else {

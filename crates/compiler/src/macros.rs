@@ -15,8 +15,8 @@ use crate::tokens::{Token, TokenKind};
 #[collect(no_drop)]
 pub struct Macro<S> {
     pub name: S,
-    pub tokens: Vec<Token<S>>,
     pub span: Span,
+    pub tokens: Vec<Token<S>>,
 }
 
 #[derive(Debug, Error)]
@@ -40,6 +40,8 @@ pub struct MacroError {
 #[error("macro #{0} depends on itself recursively")]
 pub struct RecursiveMacro(pub usize);
 
+/// Gather a set of macro definitions from multiple sources and then later expand them as a
+/// potentially recursively dependent set.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct MacroSet<S> {
@@ -73,6 +75,10 @@ impl<S> MacroSet<S> {
     /// Get an extracted macro.
     pub fn get(&self, index: usize) -> Option<&Macro<S>> {
         self.macros.get(index)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Macro<S>> {
+        self.macros.iter()
     }
 }
 
@@ -150,8 +156,8 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
                         self.macros.push(Macro {
                             name: macro_name,
-                            tokens: macro_tokens,
                             span: macro_span,
+                            tokens: macro_tokens,
                         });
                     }
                     t => {

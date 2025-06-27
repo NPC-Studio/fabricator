@@ -5,7 +5,10 @@ use fabricator_math::Vec2;
 use fabricator_vm as vm;
 use gc_arena::{Collect, Rootable};
 
-use crate::state::{InstanceState, State};
+use crate::{
+    api::magic::MagicExt as _,
+    state::{InstanceState, State},
+};
 
 pub fn no_one<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
     #[derive(Collect)]

@@ -40,21 +40,24 @@ pub struct EnumEvaluationError {
 #[collect(no_drop)]
 pub struct Enum<S> {
     pub name: S,
+    pub span: Span,
     pub variants: HashMap<S, Constant<S>>,
 }
 
+/// Gather enum definitions from multiple sources and then expand them all anywhere they occur in
+/// an AST.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct EnumSet<S> {
     enums: Vec<Enum<S>>,
-    enum_dict: HashMap<S, usize>,
+    dict: HashMap<S, usize>,
 }
 
 impl<S> Default for EnumSet<S> {
     fn default() -> Self {
         Self {
             enums: Vec::new(),
-            enum_dict: HashMap::new(),
+            dict: HashMap::new(),
         }
     }
 }
@@ -68,7 +71,7 @@ impl<S> EnumSet<S> {
     ///
     /// Each enum is assigned a sequential index for identification starting from zero. Checking the
     /// current enum count can be used to determine which enums are extracted from which calls to
-    /// [`EnumSet::extract_enums`].
+    /// [`EnumSet::extract`].
     pub fn len(&self) -> usize {
         self.enums.len()
     }
@@ -77,16 +80,20 @@ impl<S> EnumSet<S> {
     pub fn get(&self, index: usize) -> Option<&Enum<S>> {
         self.enums.get(index)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Enum<S>> {
+        self.enums.iter()
+    }
 }
 
 impl<S: Eq + Hash> EnumSet<S> {
-    /// Find a enum index by enum name.
+    /// Find a enum index by its name.
     pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.enum_dict.get(name).copied()
+        self.dict.get(name).copied()
     }
 }
 
@@ -95,20 +102,22 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
         let enums = block
             .statements
-            .extract_if(.., |s| matches!(*s.kind, ast::StatementKind::Enum(_)))
-            .map(|s| match *s.kind {
-                ast::StatementKind::Enum(es) => es,
-                _ => unreachable!(),
-            });
+            .extract_if(.., |s| matches!(*s.kind, ast::StatementKind::Enum(_)));
 
         for stmt in enums {
+            let enum_stmt = match *stmt.kind {
+                ast::StatementKind::Enum(enum_stmt) => enum_stmt,
+                _ => unreachable!(),
+            };
+
             let mut enom = Enum {
-                name: stmt.name,
+                name: enum_stmt.name,
+                span: stmt.span,
                 variants: HashMap::new(),
             };
 
             let mut implicit_index = 0;
-            for (name, value) in stmt.variants {
+            for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
                     let span = expr.span;
                     let value = fold_constant_expr(expr).ok_or_else(|| EnumError {
@@ -123,7 +132,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 };
             }
 
-            self.enum_dict.insert(enom.name.clone(), self.enums.len());
+            self.dict.insert(enom.name.clone(), self.enums.len());
             self.enums.push(enom);
         }
 
@@ -131,7 +140,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     }
 
     /// Expand all enum values referenced anywhere in the given block.
-    pub fn expand_block(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumEvaluationError> {
+    pub fn expand(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumEvaluationError> {
         struct EnumExpander<'a, S>(&'a EnumSet<S>);
 
         impl<'a, S: Clone + Eq + Hash> ast::VisitorMut<S> for EnumExpander<'a, S> {
@@ -139,11 +148,9 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
 
             fn visit_stmt_mut(&mut self, stmt: &mut ast::Statement<S>) -> ControlFlow<Self::Break> {
                 let shadows = match stmt.kind.as_ref() {
-                    ast::StatementKind::Enum(enum_stmt) => self.0.enum_dict.get(&enum_stmt.name),
-                    ast::StatementKind::Function(func_stmt) => {
-                        self.0.enum_dict.get(&func_stmt.name)
-                    }
-                    ast::StatementKind::Var(var_stmt) => self.0.enum_dict.get(&var_stmt.name),
+                    ast::StatementKind::Enum(enum_stmt) => self.0.dict.get(&enum_stmt.name),
+                    ast::StatementKind::Function(func_stmt) => self.0.dict.get(&func_stmt.name),
+                    ast::StatementKind::Var(var_stmt) => self.0.dict.get(&var_stmt.name),
                     _ => None,
                 }
                 .copied();
@@ -164,7 +171,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             ) -> ControlFlow<Self::Break> {
                 match &mut *expr.kind {
                     ast::ExpressionKind::Name(ident) => {
-                        if let Some(&index) = self.0.enum_dict.get(ident) {
+                        if let Some(&index) = self.0.dict.get(ident) {
                             return ControlFlow::Break(EnumEvaluationError {
                                 kind: EnumEvaluationErrorKind::BadVariant(index),
                                 span: expr.span,
@@ -173,7 +180,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                     }
                     ast::ExpressionKind::Field(field_expr) => {
                         if let ast::ExpressionKind::Name(ident) = &*field_expr.base.kind {
-                            if let Some(&index) = self.0.enum_dict.get(ident) {
+                            if let Some(&index) = self.0.dict.get(ident) {
                                 if let Some(var) =
                                     self.0.enums[index].variants.get(&field_expr.field)
                                 {
