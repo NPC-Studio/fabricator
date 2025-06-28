@@ -91,8 +91,9 @@ impl ScriptPrototype {
     }
 }
 
-#[derive(Default)]
 pub struct Scripts {
+    pub magic: vm::StashedMagicSet,
+    pub scripts: Vec<ScriptPrototype>,
     pub object_events: HashMap<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>,
 }
 

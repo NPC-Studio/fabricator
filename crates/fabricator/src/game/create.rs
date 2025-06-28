@@ -13,7 +13,7 @@ use crate::{
         collision::collision_api, drawing::drawing_api, magic::MagicExt as _,
         platform::platform_api, room::room_api,
     },
-    project::{CollisionKind, Project, ScriptMode},
+    project::{CollisionKind, ObjectEvent, Project, ScriptMode},
     state::{
         AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
         ObjectId, Room, RoomId, ScriptPrototype, Scripts, Sprite, SpriteCollision,
@@ -157,9 +157,8 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
         rooms,
     };
 
-    let mut scripts = Scripts::default();
-
-    interpreter.enter(|ctx| -> Result<_, Error> {
+    let scripts = interpreter.enter(|ctx| -> Result<_, Error> {
+        let mut object_events = HashMap::<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>::new();
         let mut magic = vm::MagicSet::new();
 
         magic.merge_unique(&ctx.stdlib())?;
@@ -171,31 +170,55 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
 
         let magic = Gc::new(&ctx, magic);
 
+        let mut code_buf = String::new();
+
+        let mut script_compiler =
+            compiler::Compiler::new(ctx, compiler::ImportItems::from_magic(magic));
+        for script in project.scripts.values() {
+            code_buf.clear();
+            File::open(&script.path)?.read_to_string(&mut code_buf)?;
+            script_compiler.add_chunk(
+                match script.mode {
+                    ScriptMode::Compat => compiler::CompileSettings::compat(),
+                    ScriptMode::Full => compiler::CompileSettings::full(),
+                },
+                script.path.to_string_lossy().into_owned(),
+                &code_buf,
+            )?;
+        }
+
+        let (scripts, script_imports) = script_compiler.compile()?;
+
         for (object_name, proj_object) in &project.objects {
-            let mut code = String::new();
             for (&event, script) in &proj_object.event_scripts {
-                code.clear();
-                File::open(&script.path)?.read_to_string(&mut code)?;
+                code_buf.clear();
+                File::open(&script.path)?.read_to_string(&mut code_buf)?;
                 let name = script.path.to_string_lossy();
                 let (proto, _) = compiler::Compiler::compile_chunk(
                     ctx,
-                    compiler::ImportItems::from_magic(magic),
+                    script_imports,
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Full => compiler::CompileSettings::full(),
                     },
                     name.into_owned(),
-                    &code,
+                    &code_buf,
                 )?;
-                scripts
-                    .object_events
+                object_events
                     .entry(object_dict[object_name])
                     .or_default()
                     .insert(event, ScriptPrototype::new(ctx, proto));
             }
         }
 
-        Ok(())
+        Ok(Scripts {
+            magic: ctx.stash(magic),
+            scripts: scripts
+                .into_iter()
+                .map(|p| ScriptPrototype::new(ctx, p))
+                .collect(),
+            object_events,
+        })
     })?;
 
     let first_room = project.room_order.first().context("no first room")?;

@@ -54,6 +54,10 @@ impl<S> ExportSet<S> {
         self.exports.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.exports.is_empty()
+    }
+
     /// Get an extracted enum.
     pub fn get(&self, index: usize) -> Option<&Export<S>> {
         self.exports.get(index)

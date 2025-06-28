@@ -206,19 +206,9 @@ impl<'gc> Compiler<'gc> {
     }
 
     pub fn new(ctx: vm::Context<'gc>, imports: ImportItems<'gc>) -> Self {
-        let macros = if let Some(macros) = imports.macros {
-            (*macros).clone()
-        } else {
-            MacroSet::default()
-        };
-
-        let enums = if let Some(enums) = imports.enums {
-            (*enums).clone()
-        } else {
-            EnumSet::default()
-        };
-
-        let magic = (*imports.magic).clone();
+        let macros = imports.macros.as_deref().cloned().unwrap_or_default();
+        let enums = imports.enums.as_deref().cloned().unwrap_or_default();
+        let magic = imports.magic.as_ref().clone();
 
         Self {
             ctx,
@@ -524,8 +514,16 @@ impl<'gc> Compiler<'gc> {
         }
 
         let imports = ImportItems {
-            macros: Some(Gc::new(&ctx, macros)),
-            enums: Some(Gc::new(&ctx, enums)),
+            macros: if macros.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, macros))
+            },
+            enums: if enums.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, enums))
+            },
             magic,
         };
 

@@ -74,11 +74,11 @@ impl ObjectEvent {
         [Self::Create, Self::Step, Self::Draw].into_iter()
     }
 
-    pub fn path(self) -> &'static str {
+    pub fn file_stem(self) -> &'static str {
         match self {
-            Self::Create => "Create_0.gml",
-            Self::Step => "Step_0.gml",
-            Self::Draw => "Draw_0.gml",
+            Self::Create => "Create_0",
+            Self::Step => "Step_0",
+            Self::Draw => "Draw_0",
         }
     }
 }
@@ -87,6 +87,15 @@ impl ObjectEvent {
 pub enum ScriptMode {
     Compat,
     Full,
+}
+
+impl ScriptMode {
+    pub fn extension(self) -> &'static str {
+        match self {
+            ScriptMode::Compat => "gml",
+            ScriptMode::Full => "fml",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -133,6 +142,13 @@ pub struct Room {
 }
 
 #[derive(Debug)]
+pub struct Script {
+    pub name: String,
+    pub path: PathBuf,
+    pub mode: ScriptMode,
+}
+
+#[derive(Debug)]
 pub struct TextureGroup {
     pub name: String,
     pub auto_crop: bool,
@@ -147,6 +163,7 @@ pub struct Project {
     pub sprites: HashMap<String, Sprite>,
     pub objects: HashMap<String, Object>,
     pub rooms: HashMap<String, Room>,
+    pub scripts: HashMap<String, Script>,
     pub room_order: Vec<String>,
 }
 

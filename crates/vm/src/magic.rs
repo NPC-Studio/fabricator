@@ -97,6 +97,10 @@ impl<'gc> MagicSet<'gc> {
         Self::default()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.registered.is_empty()
+    }
+
     /// Add a new or set an existing magic variable in a `MagicSet`.
     ///
     /// If this `MagicSet` did not previously contain a magic variable with this name, then it will

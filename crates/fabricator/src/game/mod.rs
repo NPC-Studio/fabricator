@@ -74,7 +74,18 @@ impl Game {
         let mut interpreter = vm::Interpreter::new();
         let main_thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
 
-        let state = create_state(&mut interpreter, &project)?;
+        let mut state = create_state(&mut interpreter, &project)?;
+        for script in state.scripts.scripts.clone() {
+            interpreter
+                .enter(|ctx| -> Result<_, vm::Error> {
+                    let thread = ctx.fetch(&main_thread);
+                    let closure = script.create_closure(ctx);
+                    State::ctx_cell(ctx).freeze(&mut state, || thread.exec(ctx, closure))?;
+
+                    Ok(())
+                })
+                .map_err(|e| e.into_inner())?;
+        }
 
         let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
 

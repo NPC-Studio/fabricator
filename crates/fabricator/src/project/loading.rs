@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::File,
+    fs::{self, File},
     io::BufReader,
     path::{Path, PathBuf},
 };
@@ -11,7 +11,7 @@ use serde_json as json;
 
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Frame, Instance, Layer, Object, ObjectEvent,
-    Project, Room, ScriptMode, Sprite, TextureGroup,
+    Project, Room, Script, ScriptMode, Sprite, TextureGroup,
     strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
@@ -47,6 +47,7 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         sprites: HashMap::new(),
         objects: HashMap::new(),
         rooms: HashMap::new(),
+        scripts: HashMap::new(),
         room_order,
     };
 
@@ -66,6 +67,10 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
             YyResource::Room(yy_room) => {
                 let room = read_room(base_path, yy_room)?;
                 project.rooms.insert(room.name.clone(), room);
+            }
+            YyResource::Script(yy_script) => {
+                let script = read_script(base_path, yy_script)?;
+                project.scripts.insert(script.name.clone(), script);
             }
             YyResource::Other => {}
         }
@@ -213,6 +218,11 @@ struct YyRoom {
 }
 
 #[derive(Deserialize)]
+struct YyScript {
+    name: String,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyResource {
     #[serde(rename = "GMSprite")]
@@ -221,6 +231,8 @@ enum YyResource {
     Object(YyObject),
     #[serde(rename = "GMRoom")]
     Room(YyRoom),
+    #[serde(rename = "GMScript")]
+    Script(YyScript),
     #[serde(other)]
     Other,
 }
@@ -286,18 +298,34 @@ fn read_sprite(base_path: PathBuf, yy_sprite: YySprite) -> Result<Sprite, Error>
 
 fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error> {
     let mut event_scripts = HashMap::new();
-    for event in ObjectEvent::all() {
-        let path = base_path.join(event.path());
-        let ext = path.extension().context("missing script extension")?;
-        let mode = if ext.eq_ignore_ascii_case("gml") {
-            ScriptMode::Compat
-        } else if ext.eq_ignore_ascii_case("fml") {
-            ScriptMode::Full
-        } else {
-            bail!("unknown script extension {:?}", ext);
-        };
-        if path.exists() {
-            event_scripts.insert(event, EventScript { event, path, mode });
+    for entry in fs::read_dir(&base_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        for event in ObjectEvent::all() {
+            let stem = path.file_stem().unwrap();
+            if stem.eq_ignore_ascii_case(event.file_stem()) {
+                let ext = path.extension().context("missing event script extension")?;
+                let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
+                    ScriptMode::Compat
+                } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
+                    ScriptMode::Full
+                } else {
+                    bail!("unknown event script extension {:?}", ext);
+                };
+                event_scripts.insert(
+                    event,
+                    EventScript {
+                        event,
+                        path: path.clone(),
+                        mode,
+                    },
+                );
+            }
         }
     }
 
@@ -343,4 +371,38 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
         height: yy_room.room_settings.height,
         layers,
     })
+}
+
+fn read_script(base_path: PathBuf, yy_script: YyScript) -> Result<Script, Error> {
+    for entry in fs::read_dir(&base_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        let stem = path.file_stem().unwrap();
+        if stem.eq_ignore_ascii_case(&yy_script.name) {
+            let ext = path.extension().context("missing script extension")?;
+            let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
+                ScriptMode::Compat
+            } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
+                ScriptMode::Full
+            } else {
+                bail!("unknown event script extension {:?}", ext);
+            };
+            return Ok(Script {
+                name: yy_script.name,
+                path,
+                mode,
+            });
+        }
+    }
+
+    bail!(
+        "could not find a script file with the stem {:?} in {:?}",
+        yy_script.name,
+        base_path
+    );
 }

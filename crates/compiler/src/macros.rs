@@ -63,6 +63,10 @@ impl<S> MacroSet<S> {
         Self::default()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.macros.is_empty()
+    }
+
     /// The current count of extracted macros.
     ///
     /// Each macro is assigned a sequential index for identification starting from zero. Checking

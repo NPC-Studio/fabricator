@@ -1,6 +1,6 @@
 {
   "$GMProject":"v1",
-  "%Name":"movement-test",
+  "%Name":"scripts-test",
   "AudioGroups":[
     {"$GMAudioGroup":"","%Name":"audiogroup_default","name":"audiogroup_default","resourceType":"GMAudioGroup","resourceVersion":"2.0","targets":-1,},
   ],
@@ -33,10 +33,12 @@
   "MetaData":{
     "IDEVersion":"2024.13.0.190",
   },
-  "name":"movement-test",
+  "name":"scripts-test",
   "resources":[
     {"id":{"name":"obj_square","path":"objects/obj_square/obj_square.yy",},},
     {"id":{"name":"room1","path":"rooms/room1/room1.yy",},},
+    {"id":{"name":"script_a","path":"scripts/script_a/script_a.yy",},},
+    {"id":{"name":"script_b","path":"scripts/script_b/script_b.yy",},},
     {"id":{"name":"square","path":"sprites/square/square.yy",},},
   ],
   "resourceType":"GMProject",

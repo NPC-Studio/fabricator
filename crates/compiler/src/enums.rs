@@ -76,6 +76,10 @@ impl<S> EnumSet<S> {
         self.enums.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.enums.is_empty()
+    }
+
     /// Get an extracted enum.
     pub fn get(&self, index: usize) -> Option<&Enum<S>> {
         self.enums.get(index)
