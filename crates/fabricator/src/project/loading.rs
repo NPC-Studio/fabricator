@@ -310,6 +310,10 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
             let stem = path.file_stem().unwrap();
             if stem.eq_ignore_ascii_case(event.file_stem()) {
                 let ext = path.extension().context("missing event script extension")?;
+                if ext.eq_ignore_ascii_case("yy") {
+                    continue;
+                }
+
                 let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
                     ScriptMode::Compat
                 } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
@@ -385,6 +389,10 @@ fn read_script(base_path: PathBuf, yy_script: YyScript) -> Result<Script, Error>
         let stem = path.file_stem().unwrap();
         if stem.eq_ignore_ascii_case(&yy_script.name) {
             let ext = path.extension().context("missing script extension")?;
+            if ext.eq_ignore_ascii_case("yy") {
+                continue;
+            }
+
             let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
                 ScriptMode::Compat
             } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
