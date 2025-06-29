@@ -138,7 +138,7 @@ where
             (Some(c), _) if c.is_ascii_whitespace() => {
                 unreachable!("whitespace should have been skipped")
             }
-            (Some(c), _) if c == '#' => {
+            (Some(c), Some(n)) if c == '#' && is_identifier_start_char(n) => {
                 self.advance(1);
                 self.read_identifier();
                 match self.string_buffer.as_str() {
@@ -274,6 +274,26 @@ where
             (Some('|'), _) => {
                 self.advance(1);
                 TokenKind::Pipe
+            }
+            (Some('~'), _) => {
+                self.advance(1);
+                TokenKind::Tilde
+            }
+            (Some('?'), _) => {
+                self.advance(1);
+                TokenKind::QuestionMark
+            }
+            (Some('#'), _) => {
+                self.advance(1);
+                TokenKind::Octothorpe
+            }
+            (Some('@'), _) => {
+                self.advance(1);
+                TokenKind::AtSign
+            }
+            (Some('$'), _) => {
+                self.advance(1);
+                TokenKind::Dollar
             }
             (Some('='), _) => {
                 self.advance(1);
