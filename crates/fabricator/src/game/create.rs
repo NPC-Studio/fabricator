@@ -21,7 +21,11 @@ use crate::{
     },
 };
 
-pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Result<State, Error> {
+pub fn create_state(
+    interpreter: &mut vm::Interpreter,
+    project: &Project,
+    config_name: &str,
+) -> Result<State, Error> {
     // TODO: Hard code tick rate, normally configured by 'options/main/options_main.yy'.
     const TICK_RATE: f64 = 60.0;
 
@@ -173,7 +177,7 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
         let mut code_buf = String::new();
 
         let mut script_compiler =
-            compiler::Compiler::new(ctx, compiler::ImportItems::from_magic(magic));
+            compiler::Compiler::new(ctx, config_name, compiler::ImportItems::from_magic(magic));
         for script in project.scripts.values() {
             code_buf.clear();
             File::open(&script.path)?.read_to_string(&mut code_buf)?;
@@ -196,6 +200,7 @@ pub fn create_state(interpreter: &mut vm::Interpreter, project: &Project) -> Res
                 let name = script.path.to_string_lossy();
                 let (proto, _) = compiler::Compiler::compile_chunk(
                     ctx,
+                    config_name,
                     script_imports,
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),

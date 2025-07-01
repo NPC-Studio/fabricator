@@ -11,14 +11,6 @@ use thiserror::Error;
 
 use crate::tokens::{Token, TokenKind};
 
-#[derive(Debug, Clone, Collect)]
-#[collect(no_drop)]
-pub struct Macro<S> {
-    pub name: S,
-    pub span: Span,
-    pub tokens: Vec<Token<S>>,
-}
-
 #[derive(Debug, Error)]
 pub enum MacroErrorKind {
     #[error("`#macro` must be at the beginning of a line")]
@@ -40,13 +32,57 @@ pub struct MacroError {
 #[error("macro #{0} depends on itself recursively")]
 pub struct RecursiveMacro(pub usize);
 
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct Macro<S> {
+    pub name: S,
+    pub config: Option<S>,
+    pub span: Span,
+    pub tokens: Vec<Token<S>>,
+}
+
+/// The set of macros with a specific name, mapping from configuration to macro index for that
+/// configuration.
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct ConfigurationSet<S> {
+    /// Macro specified with no configuration option.
+    pub default: Option<usize>,
+
+    /// Macros specified with named configurations.
+    pub for_config: HashMap<S, usize>,
+}
+
+impl<S> Default for ConfigurationSet<S> {
+    fn default() -> Self {
+        Self {
+            default: None,
+            for_config: HashMap::new(),
+        }
+    }
+}
+
+impl<S: Eq + Hash> ConfigurationSet<S> {
+    pub fn index_for_config<Q: ?Sized>(&self, config: Option<&Q>) -> Option<usize>
+    where
+        S: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        if let Some(config) = config {
+            self.for_config.get(config).copied().or(self.default)
+        } else {
+            self.default
+        }
+    }
+}
+
 /// Gather a set of macro definitions from multiple sources and then later expand them as a
 /// potentially recursively dependent set.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct MacroSet<S> {
     macros: Vec<Macro<S>>,
-    macro_dict: HashMap<S, usize>,
+    macro_dict: HashMap<S, ConfigurationSet<S>>,
 }
 
 impl<S> Default for MacroSet<S> {
@@ -87,13 +123,25 @@ impl<S> MacroSet<S> {
 }
 
 impl<S: Eq + Hash> MacroSet<S> {
-    /// Find a macro index by macro name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    /// Find the configuration set for a macro by name.
+    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<&ConfigurationSet<S>>
     where
         S: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.macro_dict.get(name).copied()
+        self.macro_dict.get(name)
+    }
+
+    /// Find a macro index for a specific configuration by macro name.
+    pub fn find_config<Q1: ?Sized, Q2: ?Sized>(&self, config: &Q1, name: &Q2) -> Option<usize>
+    where
+        S: Borrow<Q1> + Borrow<Q2>,
+        Q1: Hash + Eq,
+        Q2: Hash + Eq,
+    {
+        self.macro_dict
+            .get(name)
+            .and_then(|c| c.for_config.get(config).copied().or(c.default))
     }
 }
 
@@ -104,6 +152,11 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// be the first token following a newline, and the macro <TOKENS> list is interpreted up to
     /// the following newline or eof. All of the tokens that make up the macro are removed, not
     /// including the trailing newline or eof.
+    ///
+    /// Macros can also be of the form `#macro CONFIG:NAME <TOKENS>`, which marks the macro as
+    /// applying only under a specific, named configuration, which can be set during expansion.
+    /// These macros will override any default if the named configuration identifier matches the
+    /// selected configuration.
     ///
     /// If an error is encountered, the provided token buffer will be in an unspecified state.
     pub fn extract(&mut self, tokens: &mut Vec<Token<S>>) -> Result<(), MacroError> {
@@ -122,55 +175,100 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
                 let mut macro_span = token.span;
 
-                match token_iter.next() {
-                    Some(Token {
-                        kind: TokenKind::Identifier(macro_name),
+                let t = token_iter.next();
+                let Some(Token {
+                    kind: TokenKind::Identifier(config_or_name),
+                    span: config_or_name_span,
+                }) = t
+                else {
+                    return Err(MacroError {
+                        kind: MacroErrorKind::BadMacroName,
+                        span: t.map(|t| t.span).unwrap_or(Span::null()),
+                    });
+                };
+
+                let config;
+                let macro_name;
+
+                // An identifier followed by a colon is a configuration-specific macro, with the
+                // config name followed by a colon.
+                if let Some(Token {
+                    kind: TokenKind::Colon,
+                    ..
+                }) = token_iter.peek()
+                {
+                    config = Some(config_or_name);
+                    token_iter.next();
+
+                    let t = token_iter.next();
+                    let Some(Token {
+                        kind: TokenKind::Identifier(name),
                         span: name_span,
-                    }) => {
-                        macro_span = macro_span.combine(name_span);
-
-                        let mut macro_tokens = Vec::new();
-                        loop {
-                            match token_iter.peek() {
-                                Some(t) => {
-                                    if matches!(t.kind, TokenKind::EndOfStream | TokenKind::Newline)
-                                    {
-                                        break;
-                                    } else {
-                                        let token = token_iter.next().unwrap();
-                                        macro_span = macro_span.combine(token.span);
-                                        macro_tokens.push(token);
-                                    }
-                                }
-                                None => break,
-                            }
-                        }
-
-                        match self.macro_dict.entry(macro_name.clone()) {
-                            hash_map::Entry::Occupied(occupied) => {
-                                return Err(MacroError {
-                                    kind: MacroErrorKind::DuplicateMacro(*occupied.get()),
-                                    span: macro_span,
-                                });
-                            }
-                            hash_map::Entry::Vacant(vacant) => {
-                                vacant.insert(self.macros.len());
-                            }
-                        }
-
-                        self.macros.push(Macro {
-                            name: macro_name,
-                            span: macro_span,
-                            tokens: macro_tokens,
-                        });
-                    }
-                    t => {
+                    }) = t
+                    else {
                         return Err(MacroError {
                             kind: MacroErrorKind::BadMacroName,
                             span: t.map(|t| t.span).unwrap_or(Span::null()),
                         });
+                    };
+
+                    macro_name = name;
+                    macro_span = macro_span.combine(name_span);
+                } else {
+                    config = None;
+                    macro_name = config_or_name;
+                    macro_span = macro_span.combine(config_or_name_span);
+                }
+
+                let mut macro_tokens = Vec::new();
+                loop {
+                    match token_iter.peek() {
+                        Some(t) => {
+                            if matches!(t.kind, TokenKind::EndOfStream | TokenKind::Newline) {
+                                break;
+                            } else {
+                                let token = token_iter.next().unwrap();
+                                macro_span = macro_span.combine(token.span);
+                                macro_tokens.push(token);
+                            }
+                        }
+                        None => break,
                     }
                 }
+
+                let named = self
+                    .macro_dict
+                    .entry(macro_name.clone())
+                    .or_insert_with(Default::default);
+
+                if let Some(config) = config.clone() {
+                    match named.for_config.entry(config) {
+                        hash_map::Entry::Occupied(occupied) => {
+                            return Err(MacroError {
+                                kind: MacroErrorKind::DuplicateMacro(*occupied.get()),
+                                span: macro_span,
+                            });
+                        }
+                        hash_map::Entry::Vacant(vacant) => {
+                            vacant.insert(self.macros.len());
+                        }
+                    }
+                } else {
+                    if let Some(def) = named.default {
+                        return Err(MacroError {
+                            kind: MacroErrorKind::DuplicateMacro(def),
+                            span: macro_span,
+                        });
+                    }
+                    named.default = Some(self.macros.len());
+                }
+
+                self.macros.push(Macro {
+                    name: macro_name,
+                    config,
+                    span: macro_span,
+                    tokens: macro_tokens,
+                });
             } else {
                 prev_token_was_newline = matches!(token.kind, TokenKind::Newline);
                 filtered_tokens.push(token);
@@ -190,7 +288,17 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// with the fully expanded macro that the identifier references.
     ///
     /// Will return `Err` if any macro depends on itself recursively.
-    pub fn resolve_dependencies(&mut self) -> Result<(), RecursiveMacro> {
+    ///
+    /// If `config` is provided, then this will expand using macros with the given named
+    /// configuration if they exist, otherwise falling back to the default.
+    pub fn resolve_dependencies<Q: ?Sized>(
+        &mut self,
+        config: Option<&Q>,
+    ) -> Result<(), RecursiveMacro>
+    where
+        S: Borrow<S> + Borrow<Q>,
+        Q: Hash + Eq,
+    {
         // Determine a proper macro evaluation order.
         //
         // Add all of the macro indexes we need to evaluate to a stack.
@@ -221,8 +329,12 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
             let makro = &self.macros[macro_index];
             for token in &makro.tokens {
-                if let TokenKind::Identifier(i) = &token.kind {
-                    if let Some(&ind) = self.macro_dict.get(i) {
+                if let TokenKind::Identifier(ident) = &token.kind {
+                    if let Some(ind) = self
+                        .macro_dict
+                        .get(ident)
+                        .and_then(|c| c.index_for_config(config))
+                    {
                         if !evaluated_dependencies.contains(ind) {
                             if !evaluating_dependencies.insert(macro_index) {
                                 return Err(RecursiveMacro(macro_index));
@@ -248,19 +360,23 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             let mut expanded_tokens = Vec::new();
             let makro = &self.macros[macro_index];
             for token in &makro.tokens {
-                match &token.kind {
-                    TokenKind::Identifier(i) if self.macro_dict.contains_key(i) => {
-                        let ind = self.macro_dict[i];
-                        expanded_tokens.extend_from_slice(
-                            &resolved_macros
-                                .get(ind)
-                                .expect("bad macro evaluation order")
-                                .tokens,
-                        );
-                    }
-                    _ => {
-                        expanded_tokens.push(token.clone());
-                    }
+                let ind = match &token.kind {
+                    TokenKind::Identifier(ident) => self
+                        .macro_dict
+                        .get(ident)
+                        .and_then(|c| c.index_for_config(config)),
+                    _ => None,
+                };
+
+                if let Some(ind) = ind {
+                    expanded_tokens.extend_from_slice(
+                        &resolved_macros
+                            .get(ind)
+                            .expect("bad macro evaluation order")
+                            .tokens,
+                    );
+                } else {
+                    expanded_tokens.push(token.clone());
                 }
             }
 
@@ -268,6 +384,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                 macro_index,
                 Macro {
                     name: makro.name.clone(),
+                    config: makro.config.clone(),
                     tokens: expanded_tokens,
                     span: makro.span,
                 },
@@ -280,13 +397,22 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
         Ok(())
     }
 
+    /// Resolve dependencies with the default configuration.
+    pub fn resolve_dependencies_default(&mut self) -> Result<(), RecursiveMacro> {
+        self.resolve_dependencies::<S>(None)
+    }
+
     /// Expand all macros in the given token list.
-    pub fn expand(&mut self, tokens: &mut Vec<Token<S>>) {
+    pub fn expand<Q: ?Sized>(&self, config: Option<&Q>, tokens: &mut Vec<Token<S>>)
+    where
+        S: Borrow<S> + Borrow<Q>,
+        Q: Hash + Eq,
+    {
         let mut expanded_tokens = Vec::new();
 
         for token in tokens.drain(..) {
             let macro_index = if let TokenKind::Identifier(i) = &token.kind {
-                self.find(i)
+                self.find(i).and_then(|c| c.index_for_config(config))
             } else {
                 None
             };
@@ -300,6 +426,11 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
         *tokens = expanded_tokens;
     }
+
+    /// Expand macros with the default configuration.
+    pub fn expand_default(&self, tokens: &mut Vec<Token<S>>) {
+        self.expand::<S>(None, tokens)
+    }
 }
 
 #[cfg(test)]
@@ -312,7 +443,8 @@ mod tests {
     fn test_macro_dependencies() {
         const SOURCE: &str = r#"
             #macro THREE TWO + ONE
-            #macro ONE 1
+            #macro correct:ONE 1
+            #macro broken:ONE 2
             #macro FOUR TWO + TWO
             #macro TWO ONE + ONE
         "#;
@@ -323,11 +455,11 @@ mod tests {
         let mut macros = MacroSet::new();
 
         macros.extract(&mut tokens).unwrap();
-        macros.resolve_dependencies().unwrap();
+        macros.resolve_dependencies(Some("correct")).unwrap();
 
         assert_eq!(
             macros
-                .get(macros.find("FOUR").unwrap())
+                .get(macros.find_config("correct", "FOUR").unwrap())
                 .unwrap()
                 .tokens
                 .iter()
@@ -358,6 +490,6 @@ mod tests {
         let mut macros = MacroSet::default();
 
         macros.extract(&mut tokens).unwrap();
-        assert!(macros.resolve_dependencies().is_err());
+        assert!(macros.resolve_dependencies_default().is_err());
     }
 }

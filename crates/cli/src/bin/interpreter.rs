@@ -38,6 +38,7 @@ fn main() {
 
             let (prototype, _) = Compiler::compile_chunk(
                 ctx,
+                "default",
                 ImportItems::from_magic(ctx.testing_stdlib()),
                 CompileSettings::full(),
                 path.to_string_lossy().into_owned(),

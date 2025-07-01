@@ -45,7 +45,7 @@ struct AppState {
 }
 
 impl AppState {
-    async fn new(window: Arc<Window>, project_file: &Path) -> AppState {
+    async fn new(window: Arc<Window>, project_file: &Path, config: &String) -> AppState {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -62,7 +62,7 @@ impl AppState {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let game = fab::Game::new(fab::Project::load(&project_file).unwrap()).unwrap();
+        let game = fab::Game::new(fab::Project::load(&project_file).unwrap(), config).unwrap();
 
         let pipeline = pipeline::Pipeline::new(&device, surface_format.add_srgb_suffix());
 
@@ -323,6 +323,7 @@ impl AppState {
 
 struct App {
     project_file: PathBuf,
+    config: String,
     app_state: Option<AppState>,
 }
 
@@ -337,7 +338,11 @@ impl ApplicationHandler for App {
                 .unwrap(),
         );
 
-        let state = pollster::block_on(AppState::new(window.clone(), &self.project_file));
+        let state = pollster::block_on(AppState::new(
+            window.clone(),
+            &self.project_file,
+            &self.config,
+        ));
         self.app_state = Some(state);
 
         window.request_redraw();
@@ -389,6 +394,8 @@ impl ApplicationHandler for App {
 #[derive(Parser)]
 struct Cli {
     project_file: PathBuf,
+    #[arg(long)]
+    config: String,
 }
 
 fn main() {
@@ -401,6 +408,7 @@ fn main() {
 
     let mut app = App {
         project_file: cli.project_file,
+        config: cli.config,
         app_state: None,
     };
     event_loop.run_app(&mut app).unwrap();

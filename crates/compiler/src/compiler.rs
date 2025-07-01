@@ -174,6 +174,7 @@ impl<'gc> ImportItems<'gc> {
 /// Compiles separate code units together in multiple phases to allow for cross referencing.
 pub struct Compiler<'gc> {
     ctx: vm::Context<'gc>,
+    config: String,
     macros: MacroSet<vm::String<'gc>>,
     enums: EnumSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
@@ -194,24 +195,30 @@ impl<'gc> Compiler<'gc> {
     /// method for creating a `Compiler` instance and compiling only a single chunk.
     pub fn compile_chunk(
         ctx: vm::Context<'gc>,
+        config: impl Into<String>,
         imports: ImportItems<'gc>,
         settings: CompileSettings,
         chunk_name: impl Into<String>,
         code: &str,
     ) -> Result<(Gc<'gc, vm::Prototype<'gc>>, ImportItems<'gc>), CompileError> {
-        let mut this = Self::new(ctx, imports);
+        let mut this = Self::new(ctx, config, imports);
         this.add_chunk(settings, chunk_name, code)?;
         let (mut prototypes, imports) = this.compile()?;
         Ok((prototypes.pop().unwrap(), imports))
     }
 
-    pub fn new(ctx: vm::Context<'gc>, imports: ImportItems<'gc>) -> Self {
+    pub fn new(
+        ctx: vm::Context<'gc>,
+        config: impl Into<String>,
+        imports: ImportItems<'gc>,
+    ) -> Self {
         let macros = imports.macros.as_deref().cloned().unwrap_or_default();
         let enums = imports.enums.as_deref().cloned().unwrap_or_default();
         let magic = imports.magic.as_ref().clone();
 
         Self {
             ctx,
+            config: config.into(),
             macros,
             enums,
             magic,
@@ -252,6 +259,7 @@ impl<'gc> Compiler<'gc> {
     ) -> Result<(Vec<Gc<'gc, vm::Prototype<'gc>>>, ImportItems<'gc>), CompileError> {
         let Self {
             ctx,
+            config,
             mut macros,
             mut enums,
             mut magic,
@@ -278,7 +286,7 @@ impl<'gc> Compiler<'gc> {
 
         // Resolve all macro interdependencies.
 
-        if let Err(err) = macros.resolve_dependencies() {
+        if let Err(err) = macros.resolve_dependencies(Some(config.as_str())) {
             let makro = macros.get(err.0).unwrap();
             let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
                 Ok(i) => macro_chunk_indexes[i],
@@ -311,7 +319,7 @@ impl<'gc> Compiler<'gc> {
                 mut tokens,
                 compile_settings,
             } = chunk;
-            macros.expand(&mut tokens);
+            macros.expand(Some(config.as_str()), &mut tokens);
 
             let chunk = vm::Chunk::new_static(
                 &ctx,
