@@ -31,7 +31,7 @@ pub struct ByteCode {
     // Encoded bytecode, each instruction is serialized directly into the byte array and jump
     // offsets are stored in byte offets.
     bytes: Box<[MaybeUninit<u8>]>,
-    // Maps each instruction bytecode start position to its original index.
+    // Ordered list of each instruction bytecode start position and the original instruction index.
     inst_boundaries: Box<[(usize, usize)]>,
     // Span data for each instruction.
     inst_spans: Box<[Span]>,
@@ -303,69 +303,87 @@ impl<'a> Dispatcher<'a> {
         );
 
         loop {
-            debug_assert!(self.bytecode.inst_index_for_pc(self.pc()).is_some());
-
-            unsafe {
-                let opcode: OpCode = bytecode_read(&mut self.ptr);
-
-                macro_rules! dispatch {
-                    (
-                        $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                        $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
-                        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
-                    ) => {
-                        match opcode {
-                            $(
-                                OpCode::$simple_name => {
-                                    let params::$simple_name { $($simple_field),* } = bytecode_read(&mut self.ptr);
-                                    dispatch.$simple_snake_name($($simple_field),*)?;
-                                }
-                            )*
-
-                            OpCode::Jump => {
-                                let params::Jump { offset } = bytecode_read(&mut self.ptr);
-                                self.ptr = self.ptr.offset(offset as isize);
-                            }
-                            OpCode::JumpIf => {
-                                let params::JumpIf {
-                                    arg,
-                                    is_true,
-                                    offset,
-                                } = bytecode_read(&mut self.ptr);
-                                if dispatch.check(arg, is_true)? {
-                                    self.ptr = self.ptr.offset(offset as isize);
-                                }
-                            }
-                            OpCode::Call => {
-                                let params::Call {
-                                    func,
-                                    returns,
-                                } = bytecode_read(&mut self.ptr);
-                                if let ControlFlow::Break(b) = dispatch.call(func, returns)? {
-                                    return Ok(b);
-                                }
-                            }
-                            OpCode::Method => {
-                                let params::Method {
-                                    this,
-                                    func,
-                                    returns,
-                                } = bytecode_read(&mut self.ptr);
-                                if let ControlFlow::Break(b) = dispatch.method(this, func, returns)? {
-                                    return Ok(b);
-                                }
-                            }
-                            OpCode::Return => {
-                                let params::Return { } = bytecode_read(&mut self.ptr);
-                                return dispatch.return_();
-                            }
-                        }
-                    };
+            let prev_ptr = self.ptr;
+            match self.dispatch_one(dispatch) {
+                Ok(ControlFlow::Continue(())) => {}
+                Ok(ControlFlow::Break(b)) => {
+                    return Ok(b);
                 }
-
-                for_each_instruction!(dispatch);
+                Err(err) => {
+                    self.ptr = prev_ptr;
+                    return Err(err);
+                }
             }
         }
+    }
+
+    #[inline]
+    fn dispatch_one<D: Dispatch>(
+        &mut self,
+        dispatch: &mut D,
+    ) -> Result<ControlFlow<D::Break>, D::Error> {
+        unsafe {
+            let opcode: OpCode = bytecode_read(&mut self.ptr);
+
+            macro_rules! dispatch {
+                (
+                    $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+                    $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
+                    $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                ) => {
+                    match opcode {
+                        $(
+                            OpCode::$simple_name => {
+                                let params::$simple_name { $($simple_field),* } = bytecode_read(&mut self.ptr);
+                                dispatch.$simple_snake_name($($simple_field),*)?;
+                            }
+                        )*
+
+                        OpCode::Jump => {
+                            let params::Jump { offset } = bytecode_read(&mut self.ptr);
+                            self.ptr = self.ptr.offset(offset as isize);
+                        }
+                        OpCode::JumpIf => {
+                            let params::JumpIf {
+                                arg,
+                                is_true,
+                                offset,
+                            } = bytecode_read(&mut self.ptr);
+                            if dispatch.check(arg, is_true)? {
+                                self.ptr = self.ptr.offset(offset as isize);
+                            }
+                        }
+                        OpCode::Call => {
+                            let params::Call {
+                                func,
+                                returns,
+                            } = bytecode_read(&mut self.ptr);
+                            if let ControlFlow::Break(b) = dispatch.call(func, returns)? {
+                                return Ok(ControlFlow::Break(b));
+                            }
+                        }
+                        OpCode::Method => {
+                            let params::Method {
+                                this,
+                                func,
+                                returns,
+                            } = bytecode_read(&mut self.ptr);
+                            if let ControlFlow::Break(b) = dispatch.method(this, func, returns)? {
+                                return Ok(ControlFlow::Break(b));
+                            }
+                        }
+                        OpCode::Return => {
+                            let params::Return { } = bytecode_read(&mut self.ptr);
+                            return dispatch.return_().map(ControlFlow::Break);
+                        }
+                    }
+                };
+            }
+
+            for_each_instruction!(dispatch);
+        }
+
+        Ok(ControlFlow::Continue(()))
     }
 }
 
