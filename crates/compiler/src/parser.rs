@@ -8,8 +8,8 @@ use crate::{
     ast::{
         AssignmentOp, AssignmentStatement, AssignmentTarget, BinaryOp, Block, CallExpr,
         EnumStatement, Expression, ExpressionKind, FieldExpr, ForStatement, FunctionExpr,
-        FunctionStatement, IfStatement, IndexExpr, ReturnStatement, Statement, StatementKind,
-        UnaryOp, VarStatement,
+        FunctionStatement, IfStatement, IndexExpr, Parameter, ReturnStatement, Statement,
+        StatementKind, UnaryOp, VarStatement,
     },
     constant::Constant,
     tokens::{Token, TokenKind},
@@ -147,16 +147,7 @@ where
             TokenKind::Function => {
                 self.advance(1);
                 let name = self.parse_identifier()?.0;
-
-                let mut parameters = Vec::new();
-                self.parse_comma_separated_list(
-                    TokenKind::LeftParen,
-                    TokenKind::RightParen,
-                    |this| {
-                        parameters.push(this.parse_identifier()?.0);
-                        Ok(())
-                    },
-                )?;
+                let parameters = self.parse_parameter_list()?.0;
 
                 self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block()?;
@@ -592,15 +583,7 @@ where
             TokenKind::Function => {
                 self.advance(1);
 
-                let mut parameters = Vec::new();
-                self.parse_comma_separated_list(
-                    TokenKind::LeftParen,
-                    TokenKind::RightParen,
-                    |this| {
-                        parameters.push(this.parse_identifier()?.0);
-                        Ok(())
-                    },
-                )?;
+                let parameters = self.parse_parameter_list()?.0;
 
                 self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block()?;
@@ -659,6 +642,27 @@ where
         )?;
 
         Ok((entries, span))
+    }
+
+    fn parse_parameter_list(&mut self) -> Result<(Vec<Parameter<S>>, Span), ParseError> {
+        let mut parameters = Vec::new();
+        let span =
+            self.parse_comma_separated_list(TokenKind::LeftParen, TokenKind::RightParen, |this| {
+                let name = this.parse_identifier()?.0;
+
+                this.look_ahead(1);
+                let default = if matches!(this.peek(0).kind, TokenKind::Equal) {
+                    this.advance(1);
+                    Some(this.parse_expression()?)
+                } else {
+                    None
+                };
+
+                parameters.push(Parameter { name, default });
+                Ok(())
+            })?;
+
+        Ok((parameters, span))
     }
 
     /// Parse a comma separated list of items surrounded by paired left / right delimiters.

@@ -14,7 +14,7 @@ new_id_type! {
     pub struct FuncId;
 }
 
-pub type ParamIndex = u8;
+pub type ArgIndex = u8;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
@@ -119,7 +119,8 @@ pub enum Instruction<S> {
     This,
     NewObject,
     NewArray,
-    Parameter(ParamIndex),
+    ArgumentCount,
+    Argument(ArgIndex),
     GetField {
         object: InstId,
         key: InstId,
@@ -284,7 +285,8 @@ impl<S> Instruction<S> {
             Instruction::This => true,
             Instruction::NewObject => true,
             Instruction::NewArray => true,
-            Instruction::Parameter(_) => true,
+            Instruction::ArgumentCount => true,
+            Instruction::Argument(_) => true,
             Instruction::GetField { .. } => true,
             Instruction::GetFieldConst { .. } => true,
             Instruction::GetIndex { .. } => true,
@@ -490,8 +492,11 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::NewArray => {
                         writeln!(f, "new_array()")?;
                     }
-                    Instruction::Parameter(ind) => {
-                        writeln!(f, "parameter(P{})", ind)?;
+                    Instruction::ArgumentCount => {
+                        writeln!(f, "argument_count()")?;
+                    }
+                    Instruction::Argument(ind) => {
+                        writeln!(f, "argument(P{})", ind)?;
                     }
                     Instruction::GetField { object, key } => {
                         writeln!(

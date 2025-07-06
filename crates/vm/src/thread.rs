@@ -9,7 +9,7 @@ use crate::{
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor},
     debug::{LineNumber, RefName},
     error::Error,
-    instructions::{ConstIdx, HeapIdx, Instruction, MagicIdx, ParamIdx, ProtoIdx, RegIdx},
+    instructions::{ArgIdx, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
     stack::Stack,
@@ -134,7 +134,7 @@ impl<'gc> ThreadState<'gc> {
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
 
-        let params_top = self.stack.len();
+        let args_top = self.stack.len();
 
         let heap_bottom = self.heap.len();
         for hd in closure.heap() {
@@ -163,7 +163,7 @@ impl<'gc> ThreadState<'gc> {
                     .unwrap(),
                 &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
-                params_top - stack_bottom,
+                args_top - stack_bottom,
             )? {
                 Next::Call {
                     closure,
@@ -172,19 +172,19 @@ impl<'gc> ThreadState<'gc> {
                 } => {
                     // We only preserve the registers that the prototype claims to use,
                     self.stack.truncate(register_bottom + proto.used_registers);
-                    self.call(ctx, closure, this, params_top)?;
+                    self.call(ctx, closure, this, args_top)?;
                     // Resize the register slice to be 256 wide.
                     self.stack.resize(register_bottom + 256, Value::Undefined);
                     // Pad stack with undefined values to match the expected return len.
                     self.stack
-                        .resize(params_top + returns as usize, Value::Undefined);
+                        .resize(args_top + returns as usize, Value::Undefined);
                 }
                 Next::Return => {
                     // Clear the registers for this frame.
                     self.registers.truncate(register_bottom);
-                    // Drain all of the parameters, everything left on the stack for this frame is
+                    // Drain all of the arguments, everything left on the stack for this frame is
                     // a return.
-                    self.stack.drain(stack_bottom..params_top);
+                    self.stack.drain(stack_bottom..args_top);
 
                     return Ok(());
                 }
@@ -255,7 +255,7 @@ fn dispatch<'gc>(
     registers: &mut [Value<'gc>; 256],
     heap: &mut [OwnedHeapVar<'gc>],
     stack: Stack<'gc, '_>,
-    num_params: usize,
+    num_args: usize,
 ) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
@@ -264,7 +264,7 @@ fn dispatch<'gc>(
         registers: &'a mut [Value<'gc>],
         heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
-        num_params: usize,
+        num_args: usize,
     }
 
     impl<'gc, 'a> Dispatch<'gc, 'a> {
@@ -282,12 +282,10 @@ fn dispatch<'gc>(
                     returns,
                 }),
                 Function::Callback(callback) => {
-                    callback.call_with(self.ctx, this, self.stack.sub_stack(self.num_params))?;
+                    callback.call_with(self.ctx, this, self.stack.sub_stack(self.num_args))?;
 
                     // Pad stack with undefined values to match the expected return len.
-                    self.stack
-                        .sub_stack(self.num_params)
-                        .resize(returns as usize);
+                    self.stack.sub_stack(self.num_args).resize(returns as usize);
 
                     ControlFlow::Continue(())
                 }
@@ -494,8 +492,14 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn param(&mut self, dest: RegIdx, index: ParamIdx) -> Result<(), Self::Error> {
-            if (index as usize) < self.num_params {
+        fn arg_count(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Integer(self.num_args as i64);
+            Ok(())
+        }
+
+        #[inline]
+        fn argument(&mut self, dest: RegIdx, index: ArgIdx) -> Result<(), Self::Error> {
+            if (index as usize) < self.num_args {
                 self.registers[dest as usize] = self.stack.get(index as usize);
             } else {
                 self.registers[dest as usize] = Value::Undefined;
@@ -761,7 +765,7 @@ fn dispatch<'gc>(
         fn push(&mut self, source: RegIdx, len: u8) -> Result<(), Self::Error> {
             for i in 0..len {
                 self.stack
-                    .sub_stack(self.num_params)
+                    .sub_stack(self.num_args)
                     .push_back(self.registers[source as usize + i as usize]);
             }
             Ok(())
@@ -772,7 +776,7 @@ fn dispatch<'gc>(
             for i in (0..len).rev() {
                 self.registers[dest as usize + i as usize] = self
                     .stack
-                    .sub_stack(self.num_params)
+                    .sub_stack(self.num_args)
                     .pop_back()
                     .ok_or(OpError::StackUnderflow)?;
             }
@@ -845,7 +849,7 @@ fn dispatch<'gc>(
         registers,
         heap,
         stack,
-        num_params,
+        num_args,
     });
     *pc = dispatcher.pc();
 

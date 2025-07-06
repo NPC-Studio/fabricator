@@ -30,6 +30,8 @@ pub enum IrGenErrorKind {
     ReadOnlyMagic,
     #[error("too many parameters")]
     ParameterOverflow,
+    #[error("parameter default value is not a constant")]
+    ParameterDefaultNotConstant,
 }
 
 #[derive(Debug, Error)]
@@ -84,7 +86,7 @@ impl IrGenSettings {
         self,
         block: &ast::Block<S>,
         func_ref: FunctionRef,
-        parameters: &[S],
+        parameters: &[ast::Parameter<S>],
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
@@ -120,7 +122,7 @@ where
         settings: IrGenSettings,
         block: &ast::Block<S>,
         func_ref: FunctionRef,
-        parameters: &[S],
+        parameters: &[ast::Parameter<S>],
         find_magic: M,
     ) -> Result<ir::Function<S>, IrGenError> {
         // Create a blank placeholder initial top-level function.
@@ -169,6 +171,7 @@ where
         let func_id = this.pop_function();
         let func = this.current.function.functions.remove(func_id).unwrap();
 
+        // Assert that nothing was generated into our placeholder top-level function.
         assert!(this.current.function.instructions.is_empty());
         assert!(this.current.scopes.is_empty());
         assert!(this.current.variables.is_empty());
@@ -658,7 +661,7 @@ where
     fn push_function(
         &mut self,
         reference: FunctionRef,
-        parameters: &[S],
+        parameters: &[ast::Parameter<S>],
     ) -> Result<(), IrGenError> {
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
@@ -676,12 +679,6 @@ where
         let start_block = blocks.insert(ir::Block::default());
         let first_block = blocks.insert(ir::Block::default());
         blocks[start_block].exit = ir::Exit::Jump(first_block);
-
-        let span = match reference {
-            FunctionRef::Named(_, span) => span,
-            FunctionRef::Expression(span) => span,
-            FunctionRef::Chunk => Span::null(),
-        };
 
         let function = ir::Function {
             num_parameters: parameters.len(),
@@ -709,16 +706,74 @@ where
         );
         self.upper.push(upper);
 
-        for (param_index, param_name) in parameters.iter().enumerate() {
-            let param_var = self.declare_var(param_name.clone());
-            let pop_arg = self.push_instruction(
-                span,
-                ir::Instruction::Parameter(param_index.try_into().map_err(|_| IrGenError {
-                    kind: IrGenErrorKind::ParameterOverflow,
-                    span,
-                })?),
-            );
-            self.push_instruction(span, ir::Instruction::SetVariable(param_var, pop_arg));
+        let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
+        for (param_index, param) in parameters.iter().enumerate() {
+            let param_index = param_index.try_into().map_err(|_| IrGenError {
+                kind: IrGenErrorKind::ParameterOverflow,
+                span: Span::null(),
+            })?;
+
+            let arg_var = self.declare_var(param.name.clone());
+
+            if let Some(default) = &param.default {
+                let def_value = default.clone().fold_constant().ok_or_else(|| IrGenError {
+                    kind: IrGenErrorKind::ParameterDefaultNotConstant,
+                    span: default.span,
+                })?;
+
+                let arg_index = self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::Constant(Constant::Integer(param_index as i64)),
+                );
+                let arg_provided = self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::BinOp {
+                        left: arg_index,
+                        right: arg_count,
+                        op: ir::BinOp::LessThan,
+                    },
+                );
+
+                let provided_block = self.current.function.blocks.insert(ir::Block::default());
+                let not_provided_block = self.current.function.blocks.insert(ir::Block::default());
+                let successor_block = self.current.function.blocks.insert(ir::Block::default());
+
+                self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+                    cond: arg_provided,
+                    if_true: provided_block,
+                    if_false: not_provided_block,
+                };
+
+                self.current.current_block = provided_block;
+                {
+                    let pop_arg_inst =
+                        self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                    self.push_instruction(
+                        Span::null(),
+                        ir::Instruction::SetVariable(arg_var, pop_arg_inst),
+                    );
+                }
+                self.current.function.blocks[self.current.current_block].exit =
+                    ir::Exit::Jump(successor_block);
+
+                self.current.current_block = not_provided_block;
+                {
+                    let def_value_inst =
+                        self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
+                    self.push_instruction(
+                        Span::null(),
+                        ir::Instruction::SetVariable(arg_var, def_value_inst),
+                    );
+                }
+                self.current.function.blocks[self.current.current_block].exit =
+                    ir::Exit::Jump(successor_block);
+
+                self.current.current_block = successor_block;
+            } else {
+                let pop_arg =
+                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                self.push_instruction(Span::null(), ir::Instruction::SetVariable(arg_var, pop_arg));
+            };
         }
 
         Ok(())

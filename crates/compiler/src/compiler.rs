@@ -289,16 +289,12 @@ impl<'gc> Compiler<'gc> {
         if let Err(err) = macros.resolve_dependencies(Some(config.as_str())) {
             let makro = macros.get(err.0).unwrap();
             let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
-                Ok(i) => macro_chunk_indexes[i],
-                Err(i) => {
-                    assert!(
-                        i > 0,
-                        "pre-existing macros should not have recursion errors"
-                    );
-                    macro_chunk_indexes[i - 1]
-                }
+                Ok(i) => i,
+                Err(i) => i
+                    .checked_sub(1)
+                    .expect("pre-existing macros should not have recursion errors"),
             };
-            let chunk = &chunks[macro_chunk_indexes[chunk_index]];
+            let chunk = &chunks[chunk_index];
             let line_number = chunk.line_numbers.line(makro.span.start());
             return Err(CompileError {
                 kind: CompileErrorKind::RecursiveMacro(err),
@@ -439,9 +435,9 @@ impl<'gc> Compiler<'gc> {
         // For each exported item, produce a real magic value for it.
 
         for (i, export) in exports.iter().enumerate() {
-            let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&i)) {
-                Ok(i) => export_chunk_indexes[i],
-                Err(i) => export_chunk_indexes[i - 1],
+            let chunk_index = match export_chunk_indexes.binary_search_by(|i| i.cmp(&i)) {
+                Ok(i) => i,
+                Err(i) => i.checked_sub(1).unwrap(),
             };
             let (chunk, _, compile_settings) = parsed_chunks[chunk_index];
 

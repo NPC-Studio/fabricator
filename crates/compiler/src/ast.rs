@@ -37,7 +37,7 @@ pub struct EnumStatement<S> {
 #[derive(Debug, Clone)]
 pub struct FunctionStatement<S> {
     pub name: S,
-    pub parameters: Vec<S>,
+    pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
 }
 
@@ -105,7 +105,7 @@ pub struct Expression<S> {
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpr<S> {
-    pub parameters: Vec<S>,
+    pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
 }
 
@@ -125,6 +125,12 @@ pub struct FieldExpr<S> {
 pub struct IndexExpr<S> {
     pub base: Expression<S>,
     pub index: Expression<S>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Parameter<S> {
+    pub name: S,
+    pub default: Option<Expression<S>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -403,5 +409,36 @@ impl<S> Expression<S> {
             ExpressionKind::Constant(_) => {}
         }
         ControlFlow::Continue(())
+    }
+
+    pub fn fold_constant(self) -> Option<Constant<S>> {
+        match *self.kind {
+            ExpressionKind::Constant(c) => Some(c),
+            ExpressionKind::Group(expr) => expr.fold_constant(),
+            ExpressionKind::Unary(unary_op, expr) => match unary_op {
+                UnaryOp::Not => Some(Constant::Boolean(!expr.fold_constant()?.to_bool())),
+                UnaryOp::Minus => expr.fold_constant()?.negate(),
+            },
+            ExpressionKind::Binary(l, op, r) => {
+                let l = l.fold_constant()?;
+                let r = r.fold_constant()?;
+
+                match op {
+                    BinaryOp::Add => l.add(r),
+                    BinaryOp::Sub => l.sub(r),
+                    BinaryOp::Mult => l.mult(r),
+                    BinaryOp::Div => l.div(r),
+                    BinaryOp::Equal => l.equal(r).map(Constant::Boolean),
+                    BinaryOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
+                    BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
+                    BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
+                    BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
+                    BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
+                    BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
+                    BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
+                }
+            }
+            _ => None,
+        }
     }
 }

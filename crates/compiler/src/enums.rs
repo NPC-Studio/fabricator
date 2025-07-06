@@ -124,7 +124,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
                     let span = expr.span;
-                    let value = fold_constant_expr(expr).ok_or_else(|| EnumError {
+                    let value = expr.fold_constant().ok_or_else(|| EnumError {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
                     })?;
@@ -210,36 +210,5 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
         } else {
             Ok(())
         }
-    }
-}
-
-fn fold_constant_expr<S>(expr: ast::Expression<S>) -> Option<Constant<S>> {
-    match *expr.kind {
-        ast::ExpressionKind::Constant(c) => Some(c),
-        ast::ExpressionKind::Group(expr) => fold_constant_expr(expr),
-        ast::ExpressionKind::Unary(unary_op, expr) => match unary_op {
-            ast::UnaryOp::Not => Some(Constant::Boolean(!fold_constant_expr(expr)?.to_bool())),
-            ast::UnaryOp::Minus => fold_constant_expr(expr)?.negate(),
-        },
-        ast::ExpressionKind::Binary(l, op, r) => {
-            let l = fold_constant_expr(l)?;
-            let r = fold_constant_expr(r)?;
-
-            match op {
-                ast::BinaryOp::Add => l.add(r),
-                ast::BinaryOp::Sub => l.sub(r),
-                ast::BinaryOp::Mult => l.mult(r),
-                ast::BinaryOp::Div => l.div(r),
-                ast::BinaryOp::Equal => l.equal(r).map(Constant::Boolean),
-                ast::BinaryOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
-                ast::BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
-                ast::BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
-                ast::BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
-                ast::BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
-                ast::BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
-                ast::BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
-            }
-        }
-        _ => None,
     }
 }

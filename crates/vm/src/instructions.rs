@@ -2,7 +2,7 @@ use std::fmt;
 
 pub type RegIdx = u8;
 pub type ConstIdx = u16;
-pub type ParamIdx = u8;
+pub type ArgIdx = u8;
 pub type HeapIdx = u8;
 pub type ProtoIdx = u8;
 pub type MagicIdx = u16;
@@ -20,7 +20,8 @@ macro_rules! for_each_instruction {
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
             simple => new_array = NewArray { dest: RegIdx };
-            simple => param = Param { dest: RegIdx, index: ParamIdx };
+            simple => arg_count = ArgCount { dest: RegIdx };
+            simple => argument = Argument { dest: RegIdx, index: ArgIdx };
             simple => get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             simple => set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
             simple => get_field_const = GetFieldConst { dest: RegIdx, object: RegIdx, key: ConstIdx };

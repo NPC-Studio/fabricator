@@ -249,9 +249,17 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::Parameter(index) => {
+                ir::Instruction::ArgumentCount => {
                     vm_instructions.push((
-                        Instruction::Param {
+                        Instruction::ArgCount {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::Argument(index) => {
+                    vm_instructions.push((
+                        Instruction::Argument {
                             dest: reg_alloc.instruction_registers[inst_id],
                             index,
                         },
