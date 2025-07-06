@@ -11,10 +11,9 @@ new_id_type! {
     pub struct InstId;
     pub struct Variable;
     pub struct ShadowVar;
+    pub struct ThisScope;
     pub struct FuncId;
 }
-
-pub type ArgIndex = u8;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
@@ -103,6 +102,36 @@ pub enum BinOp {
 ///   able to enter a single block in both an open and closed state).
 /// * Every `GetVariable`, `SetVariable`, and `Closure` instruction that uses a variable must be in
 ///   a definitely-open location in the CFG for that variable.
+///
+/// These rules are more restrictive than strictly necessary to generate VM code, but they exist
+/// to verify that generated IR is correct in situations where a closure is crated and closes over
+/// variables that are opened / closed in some kind of loop. These errors can be hard to catch and
+/// would otherwise *only* appear when variables are actually captured by a closure, so verifying
+/// these rules in the generated IR for *all* variables helps ensure that generated IR is always
+/// correct.
+///
+/// # "this" scopes
+///
+/// The `OpenThisScope` and `CloseThisScope` instructions (referred to generally as "this" scopes)
+/// mark regions the `this` and `other` values change due to code constructs like `with(obj) {}`
+/// blocks.
+///
+/// There are similar rules to `OpenThisScope` and `CloseThisScope` instructions as there are to
+/// `OpenVariable` and `CloseVariable` instructions to ensure the correctness of generated IR:
+///
+/// * All `ThisScope`s must have *exactly one* `OpenThisScope` instruction and *at most one*
+///   `CloseThisScope` instruction.
+/// * There should be nowhere in the CFG where a "this" scope can potentially be either opened or
+///   closed, depending on the path taken. Every location must, for every "this" scope, be either
+///   *definitely* open or *definitely* closed for that scope. This is meant to imply also that
+///   it should not be possible to re-open a scope without closing it first (you should not be
+///   able to enter a single block in both an open and closed state).
+///
+/// Similar to the matching rules with variables, these rules exist to catch IR generation errors
+/// where a scope is opened but not closed or the close becomes lost or a scope is accidentally
+/// opened multiple times. There is matching stack manipulation that must happen when scopes are
+/// opened and closed, and having mismatched open / close instructions will lead to strange runtime
+/// errors.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,
@@ -118,10 +147,13 @@ pub enum Instruction<S> {
     SetMagic(S, InstId),
     Globals,
     This,
+    Other,
+    OpenThisScope(ThisScope, InstId),
+    CloseThisScope(ThisScope),
     NewObject,
     NewArray,
     ArgumentCount,
-    Argument(ArgIndex),
+    Argument(usize),
     GetField {
         object: InstId,
         key: InstId,
@@ -171,12 +203,7 @@ pub enum Instruction<S> {
     },
     Call {
         func: InstId,
-        args: Vec<InstId>,
-        return_value: bool,
-    },
-    Method {
-        this: InstId,
-        func: InstId,
+        this: Option<InstId>,
         args: Vec<InstId>,
         return_value: bool,
     },
@@ -212,6 +239,7 @@ impl<S> Instruction<S> {
             &Instruction::Copy(source) => make_iter!([source]),
             &Instruction::SetVariable(_, source) => make_iter!([source]),
             &Instruction::SetMagic(_, source) => make_iter!([source]),
+            &Instruction::OpenThisScope(_, this) => make_iter!([this]),
             &Instruction::GetField { object, key } => make_iter!([object, key]),
             &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -227,10 +255,15 @@ impl<S> Instruction<S> {
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::Call { func, args, .. } => make_iter!([*func], args),
-            Instruction::Method {
-                this, func, args, ..
-            } => make_iter!([*this, *func], args),
+            Instruction::Call {
+                func, this, args, ..
+            } => {
+                if let Some(this) = this {
+                    make_iter!([*this, *func], args)
+                } else {
+                    make_iter!([*func], args)
+                }
+            }
             _ => make_iter!([]),
         }
     }
@@ -252,6 +285,7 @@ impl<S> Instruction<S> {
             Instruction::Copy(source) => make_iter!([source]),
             Instruction::SetVariable(_, source) => make_iter!([source]),
             Instruction::SetMagic(_, source) => make_iter!([source]),
+            Instruction::OpenThisScope(_, this) => make_iter!([this]),
             Instruction::GetField { object, key } => make_iter!([object, key]),
             Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -267,10 +301,15 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::Call { func, args, .. } => make_iter!([func], args),
-            Instruction::Method {
-                this, func, args, ..
-            } => make_iter!([this, func], args),
+            Instruction::Call {
+                func, this, args, ..
+            } => {
+                if let Some(this) = this {
+                    make_iter!([this, func], args)
+                } else {
+                    make_iter!([func], args)
+                }
+            }
             _ => make_iter!([]),
         }
     }
@@ -285,6 +324,7 @@ impl<S> Instruction<S> {
             Instruction::GetMagic(_) => true,
             Instruction::Globals => true,
             Instruction::This => true,
+            Instruction::Other => true,
             Instruction::NewObject => true,
             Instruction::NewArray => true,
             Instruction::ArgumentCount => true,
@@ -297,7 +337,6 @@ impl<S> Instruction<S> {
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
             Instruction::Call { return_value, .. } => *return_value,
-            Instruction::Method { return_value, .. } => *return_value,
             _ => false,
         }
     }
@@ -309,6 +348,8 @@ impl<S> Instruction<S> {
             Instruction::CloseVariable(_) => true,
             Instruction::GetMagic(_) => true,
             Instruction::SetMagic(_, _) => true,
+            Instruction::OpenThisScope(_, _) => true,
+            Instruction::CloseThisScope(_) => true,
             Instruction::GetField { .. } => true,
             Instruction::SetField { .. } => true,
             Instruction::GetFieldConst { .. } => true,
@@ -321,7 +362,6 @@ impl<S> Instruction<S> {
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
             Instruction::Call { .. } => true,
-            Instruction::Method { .. } => true,
             _ => false,
         }
     }
@@ -406,6 +446,7 @@ pub type SpanMap = SecondaryMap<InstId, Span>;
 pub type BlockMap = IdMap<BlockId, Block>;
 pub type VariableSet = IdMap<Variable, ()>;
 pub type ShadowVarSet = IdMap<ShadowVar, ()>;
+pub type ThisScopeSet = IdMap<ThisScope, ()>;
 pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
 pub type UpValueMap = HashMap<Variable, Variable>;
 
@@ -417,6 +458,7 @@ pub struct Function<S> {
     pub blocks: BlockMap,
     pub variables: VariableSet,
     pub shadow_vars: ShadowVarSet,
+    pub this_scopes: ThisScopeSet,
 
     /// Inner functions declared within this function.
     pub functions: FunctionMap<S>,
@@ -491,6 +533,20 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::This => {
                         writeln!(f, "this()")?;
                     }
+                    Instruction::Other => {
+                        writeln!(f, "other()")?;
+                    }
+                    Instruction::OpenThisScope(scope, this) => {
+                        writeln!(
+                            f,
+                            "open_this_scope(scope = T{}, this_value = I{})",
+                            scope.index(),
+                            this.index(),
+                        )?;
+                    }
+                    Instruction::CloseThisScope(scope) => {
+                        writeln!(f, "close_this_scope(scope = T{})", scope.index())?;
+                    }
                     Instruction::NewObject => {
                         writeln!(f, "new_object()")?;
                     }
@@ -501,7 +557,7 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "argument_count()")?;
                     }
                     Instruction::Argument(ind) => {
-                        writeln!(f, "argument(P{})", ind)?;
+                        writeln!(f, "argument(A{})", ind)?;
                     }
                     Instruction::GetField { object, key } => {
                         writeln!(
@@ -633,36 +689,26 @@ impl<S: AsRef<str>> Function<S> {
                     },
                     Instruction::Call {
                         func,
-                        args,
-                        return_value,
-                    } => {
-                        write!(
-                            f,
-                            "call(I{}, return_value = {}, args = [",
-                            func.index(),
-                            return_value,
-                        )?;
-                        for (i, &arg) in args.iter().enumerate() {
-                            if i != 0 {
-                                write!(f, ", ")?;
-                            }
-                            write!(f, "I{}", arg.index())?;
-                        }
-                        writeln!(f, "])")?;
-                    }
-                    Instruction::Method {
                         this,
-                        func,
                         args,
                         return_value,
                     } => {
-                        write!(
-                            f,
-                            "call(I{}, this = I{}, return_value = {}, args = [",
-                            func.index(),
-                            this.index(),
-                            return_value,
-                        )?;
+                        if let Some(this) = this {
+                            write!(
+                                f,
+                                "call(I{}, this = I{}, return_value = {}, args = [",
+                                this.index(),
+                                func.index(),
+                                return_value,
+                            )?;
+                        } else {
+                            write!(
+                                f,
+                                "call(I{}, return_value = {}, args = [",
+                                func.index(),
+                                return_value,
+                            )?;
+                        }
                         for (i, &arg) in args.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;

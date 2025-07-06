@@ -318,6 +318,7 @@ where
                     "function" => TokenKind::Function,
                     "constructor" => TokenKind::Constructor,
                     "var" => TokenKind::Var,
+                    "static" => TokenKind::Static,
                     "switch" => TokenKind::Switch,
                     "case" => TokenKind::Case,
                     "break" => TokenKind::Break,
@@ -334,6 +335,7 @@ where
                     "false" => TokenKind::False,
                     "global" => TokenKind::Global,
                     "self" => TokenKind::This,
+                    "other" => TokenKind::Other,
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }

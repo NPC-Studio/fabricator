@@ -95,6 +95,7 @@ pub fn tick_state(
                                         ctx,
                                         create_script.create_closure(ctx),
                                         this.into(),
+                                        this.into(),
                                     )
                                 })?;
                         }
@@ -137,7 +138,7 @@ pub fn tick_state(
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .in_scope(|| {
                         thread
-                            .exec_with(ctx, closure, this.into())
+                            .exec_with(ctx, closure, this.into(), this.into())
                             .map_err(|e| e.into_inner())
                     })?;
             }
@@ -160,7 +161,7 @@ pub fn tick_state(
                     .freeze(DrawingState::ctx_cell(ctx), drawing_state)
                     .in_scope(|| {
                         thread
-                            .exec_with(ctx, closure, this.into())
+                            .exec_with(ctx, closure, this.into(), this.into())
                             .map_err(|e| e.into_inner())
                     })?;
             }

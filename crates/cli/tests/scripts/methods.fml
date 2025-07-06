@@ -37,3 +37,33 @@ var test_method_2 = obj_a.method;
 // If not called as a field, an unbound function will return to using the `self`
 // from the current environment.
 assert(test_method_2() == 3);
+
+// As a special case, functions defined inline as the value in a struct
+// literal become bound to the instance being constructed.
+
+var obj_c = {
+	a: 7,
+	b: 8,
+	get: function() {
+		return a + b;
+	},
+};
+
+assert(obj_c.get() == 15);
+var f = obj_c.get;
+assert(f() == 15);
+
+// This ONLY applies if the member value is a function expression *inline* in
+// the struct literal.
+
+var obj_d = {
+	a: 9,
+	b: 10,
+	get: undefined,
+};
+
+obj_d.get = function() {
+	return a + b;
+};
+
+assert(obj_d.get() == 3);

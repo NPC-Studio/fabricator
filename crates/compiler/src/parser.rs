@@ -476,6 +476,10 @@ where
                 kind: Box::new(ExpressionKind::This),
                 span,
             }),
+            TokenKind::Other => Ok(Expression {
+                kind: Box::new(ExpressionKind::Other),
+                span,
+            }),
             token => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&token),
@@ -887,6 +891,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Function => "function",
         TokenKind::Constructor => "constructor",
         TokenKind::Var => "var",
+        TokenKind::Static => "static",
         TokenKind::Switch => "switch",
         TokenKind::Case => "case",
         TokenKind::Break => "break",
@@ -903,6 +908,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::False => "false",
         TokenKind::Global => "global",
         TokenKind::This => "self",
+        TokenKind::Other => "other",
         TokenKind::Integer(_) => "<integer>",
         TokenKind::HexInteger(_) => "<hex_integer>",
         TokenKind::Float(_) => "<float>",

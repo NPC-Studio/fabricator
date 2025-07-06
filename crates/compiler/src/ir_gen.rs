@@ -28,8 +28,6 @@ pub enum IrGenErrorKind {
     MisplacedFunctionStmt,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
-    #[error("too many parameters")]
-    ParameterOverflow,
     #[error("parameter default value is not a constant")]
     ParameterDefaultNotConstant,
 }
@@ -90,7 +88,7 @@ impl IrGenSettings {
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
-        S: Eq + Hash + Clone + AsRef<str>,
+        S: Eq + Hash + Clone,
     {
         IrCompiler::compile_function(self, block, func_ref, parameters, find_magic)
     }
@@ -115,7 +113,7 @@ struct IrCompiler<S, M> {
 
 impl<S, M> IrCompiler<S, M>
 where
-    S: Eq + Hash + Clone + AsRef<str>,
+    S: Eq + Hash + Clone,
     M: Fn(&S) -> Option<MagicMode>,
 {
     fn compile_function(
@@ -131,13 +129,7 @@ where
         // This is also less painful than dealing with `self.current` being `Option` or having the
         // current function be at the top of the function stack.
 
-        let instructions = ir::InstructionMap::new();
-        let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
-        let variables = ir::VariableSet::new();
-        let shadow_vars = ir::ShadowVarSet::new();
-        let functions = ir::FunctionMap::new();
-        let upvalues = ir::UpValueMap::new();
 
         let missing_block = blocks.insert(ir::Block::default());
         blocks.remove(missing_block);
@@ -150,13 +142,14 @@ where
                 function: ir::Function {
                     num_parameters: 0,
                     reference: FunctionRef::Chunk,
-                    instructions,
-                    spans,
+                    instructions: ir::InstructionMap::new(),
+                    spans: ir::SpanMap::new(),
                     blocks,
-                    variables,
-                    shadow_vars,
-                    functions,
-                    upvalues,
+                    variables: ir::VariableSet::new(),
+                    shadow_vars: ir::ShadowVarSet::new(),
+                    this_scopes: ir::ThisScopeSet::new(),
+                    functions: ir::FunctionMap::new(),
+                    upvalues: ir::UpValueMap::new(),
                     start_block: missing_block,
                 },
                 current_block: missing_block,
@@ -515,10 +508,26 @@ where
             }
             ast::ExpressionKind::Global => self.push_instruction(span, ir::Instruction::Globals),
             ast::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
+            ast::ExpressionKind::Other => self.push_instruction(span, ir::Instruction::Other),
             ast::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
             ast::ExpressionKind::Object(fields) => {
                 let object = self.push_instruction(span, ir::Instruction::NewObject);
+
                 for (field, value) in fields {
+                    let this_scope =
+                        if matches!(value.kind.as_ref(), ast::ExpressionKind::Function(_)) {
+                            // Within a struct literal, closures always bind `self` to the struct currently
+                            // being created.
+                            let this_scope = self.current.function.this_scopes.insert(());
+                            self.push_instruction(
+                                span,
+                                ir::Instruction::OpenThisScope(this_scope, object),
+                            );
+                            Some(this_scope)
+                        } else {
+                            None
+                        };
+
                     let value = self.commit_expression(value)?;
                     self.push_instruction(
                         span,
@@ -528,7 +537,12 @@ where
                             value,
                         },
                     );
+
+                    if let Some(this_scope) = this_scope {
+                        self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
+                    }
                 }
+
                 object
             }
             ast::ExpressionKind::Array(values) => {
@@ -643,15 +657,16 @@ where
                 span,
                 ir::Instruction::Call {
                     func,
+                    this: None,
                     args,
                     return_value,
                 },
             ),
             Call::Method { func, object } => self.push_instruction(
                 span,
-                ir::Instruction::Method {
+                ir::Instruction::Call {
                     func,
-                    this: object,
+                    this: Some(object),
                     args,
                     return_value,
                 },
@@ -669,6 +684,7 @@ where
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableSet::new();
         let shadow_vars = ir::ShadowVarSet::new();
+        let this_scopes = ir::ThisScopeSet::new();
         let functions = ir::FunctionMap::new();
         let upvalues = ir::UpValueMap::new();
 
@@ -689,6 +705,7 @@ where
             blocks,
             variables,
             shadow_vars,
+            this_scopes,
             functions,
             upvalues,
             start_block,
@@ -709,11 +726,6 @@ where
 
         let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
         for (param_index, param) in parameters.iter().enumerate() {
-            let param_index = param_index.try_into().map_err(|_| IrGenError {
-                kind: IrGenErrorKind::ParameterOverflow,
-                span: Span::null(),
-            })?;
-
             let arg_var = self.declare_var(param.name.clone());
 
             if let Some(default) = &param.default {

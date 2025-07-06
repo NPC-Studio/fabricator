@@ -100,7 +100,8 @@ impl<'gc> Thread<'gc> {
     }
 
     pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
-        self.exec_with(ctx, closure, ctx.globals().into())
+        let globals = ctx.globals().into();
+        self.exec_with(ctx, closure, globals, globals)
     }
 
     pub fn exec_with(
@@ -108,12 +109,13 @@ impl<'gc> Thread<'gc> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
         this: Value<'gc>,
+        other: Value<'gc>,
     ) -> Result<Vec<Value<'gc>>, Error> {
         let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
         thread.registers.clear();
         thread.stack.clear();
 
-        thread.call(ctx, closure, this, 0)?;
+        thread.call(ctx, closure, this, other, 0)?;
 
         Ok(thread.stack.drain(..).collect())
     }
@@ -124,7 +126,8 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Value<'gc>,
+        mut this: Value<'gc>,
+        mut other: Value<'gc>,
         stack_bottom: usize,
     ) -> Result<(), Error> {
         let proto = closure.prototype();
@@ -134,7 +137,7 @@ impl<'gc> ThreadState<'gc> {
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
 
-        let args_top = self.stack.len();
+        let num_args = self.stack.len() - stack_bottom;
 
         let heap_bottom = self.heap.len();
         for hd in closure.heap() {
@@ -147,44 +150,52 @@ impl<'gc> ThreadState<'gc> {
 
         let mut pc: usize = 0;
 
+        if !closure.this().is_undefined() {
+            other = this;
+            this = closure.this();
+        }
+
         loop {
             // We pass in a 256 slice of registers to avoid register bounds checks.
             match dispatch(
                 ctx,
                 closure,
-                if closure.this().is_undefined() {
-                    this
-                } else {
-                    closure.this()
-                },
+                &mut this,
+                &mut other,
                 &mut pc,
                 (&mut self.registers[register_bottom..register_bottom + 256])
                     .try_into()
                     .unwrap(),
                 &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
-                args_top - stack_bottom,
+                num_args,
             )? {
                 Next::Call {
                     closure,
-                    this,
+                    arguments,
                     returns,
                 } => {
                     // We only preserve the registers that the prototype claims to use,
-                    self.stack.truncate(register_bottom + proto.used_registers);
-                    self.call(ctx, closure, this, args_top)?;
+                    self.registers
+                        .truncate(register_bottom + proto.used_registers);
+
+                    let call_args_bottom = self.stack.len() - arguments as usize;
+                    self.call(ctx, closure, this, other, call_args_bottom)?;
+
                     // Resize the register slice to be 256 wide.
-                    self.stack.resize(register_bottom + 256, Value::Undefined);
+                    self.registers
+                        .resize(register_bottom + 256, Value::Undefined);
+
                     // Pad stack with undefined values to match the expected return len.
                     self.stack
-                        .resize(args_top + returns as usize, Value::Undefined);
+                        .resize(call_args_bottom + returns as usize, Value::Undefined);
                 }
-                Next::Return => {
+                Next::Return { count } => {
                     // Clear the registers for this frame.
                     self.registers.truncate(register_bottom);
-                    // Drain all of the arguments, everything left on the stack for this frame is
-                    // a return.
-                    self.stack.drain(stack_bottom..args_top);
+                    // Drain everything on the stack up until the returns.
+                    self.stack
+                        .drain(stack_bottom..self.stack.len() - count as usize);
 
                     return Ok(());
                 }
@@ -196,10 +207,12 @@ impl<'gc> ThreadState<'gc> {
 enum Next<'gc> {
     Call {
         closure: Closure<'gc>,
-        this: Value<'gc>,
-        returns: u8,
+        arguments: ArgIdx,
+        returns: ArgIdx,
     },
-    Return,
+    Return {
+        count: ArgIdx,
+    },
 }
 
 type SharedHeap<'gc> = Gc<'gc, Lock<Value<'gc>>>;
@@ -250,7 +263,8 @@ impl<'gc> OwnedHeapVar<'gc> {
 fn dispatch<'gc>(
     ctx: Context<'gc>,
     closure: Closure<'gc>,
-    this: Value<'gc>,
+    this: &mut Value<'gc>,
+    other: &mut Value<'gc>,
     pc: &mut usize,
     registers: &mut [Value<'gc>; 256],
     heap: &mut [OwnedHeapVar<'gc>],
@@ -260,7 +274,8 @@ fn dispatch<'gc>(
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Value<'gc>,
+        this: &'a mut Value<'gc>,
+        other: &'a mut Value<'gc>,
         registers: &'a mut [Value<'gc>],
         heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
@@ -268,30 +283,6 @@ fn dispatch<'gc>(
     }
 
     impl<'gc, 'a> Dispatch<'gc, 'a> {
-        #[inline]
-        fn do_call(
-            &mut self,
-            this: Value<'gc>,
-            func: Function<'gc>,
-            returns: u8,
-        ) -> Result<ControlFlow<Next<'gc>>, Error> {
-            Ok(match func {
-                Function::Closure(closure) => ControlFlow::Break(Next::Call {
-                    closure,
-                    this,
-                    returns,
-                }),
-                Function::Callback(callback) => {
-                    callback.call_with(self.ctx, this, self.stack.sub_stack(self.num_args))?;
-
-                    // Pad stack with undefined values to match the expected return len.
-                    self.stack.sub_stack(self.num_args).resize(returns as usize);
-
-                    ControlFlow::Continue(())
-                }
-            })
-        }
-
         #[inline]
         fn do_get_field(&mut self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
             match obj {
@@ -430,7 +421,7 @@ fn dispatch<'gc>(
             self.registers[dest as usize] = Closure::from_parts(
                 &self.ctx,
                 proto,
-                self.this,
+                *self.this,
                 Gc::new(&self.ctx, heap.into_boxed_slice()),
             )?
             .into();
@@ -475,7 +466,13 @@ fn dispatch<'gc>(
 
         #[inline]
         fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.this;
+            self.registers[dest as usize] = *self.this;
+            Ok(())
+        }
+
+        #[inline]
+        fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = *self.other;
             Ok(())
         }
 
@@ -762,7 +759,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn push(&mut self, source: RegIdx, len: u8) -> Result<(), Self::Error> {
+        fn push(&mut self, source: RegIdx, len: ArgIdx) -> Result<(), Self::Error> {
             for i in 0..len {
                 self.stack
                     .sub_stack(self.num_args)
@@ -772,7 +769,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn pop(&mut self, dest: RegIdx, len: u8) -> Result<(), Self::Error> {
+        fn pop(&mut self, dest: RegIdx, len: ArgIdx) -> Result<(), Self::Error> {
             for i in (0..len).rev() {
                 self.registers[dest as usize + i as usize] = self
                     .stack
@@ -780,6 +777,28 @@ fn dispatch<'gc>(
                     .pop_back()
                     .ok_or(OpError::StackUnderflow)?;
             }
+            Ok(())
+        }
+
+        #[inline]
+        fn push_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
+            let prev_this = *self.this;
+            let prev_other = *self.other;
+            self.stack.sub_stack(self.num_args).push_back(prev_other);
+            *self.other = prev_this;
+            *self.this = self.registers[source as usize];
+            Ok(())
+        }
+
+        #[inline]
+        fn pop_this(&mut self) -> Result<(), Self::Error> {
+            let old_other = self
+                .stack
+                .sub_stack(self.num_args)
+                .pop_back()
+                .ok_or(OpError::StackUnderflow)?;
+            *self.this = *self.other;
+            *self.other = old_other;
             Ok(())
         }
 
@@ -811,33 +830,43 @@ fn dispatch<'gc>(
         fn call(
             &mut self,
             func: RegIdx,
-            returns: u8,
+            arguments: ArgIdx,
+            returns: ArgIdx,
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
             let func = self.registers[func as usize]
                 .to_function()
                 .ok_or(OpError::BadCall)?;
 
-            self.do_call(self.this, func, returns)
+            if self.stack.len() < self.num_args + arguments as usize {
+                return Err(OpError::StackUnderflow.into());
+            }
+
+            Ok(match func {
+                Function::Closure(closure) => ControlFlow::Break(Next::Call {
+                    closure,
+                    arguments,
+                    returns,
+                }),
+                Function::Callback(callback) => {
+                    let call_bottom = self.stack.len() - arguments as usize;
+
+                    callback.call_with(self.ctx, *self.this, self.stack.sub_stack(call_bottom))?;
+
+                    // Pad stack with undefined values to match the expected return len.
+                    self.stack.sub_stack(call_bottom).resize(returns as usize);
+
+                    ControlFlow::Continue(())
+                }
+            })
         }
 
         #[inline]
-        fn method(
-            &mut self,
-            this: RegIdx,
-            func: RegIdx,
-            returns: u8,
-        ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-            let this = self.registers[this as usize];
-            let func = self.registers[func as usize]
-                .to_function()
-                .ok_or(OpError::BadCall)?;
+        fn return_(&mut self, count: ArgIdx) -> Result<Self::Break, Self::Error> {
+            if self.stack.len() < self.num_args + count as usize {
+                return Err(OpError::StackUnderflow.into());
+            }
 
-            self.do_call(this, func, returns)
-        }
-
-        #[inline]
-        fn return_(&mut self) -> Result<Self::Break, Self::Error> {
-            Ok(Next::Return)
+            Ok(Next::Return { count })
         }
     }
 
@@ -846,6 +875,7 @@ fn dispatch<'gc>(
         ctx,
         closure,
         this,
+        other,
         registers,
         heap,
         stack,

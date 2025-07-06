@@ -4,10 +4,7 @@ use fabricator_util::typed_id_map::SecondaryMap;
 use thiserror::Error;
 
 use crate::{
-    graph::{
-        dfs::{depth_first_search, topological_order},
-        dominators::Dominators,
-    },
+    graph::{dfs::depth_first_search, dominators::Dominators},
     ir,
 };
 
@@ -21,7 +18,7 @@ pub enum VariableVerificationError {
     MultipleClose,
     #[error("variable close is not dominated by its open")]
     CloseNotDominated,
-    #[error("range exists that is not definitely open or definitely closed")]
+    #[error("range exists where a variable is not definitely open or definitely closed")]
     IndeterminateState,
     #[error("variable use is not dominated by its open or may occur after a close")]
     UseNotInRange,
@@ -71,9 +68,7 @@ impl VariableLiveness {
         let mut variable_uses: HashMap<ir::Variable, Vec<(ir::BlockId, usize)>> = HashMap::new();
         let mut variable_close: HashMap<ir::Variable, (ir::BlockId, usize)> = HashMap::new();
 
-        let topological_order =
-            topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
-        for &block_id in &topological_order {
+        for block_id in dominators.topological_order() {
             let block = &ir.blocks[block_id];
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 match ir.instructions[inst_id] {
@@ -328,6 +323,7 @@ mod tests {
             blocks,
             variables,
             shadow_vars: Default::default(),
+            this_scopes: Default::default(),
             functions: Default::default(),
             upvalues: Default::default(),
             start_block: block_a_id,
@@ -378,6 +374,7 @@ mod tests {
             blocks,
             variables,
             shadow_vars: Default::default(),
+            this_scopes: Default::default(),
             functions: Default::default(),
             upvalues: Default::default(),
             start_block: block_a_id,

@@ -13,9 +13,8 @@ use thiserror::Error;
 
 use crate::{
     analysis::{
-        instruction_liveness::{InstructionLiveness, InstructionVerificationError},
-        shadow_liveness::{ShadowLiveness, ShadowVerificationError},
-        variable_liveness::{VariableLiveness, VariableVerificationError},
+        instruction_liveness::InstructionLiveness, shadow_liveness::ShadowLiveness,
+        variable_liveness::VariableLiveness,
     },
     code_gen::{
         heap_alloc::HeapAllocation, prototype::Prototype, register_alloc::RegisterAllocation,
@@ -28,12 +27,6 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum ProtoGenError {
     #[error(transparent)]
-    InstructionVerification(#[from] InstructionVerificationError),
-    #[error(transparent)]
-    PhiUpsilonVerification(#[from] ShadowVerificationError),
-    #[error(transparent)]
-    VariableVerification(#[from] VariableVerificationError),
-    #[error(transparent)]
     ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
     #[error("too many registers used")]
     RegisterOverflow,
@@ -43,6 +36,8 @@ pub enum ProtoGenError {
     ConstantOverflow,
     #[error("too many sub-functions")]
     PrototypeOverflow,
+    #[error("too many arguments")]
+    ArgumentOverflow,
     #[error("jump out of range")]
     JumpOutOfRange,
     #[error("missing magic value")]
@@ -51,6 +46,11 @@ pub enum ProtoGenError {
     MagicIndexOverflow,
 }
 
+/// Generate a [`Prototype`] from IR.
+///
+/// # Panics
+///
+/// May panic if the provided IR is not well-formed.
 pub fn gen_prototype<S: Clone + Eq + Hash>(
     ir: &ir::Function<S>,
     magic_index: impl Fn(&S) -> Option<usize>,
@@ -63,9 +63,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
     magic_index: &impl Fn(&S) -> Option<usize>,
     parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
 ) -> Result<Prototype<S>, ProtoGenError> {
-    let instruction_liveness = InstructionLiveness::compute(ir)?;
-    let shadow_liveness = ShadowLiveness::compute(ir)?;
-    let variable_liveness = VariableLiveness::compute(ir)?;
+    let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
+    let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
+    let variable_liveness = VariableLiveness::compute(ir).unwrap();
 
     let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
         .ok_or(ProtoGenError::RegisterOverflow)?;
@@ -241,6 +241,25 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
+                ir::Instruction::Other => {
+                    vm_instructions.push((
+                        Instruction::Other {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::OpenThisScope(_, this) => {
+                    vm_instructions.push((
+                        Instruction::PushThis {
+                            source: reg_alloc.instruction_registers[this],
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::CloseThisScope(_) => {
+                    vm_instructions.push((Instruction::PopThis {}, span));
+                }
                 ir::Instruction::NewObject => {
                     vm_instructions.push((
                         Instruction::NewObject {
@@ -266,6 +285,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     ));
                 }
                 ir::Instruction::Argument(index) => {
+                    let index = index
+                        .try_into()
+                        .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+
                     vm_instructions.push((
                         Instruction::Argument {
                             dest: reg_alloc.instruction_registers[inst_id],
@@ -544,50 +567,24 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
                 ir::Instruction::Call {
                     func,
-                    ref args,
-                    return_value,
-                } => {
-                    for &arg in args {
-                        vm_instructions.push((
-                            Instruction::Push {
-                                source: reg_alloc.instruction_registers[arg],
-                                len: 1,
-                            },
-                            span,
-                        ));
-                    }
-
-                    if return_value {
-                        vm_instructions.push((
-                            Instruction::Call {
-                                func: reg_alloc.instruction_registers[func],
-                                returns: 1,
-                            },
-                            span,
-                        ));
-                        vm_instructions.push((
-                            Instruction::Pop {
-                                dest: reg_alloc.instruction_registers[inst_id],
-                                len: 1,
-                            },
-                            span,
-                        ));
-                    } else {
-                        vm_instructions.push((
-                            Instruction::Call {
-                                func: reg_alloc.instruction_registers[func],
-                                returns: 0,
-                            },
-                            span,
-                        ));
-                    }
-                }
-                ir::Instruction::Method {
-                    func,
                     this,
                     ref args,
                     return_value,
                 } => {
+                    let arg_count = args
+                        .len()
+                        .try_into()
+                        .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+
+                    if let Some(this) = this {
+                        vm_instructions.push((
+                            Instruction::PushThis {
+                                source: reg_alloc.instruction_registers[this],
+                            },
+                            span,
+                        ));
+                    }
+
                     for &arg in args {
                         vm_instructions.push((
                             Instruction::Push {
@@ -598,12 +595,11 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ));
                     }
 
-                    let this = reg_alloc.instruction_registers[this];
                     if return_value {
                         vm_instructions.push((
-                            Instruction::Method {
-                                this,
+                            Instruction::Call {
                                 func: reg_alloc.instruction_registers[func],
+                                arguments: arg_count,
                                 returns: 1,
                             },
                             span,
@@ -617,13 +613,17 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ));
                     } else {
                         vm_instructions.push((
-                            Instruction::Method {
-                                this,
+                            Instruction::Call {
                                 func: reg_alloc.instruction_registers[func],
+                                arguments: arg_count,
                                 returns: 0,
                             },
                             span,
                         ));
+                    }
+
+                    if this.is_some() {
+                        vm_instructions.push((Instruction::PopThis {}, span));
                     }
                 }
             }
@@ -639,8 +639,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         },
                         Span::null(),
                     ));
+                    vm_instructions.push((Instruction::Return { count: 1 }, Span::null()));
+                } else {
+                    vm_instructions.push((Instruction::Return { count: 0 }, Span::null()));
                 }
-                vm_instructions.push((Instruction::Return {}, Span::null()));
             }
             ir::Exit::Jump(block_id) => {
                 // If we are the next block in output order, we don't need to add a jump

@@ -85,6 +85,7 @@ pub struct ForStatement<S> {
 pub enum ExpressionKind<S> {
     Global,
     This,
+    Other,
     Constant(Constant<S>),
     Name(S),
     Group(Expression<S>),
@@ -367,6 +368,7 @@ impl<S> Expression<S> {
             ExpressionKind::Name(_)
             | ExpressionKind::Global
             | ExpressionKind::This
+            | ExpressionKind::Other
             | ExpressionKind::Constant(_) => {}
         }
         ControlFlow::Continue(())
@@ -409,6 +411,7 @@ impl<S> Expression<S> {
             ExpressionKind::Name(_)
             | ExpressionKind::Global
             | ExpressionKind::This
+            | ExpressionKind::Other
             | ExpressionKind::Constant(_) => {}
         }
         ControlFlow::Continue(())

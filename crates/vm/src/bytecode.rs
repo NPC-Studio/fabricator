@@ -45,7 +45,7 @@ impl ByteCode {
         fn opcode_for_inst(inst: Instruction) -> OpCode {
             macro_rules! match_inst {
                 ($(
-                    $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
                 )*) => {
                     match inst {
                         $(Instruction::$name { .. } => OpCode::$name),*
@@ -58,7 +58,7 @@ impl ByteCode {
         fn op_param_len(opcode: OpCode) -> usize {
             macro_rules! match_opcode {
                 ($(
-                    $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
                 )*) => {
                     match opcode {
                         $(OpCode::$name { .. } => mem::size_of::<params::$name>()),*
@@ -141,7 +141,7 @@ impl ByteCode {
 
             macro_rules! write_instruction {
                 ($(
-                    $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
                 )*) => {
                     match inst {
                         $(Instruction::$name { $($field),* } => {
@@ -203,9 +203,9 @@ impl ByteCode {
 
             macro_rules! decode {
                 (
-                    $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                    $(jump => $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
-                    $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                    $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
+                    $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
                 ) => {
                     match opcode {
                         $(OpCode::$simple_name => {
@@ -310,6 +310,7 @@ impl<'a> Dispatcher<'a> {
                     return Ok(b);
                 }
                 Err(err) => {
+                    // Reset the PC back to the instruction that caused the error.
                     self.ptr = prev_ptr;
                     return Err(err);
                 }
@@ -327,9 +328,9 @@ impl<'a> Dispatcher<'a> {
 
             macro_rules! dispatch {
                 (
-                    $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                    $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
-                    $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                    $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
+                    $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
                 ) => {
                     match opcode {
                         $(
@@ -356,25 +357,16 @@ impl<'a> Dispatcher<'a> {
                         OpCode::Call => {
                             let params::Call {
                                 func,
+                                arguments,
                                 returns,
                             } = bytecode_read(&mut self.ptr);
-                            if let ControlFlow::Break(b) = dispatch.call(func, returns)? {
-                                return Ok(ControlFlow::Break(b));
-                            }
-                        }
-                        OpCode::Method => {
-                            let params::Method {
-                                this,
-                                func,
-                                returns,
-                            } = bytecode_read(&mut self.ptr);
-                            if let ControlFlow::Break(b) = dispatch.method(this, func, returns)? {
+                            if let ControlFlow::Break(b) = dispatch.call(func, arguments, returns)? {
                                 return Ok(ControlFlow::Break(b));
                             }
                         }
                         OpCode::Return => {
-                            let params::Return { } = bytecode_read(&mut self.ptr);
-                            return dispatch.return_().map(ControlFlow::Break);
+                            let params::Return { count } = bytecode_read(&mut self.ptr);
+                            return dispatch.return_(count).map(ControlFlow::Break);
                         }
                     }
                 };
@@ -389,9 +381,9 @@ impl<'a> Dispatcher<'a> {
 
 macro_rules! define_dispatch {
     (
-        $(simple => $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-        $(jump => $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
-        $(call => $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+        $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
+        $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
+        $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
     ) => {
         pub trait Dispatch {
             type Break;
@@ -404,17 +396,11 @@ macro_rules! define_dispatch {
             fn call(
                 &mut self,
                 func: RegIdx,
-                returns: u8,
+                arg_count: ArgIdx,
+                returns: ArgIdx,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
 
-            fn method(
-                &mut self,
-                base: RegIdx,
-                func: RegIdx,
-                returns: u8,
-            ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-
-            fn return_(&mut self) -> Result<Self::Break, Self::Error>;
+            fn return_(&mut self, count: ArgIdx) -> Result<Self::Break, Self::Error>;
         }
     };
 }
@@ -423,7 +409,7 @@ for_each_instruction!(define_dispatch);
 
 macro_rules! define_opcode {
     ($(
-        $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+        [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
     )*) => {
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         #[repr(u8)]
@@ -439,7 +425,7 @@ mod params {
 
     macro_rules! define_params {
         ($(
-            $category:ident => $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+            [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
         )*) => {
             $(
                 #[derive(Copy, Clone)]
@@ -504,7 +490,7 @@ mod tests {
                 is_true: true,
             },
             Instruction::Move { source: 7, dest: 8 },
-            Instruction::Return {},
+            Instruction::Return { count: 1 },
         ];
 
         let bytecode = ByteCode::encode(insts.iter().map(|&i| (i, Span::null()))).unwrap();

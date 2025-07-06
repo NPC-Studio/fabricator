@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use fabricator_compiler::{
     CompileError, CompileSettings,
     code_gen::gen_prototype,
-    compiler::{CompileErrorKind, Compiler, ImportItems, SourceChunk, optimize_ir},
+    compiler::{CompileErrorKind, Compiler, ImportItems, SourceChunk, optimize_ir, verify_ir},
     ir_gen::MagicMode,
     lexer::Lexer,
     line_numbers::LineNumbers,
@@ -114,10 +114,13 @@ fn main() {
                 })
                 .unwrap();
 
+            verify_ir(&ir).expect("Internal IR generation error");
             println!("Compiled IR: {ir:#?}");
-            optimize_ir(&mut ir).expect("Internal Compiler Error");
+            optimize_ir(&mut ir);
+            verify_ir(&ir).expect("Internal IR optimization error");
             println!("Optimized IR: {ir:#?}");
-            let prototype = gen_prototype(&ir, |m| ctx.stdlib().find(m)).unwrap();
+            let prototype =
+                gen_prototype(&ir, |m| ctx.stdlib().find(m)).expect("Internal Codegen Error");
             println!("Bytecode: {prototype:#?}");
         }
     });

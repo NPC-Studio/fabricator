@@ -9,6 +9,7 @@ pub mod shadow_reduction;
 pub mod ssa_conversion;
 pub mod variable_liveness;
 pub mod vec_change_set;
+pub mod verify_scopes;
 
 use crate::{graph, ir};
 

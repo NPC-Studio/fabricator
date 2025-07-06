@@ -14,9 +14,12 @@ use crate::{
         constant_folding::fold_constants,
         dead_code_elim::eliminate_dead_code,
         eliminate_copies::eliminate_copies,
-        shadow_liveness::ShadowVerificationError,
+        instruction_liveness::{InstructionLiveness, InstructionVerificationError},
+        shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
+        variable_liveness::{VariableLiveness, VariableVerificationError},
+        verify_scopes::{ScopeVerificationError, verify_scopes},
     },
     code_gen::gen_prototype,
     enums::{EnumError, EnumEvaluationError, EnumSet},
@@ -113,19 +116,37 @@ impl vm::debug::ChunkData for SourceChunk {
 }
 
 #[derive(Debug, Error)]
-pub enum OptimizationError {
+pub enum IrVerificationError {
     #[error(transparent)]
-    ShadowVariables(#[from] ShadowVerificationError),
+    InstructionVerification(#[from] InstructionVerificationError),
+    #[error(transparent)]
+    ShadowVerification(#[from] ShadowVerificationError),
+    #[error(transparent)]
+    VariableVerification(#[from] VariableVerificationError),
+    #[error(transparent)]
+    ScopeVerification(#[from] ScopeVerificationError),
 }
 
-pub fn optimize_ir<S: Clone + AsRef<str>>(
-    ir: &mut ir::Function<S>,
-) -> Result<(), OptimizationError> {
+/// Verify that IR is well-formed.
+pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationError> {
+    InstructionLiveness::compute(ir)?;
+    ShadowLiveness::compute(ir)?;
+    VariableLiveness::compute(ir)?;
+    verify_scopes(ir)?;
+    Ok(())
+}
+
+/// Run optimization passes on IR.
+///
+/// # Panics
+///
+/// May panic if the provided IR is not well-formed.
+pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
     convert_to_ssa(ir);
 
     fold_constants(ir);
     eliminate_dead_code(ir);
-    reduce_shadows(ir)?;
+    reduce_shadows(ir).unwrap();
 
     eliminate_copies(ir);
     fold_constants(ir);
@@ -138,10 +159,8 @@ pub fn optimize_ir<S: Clone + AsRef<str>>(
     clean_unused_variables(ir);
 
     for func in ir.functions.values_mut() {
-        optimize_ir(func)?;
+        optimize_ir(func);
     }
-
-    Ok(())
 }
 
 /// Items shared across compilation units.
@@ -472,8 +491,9 @@ impl<'gc> Compiler<'gc> {
                             }
                         })?;
 
-                    optimize_ir(&mut ir).expect("Internal Optimization Error");
-
+                    verify_ir(&ir).expect("Internal IR generation error");
+                    optimize_ir(&mut ir);
+                    verify_ir(&ir).expect("Internal IR optimization error");
                     let proto =
                         gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
 
@@ -512,9 +532,11 @@ impl<'gc> Compiler<'gc> {
                     }
                 })?;
 
-            optimize_ir(&mut ir).expect("Internal Optimization Error");
-
+            verify_ir(&ir).expect("Internal IR generation error");
+            optimize_ir(&mut ir);
+            verify_ir(&ir).expect("Internal IR optimization error");
             let proto = gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
+
             let vm_proto = proto.into_vm(&ctx, chunk, magic);
 
             prototypes.push(vm_proto);
