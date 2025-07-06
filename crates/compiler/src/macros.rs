@@ -308,26 +308,31 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
         // by all of its un-evaluated dependencies. Otherwise if the macro has no un-evaluated
         // dependencies, then it can be evaluated next.
         //
-        // We also keep track of in-progress *evaluating* dependencies (un-evaluated dependencies
-        // that we have encountered before and pushed onto our stack but are not yet evaluated). If
-        // we encounter one of these dependencies more than once without it becoming evaluated, then
-        // we know we have a recursive macro.
+        // We also keep track of in-progress *evaluating* macros (un-evaluated macros that we have
+        // encountered before which had an un-evaluated dependency). If we encounter one of these
+        // macros more than once without it becoming evaluated in-between, then we know we have a
+        // recursive macro.
 
         let mut eval_stack = (0..self.macros.len()).collect::<Vec<_>>();
-        let mut evaluating_dependencies = IndexSet::new();
-        let mut evaluated_dependencies = IndexSet::new();
+        let mut evaluating_macros = IndexSet::new();
+        let mut evaluated_macros = IndexSet::new();
         let mut eval_order = Vec::new();
 
-        'outer: loop {
+        loop {
             let Some(macro_index) = eval_stack.pop() else {
                 break;
             };
 
-            if evaluated_dependencies.contains(macro_index) {
+            if evaluated_macros.contains(macro_index) {
+                // Macros can be in the evaluation stack more than once since we push every macro to
+                // the stack first thing to make sure that every macro is evaluated. If we encounter
+                // an evaluated macro again we can just skip it.
                 continue;
             }
 
             let makro = &self.macros[macro_index];
+
+            let mut has_unevaluated_dependency = false;
             for token in &makro.tokens {
                 if let TokenKind::Identifier(ident) = &token.kind {
                     if let Some(ind) = self
@@ -335,20 +340,33 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                         .get(ident)
                         .and_then(|c| c.index_for_config(config))
                     {
-                        if !evaluated_dependencies.contains(ind) {
-                            if !evaluating_dependencies.insert(macro_index) {
-                                return Err(RecursiveMacro(macro_index));
+                        if !evaluated_macros.contains(ind) {
+                            if !has_unevaluated_dependency {
+                                has_unevaluated_dependency = true;
+
+                                // We need to evaluate dependencies before this macro, so mark the
+                                // macro as in-progress. If we get here a *second* time without
+                                // the macro becoming evaluated, then we must have a recursive
+                                // dependency.
+                                if !evaluating_macros.insert(macro_index) {
+                                    return Err(RecursiveMacro(macro_index));
+                                }
+
+                                // We must push the evaluating macro *before* all of its
+                                // dependencies.
+                                eval_stack.push(macro_index);
                             }
-                            eval_stack.push(macro_index);
+
                             eval_stack.push(ind);
-                            continue 'outer;
                         }
                     }
                 }
             }
 
-            evaluated_dependencies.insert(macro_index);
-            eval_order.push(macro_index);
+            if !has_unevaluated_dependency {
+                evaluated_macros.insert(macro_index);
+                eval_order.push(macro_index);
+            }
         }
 
         // Once we have a known-good evaluation order, we can evaluate our interdependent macros in
