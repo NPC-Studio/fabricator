@@ -116,6 +116,7 @@ pub enum Instruction<S> {
     CloseVariable(Variable),
     GetMagic(S),
     SetMagic(S, InstId),
+    Globals,
     This,
     NewObject,
     NewArray,
@@ -282,6 +283,7 @@ impl<S> Instruction<S> {
             Instruction::Closure(_) => true,
             Instruction::GetVariable(_) => true,
             Instruction::GetMagic(_) => true,
+            Instruction::Globals => true,
             Instruction::This => true,
             Instruction::NewObject => true,
             Instruction::NewArray => true,
@@ -482,6 +484,9 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetMagic(magic, source) => {
                         writeln!(f, "set_magic({:?}, I{})", magic.as_ref(), source.index())?;
+                    }
+                    Instruction::Globals => {
+                        writeln!(f, "globals()")?;
                     }
                     Instruction::This => {
                         writeln!(f, "this()")?;

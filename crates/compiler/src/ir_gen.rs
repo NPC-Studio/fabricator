@@ -513,6 +513,7 @@ where
                     self.push_instruction(span, ir::Instruction::GetField { object: this, key })
                 }
             }
+            ast::ExpressionKind::Global => self.push_instruction(span, ir::Instruction::Globals),
             ast::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
             ast::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
             ast::ExpressionKind::Object(fields) => {

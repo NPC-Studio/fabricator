@@ -468,7 +468,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn global(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+        fn globals(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.ctx.globals().into();
             Ok(())
         }

@@ -394,7 +394,7 @@ impl ApplicationHandler for App {
 #[derive(Parser)]
 struct Cli {
     project_file: PathBuf,
-    #[arg(long)]
+    #[arg(long, default_value = "default")]
     config: String,
 }
 

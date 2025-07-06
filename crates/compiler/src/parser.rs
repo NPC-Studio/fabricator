@@ -468,6 +468,14 @@ where
                 kind: Box::new(ExpressionKind::Name(n)),
                 span,
             }),
+            TokenKind::Global => Ok(Expression {
+                kind: Box::new(ExpressionKind::Global),
+                span,
+            }),
+            TokenKind::This => Ok(Expression {
+                kind: Box::new(ExpressionKind::This),
+                span,
+            }),
             token => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&token),
@@ -486,13 +494,6 @@ where
                 self.advance(1);
                 Ok(Expression {
                     kind: Box::new(ExpressionKind::Constant(Constant::Undefined)),
-                    span,
-                })
-            }
-            TokenKind::This => {
-                self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::This),
                     span,
                 })
             }
@@ -884,6 +885,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::DoublePipe => "--",
         TokenKind::Enum => "enum",
         TokenKind::Function => "function",
+        TokenKind::Constructor => "constructor",
         TokenKind::Var => "var",
         TokenKind::Switch => "switch",
         TokenKind::Case => "case",
@@ -899,6 +901,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Undefined => "undefined",
         TokenKind::True => "true",
         TokenKind::False => "false",
+        TokenKind::Global => "global",
         TokenKind::This => "self",
         TokenKind::Integer(_) => "<integer>",
         TokenKind::HexInteger(_) => "<hex_integer>",

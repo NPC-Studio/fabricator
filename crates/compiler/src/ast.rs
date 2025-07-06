@@ -83,6 +83,7 @@ pub struct ForStatement<S> {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind<S> {
+    Global,
     This,
     Constant(Constant<S>),
     Name(S),
@@ -331,7 +332,6 @@ impl<S> Statement<S> {
 impl<S> Expression<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self.kind.as_ref() {
-            ExpressionKind::Name(_) => {}
             ExpressionKind::Group(expr) => visitor.visit_expr(expr)?,
             ExpressionKind::Object(items) => {
                 for (_, item) in items {
@@ -364,15 +364,16 @@ impl<S> Expression<S> {
                 visitor.visit_expr(&index_expr.base)?;
                 visitor.visit_expr(&index_expr.index)?;
             }
-            ExpressionKind::This => {}
-            ExpressionKind::Constant(_) => {}
+            ExpressionKind::Name(_)
+            | ExpressionKind::Global
+            | ExpressionKind::This
+            | ExpressionKind::Constant(_) => {}
         }
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self.kind.as_mut() {
-            ExpressionKind::Name(_) => {}
             ExpressionKind::Group(expr) => visitor.visit_expr_mut(expr)?,
             ExpressionKind::Object(items) => {
                 for (_, item) in items {
@@ -405,8 +406,10 @@ impl<S> Expression<S> {
                 visitor.visit_expr_mut(&mut index_expr.base)?;
                 visitor.visit_expr_mut(&mut index_expr.index)?;
             }
-            ExpressionKind::This => {}
-            ExpressionKind::Constant(_) => {}
+            ExpressionKind::Name(_)
+            | ExpressionKind::Global
+            | ExpressionKind::This
+            | ExpressionKind::Constant(_) => {}
         }
         ControlFlow::Continue(())
     }

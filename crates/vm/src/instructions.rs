@@ -16,7 +16,7 @@ macro_rules! for_each_instruction {
             simple => set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
             simple => reset_heap = ResetHeap { heap: HeapIdx };
             simple => closure = Closure { dest: RegIdx, proto: ProtoIdx };
-            simple => global = Global { dest: RegIdx };
+            simple => globals = Globals { dest: RegIdx };
             simple => this = This { dest: RegIdx };
             simple => new_object = NewObject { dest: RegIdx };
             simple => new_array = NewArray { dest: RegIdx };

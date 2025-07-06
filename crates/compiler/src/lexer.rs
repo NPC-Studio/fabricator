@@ -316,6 +316,7 @@ where
                 match self.string_buffer.as_str() {
                     "enum" => TokenKind::Enum,
                     "function" => TokenKind::Function,
+                    "constructor" => TokenKind::Constructor,
                     "var" => TokenKind::Var,
                     "switch" => TokenKind::Switch,
                     "case" => TokenKind::Case,
@@ -331,6 +332,7 @@ where
                     "undefined" => TokenKind::Undefined,
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
+                    "global" => TokenKind::Global,
                     "self" => TokenKind::This,
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }

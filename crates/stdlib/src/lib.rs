@@ -19,11 +19,6 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut stdlib = vm::MagicSet::new();
 
-                stdlib.insert(
-                    ctx.intern("global"),
-                    MagicConstant::new_ptr(&ctx, ctx.globals().into()),
-                );
-
                 let method = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
                     let Some(func) = stack.get(1).to_function() else {
                         return Err(vm::Error::msg(

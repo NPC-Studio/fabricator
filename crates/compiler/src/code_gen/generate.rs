@@ -225,6 +225,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
+                ir::Instruction::Globals => {
+                    vm_instructions.push((
+                        Instruction::Globals {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        },
+                        span,
+                    ));
+                }
                 ir::Instruction::This => {
                     vm_instructions.push((
                         Instruction::This {
