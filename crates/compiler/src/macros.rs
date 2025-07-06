@@ -281,7 +281,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
         Ok(())
     }
 
-    /// Resolve all inter-macro dependencies.
+    /// Apply a macro configuration and resolve all inter-macro dependencies.
     ///
     /// After a successful call here, macros are guaranteed to be fully recursively expanded. All
     /// instances of `Token::Identifier` that reference another macro in the set will be replaced
@@ -291,10 +291,10 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     ///
     /// If `config` is provided, then this will expand using macros with the given named
     /// configuration if they exist, otherwise falling back to the default.
-    pub fn resolve_dependencies<Q: ?Sized>(
-        &mut self,
+    pub fn resolve<Q: ?Sized>(
+        self,
         config: Option<&Q>,
-    ) -> Result<(), RecursiveMacro>
+    ) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
         Q: Hash + Eq,
@@ -409,28 +409,71 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             );
         }
 
-        self.macros = (0..self.macros.len())
-            .map(|i| resolved_macros.remove(i).unwrap())
-            .collect();
-        Ok(())
+        Ok(ResolvedMacroSet {
+            macros: (0..self.macros.len())
+                .map(|i| resolved_macros.remove(i).unwrap())
+                .collect(),
+            macro_dict: self
+                .macro_dict
+                .into_iter()
+                .filter_map(|(k, v)| Some((k, v.index_for_config(config)?)))
+                .collect(),
+        })
     }
 
     /// Resolve dependencies with the default configuration.
-    pub fn resolve_dependencies_default(&mut self) -> Result<(), RecursiveMacro> {
-        self.resolve_dependencies::<S>(None)
+    pub fn resolve_dependencies_default(self) -> Result<ResolvedMacroSet<S>, RecursiveMacro> {
+        self.resolve::<S>(None)
+    }
+}
+
+/// A set of macros that have been evaluated for a specific configuration and with recursive macros
+/// expanded.
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct ResolvedMacroSet<S> {
+    macros: Vec<Macro<S>>,
+    macro_dict: HashMap<S, usize>,
+}
+
+impl<S> ResolvedMacroSet<S> {
+    pub fn is_empty(&self) -> bool {
+        self.macros.is_empty()
     }
 
-    /// Expand all macros in the given token list.
-    pub fn expand<Q: ?Sized>(&self, config: Option<&Q>, tokens: &mut Vec<Token<S>>)
+    pub fn len(&self) -> usize {
+        self.macros.len()
+    }
+
+    /// Get an extracted macro.
+    pub fn get(&self, index: usize) -> Option<&Macro<S>> {
+        self.macros.get(index)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Macro<S>> {
+        self.macros.iter()
+    }
+}
+
+impl<S: Eq + Hash> ResolvedMacroSet<S> {
+    /// Find the index for a macro by name.
+    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
     where
-        S: Borrow<S> + Borrow<Q>,
+        S: Borrow<Q>,
         Q: Hash + Eq,
     {
+        self.macro_dict.get(name).copied()
+    }
+}
+
+impl<S: Clone + Eq + Hash> ResolvedMacroSet<S> {
+    /// Expand all macros in the given token list.
+    pub fn expand(&self, tokens: &mut Vec<Token<S>>) {
         let mut expanded_tokens = Vec::new();
 
         for token in tokens.drain(..) {
             let macro_index = if let TokenKind::Identifier(i) = &token.kind {
-                self.find(i).and_then(|c| c.index_for_config(config))
+                self.find(i)
             } else {
                 None
             };
@@ -443,11 +486,6 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
         }
 
         *tokens = expanded_tokens;
-    }
-
-    /// Expand macros with the default configuration.
-    pub fn expand_default(&self, tokens: &mut Vec<Token<S>>) {
-        self.expand::<S>(None, tokens)
     }
 }
 
@@ -473,11 +511,11 @@ mod tests {
         let mut macros = MacroSet::new();
 
         macros.extract(&mut tokens).unwrap();
-        macros.resolve_dependencies(Some("correct")).unwrap();
+        let macros = macros.clone().resolve(Some("correct")).unwrap();
 
         assert_eq!(
             macros
-                .get(macros.find_config("correct", "FOUR").unwrap())
+                .get(macros.find("FOUR").unwrap())
                 .unwrap()
                 .tokens
                 .iter()

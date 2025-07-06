@@ -284,24 +284,27 @@ impl<'gc> Compiler<'gc> {
             }
         }
 
-        // Resolve all macro interdependencies.
+        // Apply a config and resolve all macro interdependencies.
 
-        if let Err(err) = macros.resolve_dependencies(Some(config.as_str())) {
-            let makro = macros.get(err.0).unwrap();
-            let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
-                Ok(i) => i,
-                Err(i) => i
-                    .checked_sub(1)
-                    .expect("pre-existing macros should not have recursion errors"),
-            };
-            let chunk = &chunks[chunk_index];
-            let line_number = chunk.line_numbers.line(makro.span.start());
-            return Err(CompileError {
-                kind: CompileErrorKind::RecursiveMacro(err),
-                chunk_name: chunk.name.clone(),
-                line_number,
-            });
-        }
+        let resolved_macros = match macros.clone().resolve(Some(config.as_str())) {
+            Ok(macros) => macros,
+            Err(err) => {
+                let makro = macros.get(err.0).unwrap();
+                let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
+                    Ok(i) => i,
+                    Err(i) => i
+                        .checked_sub(1)
+                        .expect("pre-existing macros should not have recursion errors"),
+                };
+                let chunk = &chunks[chunk_index];
+                let line_number = chunk.line_numbers.line(makro.span.start());
+                return Err(CompileError {
+                    kind: CompileErrorKind::RecursiveMacro(err),
+                    chunk_name: chunk.name.clone(),
+                    line_number,
+                });
+            }
+        };
 
         // Use macro definitions to replace macro instances in every chunk, then parse the resulting
         // token list.
@@ -315,7 +318,7 @@ impl<'gc> Compiler<'gc> {
                 mut tokens,
                 compile_settings,
             } = chunk;
-            macros.expand(Some(config.as_str()), &mut tokens);
+            resolved_macros.expand(&mut tokens);
 
             let chunk = vm::Chunk::new_static(
                 &ctx,
@@ -518,7 +521,7 @@ impl<'gc> Compiler<'gc> {
         }
 
         let imports = ImportItems {
-            macros: if macros.is_empty() {
+            macros: if resolved_macros.is_empty() {
                 None
             } else {
                 Some(Gc::new(&ctx, macros))
