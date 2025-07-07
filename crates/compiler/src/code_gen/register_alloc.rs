@@ -10,7 +10,7 @@ use crate::{
             ShadowIncomingRange, ShadowLiveness, ShadowLivenessRange, ShadowOutgoingRange,
         },
     },
-    code_gen::upsilon_reachability::compute_upsilon_reachability,
+    code_gen::{ProtoGenError, upsilon_reachability::compute_upsilon_reachability},
     graph::dfs::topological_order,
     ir,
 };
@@ -19,6 +19,7 @@ use crate::{
 pub struct RegisterAllocation {
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
     pub shadow_registers: SecondaryMap<ir::ShadowVar, RegIdx>,
+    pub shadow_liveness: ShadowLiveness,
     pub used_registers: usize,
 }
 
@@ -29,12 +30,11 @@ impl RegisterAllocation {
     /// `Upsilon` instructions that read and write to them.
     ///
     /// Returns `None` if no allocation could be found that fits in the available registers.
-    pub fn allocate<S>(
-        ir: &ir::Function<S>,
-        instruction_liveness: &InstructionLiveness,
-        shadow_liveness: &ShadowLiveness,
-    ) -> Option<Self> {
-        let upsilon_reach = compute_upsilon_reachability(ir, shadow_liveness);
+    pub fn allocate<S>(ir: &ir::Function<S>) -> Result<Self, ProtoGenError> {
+        let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
+        let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
+
+        let upsilon_reach = compute_upsilon_reachability(ir, &shadow_liveness);
 
         // First, we assign shadow variables and the instructions they can coalesce with via graph
         // coloring.
@@ -111,7 +111,8 @@ impl RegisterAllocation {
             let assigned_reg = interfering_registers
                 .bit_iter()
                 .enumerate()
-                .find(|(_, interfering)| !interfering)?
+                .find(|(_, interfering)| !interfering)
+                .ok_or(ProtoGenError::RegisterOverflow)?
                 .0 as u8;
             assigned_shadow_registers.insert(shadow_var, assigned_reg);
 
@@ -346,10 +347,11 @@ impl RegisterAllocation {
                     let reg = if stillborn {
                         // We just need any free register to put the output which won't be used in
                         // the future.
-                        available_registers.last().copied()?
+                        available_registers.last().copied()
                     } else {
-                        available_registers.pop()?
-                    };
+                        available_registers.pop()
+                    }
+                    .ok_or(ProtoGenError::RegisterOverflow)?;
                     assert!(
                         assigned_instruction_registers
                             .insert(inst_life_start, reg)
@@ -378,9 +380,10 @@ impl RegisterAllocation {
             0
         };
 
-        Some(Self {
+        Ok(Self {
             instruction_registers: assigned_instruction_registers,
             shadow_registers: assigned_shadow_registers,
+            shadow_liveness,
             used_registers,
         })
     }

@@ -336,6 +336,7 @@ where
                     "global" => TokenKind::Global,
                     "self" => TokenKind::This,
                     "other" => TokenKind::Other,
+                    "new" => TokenKind::New,
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }

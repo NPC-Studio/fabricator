@@ -82,7 +82,7 @@ impl<I: Id, V> IdMap<I, V> {
     }
 
     #[inline]
-    pub fn contains(&mut self, id: I) -> bool {
+    pub fn contains(&self, id: I) -> bool {
         self.map.contains(id.into_id())
     }
 

@@ -5,12 +5,7 @@ use fabricator_vm::Span;
 use thiserror::Error;
 
 use crate::{
-    ast::{
-        AssignmentOp, AssignmentStatement, AssignmentTarget, BinaryOp, Block, CallExpr,
-        EnumStatement, Expression, ExpressionKind, FieldExpr, ForStatement, FunctionExpr,
-        FunctionStatement, IfStatement, IndexExpr, Parameter, ReturnStatement, Statement,
-        StatementKind, UnaryOp, VarStatement,
-    },
+    ast,
     constant::Constant,
     tokens::{Token, TokenKind},
 };
@@ -24,6 +19,10 @@ pub enum ParseErrorKind {
     },
     #[error("invalid numeric literal")]
     BadNumber,
+    #[error("function declarations with inheritance must be annotated with `constructor`")]
+    InheritWithoutConstructor,
+    #[error("parser settings forbid `constructor` annotations and `new` on call expressions")]
+    ConstructorsDisallowed,
 }
 
 #[derive(Debug, Error)]
@@ -37,19 +36,27 @@ pub struct ParseError {
 pub struct ParseSettings {
     /// Require semicolons at the end of all statements other than block-like statements like `if`
     /// and `for`.
-    pub strict: bool,
+    pub strict_semicolons: bool,
+    /// Allow `constructor` annotated functions and `new` before function call expressions.
+    pub allow_constructors: bool,
 }
 
 impl ParseSettings {
     pub fn strict() -> Self {
-        ParseSettings { strict: true }
+        ParseSettings {
+            strict_semicolons: true,
+            allow_constructors: false,
+        }
     }
 
     pub fn compat() -> Self {
-        ParseSettings { strict: false }
+        ParseSettings {
+            strict_semicolons: false,
+            allow_constructors: true,
+        }
     }
 
-    pub fn parse<I, S>(self, token_iter: I) -> Result<Block<S>, ParseError>
+    pub fn parse<I, S>(self, token_iter: I) -> Result<ast::Block<S>, ParseError>
     where
         I: IntoIterator<Item = Token<S>>,
         S: AsRef<str>,
@@ -79,7 +86,7 @@ where
         }
     }
 
-    fn parse(&mut self) -> Result<Block<S>, ParseError> {
+    fn parse(&mut self) -> Result<ast::Block<S>, ParseError> {
         let block = self.parse_block()?;
 
         self.look_ahead(1);
@@ -96,7 +103,7 @@ where
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block<S>, ParseError> {
+    fn parse_block(&mut self) -> Result<ast::Block<S>, ParseError> {
         let mut statements = Vec::new();
         loop {
             self.look_ahead(1);
@@ -109,14 +116,14 @@ where
 
             let stmt = self.parse_statement()?;
 
-            if self.settings.strict {
+            if self.settings.strict_semicolons {
                 if !matches!(
                     &*stmt.kind,
-                    StatementKind::Block(_)
-                        | StatementKind::Enum(_)
-                        | StatementKind::Function(_)
-                        | StatementKind::If(_)
-                        | StatementKind::For(_)
+                    ast::StatementKind::Block(_)
+                        | ast::StatementKind::Enum(_)
+                        | ast::StatementKind::Function(_)
+                        | ast::StatementKind::If(_)
+                        | ast::StatementKind::For(_)
                 ) {
                     self.parse_token(TokenKind::SemiColon)?;
                 }
@@ -130,17 +137,17 @@ where
             statements.push(stmt);
         }
 
-        Ok(Block { statements })
+        Ok(ast::Block { statements })
     }
 
-    fn parse_statement(&mut self) -> Result<Statement<S>, ParseError> {
+    fn parse_statement(&mut self) -> Result<ast::Statement<S>, ParseError> {
         self.look_ahead(1);
         let &Token { ref kind, mut span } = self.peek(0);
         match kind {
             TokenKind::Enum => {
                 let (stmt, span) = self.parse_enum_statement()?;
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Enum(stmt)),
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Enum(stmt)),
                     span,
                 })
             }
@@ -149,13 +156,58 @@ where
                 let name = self.parse_identifier()?.0;
                 let parameters = self.parse_parameter_list()?.0;
 
+                self.look_ahead(1);
+                let inherit;
+                if matches!(self.peek(0).kind, TokenKind::Colon) {
+                    self.advance(1);
+                    let expr = self.parse_expression()?;
+
+                    let ast::ExpressionKind::Call(expr) = *expr.kind else {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: "<expression>",
+                                expected: "<call expression>",
+                            },
+                            span: expr.span,
+                        });
+                    };
+
+                    inherit = Some(expr);
+                } else {
+                    inherit = None;
+                }
+
+                self.look_ahead(1);
+                let is_constructor = if matches!(self.peek(0).kind, TokenKind::Constructor) {
+                    self.advance(1);
+                    true
+                } else {
+                    false
+                };
+
                 self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block()?;
                 span = span.combine(self.parse_token(TokenKind::RightBrace)?);
 
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Function(FunctionStatement {
+                if !is_constructor && inherit.is_some() {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::InheritWithoutConstructor,
+                        span,
+                    });
+                }
+
+                if is_constructor && !self.settings.allow_constructors {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::ConstructorsDisallowed,
+                        span,
+                    });
+                }
+
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Function(ast::FunctionStatement {
                         name,
+                        is_constructor,
+                        inherit,
                         parameters,
                         body,
                     })),
@@ -168,8 +220,19 @@ where
                 self.parse_token(TokenKind::Equal)?;
                 let value = self.parse_expression()?;
                 span = span.combine(value.span);
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Var(VarStatement { name, value })),
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Var(ast::Declaration { name, value })),
+                    span,
+                })
+            }
+            TokenKind::Static => {
+                self.advance(1);
+                let name = self.parse_identifier()?.0;
+                self.parse_token(TokenKind::Equal)?;
+                let value = self.parse_expression()?;
+                span = span.combine(value.span);
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Static(ast::Declaration { name, value })),
                     span,
                 })
             }
@@ -183,15 +246,17 @@ where
                     span = span.combine(expr.span);
                     Some(expr)
                 };
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Return(ReturnStatement { value })),
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Return(ast::ReturnStatement { value })),
                     span,
                 })
             }
             TokenKind::Exit => {
                 self.advance(1);
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Return(ReturnStatement { value: None })),
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Return(ast::ReturnStatement {
+                        value: None,
+                    })),
                     span,
                 })
             }
@@ -213,8 +278,8 @@ where
                     else_stmt = Some(stmt);
                 }
 
-                Ok(Statement {
-                    kind: Box::new(StatementKind::If(IfStatement {
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::If(ast::IfStatement {
                         condition,
                         then_stmt,
                         else_stmt,
@@ -234,8 +299,8 @@ where
                 let body = self.parse_statement()?;
 
                 span = span.combine(body.span);
-                Ok(Statement {
-                    kind: Box::new(StatementKind::For(ForStatement {
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::For(ast::ForStatement {
                         initializer,
                         condition,
                         iterator,
@@ -248,8 +313,8 @@ where
                 self.advance(1);
                 let block = self.parse_block()?;
                 span = span.combine(self.parse_token(TokenKind::RightBrace)?);
-                Ok(Statement {
-                    kind: Box::new(StatementKind::Block(block)),
+                Ok(ast::Statement {
+                    kind: Box::new(ast::StatementKind::Block(block)),
                     span,
                 })
             }
@@ -274,14 +339,18 @@ where
                 span = expr.span;
 
                 let kind = match *expr.kind {
-                    ExpressionKind::Call(call) => StatementKind::Call(call),
-                    expr @ (ExpressionKind::Name(_)
-                    | ExpressionKind::Field(_)
-                    | ExpressionKind::Index(_)) => {
+                    ast::ExpressionKind::Call(call) => ast::StatementKind::Call(call),
+                    expr @ (ast::ExpressionKind::Name(_)
+                    | ast::ExpressionKind::Field(_)
+                    | ast::ExpressionKind::Index(_)) => {
                         let target = match expr {
-                            ExpressionKind::Name(name) => AssignmentTarget::Name(name),
-                            ExpressionKind::Field(field) => AssignmentTarget::Field(field),
-                            ExpressionKind::Index(index) => AssignmentTarget::Index(index),
+                            ast::ExpressionKind::Name(name) => ast::AssignmentTarget::Name(name),
+                            ast::ExpressionKind::Field(field) => {
+                                ast::AssignmentTarget::Field(field)
+                            }
+                            ast::ExpressionKind::Index(index) => {
+                                ast::AssignmentTarget::Index(index)
+                            }
                             _ => unreachable!(),
                         };
 
@@ -301,7 +370,7 @@ where
                         let value = self.parse_expression()?;
                         span = span.combine(value.span);
 
-                        StatementKind::Assignment(AssignmentStatement {
+                        ast::StatementKind::Assignment(ast::AssignmentStatement {
                             target,
                             op: assignment_op,
                             value,
@@ -318,7 +387,7 @@ where
                     }
                 };
 
-                Ok(Statement {
+                Ok(ast::Statement {
                     kind: Box::new(kind),
                     span,
                 })
@@ -326,7 +395,7 @@ where
         }
     }
 
-    fn parse_enum_statement(&mut self) -> Result<(EnumStatement<S>, Span), ParseError> {
+    fn parse_enum_statement(&mut self) -> Result<(ast::EnumStatement<S>, Span), ParseError> {
         let mut span = self.parse_token(TokenKind::Enum)?;
         let name = self.parse_identifier()?.0;
 
@@ -352,17 +421,17 @@ where
             },
         )?);
 
-        Ok((EnumStatement { name, variants }, span))
+        Ok((ast::EnumStatement { name, variants }, span))
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<S>, ParseError> {
+    fn parse_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
         self.parse_sub_expression(MIN_PRIORITY)
     }
 
     fn parse_sub_expression(
         &mut self,
         priority_limit: OperatorPriority,
-    ) -> Result<Expression<S>, ParseError> {
+    ) -> Result<ast::Expression<S>, ParseError> {
         self.look_ahead(1);
         let next = self.peek(0);
         let mut expr = if let Some(unary_op) = get_unary_operator(&next.kind) {
@@ -370,8 +439,8 @@ where
             self.advance(1);
             let target = self.parse_sub_expression(UNARY_PRIORITY)?;
             span = span.combine(target.span);
-            Expression {
-                kind: Box::new(ExpressionKind::Unary(unary_op, target)),
+            ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Unary(unary_op, target)),
                 span,
             }
         } else {
@@ -393,8 +462,12 @@ where
 
             let right_expression = self.parse_sub_expression(right_priority)?;
             let span = expr.span.combine(right_expression.span);
-            expr = Expression {
-                kind: Box::new(ExpressionKind::Binary(expr, binary_op, right_expression)),
+            expr = ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Binary(
+                    expr,
+                    binary_op,
+                    right_expression,
+                )),
                 span,
             };
         }
@@ -402,7 +475,7 @@ where
         Ok(expr)
     }
 
-    fn parse_suffixed_expression(&mut self) -> Result<Expression<S>, ParseError> {
+    fn parse_suffixed_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
         let mut expr = self.parse_primary_expression()?;
         loop {
             self.look_ahead(1);
@@ -419,10 +492,11 @@ where
                         },
                     )?);
 
-                    expr = Expression {
-                        kind: Box::new(ExpressionKind::Call(CallExpr {
+                    expr = ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Call(ast::CallExpr {
                             base: expr,
                             arguments,
+                            has_new: false,
                         })),
                         span,
                     };
@@ -431,8 +505,11 @@ where
                     self.advance(1);
                     let (field, fspan) = self.parse_identifier()?;
                     let span = expr.span.combine(fspan);
-                    expr = Expression {
-                        kind: Box::new(ExpressionKind::Field(FieldExpr { base: expr, field })),
+                    expr = ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Field(ast::FieldExpr {
+                            base: expr,
+                            field,
+                        })),
                         span,
                     };
                 }
@@ -442,8 +519,11 @@ where
                     let span = expr
                         .span
                         .combine(self.parse_token(TokenKind::RightBracket)?);
-                    expr = Expression {
-                        kind: Box::new(ExpressionKind::Index(IndexExpr { base: expr, index })),
+                    expr = ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Index(ast::IndexExpr {
+                            base: expr,
+                            index,
+                        })),
                         span,
                     };
                 }
@@ -453,31 +533,31 @@ where
         Ok(expr)
     }
 
-    fn parse_primary_expression(&mut self) -> Result<Expression<S>, ParseError> {
+    fn parse_primary_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
         let Token { kind, mut span } = self.next();
         match kind {
             TokenKind::LeftParen => {
                 let expr = self.parse_expression()?;
                 span = span.combine(self.parse_token(TokenKind::RightParen)?);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Group(expr)),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Group(expr)),
                     span,
                 })
             }
-            TokenKind::Identifier(n) => Ok(Expression {
-                kind: Box::new(ExpressionKind::Name(n)),
+            TokenKind::Identifier(n) => Ok(ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Name(n)),
                 span,
             }),
-            TokenKind::Global => Ok(Expression {
-                kind: Box::new(ExpressionKind::Global),
+            TokenKind::Global => Ok(ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Global),
                 span,
             }),
-            TokenKind::This => Ok(Expression {
-                kind: Box::new(ExpressionKind::This),
+            TokenKind::This => Ok(ast::Expression {
+                kind: Box::new(ast::ExpressionKind::This),
                 span,
             }),
-            TokenKind::Other => Ok(Expression {
-                kind: Box::new(ExpressionKind::Other),
+            TokenKind::Other => Ok(ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Other),
                 span,
             }),
             token => Err(ParseError {
@@ -490,28 +570,28 @@ where
         }
     }
 
-    fn parse_simple_expression(&mut self) -> Result<Expression<S>, ParseError> {
+    fn parse_simple_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
         self.look_ahead(1);
         let &Token { ref kind, mut span } = self.peek(0);
         match kind {
             TokenKind::Undefined => {
                 self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Undefined)),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Constant(Constant::Undefined)),
                     span,
                 })
             }
             TokenKind::True => {
                 self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Boolean(true))),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Constant(Constant::Boolean(true))),
                     span,
                 })
             }
             TokenKind::False => {
                 self.advance(1);
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::Boolean(false))),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Constant(Constant::Boolean(false))),
                     span,
                 })
             }
@@ -524,8 +604,8 @@ where
                     unreachable!()
                 };
                 match read_dec_integer(i.as_ref()) {
-                    Some(i) => Ok(Expression {
-                        kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
+                    Some(i) => Ok(ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Constant(Constant::Integer(i))),
                         span,
                     }),
                     None => Err(ParseError {
@@ -543,8 +623,8 @@ where
                     unreachable!()
                 };
                 match read_hex_integer(i.as_ref()) {
-                    Some(i) => Ok(Expression {
-                        kind: Box::new(ExpressionKind::Constant(Constant::Integer(i))),
+                    Some(i) => Ok(ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Constant(Constant::Integer(i))),
                         span,
                     }),
                     None => Err(ParseError {
@@ -562,8 +642,8 @@ where
                     unreachable!()
                 };
                 match read_dec_float(f.as_ref()) {
-                    Some(f) => Ok(Expression {
-                        kind: Box::new(ExpressionKind::Constant(Constant::Float(f))),
+                    Some(f) => Ok(ast::Expression {
+                        kind: Box::new(ast::ExpressionKind::Constant(Constant::Float(f))),
                         span,
                     }),
                     None => Err(ParseError {
@@ -580,8 +660,8 @@ where
                 else {
                     unreachable!()
                 };
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Constant(Constant::String(s))),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Constant(Constant::String(s))),
                     span,
                 })
             }
@@ -594,22 +674,54 @@ where
                 let body = self.parse_block()?;
                 span = span.combine(self.parse_token(TokenKind::RightBrace)?);
 
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Function(FunctionExpr { parameters, body })),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Function(ast::FunctionExpr {
+                        parameters,
+                        body,
+                    })),
                     span,
                 })
             }
+            TokenKind::New => {
+                self.advance(1);
+
+                let mut expr = self.parse_suffixed_expression()?;
+                expr.span = span.combine(expr.span);
+
+                match &mut *expr.kind {
+                    ast::ExpressionKind::Call(call_expr) => {
+                        if !self.settings.allow_constructors {
+                            return Err(ParseError {
+                                kind: ParseErrorKind::ConstructorsDisallowed,
+                                span: expr.span,
+                            });
+                        }
+
+                        call_expr.has_new = true;
+                        Ok(expr)
+                    }
+                    _ => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: "<suffixed expression>",
+                                expected: "<call expression>",
+                            },
+                            span: expr.span,
+                        });
+                    }
+                }
+            }
             TokenKind::LeftBrace => {
                 let (pairs, span) = self.parse_object()?;
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Object(pairs)),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Object(pairs)),
                     span,
                 })
             }
             TokenKind::LeftBracket => {
                 let (items, span) = self.parse_array()?;
-                Ok(Expression {
-                    kind: Box::new(ExpressionKind::Array(items)),
+                Ok(ast::Expression {
+                    kind: Box::new(ast::ExpressionKind::Array(items)),
                     span,
                 })
             }
@@ -617,7 +729,7 @@ where
         }
     }
 
-    fn parse_object(&mut self) -> Result<(Vec<(S, Expression<S>)>, Span), ParseError> {
+    fn parse_object(&mut self) -> Result<(Vec<(S, ast::Expression<S>)>, Span), ParseError> {
         let mut entries = Vec::new();
 
         let span =
@@ -634,7 +746,7 @@ where
         Ok((entries, span))
     }
 
-    fn parse_array(&mut self) -> Result<(Vec<Expression<S>>, Span), ParseError> {
+    fn parse_array(&mut self) -> Result<(Vec<ast::Expression<S>>, Span), ParseError> {
         let mut entries = Vec::new();
 
         let span = self.parse_comma_separated_list(
@@ -649,7 +761,7 @@ where
         Ok((entries, span))
     }
 
-    fn parse_parameter_list(&mut self) -> Result<(Vec<Parameter<S>>, Span), ParseError> {
+    fn parse_parameter_list(&mut self) -> Result<(Vec<ast::Parameter<S>>, Span), ParseError> {
         let mut parameters = Vec::new();
         let span =
             self.parse_comma_separated_list(TokenKind::LeftParen, TokenKind::RightParen, |this| {
@@ -663,7 +775,7 @@ where
                     None
                 };
 
-                parameters.push(Parameter { name, default });
+                parameters.push(ast::Parameter { name, default });
                 Ok(())
             })?;
 
@@ -804,39 +916,39 @@ where
     }
 }
 
-fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<UnaryOp> {
+fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<ast::UnaryOp> {
     match *token {
-        TokenKind::Minus => Some(UnaryOp::Minus),
-        TokenKind::Bang => Some(UnaryOp::Not),
+        TokenKind::Minus => Some(ast::UnaryOp::Minus),
+        TokenKind::Bang => Some(ast::UnaryOp::Not),
         _ => None,
     }
 }
 
-fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<BinaryOp> {
+fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<ast::BinaryOp> {
     match *token {
-        TokenKind::Star => Some(BinaryOp::Mult),
-        TokenKind::Slash => Some(BinaryOp::Div),
-        TokenKind::Plus => Some(BinaryOp::Add),
-        TokenKind::Minus => Some(BinaryOp::Sub),
-        TokenKind::DoubleEqual => Some(BinaryOp::Equal),
-        TokenKind::BangEqual => Some(BinaryOp::NotEqual),
-        TokenKind::Less => Some(BinaryOp::LessThan),
-        TokenKind::LessEqual => Some(BinaryOp::LessEqual),
-        TokenKind::Greater => Some(BinaryOp::GreaterThan),
-        TokenKind::GreaterEqual => Some(BinaryOp::GreaterEqual),
-        TokenKind::DoubleAmpersand => Some(BinaryOp::And),
-        TokenKind::DoublePipe => Some(BinaryOp::Or),
+        TokenKind::Star => Some(ast::BinaryOp::Mult),
+        TokenKind::Slash => Some(ast::BinaryOp::Div),
+        TokenKind::Plus => Some(ast::BinaryOp::Add),
+        TokenKind::Minus => Some(ast::BinaryOp::Sub),
+        TokenKind::DoubleEqual => Some(ast::BinaryOp::Equal),
+        TokenKind::BangEqual => Some(ast::BinaryOp::NotEqual),
+        TokenKind::Less => Some(ast::BinaryOp::LessThan),
+        TokenKind::LessEqual => Some(ast::BinaryOp::LessEqual),
+        TokenKind::Greater => Some(ast::BinaryOp::GreaterThan),
+        TokenKind::GreaterEqual => Some(ast::BinaryOp::GreaterEqual),
+        TokenKind::DoubleAmpersand => Some(ast::BinaryOp::And),
+        TokenKind::DoublePipe => Some(ast::BinaryOp::Or),
         _ => None,
     }
 }
 
-fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<AssignmentOp> {
+fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<ast::AssignmentOp> {
     match *token {
-        TokenKind::Equal => Some(AssignmentOp::Equal),
-        TokenKind::PlusEqual => Some(AssignmentOp::PlusEqual),
-        TokenKind::MinusEqual => Some(AssignmentOp::MinusEqual),
-        TokenKind::StarEqual => Some(AssignmentOp::MultEqual),
-        TokenKind::SlashEqual => Some(AssignmentOp::DivEqual),
+        TokenKind::Equal => Some(ast::AssignmentOp::Equal),
+        TokenKind::PlusEqual => Some(ast::AssignmentOp::PlusEqual),
+        TokenKind::MinusEqual => Some(ast::AssignmentOp::MinusEqual),
+        TokenKind::StarEqual => Some(ast::AssignmentOp::MultEqual),
+        TokenKind::SlashEqual => Some(ast::AssignmentOp::DivEqual),
         _ => None,
     }
 }
@@ -909,6 +1021,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Global => "global",
         TokenKind::This => "self",
         TokenKind::Other => "other",
+        TokenKind::New => "new",
         TokenKind::Integer(_) => "<integer>",
         TokenKind::HexInteger(_) => "<hex_integer>",
         TokenKind::Float(_) => "<float>",
@@ -930,20 +1043,20 @@ const UNARY_PRIORITY: OperatorPriority = 6;
 // Different left and right priorities can be used to make an operation associate leftwards
 // or rightwards, if the two priorities are the same the operation will default to associating
 // leftwards.
-fn binary_priority(operator: BinaryOp) -> (OperatorPriority, OperatorPriority) {
+fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriority) {
     match operator {
-        BinaryOp::Mult => (5, 5),
-        BinaryOp::Div => (5, 5),
-        BinaryOp::Add => (4, 4),
-        BinaryOp::Sub => (4, 4),
-        BinaryOp::NotEqual => (3, 3),
-        BinaryOp::Equal => (3, 3),
-        BinaryOp::LessThan => (3, 3),
-        BinaryOp::LessEqual => (3, 3),
-        BinaryOp::GreaterThan => (3, 3),
-        BinaryOp::GreaterEqual => (3, 3),
-        BinaryOp::And => (2, 2),
-        BinaryOp::Or => (1, 1),
+        ast::BinaryOp::Mult => (5, 5),
+        ast::BinaryOp::Div => (5, 5),
+        ast::BinaryOp::Add => (4, 4),
+        ast::BinaryOp::Sub => (4, 4),
+        ast::BinaryOp::NotEqual => (3, 3),
+        ast::BinaryOp::Equal => (3, 3),
+        ast::BinaryOp::LessThan => (3, 3),
+        ast::BinaryOp::LessEqual => (3, 3),
+        ast::BinaryOp::GreaterThan => (3, 3),
+        ast::BinaryOp::GreaterEqual => (3, 3),
+        ast::BinaryOp::And => (2, 2),
+        ast::BinaryOp::Or => (1, 1),
     }
 }
 
@@ -977,7 +1090,7 @@ mod tests {
 
     use crate::{lexer::Lexer, string_interner::StringInterner};
 
-    fn parse(source: &str) -> Result<Block<String>, ParseError> {
+    fn parse(settings: ParseSettings, source: &str) -> Result<ast::Block<String>, ParseError> {
         struct SimpleInterner;
 
         impl StringInterner for SimpleInterner {
@@ -991,7 +1104,7 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(SimpleInterner, source, &mut tokens).unwrap();
 
-        ParseSettings::strict().parse(tokens)
+        settings.parse(tokens)
     }
 
     #[test]
@@ -1017,8 +1130,9 @@ mod tests {
             };
 
             var i = 1_234;
+            var j = new Foo();
         "#;
 
-        parse(SOURCE).unwrap();
+        parse(ParseSettings::compat(), SOURCE).unwrap();
     }
 }

@@ -9,7 +9,7 @@ use crate::{
         block_merge::merge_blocks,
         cleanup::{
             clean_instructions, clean_unreachable_blocks, clean_unused_functions,
-            clean_unused_variables,
+            clean_unused_shadow_vars, clean_unused_this_scopes, clean_unused_variables,
         },
         constant_folding::fold_constants,
         dead_code_elim::eliminate_dead_code,
@@ -19,6 +19,7 @@ use crate::{
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
         variable_liveness::{VariableLiveness, VariableVerificationError},
+        verify_references::{ReferenceVerificationError, verify_references},
         verify_scopes::{ScopeVerificationError, verify_scopes},
     },
     code_gen::gen_prototype,
@@ -118,6 +119,8 @@ impl vm::debug::ChunkData for SourceChunk {
 #[derive(Debug, Error)]
 pub enum IrVerificationError {
     #[error(transparent)]
+    ReferenceVerification(#[from] ReferenceVerificationError),
+    #[error(transparent)]
     InstructionVerification(#[from] InstructionVerificationError),
     #[error(transparent)]
     ShadowVerification(#[from] ShadowVerificationError),
@@ -129,6 +132,7 @@ pub enum IrVerificationError {
 
 /// Verify that IR is well-formed.
 pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationError> {
+    verify_references(ir)?;
     InstructionLiveness::compute(ir)?;
     ShadowLiveness::compute(ir)?;
     VariableLiveness::compute(ir)?;
@@ -142,6 +146,17 @@ pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationErr
 ///
 /// May panic if the provided IR is not well-formed.
 pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
+    // Try and eliminate any unused child functions before optimizing them.
+    eliminate_dead_code(ir);
+    clean_unreachable_blocks(ir);
+    clean_unused_functions(ir);
+
+    // Optimize all child functions first, which may remove variable references to this parent
+    // function, allowing for more SSA conversion.
+    for func in ir.functions.values_mut() {
+        optimize_ir(func);
+    }
+
     convert_to_ssa(ir);
 
     fold_constants(ir);
@@ -153,14 +168,12 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
     eliminate_dead_code(ir);
     merge_blocks(ir);
 
-    clean_instructions(ir);
     clean_unreachable_blocks(ir);
-    clean_unused_functions(ir);
+    clean_instructions(ir);
     clean_unused_variables(ir);
-
-    for func in ir.functions.values_mut() {
-        optimize_ir(func);
-    }
+    clean_unused_shadow_vars(ir);
+    clean_unused_this_scopes(ir);
+    clean_unused_functions(ir);
 }
 
 /// Items shared across compilation units.
@@ -467,12 +480,17 @@ impl<'gc> Compiler<'gc> {
 
             match &export.kind {
                 ExportKind::Function(func_stmt) => {
+                    assert!(
+                        !func_stmt.is_constructor && func_stmt.inherit.is_none(),
+                        "constructor functions are not supported yet"
+                    );
+
                     let mut ir = compile_settings
                         .ir_gen
                         .gen_ir(
-                            &func_stmt.body,
                             vm::FunctionRef::Chunk,
                             &func_stmt.parameters,
+                            &func_stmt.body,
                             |m| {
                                 let i = magic.find(m)?;
                                 Some(if magic.get(i).unwrap().read_only() {
@@ -515,7 +533,7 @@ impl<'gc> Compiler<'gc> {
         for (chunk, block, compile_settings) in parsed_chunks {
             let mut ir = compile_settings
                 .ir_gen
-                .gen_ir(&block, vm::FunctionRef::Chunk, &[], |m| {
+                .gen_ir(vm::FunctionRef::Chunk, &[], &block, |m| {
                     let i = magic.find(m)?;
                     Some(if magic.get(i).unwrap().read_only() {
                         MagicMode::ReadOnly

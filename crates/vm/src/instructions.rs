@@ -14,10 +14,25 @@ macro_rules! for_each_instruction {
             /// Set the `dest` register to `Value::Undefined`.
             undefined = Undefined { dest: RegIdx };
 
-            [simple] load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
-            [simple] get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
-            [simple] set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
-            [simple] reset_heap = ResetHeap { heap: HeapIdx };
+            [simple]
+            /// Load a constant into the `dest` register.
+            load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
+
+            [simple]
+            /// Get a heap variable and place it in the `dest` regsiter.
+            get_heap = GetHeap { dest: RegIdx, heap: HeapIdx };
+
+            [simple]
+            /// Set a heap variable from the `source` register.
+            set_heap = SetHeap { heap: HeapIdx, source: RegIdx };
+
+            [simple]
+            /// Reset an *owned* heap variable.
+            ///
+            /// This creates a new owned heap variable with the value `Undefined`, and can be used
+            /// to disconnect heap variables that are shared with any previously created closures.
+            reset_heap = ResetHeap { heap: HeapIdx };
+
             [simple] closure = Closure { dest: RegIdx, proto: ProtoIdx };
             [simple] globals = Globals { dest: RegIdx };
 

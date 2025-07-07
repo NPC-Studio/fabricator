@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::{
     array::Array,
     bytecode,
-    closure::{Closure, Constant, HeapVar, HeapVarDescriptor},
+    closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
     error::Error,
     instructions::{ArgIdx, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
@@ -33,6 +33,8 @@ pub enum OpError {
     NoSuchField,
     #[error("bad call")]
     BadCall,
+    #[error("bad heap index")]
+    BadHeapIdx,
     #[error("bad closure index")]
     BadClosureIdx,
     #[error("bad magic index")]
@@ -215,8 +217,6 @@ enum Next<'gc> {
     },
 }
 
-type SharedHeap<'gc> = Gc<'gc, Lock<Value<'gc>>>;
-
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 enum OwnedHeapVar<'gc> {
@@ -226,7 +226,7 @@ enum OwnedHeapVar<'gc> {
     // Once a closure is created that must share this value, it will be moved to the heap as a
     // `OwnedHeapVar::Shared` value so that it can be shared across closures.
     Unique(Value<'gc>),
-    Shared(SharedHeap<'gc>),
+    Shared(SharedValue<'gc>),
 }
 
 impl<'gc> OwnedHeapVar<'gc> {
@@ -248,7 +248,7 @@ impl<'gc> OwnedHeapVar<'gc> {
         }
     }
 
-    fn make_shared(&mut self, mc: &Mutation<'gc>) -> SharedHeap<'gc> {
+    fn make_shared(&mut self, mc: &Mutation<'gc>) -> SharedValue<'gc> {
         match *self {
             OwnedHeapVar::Unique(v) => {
                 let gc = Gc::new(mc, Lock::new(v));
@@ -407,10 +407,13 @@ fn dispatch<'gc>(
                     HeapVarDescriptor::Owned(idx) => {
                         heap.push(HeapVar::Owned(idx));
                     }
+                    HeapVarDescriptor::Static(idx) => {
+                        heap.push(HeapVar::Shared(proto.static_vars[idx as usize]))
+                    }
                     HeapVarDescriptor::UpValue(idx) => {
-                        heap.push(HeapVar::UpValue(match self.closure.heap()[idx as usize] {
+                        heap.push(HeapVar::Shared(match self.closure.heap()[idx as usize] {
                             HeapVar::Owned(idx) => self.heap[idx as usize].make_shared(&self.ctx),
-                            HeapVar::UpValue(v) => v,
+                            HeapVar::Shared(v) => v,
                         }));
                     }
                 }
@@ -430,9 +433,14 @@ fn dispatch<'gc>(
 
         #[inline]
         fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
+            self.registers[dest as usize] = match *self
+                .closure
+                .heap()
+                .get(heap as usize)
+                .ok_or(OpError::BadHeapIdx)?
+            {
                 HeapVar::Owned(idx) => self.heap[idx as usize].get(),
-                HeapVar::UpValue(v) => v.get(),
+                HeapVar::Shared(v) => v.get(),
             };
             Ok(())
         }
@@ -440,21 +448,31 @@ fn dispatch<'gc>(
         #[inline]
         fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
             let source = self.registers[source as usize];
-            match self.closure.heap()[heap as usize] {
+            match *self
+                .closure
+                .heap()
+                .get(heap as usize)
+                .ok_or(OpError::BadHeapIdx)?
+            {
                 HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
-                HeapVar::UpValue(v) => v.set(&self.ctx, source),
+                HeapVar::Shared(v) => v.set(&self.ctx, source),
             };
             Ok(())
         }
 
         #[inline]
         fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
-            match self.closure.heap()[heap as usize] {
+            match *self
+                .closure
+                .heap()
+                .get(heap as usize)
+                .ok_or(OpError::BadHeapIdx)?
+            {
                 HeapVar::Owned(idx) => {
                     self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
                     Ok(())
                 }
-                HeapVar::UpValue(_) => Err(OpError::ResetHeapNotOwned.into()),
+                HeapVar::Shared(_) => Err(OpError::ResetHeapNotOwned.into()),
             }
         }
 

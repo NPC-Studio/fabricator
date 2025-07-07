@@ -20,26 +20,33 @@ use crate::{
 ///
 /// The resulting phi placement will be *minimal* but not *pruned*.
 pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
-    // We don't do SSA conversion of upvalues, either ones from an upper function or ones shared to
-    // a lower function.
+    // We don't do SSA conversion of any shared variables: static variables, upvalues, and any owned
+    // variables shared to a lower function.
     let mut skip_vars = HashSet::new();
-    skip_vars.extend(ir.upvalues.keys().copied());
-    for func in ir.functions.values() {
-        skip_vars.extend(func.upvalues.values().copied());
+    for (var_id, var) in ir.variables.iter() {
+        if !var.is_owned() {
+            skip_vars.insert(var_id);
+        }
+    }
+    for child_func in ir.functions.values() {
+        for var in child_func.variables.values() {
+            if let &ir::Variable::Upper(var_id) = var {
+                skip_vars.insert(var_id);
+            }
+        }
     }
 
     let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
-    let mut assigning_blocks: SecondaryMap<ir::Variable, HashSet<ir::BlockId>> =
-        SecondaryMap::new();
+    let mut assigning_blocks: SecondaryMap<ir::VarId, HashSet<ir::BlockId>> = SecondaryMap::new();
 
     // We don't do any SSA conversion of unreachable blocks.
     for block_id in dominators.topological_order() {
         let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
-            if let &ir::Instruction::SetVariable(variable, _) = &ir.instructions[inst_id] {
-                if !skip_vars.contains(&variable) {
-                    let blocks = assigning_blocks.get_or_insert_default(variable);
+            if let &ir::Instruction::SetVariable(var_id, _) = &ir.instructions[inst_id] {
+                if !skip_vars.contains(&var_id) {
+                    let blocks = assigning_blocks.get_or_insert_default(var_id);
                     blocks.insert(block_id);
                 }
             }
@@ -52,13 +59,13 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // This algorithm is from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    let mut phi_functions: SecondaryMap<ir::BlockId, HashMap<ir::Variable, ir::ShadowVar>> =
+    let mut phi_functions: SecondaryMap<ir::BlockId, HashMap<ir::VarId, ir::ShadowVar>> =
         SecondaryMap::new();
-    let mut shadow_map: SecondaryMap<ir::ShadowVar, ir::Variable> = SecondaryMap::new();
+    let mut shadow_map: SecondaryMap<ir::ShadowVar, ir::VarId> = SecondaryMap::new();
 
     let mut work_queue = Vec::new();
     let mut work_added = IndexSet::new();
-    for (variable, assigning_blocks) in assigning_blocks.iter() {
+    for (var_id, assigning_blocks) in assigning_blocks.iter() {
         assert!(work_queue.is_empty());
         work_added.clear();
 
@@ -71,11 +78,11 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             for frontier_block_id in dominators.dominance_frontier(assigning_block_id).unwrap() {
                 if let hash_map::Entry::Vacant(vacant) = phi_functions
                     .get_or_insert_default(frontier_block_id)
-                    .entry(variable)
+                    .entry(var_id)
                 {
                     let shadow_var = ir.shadow_vars.insert(());
                     vacant.insert(shadow_var);
-                    shadow_map.insert(shadow_var, variable);
+                    shadow_map.insert(shadow_var, var_id);
                     if work_added.insert(frontier_block_id.index() as usize) {
                         work_queue.push(frontier_block_id);
                     }
@@ -102,9 +109,9 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // This algorithm is also from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    let current_vars: SecondaryMap<ir::Variable, Vec<ir::InstId>> =
-        SecondaryMap::from_iter(assigning_blocks.ids().map(|var| (var, Vec::new())));
-    let var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::Variable, usize>> =
+    let current_vars: SecondaryMap<ir::VarId, Vec<ir::InstId>> =
+        SecondaryMap::from_iter(assigning_blocks.ids().map(|var_id| (var_id, Vec::new())));
+    let var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::VarId, usize>> =
         SecondaryMap::new();
 
     // We turn the recursive algorithm from Cytron et al. into an explicit DFS of the dominator
@@ -115,46 +122,45 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
         start_block,
         |(current_vars, var_stack_bottom), block_id| {
             let var_stack_bottom = var_stack_bottom.get_or_insert_default(block_id);
-            for (var, stack) in current_vars.iter() {
-                var_stack_bottom.insert(var, stack.len());
+            for (var_id, stack) in current_vars.iter() {
+                var_stack_bottom.insert(var_id, stack.len());
             }
 
             let block = &mut ir.blocks[block_id];
             for &inst_id in &block.instructions {
                 let inst = &mut ir.instructions[inst_id];
                 match *inst {
-                    ir::Instruction::GetVariable(variable) => {
-                        if let Some(top) =
-                            current_vars.get(variable).and_then(|s| s.last().copied())
+                    ir::Instruction::GetVariable(var_id) => {
+                        if let Some(top) = current_vars.get(var_id).and_then(|s| s.last().copied())
                         {
                             *inst = ir::Instruction::Copy(top);
-                        } else if !skip_vars.contains(&variable) {
+                        } else if !skip_vars.contains(&var_id) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
                             *inst = ir::Instruction::Undefined;
                         }
                     }
-                    ir::Instruction::SetVariable(variable, source) => {
-                        if let Some(stack) = current_vars.get_mut(variable) {
+                    ir::Instruction::SetVariable(var_id, source) => {
+                        if let Some(stack) = current_vars.get_mut(var_id) {
                             *inst = ir::Instruction::NoOp;
                             stack.push(source);
                         } else {
-                            assert!(skip_vars.contains(&variable));
+                            assert!(skip_vars.contains(&var_id));
                         }
                     }
                     ir::Instruction::Phi(shadow_var) => {
                         // If there is a `Phi` function we did not insert, we ignore it.
-                        if let Some(&variable) = shadow_map.get(shadow_var) {
-                            current_vars.get_mut(variable).unwrap().push(inst_id);
+                        if let Some(&var_id) = shadow_map.get(shadow_var) {
+                            current_vars.get_mut(var_id).unwrap().push(inst_id);
                         }
                     }
-                    ir::Instruction::OpenVariable(variable) => {
-                        if !skip_vars.contains(&variable) {
+                    ir::Instruction::OpenVariable(var_id) => {
+                        if !skip_vars.contains(&var_id) {
                             *inst = ir::Instruction::NoOp;
                         }
                     }
-                    ir::Instruction::CloseVariable(variable) => {
-                        if !skip_vars.contains(&variable) {
+                    ir::Instruction::CloseVariable(var_id) => {
+                        if !skip_vars.contains(&var_id) {
                             *inst = ir::Instruction::NoOp;
                         }
                     }
@@ -166,10 +172,9 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             // that block, we must insert a matching upsilon.
             for succ in block.exit.successors() {
                 if let Some(phi_functions) = phi_functions.get(succ) {
-                    for (&variable, &shadow_var) in phi_functions {
+                    for (&var_id, &shadow_var) in phi_functions {
                         let var_inst;
-                        if let Some(top) =
-                            current_vars.get(variable).and_then(|s| s.last().copied())
+                        if let Some(top) = current_vars.get(var_id).and_then(|s| s.last().copied())
                         {
                             var_inst = top;
                         } else {
@@ -191,8 +196,8 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             dominators.dominance_children(block_id).unwrap()
         },
         |(current_vars, var_stack_bottom), block_id| {
-            for (&var, &stack_bottom) in &var_stack_bottom[block_id] {
-                current_vars.get_mut(var).unwrap().truncate(stack_bottom);
+            for (&var_id, &stack_bottom) in &var_stack_bottom[block_id] {
+                current_vars.get_mut(var_id).unwrap().truncate(stack_bottom);
             }
         },
     );

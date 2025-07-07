@@ -20,7 +20,8 @@ pub enum StatementKind<S> {
     Block(Block<S>),
     Enum(EnumStatement<S>),
     Function(FunctionStatement<S>),
-    Var(VarStatement<S>),
+    Var(Declaration<S>),
+    Static(Declaration<S>),
     Assignment(AssignmentStatement<S>),
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
@@ -37,12 +38,14 @@ pub struct EnumStatement<S> {
 #[derive(Debug, Clone)]
 pub struct FunctionStatement<S> {
     pub name: S,
+    pub is_constructor: bool,
+    pub inherit: Option<CallExpr<S>>,
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
 }
 
 #[derive(Debug, Clone)]
-pub struct VarStatement<S> {
+pub struct Declaration<S> {
     pub name: S,
     pub value: Expression<S>,
 }
@@ -115,6 +118,7 @@ pub struct FunctionExpr<S> {
 pub struct CallExpr<S> {
     pub base: Expression<S>,
     pub arguments: Vec<Expression<S>>,
+    pub has_new: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +235,9 @@ impl<S> Statement<S> {
             StatementKind::Var(var_stmt) => {
                 visitor.visit_expr(&var_stmt.value)?;
             }
+            StatementKind::Static(static_stmt) => {
+                visitor.visit_expr(&static_stmt.value)?;
+            }
             StatementKind::Assignment(assignment_stmt) => {
                 match &assignment_stmt.target {
                     AssignmentTarget::Name(_) => {}
@@ -287,6 +294,9 @@ impl<S> Statement<S> {
             }
             StatementKind::Var(var_stmt) => {
                 visitor.visit_expr_mut(&mut var_stmt.value)?;
+            }
+            StatementKind::Static(static_stmt) => {
+                visitor.visit_expr_mut(&mut static_stmt.value)?;
             }
             StatementKind::Assignment(assignment_stmt) => {
                 match &mut assignment_stmt.target {

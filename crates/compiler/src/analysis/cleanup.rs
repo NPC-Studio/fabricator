@@ -40,28 +40,69 @@ pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
         .retain(|id, _| reachable_blocks.contains(id.index() as usize));
 }
 
+/// Clean all variables that are never used in any block.
+///
+/// Any variable instruction counts as a use, as well as `Closure` instructions that reference an
+/// upper variable.
 pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
     let mut used_variables = IndexSet::new();
 
     for inst in ir.instructions.values() {
-        match inst {
-            ir::Instruction::GetVariable(variable) | ir::Instruction::SetVariable(variable, _) => {
-                used_variables.insert(variable.index() as usize);
+        match *inst {
+            ir::Instruction::OpenVariable(var_id)
+            | ir::Instruction::GetVariable(var_id)
+            | ir::Instruction::SetVariable(var_id, _)
+            | ir::Instruction::CloseVariable(var_id) => {
+                used_variables.insert(var_id.index() as usize);
+            }
+            ir::Instruction::Closure(func) => {
+                for var in ir.functions[func].variables.values() {
+                    // Creating a closure uses every upper variable that the closure closes
+                    // over.
+                    if let &ir::Variable::Upper(var_id) = var {
+                        used_variables.insert(var_id.index() as usize);
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    for func in ir.functions.values() {
-        for &parent_var in func.upvalues.values() {
-            used_variables.insert(parent_var.index() as usize);
+    ir.variables
+        .retain(|id, _| used_variables.contains(id.index() as usize));
+}
+
+pub fn clean_unused_shadow_vars<S>(ir: &mut ir::Function<S>) {
+    let mut used_shadow_vars = IndexSet::new();
+
+    for inst in ir.instructions.values() {
+        match *inst {
+            ir::Instruction::Phi(shadow_var) | ir::Instruction::Upsilon(shadow_var, _) => {
+                used_shadow_vars.insert(shadow_var.index() as usize);
+            }
+            _ => {}
         }
     }
 
-    ir.variables
-        .retain(|id, _| used_variables.contains(id.index() as usize));
-    ir.upvalues
-        .retain(|id, _| used_variables.contains(id.index() as usize));
+    ir.shadow_vars
+        .retain(|id, _| used_shadow_vars.contains(id.index() as usize));
+}
+
+pub fn clean_unused_this_scopes<S>(ir: &mut ir::Function<S>) {
+    let mut used_this_scopes = IndexSet::new();
+
+    for inst in ir.instructions.values() {
+        match *inst {
+            ir::Instruction::OpenThisScope(this_scope, _)
+            | ir::Instruction::CloseThisScope(this_scope) => {
+                used_this_scopes.insert(this_scope.index() as usize);
+            }
+            _ => {}
+        }
+    }
+
+    ir.this_scopes
+        .retain(|id, _| used_this_scopes.contains(id.index() as usize));
 }
 
 pub fn clean_unused_functions<S>(ir: &mut ir::Function<S>) {

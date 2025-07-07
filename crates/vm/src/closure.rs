@@ -5,8 +5,7 @@ use thiserror::Error;
 
 use crate::{
     bytecode::ByteCode,
-    debug::Chunk,
-    debug::{RefName, Span},
+    debug::{Chunk, RefName, Span},
     instructions::HeapIdx,
     magic::MagicSet,
     string::String,
@@ -35,25 +34,32 @@ impl<'gc> Constant<'gc> {
     }
 }
 
+/// A shared [`Value`] that can be referenced by multiple closures with independent lifetimes.
+pub type SharedValue<'gc> = Gc<'gc, Lock<Value<'gc>>>;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Collect)]
 #[collect(require_static)]
 pub enum HeapVarDescriptor {
-    /// This heap variable is owned by the prototype.
+    /// This heap variable is owned by a closure.
     ///
-    /// Contains a "slot" for the owned heap variable that should be unique amongst all owned heap
-    /// variables in this prototype.
+    /// Contains a "slot" for an owned heap variable. Slots may be re-used for a set of variables if
+    /// their lifetimes do not overlap with each other and have `ResetHeap` instructions in-between.
     ///
     /// When the running closure created from this prototype executes and uses this heap variable,
     /// it will create a new, unique instance of it.
     Owned(HeapIdx),
-    /// This heap variable is owned by a parent prototype.
+    /// This heap variable is a prototype-level static.
+    ///
+    /// The index must be a valid index into the `static_vars` prototype table.
+    Static(HeapIdx),
+    /// This heap variable is a reference to a heap variable from a parent closure.
     ///
     /// Having a non-owned heap variable means that this prototype represents a function that closes
     /// over an upper variable, and the two functions need to share this variable with potentially
     /// different lifetimes.
     ///
-    /// Contains the *index* in the parent prototype list for the heap variable that this upvalue
-    /// references.
+    /// Contains the index into the *parent* heap variable list for the heap variable that this
+    /// upvalue references.
     UpValue(HeapIdx),
 }
 
@@ -74,6 +80,7 @@ pub struct Prototype<'gc> {
     pub bytecode: ByteCode,
     pub constants: Box<[Constant<'gc>]>,
     pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
+    pub static_vars: Box<[SharedValue<'gc>]>,
     pub used_registers: usize,
     pub heap_vars: Box<[HeapVarDescriptor]>,
 }
@@ -94,12 +101,8 @@ impl<'gc> Prototype<'gc> {
 pub enum HeapVar<'gc> {
     /// A `HeapVarDescriptor::Owned` heap variable.
     Owned(HeapIdx),
-    /// A `HeapVarDescriptor::UpValue` heap variable.
-    ///
-    /// When a closure is created with upvalues, the parent heap variable that an upvalue references
-    /// will be here. These persist for the lifetime of the closure across calls, and so must be
-    /// bound to the closure itself.
-    UpValue(Gc<'gc, Lock<Value<'gc>>>),
+    /// A shared heap variable (either a static or an upvalue).
+    Shared(SharedValue<'gc>),
 }
 
 #[derive(Debug, Error)]
@@ -148,6 +151,9 @@ impl<'gc> Closure<'gc> {
             match h {
                 HeapVarDescriptor::Owned(idx) => {
                     heap.push(HeapVar::Owned(idx));
+                }
+                HeapVarDescriptor::Static(idx) => {
+                    heap.push(HeapVar::Shared(proto.static_vars[idx as usize]))
                 }
                 HeapVarDescriptor::UpValue(_) => {
                     return Err(MissingUpValue);

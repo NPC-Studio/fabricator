@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 use arrayvec::ArrayVec;
 use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
@@ -9,7 +9,7 @@ use crate::constant::Constant;
 new_id_type! {
     pub struct BlockId;
     pub struct InstId;
-    pub struct Variable;
+    pub struct VarId;
     pub struct ShadowVar;
     pub struct ThisScope;
     pub struct FuncId;
@@ -35,6 +35,24 @@ pub enum BinOp {
     GreaterEqual,
     And,
     Or,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Variable<S> {
+    /// A heap variable owned by a closure.
+    Owned,
+    /// A static variable owned by a *prototype*.
+    Static(Constant<S>),
+    /// A reference to a variable in the immediate parent function. Contains the `VarId` for the
+    /// parent function.
+    Upper(VarId),
+}
+
+impl<S> Variable<S> {
+    #[must_use]
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned)
+    }
 }
 
 /// A single IR instruction.
@@ -83,18 +101,18 @@ pub enum BinOp {
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
 /// `Upsilon` instructions.
 ///
-/// Normally, *all* IR variables can be converted into SSA form in this way, but any variables
-/// that are shared across parent / child functions will not be converted to SSA form. These shared
-/// variables that remain after optimization will instead be represented by VM "heap" variables,
-/// allowing them to be shared across closures.
+/// Normally, *all* owned IR variables can be converted into SSA form in this way, but any variables
+/// that are prototype-level statics or shared across parent / child functions will not be converted
+/// to SSA form. These shared variables that remain after optimization will instead be represented
+/// by VM "heap" variables, allowing them to be shared across closures.
 ///
 /// In order for the IR to be well-formed, variables must follow the following rules:
 ///
-/// * All (owned) variable must have *exactly one* `OpenVariable` instruction and *at most one*
+/// * All owned variables must have *exactly one* `OpenVariable` instruction and *at most one*
 ///   `CloseVariable` instruction.
-/// * Upvalue variables can be used anywhere in their containing function and in well-formed IR must
-///   have neither `OpenVariable` nor `CloseVariable` instructions. Upvalue variables are always
-///   open for the entire lifetime of the closure that contains them.
+/// * Static and upvalue variables can be used anywhere in their containing function and in
+///   well-formed IR must have neither `OpenVariable` nor `CloseVariable` instructions. These
+///   variables are always open for the entire lifetime of the closure that contains them.
 /// * There should be nowhere in the CFG where a variable can potentially be either opened or
 ///   closed, depending on the path taken. Every location must, for every variable, be either
 ///   *definitely* open or *definitely* closed for that variable. This is meant to imply also that
@@ -139,10 +157,10 @@ pub enum Instruction<S> {
     Undefined,
     Constant(Constant<S>),
     Closure(FuncId),
-    OpenVariable(Variable),
-    GetVariable(Variable),
-    SetVariable(Variable, InstId),
-    CloseVariable(Variable),
+    OpenVariable(VarId),
+    GetVariable(VarId),
+    SetVariable(VarId, InstId),
+    CloseVariable(VarId),
     GetMagic(S),
     SetMagic(S, InstId),
     Globals,
@@ -444,30 +462,22 @@ impl Default for Block {
 pub type InstructionMap<S> = IdMap<InstId, Instruction<S>>;
 pub type SpanMap = SecondaryMap<InstId, Span>;
 pub type BlockMap = IdMap<BlockId, Block>;
-pub type VariableSet = IdMap<Variable, ()>;
+pub type VariableMap<S> = IdMap<VarId, Variable<S>>;
 pub type ShadowVarSet = IdMap<ShadowVar, ()>;
 pub type ThisScopeSet = IdMap<ThisScope, ()>;
 pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
-pub type UpValueMap = HashMap<Variable, Variable>;
 
 pub struct Function<S> {
-    pub num_parameters: usize,
     pub reference: FunctionRef,
     pub instructions: InstructionMap<S>,
     pub spans: SpanMap,
     pub blocks: BlockMap,
-    pub variables: VariableSet,
+    pub variables: VariableMap<S>,
     pub shadow_vars: ShadowVarSet,
     pub this_scopes: ThisScopeSet,
 
     /// Inner functions declared within this function.
     pub functions: FunctionMap<S>,
-
-    /// If this is a sub-function, this maps *this* function's variables to the upper function's
-    /// variables for any "upvalues" (variables shared from the parent function).
-    ///
-    /// For the top-level function, this will be empty.
-    pub upvalues: UpValueMap,
 
     pub start_block: BlockId,
 }
@@ -758,9 +768,6 @@ impl<S: AsRef<str>> Function<S> {
             write_block(f, block_id)?;
         }
 
-        write_indent(f, 0)?;
-        writeln!(f, "num_parameters: {}", self.num_parameters)?;
-
         if !self.shadow_vars.is_empty() {
             write_indent(f, 0)?;
             write!(f, "shadow_vars:")?;
@@ -773,18 +780,15 @@ impl<S: AsRef<str>> Function<S> {
         if !self.variables.is_empty() {
             write_indent(f, 0)?;
             write!(f, "variables:")?;
-            for var in self.variables.ids() {
-                write!(f, " V{}", var.index())?;
-            }
-            writeln!(f)?;
-        }
-
-        if !self.upvalues.is_empty() {
-            write_indent(f, 0)?;
-            writeln!(f, "upvalues:")?;
-            for (&var_id, &up_var_id) in self.upvalues.iter() {
+            for (id, var) in self.variables.iter() {
                 write_indent(f, 4)?;
-                writeln!(f, "V{}: parent V{}", var_id.index(), up_var_id.index())?;
+                write!(f, "V{}: ", id.index())?;
+                match var {
+                    Variable::Owned => write!(f, "Owned")?,
+                    Variable::Static(init) => write!(f, "Static({:?})", init.as_str())?,
+                    Variable::Upper(uid) => write!(f, "Upper(V{})", uid.index())?,
+                }
+                writeln!(f)?;
             }
         }
 

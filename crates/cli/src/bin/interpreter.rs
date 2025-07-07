@@ -96,7 +96,7 @@ fn main() {
 
             let mut ir = settings
                 .ir_gen
-                .gen_ir(&parsed, vm::FunctionRef::Chunk, &[], |m| {
+                .gen_ir(vm::FunctionRef::Chunk, &[], &parsed, |m| {
                     let i = ctx.stdlib().find(m)?;
                     Some(if ctx.stdlib().get(i).unwrap().read_only() {
                         MagicMode::ReadOnly

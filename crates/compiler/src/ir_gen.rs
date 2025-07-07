@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, hash_map},
     hash::Hash,
-    mem,
 };
 
 use fabricator_vm::{FunctionRef, Span};
@@ -82,94 +81,145 @@ impl IrGenSettings {
 
     pub fn gen_ir<S>(
         self,
-        block: &ast::Block<S>,
         func_ref: FunctionRef,
         parameters: &[ast::Parameter<S>],
+        block: &ast::Block<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone,
     {
-        IrCompiler::compile_function(self, block, func_ref, parameters, find_magic)
+        let mut compiler = FunctionCompiler::new(self, func_ref, &find_magic);
+        compiler.declare_parameters(parameters)?;
+        compiler.block(block)?;
+        Ok(compiler.function)
     }
 }
 
-struct Function<S> {
+struct FunctionCompiler<'a, S> {
+    settings: IrGenSettings,
+    find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
+
     function: ir::Function<S>,
     current_block: ir::BlockId,
     scopes: Vec<HashSet<S>>,
-    variables: HashMap<S, Vec<ir::Variable>>,
-    // Either a `Some` for an upvalue, or a `None` as a negative cache for no upper function having
-    // such a variable.
-    upvalues: HashMap<S, Option<ir::Variable>>,
+    variables: HashMap<S, Vec<ir::VarId>>,
 }
 
-struct IrCompiler<S, M> {
-    settings: IrGenSettings,
-    find_magic: M,
-    upper: Vec<Function<S>>,
-    current: Function<S>,
-}
-
-impl<S, M> IrCompiler<S, M>
+impl<'a, S> FunctionCompiler<'a, S>
 where
     S: Eq + Hash + Clone,
-    M: Fn(&S) -> Option<MagicMode>,
 {
-    fn compile_function(
+    fn new(
         settings: IrGenSettings,
-        block: &ast::Block<S>,
-        func_ref: FunctionRef,
-        parameters: &[ast::Parameter<S>],
-        find_magic: M,
-    ) -> Result<ir::Function<S>, IrGenError> {
-        // Create a blank placeholder initial top-level function.
-        //
-        // We do this to avoid repeating the same code from `IrCompiler::push_function` here.
-        // This is also less painful than dealing with `self.current` being `Option` or having the
-        // current function be at the top of the function stack.
-
+        reference: FunctionRef,
+        find_magic: &'a dyn Fn(&S) -> Option<MagicMode>,
+    ) -> Self {
+        let instructions = ir::InstructionMap::new();
+        let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
+        let variables = ir::VariableMap::new();
+        let shadow_vars = ir::ShadowVarSet::new();
+        let this_scopes = ir::ThisScopeSet::new();
+        let functions = ir::FunctionMap::new();
 
-        let missing_block = blocks.insert(ir::Block::default());
-        blocks.remove(missing_block);
+        // We leave the start block completely empty except for a jump to the "real" start block.
+        //
+        // This is so that we can use the start block as a place to put non-lexically scoped
+        // variable declaration instructions that need to be before any other generated IR, and
+        // avoid being O(n^2) in the number of variable declarations.
+        let start_block = blocks.insert(ir::Block::default());
+        let first_block = blocks.insert(ir::Block::default());
+        blocks[start_block].exit = ir::Exit::Jump(first_block);
 
-        let mut this = Self {
-            settings,
-            find_magic,
-            upper: Vec::new(),
-            current: Function {
-                function: ir::Function {
-                    num_parameters: 0,
-                    reference: FunctionRef::Chunk,
-                    instructions: ir::InstructionMap::new(),
-                    spans: ir::SpanMap::new(),
-                    blocks,
-                    variables: ir::VariableSet::new(),
-                    shadow_vars: ir::ShadowVarSet::new(),
-                    this_scopes: ir::ThisScopeSet::new(),
-                    functions: ir::FunctionMap::new(),
-                    upvalues: ir::UpValueMap::new(),
-                    start_block: missing_block,
-                },
-                current_block: missing_block,
-                scopes: vec![],
-                variables: Default::default(),
-                upvalues: HashMap::new(),
-            },
+        let function = ir::Function {
+            reference,
+            instructions,
+            spans,
+            blocks,
+            variables,
+            shadow_vars,
+            this_scopes,
+            functions,
+            start_block,
         };
 
-        this.push_function(func_ref, parameters)?;
-        this.block(block)?;
-        let func_id = this.pop_function();
-        let func = this.current.function.functions.remove(func_id).unwrap();
+        Self {
+            settings,
+            find_magic,
+            function,
+            current_block: first_block,
+            // Even with no lexical scoping, all functions must have one top-level scope.
+            scopes: vec![HashSet::new()],
+            variables: Default::default(),
+        }
+    }
 
-        // Assert that nothing was generated into our placeholder top-level function.
-        assert!(this.current.function.instructions.is_empty());
-        assert!(this.current.scopes.is_empty());
-        assert!(this.current.variables.is_empty());
+    fn declare_parameters(&mut self, parameters: &[ast::Parameter<S>]) -> Result<(), IrGenError> {
+        let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
+        for (param_index, param) in parameters.into_iter().enumerate() {
+            let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned);
 
-        Ok(func)
+            if let Some(default) = &param.default {
+                let def_value = default.clone().fold_constant().ok_or_else(|| IrGenError {
+                    kind: IrGenErrorKind::ParameterDefaultNotConstant,
+                    span: default.span,
+                })?;
+
+                let arg_index = self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::Constant(Constant::Integer(param_index as i64)),
+                );
+                let arg_provided = self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::BinOp {
+                        left: arg_index,
+                        right: arg_count,
+                        op: ir::BinOp::LessThan,
+                    },
+                );
+
+                let provided_block = self.function.blocks.insert(ir::Block::default());
+                let not_provided_block = self.function.blocks.insert(ir::Block::default());
+                let successor_block = self.function.blocks.insert(ir::Block::default());
+
+                self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+                    cond: arg_provided,
+                    if_true: provided_block,
+                    if_false: not_provided_block,
+                };
+
+                self.current_block = provided_block;
+                {
+                    let pop_arg_inst =
+                        self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                    self.push_instruction(
+                        Span::null(),
+                        ir::Instruction::SetVariable(arg_var, pop_arg_inst),
+                    );
+                }
+                self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor_block);
+
+                self.current_block = not_provided_block;
+                {
+                    let def_value_inst =
+                        self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
+                    self.push_instruction(
+                        Span::null(),
+                        ir::Instruction::SetVariable(arg_var, def_value_inst),
+                    );
+                }
+                self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor_block);
+
+                self.current_block = successor_block;
+            } else {
+                let pop_arg =
+                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                self.push_instruction(Span::null(), ir::Instruction::SetVariable(arg_var, pop_arg));
+            };
+        }
+
+        Ok(())
     }
 
     fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
@@ -199,8 +249,9 @@ where
                     span: statement.span,
                 });
             }
-            ast::StatementKind::Var(var_statement) => {
-                self.var_statement(statement.span, var_statement)
+            ast::StatementKind::Var(var_decl) => self.var_statement(statement.span, var_decl),
+            ast::StatementKind::Static(static_decl) => {
+                self.static_statement(statement.span, static_decl)
             }
             ast::StatementKind::Assignment(assignment_statement) => {
                 self.assignment_statement(statement.span, assignment_statement)
@@ -219,11 +270,61 @@ where
     fn var_statement(
         &mut self,
         span: Span,
-        var_statement: &ast::VarStatement<S>,
+        var_decl: &ast::Declaration<S>,
     ) -> Result<(), IrGenError> {
-        let var = self.declare_var(var_statement.name.clone());
-        let inst_id = self.commit_expression(&var_statement.value)?;
-        self.push_instruction(span, ir::Instruction::SetVariable(var, inst_id));
+        let var_id = self.declare_var(var_decl.name.clone(), ir::Variable::Owned);
+        let inst_id = self.commit_expression(&var_decl.value)?;
+        self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
+        Ok(())
+    }
+
+    fn static_statement(
+        &mut self,
+        span: Span,
+        static_decl: &ast::Declaration<S>,
+    ) -> Result<(), IrGenError> {
+        if let Some(constant) = static_decl.value.clone().fold_constant() {
+            // If our static is a constant, then we can just initialize it when the prototype is
+            // created.
+            self.declare_var(static_decl.name.clone(), ir::Variable::Static(constant));
+        } else {
+            // Otherwise, we need to initialize two static variables, a hidden one for the
+            // initialization state and a visible one to hold the initialized value.
+
+            // Create a hidden static variable to hold whether the real static is initialized.
+            let is_initialized = self
+                .function
+                .variables
+                .insert(ir::Variable::Static(Constant::Boolean(false)));
+            // Create a normal static variable that holds the real value.
+            let var_id = self.declare_var(
+                static_decl.name.clone(),
+                ir::Variable::Static(Constant::Undefined),
+            );
+
+            let init_block = self.function.blocks.insert(ir::Block::default());
+            let successor = self.function.blocks.insert(ir::Block::default());
+
+            let check_initialized =
+                self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
+            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+                cond: check_initialized,
+                if_false: init_block,
+                if_true: successor,
+            };
+
+            self.current_block = init_block;
+
+            let value = self.commit_expression(&static_decl.value)?;
+            self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+            let troo =
+                self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
+            self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, troo));
+            self.function.blocks[init_block].exit = ir::Exit::Jump(successor);
+
+            self.current_block = successor;
+        }
+
         Ok(())
     }
 
@@ -233,7 +334,7 @@ where
         assignment_statement: &ast::AssignmentStatement<S>,
     ) -> Result<(), IrGenError> {
         enum Target<S> {
-            Var(ir::Variable),
+            Var(ir::VarId),
             This {
                 key: ir::InstId,
             },
@@ -252,8 +353,8 @@ where
 
         let (target, old) = match &assignment_statement.target {
             ast::AssignmentTarget::Name(name) => {
-                if let Some(var) = self.get_var(name) {
-                    (Target::Var(var), ir::Instruction::GetVariable(var))
+                if let Some(var_id) = self.get_var(name) {
+                    (Target::Var(var_id), ir::Instruction::GetVariable(var_id))
                 } else if let Some(mode) = (self.find_magic)(name) {
                     if mode == MagicMode::ReadOnly {
                         return Err(IrGenError {
@@ -348,8 +449,8 @@ where
         };
 
         match target {
-            Target::Var(var) => {
-                self.push_instruction(span, ir::Instruction::SetVariable(var, assign));
+            Target::Var(var_id) => {
+                self.push_instruction(span, ir::Instruction::SetVariable(var_id, assign));
             }
             Target::This { key } => {
                 self.push_instruction(
@@ -399,32 +500,32 @@ where
         } else {
             ir::Exit::Return { value: None }
         };
-        self.current.function.blocks[self.current.current_block].exit = exit;
-        self.current.current_block = self.current.function.blocks.insert(ir::Block::default());
+        self.function.blocks[self.current_block].exit = exit;
+        self.current_block = self.function.blocks.insert(ir::Block::default());
         Ok(())
     }
 
     fn if_statement(&mut self, if_statement: &ast::IfStatement<S>) -> Result<(), IrGenError> {
         let cond = self.commit_expression(&if_statement.condition)?;
-        let then_block = self.current.function.blocks.insert(ir::Block::default());
-        let else_block = self.current.function.blocks.insert(ir::Block::default());
-        let successor = self.current.function.blocks.insert(ir::Block::default());
+        let then_block = self.function.blocks.insert(ir::Block::default());
+        let else_block = self.function.blocks.insert(ir::Block::default());
+        let successor = self.function.blocks.insert(ir::Block::default());
 
-        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
             cond,
             if_true: then_block,
             if_false: else_block,
         };
 
-        self.current.current_block = then_block;
+        self.current_block = then_block;
         {
             self.push_scope();
             self.statement(&if_statement.then_stmt)?;
             self.pop_scope();
         }
-        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
+        self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor);
 
-        self.current.current_block = else_block;
+        self.current_block = else_block;
         if let Some(else_stmt) = &if_statement.else_stmt {
             {
                 self.push_scope();
@@ -432,9 +533,9 @@ where
                 self.pop_scope();
             }
         }
-        self.current.function.blocks[self.current.current_block].exit = ir::Exit::Jump(successor);
+        self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor);
 
-        self.current.current_block = successor;
+        self.current_block = successor;
         Ok(())
     }
 
@@ -442,18 +543,18 @@ where
         {
             self.push_scope();
 
-            let body = self.current.function.blocks.insert(ir::Block::default());
-            let successor = self.current.function.blocks.insert(ir::Block::default());
+            let body = self.function.blocks.insert(ir::Block::default());
+            let successor = self.function.blocks.insert(ir::Block::default());
 
             self.statement(&for_statement.initializer)?;
             let cond = self.commit_expression(&for_statement.condition)?;
 
-            self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
                 cond,
                 if_true: body,
                 if_false: successor,
             };
-            self.current.current_block = body;
+            self.current_block = body;
 
             // The condition expression is used again at the end, so we guard the body scope so it
             // doesn't affect the condition.
@@ -472,13 +573,13 @@ where
             }
 
             let cond = self.commit_expression(&for_statement.condition)?;
-            self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
+            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
                 cond,
                 if_true: body,
                 if_false: successor,
             };
 
-            self.current.current_block = successor;
+            self.current_block = successor;
 
             self.pop_scope();
         }
@@ -493,8 +594,8 @@ where
                 self.push_instruction(span, ir::Instruction::Constant(c.clone()))
             }
             ast::ExpressionKind::Name(s) => {
-                if let Some(var) = self.get_var(s) {
-                    self.push_instruction(span, ir::Instruction::GetVariable(var))
+                if let Some(var_id) = self.get_var(s) {
+                    self.push_instruction(span, ir::Instruction::GetVariable(var_id))
                 } else if (self.find_magic)(s).is_some() {
                     self.push_instruction(span, ir::Instruction::GetMagic(s.clone()))
                 } else {
@@ -518,7 +619,7 @@ where
                         if matches!(value.kind.as_ref(), ast::ExpressionKind::Function(_)) {
                             // Within a struct literal, closures always bind `self` to the struct currently
                             // being created.
-                            let this_scope = self.current.function.this_scopes.insert(());
+                            let this_scope = self.function.this_scopes.insert(());
                             self.push_instruction(
                                 span,
                                 ir::Instruction::OpenThisScope(this_scope, object),
@@ -590,9 +691,11 @@ where
                 self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
             }
             ast::ExpressionKind::Function(func_expr) => {
-                self.push_function(FunctionRef::Expression(span), &func_expr.parameters)?;
-                self.block(&func_expr.body)?;
-                let func_id = self.pop_function();
+                let func_id = self.inner_function(
+                    FunctionRef::Expression(span),
+                    &func_expr.parameters,
+                    &func_expr.body,
+                )?;
                 self.push_instruction(span, ir::Instruction::Closure(func_id))
             }
             ast::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
@@ -674,259 +777,98 @@ where
         })
     }
 
-    fn push_function(
+    fn inner_function(
         &mut self,
         reference: FunctionRef,
         parameters: &[ast::Parameter<S>],
-    ) -> Result<(), IrGenError> {
-        let instructions = ir::InstructionMap::new();
-        let spans = ir::SpanMap::new();
-        let mut blocks = ir::BlockMap::new();
-        let variables = ir::VariableSet::new();
-        let shadow_vars = ir::ShadowVarSet::new();
-        let this_scopes = ir::ThisScopeSet::new();
-        let functions = ir::FunctionMap::new();
-        let upvalues = ir::UpValueMap::new();
+        body: &ast::Block<S>,
+    ) -> Result<ir::FuncId, IrGenError> {
+        let mut compiler = FunctionCompiler::new(self.settings, reference, self.find_magic);
 
-        // We leave the start block completely empty except for a jump to the "real" start block.
-        //
-        // This is so that we can use the start block as a place to put non-lexically scoped
-        // variable declaration instructions that need to be before any other generated IR, and
-        // avoid being O(n^2) in the number of variable declarations.
-        let start_block = blocks.insert(ir::Block::default());
-        let first_block = blocks.insert(ir::Block::default());
-        blocks[start_block].exit = ir::Exit::Jump(first_block);
-
-        let function = ir::Function {
-            num_parameters: parameters.len(),
-            reference,
-            instructions,
-            spans,
-            blocks,
-            variables,
-            shadow_vars,
-            this_scopes,
-            functions,
-            upvalues,
-            start_block,
-        };
-
-        let upper = mem::replace(
-            &mut self.current,
-            Function {
-                function,
-                current_block: first_block,
-                variables: Default::default(),
-                // Even with no lexical scoping, all functions must have one top-level scope.
-                scopes: vec![HashSet::new()],
-                upvalues: Default::default(),
-            },
-        );
-        self.upper.push(upper);
-
-        let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
-        for (param_index, param) in parameters.iter().enumerate() {
-            let arg_var = self.declare_var(param.name.clone());
-
-            if let Some(default) = &param.default {
-                let def_value = default.clone().fold_constant().ok_or_else(|| IrGenError {
-                    kind: IrGenErrorKind::ParameterDefaultNotConstant,
-                    span: default.span,
-                })?;
-
-                let arg_index = self.push_instruction(
-                    Span::null(),
-                    ir::Instruction::Constant(Constant::Integer(param_index as i64)),
-                );
-                let arg_provided = self.push_instruction(
-                    Span::null(),
-                    ir::Instruction::BinOp {
-                        left: arg_index,
-                        right: arg_count,
-                        op: ir::BinOp::LessThan,
-                    },
-                );
-
-                let provided_block = self.current.function.blocks.insert(ir::Block::default());
-                let not_provided_block = self.current.function.blocks.insert(ir::Block::default());
-                let successor_block = self.current.function.blocks.insert(ir::Block::default());
-
-                self.current.function.blocks[self.current.current_block].exit = ir::Exit::Branch {
-                    cond: arg_provided,
-                    if_true: provided_block,
-                    if_false: not_provided_block,
-                };
-
-                self.current.current_block = provided_block;
-                {
-                    let pop_arg_inst =
-                        self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
-                    self.push_instruction(
-                        Span::null(),
-                        ir::Instruction::SetVariable(arg_var, pop_arg_inst),
-                    );
-                }
-                self.current.function.blocks[self.current.current_block].exit =
-                    ir::Exit::Jump(successor_block);
-
-                self.current.current_block = not_provided_block;
-                {
-                    let def_value_inst =
-                        self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
-                    self.push_instruction(
-                        Span::null(),
-                        ir::Instruction::SetVariable(arg_var, def_value_inst),
-                    );
-                }
-                self.current.function.blocks[self.current.current_block].exit =
-                    ir::Exit::Jump(successor_block);
-
-                self.current.current_block = successor_block;
-            } else {
-                let pop_arg =
-                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
-                self.push_instruction(Span::null(), ir::Instruction::SetVariable(arg_var, pop_arg));
-            };
+        // If we allow closures, then pass every currently in-scope variable as an upvar.
+        if self.settings.allow_closures {
+            for (n, l) in &self.variables {
+                let &v = l.last().unwrap();
+                compiler.declare_var(n.clone(), ir::Variable::Upper(v));
+            }
         }
 
-        Ok(())
-    }
+        compiler.declare_parameters(parameters)?;
+        compiler.block(body)?;
 
-    fn pop_function(&mut self) -> ir::FuncId {
-        self.pop_scope();
-
-        let upper = self.upper.pop().expect("no upper function to pop to");
-        let lower = mem::replace(&mut self.current, upper);
-
-        self.current.function.functions.insert(lower.function)
+        Ok(self.function.functions.insert(compiler.function))
     }
 
     fn push_scope(&mut self) {
         if self.settings.lexical_scoping {
-            self.current.scopes.push(HashSet::new());
+            self.scopes.push(HashSet::new());
         }
     }
 
     fn pop_scope(&mut self) {
         if self.settings.lexical_scoping {
-            if let Some(out_of_scope) = self.current.scopes.pop() {
+            if let Some(out_of_scope) = self.scopes.pop() {
                 for vname in out_of_scope {
-                    let hash_map::Entry::Occupied(mut entry) = self.current.variables.entry(vname)
-                    else {
+                    let hash_map::Entry::Occupied(mut entry) = self.variables.entry(vname) else {
                         unreachable!();
                     };
-                    let var = entry.get_mut().pop().unwrap();
+                    let var_id = entry.get_mut().pop().unwrap();
                     if entry.get().is_empty() {
                         entry.remove();
                     }
-                    self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var));
+                    if self.function.variables[var_id].is_owned() {
+                        self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
+                    }
                 }
             }
         }
     }
 
-    fn declare_var(&mut self, vname: S) -> ir::Variable {
-        let in_scope = !self
-            .current
-            .scopes
-            .last_mut()
-            .unwrap()
-            .insert(vname.clone());
-        let variable_stack = self.current.variables.entry(vname).or_default();
+    fn declare_var(&mut self, vname: S, var: ir::Variable<S>) -> ir::VarId {
+        let is_owned = var.is_owned();
+        let in_scope = !self.scopes.last_mut().unwrap().insert(vname.clone());
+        let variable_stack = self.variables.entry(vname).or_default();
 
-        let var = self.current.function.variables.insert(());
+        let var_id = self.function.variables.insert(var);
         if in_scope {
             variable_stack.pop().unwrap();
         }
-        variable_stack.push(var);
+        variable_stack.push(var_id);
 
-        if self.settings.lexical_scoping {
-            self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var));
-        } else {
-            // If we're not using lexical scoping, just open every variable at the very start of the
-            // function. This keeps the IR well-formed even with no lexical scoping and no explicit
-            // `CloseVariable` instructions.
-            //
-            // We push this instruction to `start_block`, which is kept otherwise empty for this
-            // purpose.
-            let inst_id = self
-                .current
-                .function
-                .instructions
-                .insert(ir::Instruction::OpenVariable(var));
-            self.current.function.blocks[self.current.function.start_block]
-                .instructions
-                .push(inst_id);
+        if is_owned {
+            if self.settings.lexical_scoping {
+                self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var_id));
+            } else {
+                // If we're not using lexical scoping, just open every variable at the very start of
+                // the function. This keeps the IR well-formed even with no lexical scoping and no
+                // explicit `CloseVariable` instructions.
+                //
+                // We push this instruction to `start_block`, which is kept otherwise empty for
+                // this purpose.
+                let inst_id = self
+                    .function
+                    .instructions
+                    .insert(ir::Instruction::OpenVariable(var_id));
+                self.function.blocks[self.function.start_block]
+                    .instructions
+                    .push(inst_id);
+            }
         }
 
-        var
+        var_id
     }
 
-    fn get_var(&mut self, vname: &S) -> Option<ir::Variable> {
-        if let Some(declared) = self
-            .current
-            .variables
-            .get(vname)
-            .and_then(|s| s.last().copied())
-        {
-            Some(declared)
-        } else if let Some(&upvalue) = self.current.upvalues.get(vname) {
-            upvalue
-        } else if self.settings.allow_closures {
-            // Search for any value with the requested name in any upper function. If we find one,
-            // create a new variable for it in this function and record it as an upvalue.
-            //
-            // If we don't find any value with the requested name in any upper function, add a
-            // `None` entry to the upvalues map to record that no such upvalue can be found.
-
-            let mut upper_var = None;
-            for (index, upper) in self.upper.iter().enumerate().rev() {
-                if let Some(declared) = upper.variables.get(vname).and_then(|s| s.last().copied()) {
-                    upper_var = Some((index, Some(declared)));
-                    break;
-                } else if let Some(&upvalue) = upper.upvalues.get(vname) {
-                    upper_var = Some((index, upvalue));
-                    break;
-                }
-            }
-
-            if let Some((index, var)) = upper_var {
-                if let Some(mut found) = var {
-                    let add_upvalue =
-                        |f: &mut Function<S>, name: S, upper_var: ir::Variable| -> ir::Variable {
-                            let var = f.function.variables.insert(());
-                            f.function.upvalues.insert(var, upper_var);
-                            f.upvalues.insert(name, Some(var));
-                            var
-                        };
-
-                    for upper in &mut self.upper[index + 1..] {
-                        found = add_upvalue(upper, vname.clone(), found);
-                    }
-                    Some(add_upvalue(&mut self.current, vname.clone(), found))
-                } else {
-                    for upper in &mut self.upper[index + 1..] {
-                        upper.upvalues.insert(vname.clone(), None);
-                    }
-                    self.current.upvalues.insert(vname.clone(), None);
-                    None
-                }
-            } else {
-                self.current.upvalues.insert(vname.clone(), None);
-                None
-            }
-        } else {
-            None
-        }
+    fn get_var(&mut self, vname: &S) -> Option<ir::VarId> {
+        self.variables.get(vname).and_then(|s| s.last().copied())
     }
 
     fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {
-        let inst_id = self.current.function.instructions.insert(inst);
-        self.current.function.blocks[self.current.current_block]
+        let inst_id = self.function.instructions.insert(inst);
+        self.function.blocks[self.current_block]
             .instructions
             .push(inst_id);
         if !span.is_null() {
-            self.current.function.spans.insert(inst_id, span);
+            self.function.spans.insert(inst_id, span);
         }
         inst_id
     }

@@ -171,7 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_variable_liveness_loop_closes() {
+    fn test_scopes_loop_closes() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -200,7 +200,6 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -209,7 +208,6 @@ mod tests {
             shadow_vars: Default::default(),
             this_scopes,
             functions: Default::default(),
-            upvalues: Default::default(),
             start_block: block_a_id,
         };
 
@@ -220,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn test_variable_liveness_loop_reopens() {
+    fn test_scopes_loop_reopens() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -253,7 +251,6 @@ mod tests {
             .push(instructions.insert(ir::Instruction::CloseThisScope(scope)));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -262,7 +259,6 @@ mod tests {
             shadow_vars: Default::default(),
             this_scopes,
             functions: Default::default(),
-            upvalues: Default::default(),
             start_block: block_a_id,
         };
 

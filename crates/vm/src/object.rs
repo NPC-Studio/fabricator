@@ -1,14 +1,26 @@
 use std::collections::HashMap;
 
 use gc_arena::{Collect, Gc, Mutation, RefLock};
+use thiserror::Error;
 
 use crate::{string::String, value::Value};
 
+#[derive(Debug, Error)]
+#[error("new object parent would create a cycle")]
+pub struct CyclicObjectParent;
+
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
-pub struct Object<'gc>(Gc<'gc, RefLock<HashMap<String<'gc>, Value<'gc>>>>);
+pub struct Object<'gc>(Gc<'gc, ObjectInner<'gc>>);
 
-pub type ObjectInner<'gc> = RefLock<HashMap<String<'gc>, Value<'gc>>>;
+pub type ObjectInner<'gc> = RefLock<ObjectState<'gc>>;
+
+#[derive(Debug, Default, Collect)]
+#[collect(no_drop)]
+pub struct ObjectState<'gc> {
+    map: HashMap<String<'gc>, Value<'gc>>,
+    parent: Option<Object<'gc>>,
+}
 
 impl<'gc> PartialEq for Object<'gc> {
     fn eq(&self, other: &Self) -> bool {
@@ -33,16 +45,65 @@ impl<'gc> Object<'gc> {
         self.0
     }
 
+    /// Get a value from this object or any parent object.
     pub fn get(self, key: String<'gc>) -> Option<Value<'gc>> {
-        self.0.borrow().get(&key).copied()
+        let mut state = self.0;
+        loop {
+            let s = state.borrow();
+            if let Some(v) = s.map.get(&key).copied() {
+                return Some(v);
+            }
+
+            if let Some(parent) = s.parent {
+                state = parent.0;
+            } else {
+                return None;
+            }
+        }
     }
 
+    /// Set a value in *this* object.
+    ///
+    /// If a value exists in a parent, that value will not be changed and a different value will be
+    /// inserted into this object, overriding it.
     pub fn set(
         self,
         mc: &Mutation<'gc>,
         key: String<'gc>,
         value: Value<'gc>,
     ) -> Option<Value<'gc>> {
-        self.0.borrow_mut(mc).insert(key, value)
+        self.0.borrow_mut(mc).map.insert(key, value)
+    }
+
+    pub fn parent(self) -> Option<Object<'gc>> {
+        self.0.borrow().parent
+    }
+
+    pub fn set_parent(
+        self,
+        mc: &Mutation<'gc>,
+        new_parent: Option<Object<'gc>>,
+    ) -> Result<(), CyclicObjectParent> {
+        // Ensure that if a new parent is given, this object is not anywhere within its ancestry.
+        //
+        // If it was, this would create a cyclic object parent relationship.
+        if let Some(new_parent) = new_parent {
+            let mut cur_parent = new_parent;
+            loop {
+                if cur_parent == self {
+                    return Err(CyclicObjectParent);
+                }
+
+                if let Some(parent) = new_parent.parent() {
+                    cur_parent = parent;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        self.0.borrow_mut(mc).parent = new_parent;
+
+        Ok(())
     }
 }

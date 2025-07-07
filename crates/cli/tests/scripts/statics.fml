@@ -1,0 +1,9 @@
+function inc_static() {
+	static a_static = 0;
+	a_static += 1;
+	return a_static;
+}
+
+assert(inc_static() == 1);
+assert(inc_static() == 2);
+assert(inc_static() == 3);

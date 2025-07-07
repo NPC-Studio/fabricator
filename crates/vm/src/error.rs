@@ -41,6 +41,13 @@ impl Error {
     pub fn into_inner(self) -> anyhow::Error {
         self.0
     }
+
+    pub fn context<C>(self, context: C) -> Self
+    where
+        C: fmt::Display + Send + Sync + 'static,
+    {
+        Self(self.0.context(context))
+    }
 }
 
 impl ops::Deref for Error {

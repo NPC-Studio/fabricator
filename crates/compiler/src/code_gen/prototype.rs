@@ -1,7 +1,28 @@
-use fabricator_vm as vm;
+use fabricator_vm::{self as vm, instructions::HeapIdx};
 use gc_arena::{Collect, Gc, Mutation};
+use vm::closure;
 
 use crate::constant::Constant;
+
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub enum HeapVarDescriptor<S> {
+    Owned(HeapIdx),
+    Static(Constant<S>),
+    UpValue(HeapIdx),
+}
+
+impl<S> HeapVarDescriptor<S> {
+    pub fn map_string<S2>(self, map: impl Fn(S) -> S2) -> HeapVarDescriptor<S2> {
+        match self {
+            HeapVarDescriptor::Owned(idx) => HeapVarDescriptor::Owned(idx),
+            HeapVarDescriptor::Static(constant) => {
+                HeapVarDescriptor::Static(constant.map_string(map))
+            }
+            HeapVarDescriptor::UpValue(idx) => HeapVarDescriptor::UpValue(idx),
+        }
+    }
+}
 
 /// A compiler generated prototype with compiled bytecode.
 ///
@@ -15,7 +36,7 @@ pub struct Prototype<S> {
     pub constants: Box<[Constant<S>]>,
     pub prototypes: Box<[Prototype<S>]>,
     pub used_registers: usize,
-    pub heap_vars: Box<[vm::closure::HeapVarDescriptor]>,
+    pub heap_vars: Box<[HeapVarDescriptor<S>]>,
 }
 
 impl<S> Prototype<S> {
@@ -31,6 +52,7 @@ impl<S> Prototype<S> {
 
         let constants = constants.into_iter().map(|c| c.map_string(&map)).collect();
         let prototypes = prototypes.into_iter().map(|p| p.map_string(&map)).collect();
+        let heap_vars = heap_vars.into_iter().map(|h| h.map_string(&map)).collect();
 
         Prototype {
             reference,
@@ -51,6 +73,16 @@ impl<'gc> Prototype<vm::String<'gc>> {
         chunk: vm::Chunk<'gc>,
         magic: Gc<'gc, vm::MagicSet<'gc>>,
     ) -> Gc<'gc, vm::Prototype<'gc>> {
+        fn const_conv<'gc>(c: Constant<vm::String<'gc>>) -> vm::Constant<'gc> {
+            match c {
+                Constant::Undefined => vm::Constant::Undefined,
+                Constant::Boolean(b) => vm::Constant::Boolean(b),
+                Constant::Integer(i) => vm::Constant::Integer(i),
+                Constant::Float(f) => vm::Constant::Float(f),
+                Constant::String(s) => vm::Constant::String(s),
+            }
+        }
+
         let Self {
             reference,
             bytecode,
@@ -60,20 +92,30 @@ impl<'gc> Prototype<vm::String<'gc>> {
             heap_vars,
         } = self;
 
-        let constants = constants
-            .into_iter()
-            .map(|c| match c {
-                Constant::Undefined => vm::Constant::Undefined,
-                Constant::Boolean(b) => vm::Constant::Boolean(b),
-                Constant::Integer(i) => vm::Constant::Integer(i),
-                Constant::Float(f) => vm::Constant::Float(f),
-                Constant::String(s) => vm::Constant::String(s),
-            })
-            .collect();
+        let constants = constants.into_iter().map(const_conv).collect();
 
         let prototypes = prototypes
             .into_iter()
             .map(|p| p.into_vm(mc, chunk, magic))
+            .collect();
+
+        let mut static_vars = Vec::new();
+        let heap_vars = heap_vars
+            .into_iter()
+            .map(|heap_var| match heap_var {
+                HeapVarDescriptor::Owned(idx) => closure::HeapVarDescriptor::Owned(idx),
+                HeapVarDescriptor::Static(constant) => {
+                    // There won't be more statics than there are heap vars, which each have a valid
+                    // index.
+                    let ind = static_vars.len().try_into().unwrap();
+                    static_vars.push(closure::SharedValue::new(
+                        mc,
+                        const_conv(constant).to_value().into(),
+                    ));
+                    closure::HeapVarDescriptor::Static(ind)
+                }
+                HeapVarDescriptor::UpValue(idx) => closure::HeapVarDescriptor::UpValue(idx),
+            })
             .collect();
 
         Gc::new(
@@ -85,6 +127,7 @@ impl<'gc> Prototype<vm::String<'gc>> {
                 bytecode,
                 constants,
                 prototypes,
+                static_vars: static_vars.into_boxed_slice(),
                 used_registers,
                 heap_vars,
             },

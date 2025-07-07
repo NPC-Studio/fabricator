@@ -1,49 +1,60 @@
 use std::collections::HashMap;
 
 use fabricator_util::{bit_containers::BitSlice as _, typed_id_map::SecondaryMap};
-use fabricator_vm::{closure::HeapVarDescriptor, instructions::HeapIdx};
+use fabricator_vm::instructions::HeapIdx;
 
-use crate::{analysis::variable_liveness::VariableLiveness, graph::dfs::topological_order, ir};
+use crate::{
+    analysis::variable_liveness::VariableLiveness,
+    code_gen::{ProtoGenError, prototype::HeapVarDescriptor},
+    graph::dfs::topological_order,
+    ir,
+};
 
 #[derive(Debug)]
-pub struct HeapAllocation {
-    pub heap_var_descriptors: Vec<HeapVarDescriptor>,
-    pub heap_indexes: SecondaryMap<ir::Variable, HeapIdx>,
+pub struct HeapAllocation<S> {
+    pub heap_var_descriptors: Vec<HeapVarDescriptor<S>>,
+    pub heap_indexes: SecondaryMap<ir::VarId, HeapIdx>,
 }
 
-impl HeapAllocation {
-    /// Verify all variables and determine heap descriptors for them.
+impl<S: Clone> HeapAllocation<S> {
+    /// Determine descriptors for all variables.
     ///
-    /// For all owned heap variables, will try to combine variables with independent lifetimes into
-    /// the same index.
-    pub fn allocate<S>(
+    /// For all owned variables, will try to combine variables with independent lifetimes into the
+    /// same index.
+    pub fn allocate(
         ir: &ir::Function<S>,
-        variable_liveness: &VariableLiveness,
-        parent_heap_indexes: &SecondaryMap<ir::Variable, HeapIdx>,
-    ) -> Option<Self> {
+        parent_heap_indexes: &SecondaryMap<ir::VarId, HeapIdx>,
+    ) -> Result<Self, ProtoGenError> {
         let mut heap_vars = Vec::new();
-        let mut heap_indexes: SecondaryMap<ir::Variable, HeapIdx> = SecondaryMap::new();
+        let mut heap_indexes: SecondaryMap<ir::VarId, HeapIdx> = SecondaryMap::new();
 
-        // First, assign all of the upvalues because those require no analysis.
-        for var in ir.variables.ids() {
-            if let Some(&upvalue) = ir.upvalues.get(&var) {
-                let index: HeapIdx = heap_vars.len().try_into().ok()?;
-
-                heap_vars.push(HeapVarDescriptor::UpValue(
+        // First, assign all of the non-owned variables because those require no analysis.
+        for (var_id, var) in ir.variables.iter() {
+            let desc = match var {
+                ir::Variable::Owned => continue,
+                ir::Variable::Static(init) => HeapVarDescriptor::Static(init.clone()),
+                &ir::Variable::Upper(parent_var_id) => HeapVarDescriptor::UpValue(
                     *parent_heap_indexes
-                        .get(upvalue)
+                        .get(parent_var_id)
                         .expect("upvalue not present in parent"),
-                ));
+                ),
+            };
 
-                heap_indexes.insert(var, index);
-            }
+            let index: HeapIdx = heap_vars
+                .len()
+                .try_into()
+                .map_err(|_| ProtoGenError::HeapVarOverflow)?;
+            heap_indexes.insert(var_id, index);
+            heap_vars.push(desc);
         }
 
-        // Like SSA instructions, heap variables can be assigned in a single pass. Because we know
+        let variable_liveness = VariableLiveness::compute(ir).unwrap();
+
+        // Like SSA instructions, owned variables can be assigned in a single pass. Because we know
         // that a variable cannot become live again after its range ends, we can do a single pass
         // over the CFG in topological order and assign indexes as we go.
 
-        let mut assigned_indexes = SecondaryMap::<ir::Variable, HeapIdx>::new();
+        let mut assigned_indexes = SecondaryMap::<ir::VarId, HeapIdx>::new();
 
         let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
@@ -52,7 +63,7 @@ impl HeapAllocation {
 
             // The set of heap indexes that are used at the start of this block.
             //
-            // All upvalue indexes are always added to this set unconditionally.
+            // All upvalue and static indexes are always added to this set unconditionally.
             let mut live_in_indexes = [0u8; 32];
             for i in 0..heap_vars.len() {
                 live_in_indexes.set_bit(i, true);
@@ -60,15 +71,18 @@ impl HeapAllocation {
 
             let mut var_life_starts = HashMap::new();
             let mut var_life_ends = HashMap::new();
-            for (var, range) in variable_liveness.live_for_block(block_id) {
+            for (var_id, range) in variable_liveness.live_for_block(block_id) {
                 if let Some(start) = range.start {
-                    assert!(var_life_starts.insert(start, var).is_none());
+                    assert!(var_life_starts.insert(start, var_id).is_none());
                 } else {
-                    live_in_indexes.set_bit(assigned_indexes[var] as usize, true);
+                    live_in_indexes.set_bit(assigned_indexes[var_id] as usize, true);
                 }
 
                 if let Some(end) = range.end {
-                    var_life_ends.entry(end).or_insert_with(Vec::new).push(var);
+                    var_life_ends
+                        .entry(end)
+                        .or_insert_with(Vec::new)
+                        .push(var_id);
                 }
             }
 
@@ -85,7 +99,9 @@ impl HeapAllocation {
 
             for inst_index in 0..=block.instructions.len() {
                 if let Some(&var_life_start) = var_life_starts.get(&inst_index) {
-                    let idx = available_indexes.pop()?;
+                    let idx = available_indexes
+                        .pop()
+                        .ok_or(ProtoGenError::HeapVarOverflow)?;
                     assert!(assigned_indexes.insert(var_life_start, idx).is_none());
                 }
 
@@ -97,8 +113,8 @@ impl HeapAllocation {
 
         if !assigned_indexes.is_empty() {
             let mut max_idx = None;
-            for (var, heap_idx) in assigned_indexes.into_iter() {
-                assert!(heap_indexes.insert(var, heap_idx).is_none());
+            for (var_id, heap_idx) in assigned_indexes.into_iter() {
+                assert!(heap_indexes.insert(var_id, heap_idx).is_none());
                 max_idx = max_idx.max(Some(heap_idx));
                 assert!(heap_idx as usize >= heap_vars.len());
             }
@@ -109,7 +125,7 @@ impl HeapAllocation {
             }
         }
 
-        Some(Self {
+        Ok(Self {
             heap_var_descriptors: heap_vars,
             heap_indexes,
         })

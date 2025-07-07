@@ -10,21 +10,21 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum VariableVerificationError {
-    #[error("upvalue variable has an open or close instruction")]
-    OpenCloseUpValue,
+    #[error("non-owned variable has an open or close instruction")]
+    OpenCloseUnOwned,
     #[error("owned variable is not opened exactly once")]
     BadOpen,
     #[error("owned variable is closed more than once")]
     MultipleClose,
-    #[error("variable close is not dominated by its open")]
+    #[error("owned variable close is not dominated by its open")]
     CloseNotDominated,
-    #[error("range exists where a variable is not definitely open or definitely closed")]
+    #[error("range exists where an owned variable is not definitely open or definitely closed")]
     IndeterminateState,
-    #[error("variable use is not dominated by its open or may occur after a close")]
+    #[error("owned variable use is not dominated by its open or may occur after a close")]
     UseNotInRange,
 }
 
-/// The live range of a variable within a block, specified in block instruction indexes.
+/// The live range of an owned variable within a block, specified in block instruction indexes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct VariableLivenessRange {
     /// The instruction index in the block at which the variable is opened.
@@ -45,17 +45,17 @@ pub struct VariableLivenessRange {
 
 #[derive(Debug)]
 pub struct VariableLiveness {
-    live_ranges: SecondaryMap<ir::Variable, HashMap<ir::BlockId, VariableLivenessRange>>,
-    live_variables_for_block: SecondaryMap<ir::BlockId, HashSet<ir::Variable>>,
+    live_ranges: SecondaryMap<ir::VarId, HashMap<ir::BlockId, VariableLivenessRange>>,
+    live_variables_for_block: SecondaryMap<ir::BlockId, HashSet<ir::VarId>>,
 }
 
 impl VariableLiveness {
-    /// Compute variable liveness ranges for every block in the given IR. A variable is live after
-    /// it is opened and dead when it is closed.
+    /// Compute owned variable liveness ranges for every block in the given IR. A variable is live
+    /// after it is opened and dead when it is closed.
     ///
     /// This also verifies all variables within the IR and their use, namely that:
-    ///   1) Every variable has exactly one `OpenVariable` instruction and at most one
-    ///      `CloseVariable` instruction.
+    ///   1) Every owned variable has exactly one `OpenVariable` instruction and at most one
+    ///      `CloseVariable` instruction, and non-owned variables have neither.
     ///   2) Every instruction in the CFG has a definite opened or closed state for every variable,
     ///      there are no ambiguous regions.
     ///   3) Every use of a variable (`GetVariable`, `SetVariable`, or `Closure`) is in a
@@ -63,40 +63,51 @@ impl VariableLiveness {
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, VariableVerificationError> {
         let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
-        let mut variables: HashSet<ir::Variable> = HashSet::new();
-        let mut variable_open: HashMap<ir::Variable, (ir::BlockId, usize)> = HashMap::new();
-        let mut variable_uses: HashMap<ir::Variable, Vec<(ir::BlockId, usize)>> = HashMap::new();
-        let mut variable_close: HashMap<ir::Variable, (ir::BlockId, usize)> = HashMap::new();
+        let mut variables: HashSet<ir::VarId> = HashSet::new();
+        let mut variable_open: HashMap<ir::VarId, (ir::BlockId, usize)> = HashMap::new();
+        let mut variable_uses: HashMap<ir::VarId, Vec<(ir::BlockId, usize)>> = HashMap::new();
+        let mut variable_close: HashMap<ir::VarId, (ir::BlockId, usize)> = HashMap::new();
 
         for block_id in dominators.topological_order() {
             let block = &ir.blocks[block_id];
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 match ir.instructions[inst_id] {
-                    ir::Instruction::OpenVariable(var) => {
-                        variables.insert(var);
-                        if variable_open.insert(var, (block_id, inst_index)).is_some() {
+                    ir::Instruction::OpenVariable(var_id) => {
+                        variables.insert(var_id);
+                        if variable_open
+                            .insert(var_id, (block_id, inst_index))
+                            .is_some()
+                        {
                             return Err(VariableVerificationError::BadOpen);
                         }
                     }
-                    ir::Instruction::GetVariable(var) | ir::Instruction::SetVariable(var, _) => {
-                        variables.insert(var);
+                    ir::Instruction::GetVariable(var_id)
+                    | ir::Instruction::SetVariable(var_id, _) => {
+                        variables.insert(var_id);
                         variable_uses
-                            .entry(var)
+                            .entry(var_id)
                             .or_default()
                             .push((block_id, inst_index));
                     }
                     ir::Instruction::Closure(func) => {
-                        for &var in ir.functions[func].upvalues.values() {
-                            variables.insert(var);
-                            variable_uses
-                                .entry(var)
-                                .or_default()
-                                .push((block_id, inst_index));
+                        for var in ir.functions[func].variables.values() {
+                            // Creating a closure uses every upper variable that the closure closes
+                            // over.
+                            if let &ir::Variable::Upper(var_id) = var {
+                                variables.insert(var_id);
+                                variable_uses
+                                    .entry(var_id)
+                                    .or_default()
+                                    .push((block_id, inst_index));
+                            }
                         }
                     }
-                    ir::Instruction::CloseVariable(var) => {
-                        variables.insert(var);
-                        if variable_close.insert(var, (block_id, inst_index)).is_some() {
+                    ir::Instruction::CloseVariable(var_id) => {
+                        variables.insert(var_id);
+                        if variable_close
+                            .insert(var_id, (block_id, inst_index))
+                            .is_some()
+                        {
                             return Err(VariableVerificationError::MultipleClose);
                         }
                     }
@@ -110,19 +121,25 @@ impl VariableLiveness {
             live_variables_for_block: SecondaryMap::new(),
         };
 
-        for &var in &variables {
-            if ir.upvalues.contains_key(&var) {
-                if variable_open.contains_key(&var) || variable_close.contains_key(&var) {
-                    return Err(VariableVerificationError::OpenCloseUpValue);
+        for &var_id in &variables {
+            match ir.variables[var_id] {
+                ir::Variable::Owned => {}
+                ir::Variable::Static(_) | ir::Variable::Upper(_) => {
+                    if variable_open.contains_key(&var_id) || variable_close.contains_key(&var_id) {
+                        return Err(VariableVerificationError::OpenCloseUnOwned);
+                    }
+
+                    // We do not need to compute liveness ranges for non-owned variables, they are
+                    // alive for the entire function.
+                    continue;
                 }
-                continue;
             }
 
             let &(open_block_id, open_index) = variable_open
-                .get(&var)
+                .get(&var_id)
                 .ok_or(VariableVerificationError::BadOpen)?;
 
-            let variable_close = variable_close.get(&var).copied();
+            let variable_close = variable_close.get(&var_id).copied();
 
             if let Some((close_block_id, close_index)) = variable_close {
                 if open_block_id == close_block_id {
@@ -243,7 +260,7 @@ impl VariableLiveness {
                 }
             }
 
-            for &(block_id, inst_index) in &variable_uses[&var] {
+            for &(block_id, inst_index) in &variable_uses[&var_id] {
                 let live_range = live_ranges
                     .get(&block_id)
                     .ok_or(VariableVerificationError::UseNotInRange)?;
@@ -259,24 +276,24 @@ impl VariableLiveness {
             for &block_id in live_ranges.keys() {
                 this.live_variables_for_block
                     .get_or_insert_default(block_id)
-                    .insert(var);
+                    .insert(var_id);
             }
-            this.live_ranges.insert(var, live_ranges);
+            this.live_ranges.insert(var_id, live_ranges);
         }
 
         Ok(this)
     }
 
-    /// Returns all variables that are live anywhere within the given block.
+    /// Returns all owned variables that are live anywhere within the given block.
     pub fn live_for_block(
         &self,
         block_id: ir::BlockId,
-    ) -> impl Iterator<Item = (ir::Variable, VariableLivenessRange)> + '_ {
+    ) -> impl Iterator<Item = (ir::VarId, VariableLivenessRange)> + '_ {
         self.live_variables_for_block
             .get(block_id)
             .into_iter()
             .flatten()
-            .map(move |&var| (var, self.live_ranges[var][&block_id]))
+            .map(move |&var_id| (var_id, self.live_ranges[var_id][&block_id]))
     }
 }
 
@@ -292,9 +309,9 @@ mod tests {
     fn test_variable_liveness_loop_closes() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
-        let mut variables = ir::VariableSet::new();
+        let mut variables = ir::VariableMap::new();
 
-        let var = variables.insert(());
+        let var = variables.insert(ir::Variable::Owned);
 
         let block_a_id = blocks.insert(ir::Block::default());
         let block_b_id = blocks.insert(ir::Block::default());
@@ -316,7 +333,6 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -325,7 +341,6 @@ mod tests {
             shadow_vars: Default::default(),
             this_scopes: Default::default(),
             functions: Default::default(),
-            upvalues: Default::default(),
             start_block: block_a_id,
         };
 
@@ -339,9 +354,9 @@ mod tests {
     fn test_variable_liveness_loop_reopens() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
-        let mut variables = ir::VariableSet::new();
+        let mut variables = ir::VariableMap::new();
 
-        let var = variables.insert(());
+        let var = variables.insert(ir::Variable::Owned);
 
         let block_a_id = blocks.insert(ir::Block::default());
         let block_b_id = blocks.insert(ir::Block::default());
@@ -367,7 +382,6 @@ mod tests {
             .push(instructions.insert(ir::Instruction::CloseVariable(var)));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -376,7 +390,6 @@ mod tests {
             shadow_vars: Default::default(),
             this_scopes: Default::default(),
             functions: Default::default(),
-            upvalues: Default::default(),
             start_block: block_a_id,
         };
 

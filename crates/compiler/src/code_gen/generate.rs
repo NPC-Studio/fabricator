@@ -5,46 +5,20 @@ use std::{
 
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
-    self as vm, bytecode,
+    self as vm,
     debug::Span,
     instructions::{self, Instruction},
 };
-use thiserror::Error;
 
 use crate::{
-    analysis::{
-        instruction_liveness::InstructionLiveness, shadow_liveness::ShadowLiveness,
-        variable_liveness::VariableLiveness,
-    },
     code_gen::{
-        heap_alloc::HeapAllocation, prototype::Prototype, register_alloc::RegisterAllocation,
+        ProtoGenError, heap_alloc::HeapAllocation, prototype::Prototype,
+        register_alloc::RegisterAllocation,
     },
     constant::Constant,
     graph::dfs::topological_order,
     ir,
 };
-
-#[derive(Debug, Error)]
-pub enum ProtoGenError {
-    #[error(transparent)]
-    ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
-    #[error("too many registers used")]
-    RegisterOverflow,
-    #[error("too many heap variables used")]
-    HeapVarOverflow,
-    #[error("too many constants used")]
-    ConstantOverflow,
-    #[error("too many sub-functions")]
-    PrototypeOverflow,
-    #[error("too many arguments")]
-    ArgumentOverflow,
-    #[error("jump out of range")]
-    JumpOutOfRange,
-    #[error("missing magic value")]
-    NoSuchMagic,
-    #[error("magic value index too large")]
-    MagicIndexOverflow,
-}
 
 /// Generate a [`Prototype`] from IR.
 ///
@@ -61,16 +35,10 @@ pub fn gen_prototype<S: Clone + Eq + Hash>(
 fn codegen_function<S: Clone + Eq + Hash>(
     ir: &ir::Function<S>,
     magic_index: &impl Fn(&S) -> Option<usize>,
-    parent_heap_indexes: &SecondaryMap<ir::Variable, instructions::HeapIdx>,
+    parent_heap_indexes: &SecondaryMap<ir::VarId, instructions::HeapIdx>,
 ) -> Result<Prototype<S>, ProtoGenError> {
-    let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
-    let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
-    let variable_liveness = VariableLiveness::compute(ir).unwrap();
-
-    let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)
-        .ok_or(ProtoGenError::RegisterOverflow)?;
-    let heap_alloc = HeapAllocation::allocate(ir, &variable_liveness, parent_heap_indexes)
-        .ok_or(ProtoGenError::HeapVarOverflow)?;
+    let reg_alloc = RegisterAllocation::allocate(ir)?;
+    let heap_alloc = HeapAllocation::allocate(ir, parent_heap_indexes)?;
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, instructions::ProtoIdx> =
@@ -403,7 +371,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     }
                 }
                 ir::Instruction::Upsilon(shadow, source) => {
-                    if shadow_liveness.is_live_upsilon(shadow, block_id, inst_index) {
+                    if reg_alloc
+                        .shadow_liveness
+                        .is_live_upsilon(shadow, block_id, inst_index)
+                    {
                         let shadow_reg = reg_alloc.shadow_registers[shadow];
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {
