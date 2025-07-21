@@ -43,6 +43,10 @@ macro_rules! for_each_instruction {
             /// Set the `dest` register to the current `other` value.
             other = Other { dest: RegIdx };
 
+            [simple]
+            /// Set the `dest` register to the currently executing closure.
+            current_closure = CurrentClosure { dest: RegIdx };
+
             [simple] new_object = NewObject { dest: RegIdx };
             [simple] new_array = NewArray { dest: RegIdx };
             [simple] arg_count = ArgCount { dest: RegIdx };

@@ -39,7 +39,7 @@ pub struct EnumStatement<S> {
 pub struct FunctionStatement<S> {
     pub name: S,
     pub is_constructor: bool,
-    pub inherit: Option<CallExpr<S>>,
+    pub inherit: Option<(Span, CallExpr<S>)>,
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
 }

@@ -141,6 +141,7 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
+            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -202,6 +203,7 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
+            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),

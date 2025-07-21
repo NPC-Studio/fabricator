@@ -217,6 +217,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
+                ir::Instruction::CurrentClosure => {
+                    vm_instructions.push((
+                        Instruction::CurrentClosure {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        },
+                        span,
+                    ));
+                }
                 ir::Instruction::OpenThisScope(_, this) => {
                     vm_instructions.push((
                         Instruction::PushThis {
@@ -674,6 +682,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let bytecode = vm::ByteCode::encode(vm_instructions.into_iter())?;
 
     Ok(Prototype {
+        is_constructor: ir.is_constructor,
         reference: ir.reference.clone(),
         bytecode,
         constants: constants.into_boxed_slice(),

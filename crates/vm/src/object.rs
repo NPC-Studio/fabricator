@@ -94,7 +94,7 @@ impl<'gc> Object<'gc> {
                     return Err(CyclicObjectParent);
                 }
 
-                if let Some(parent) = new_parent.parent() {
+                if let Some(parent) = cur_parent.parent() {
                     cur_parent = parent;
                 } else {
                     break;

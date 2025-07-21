@@ -494,6 +494,11 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        fn current_closure(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.closure.into();
+            Ok(())
+        }
+
         #[inline]
         fn new_object(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Object::new(&self.ctx).into();

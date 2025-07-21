@@ -86,14 +86,14 @@ impl ObjectEvent {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ScriptMode {
     Compat,
-    Full,
+    Modern,
 }
 
 impl ScriptMode {
     pub fn extension(self) -> &'static str {
         match self {
             ScriptMode::Compat => "gml",
-            ScriptMode::Full => "fml",
+            ScriptMode::Modern => "fml",
         }
     }
 }

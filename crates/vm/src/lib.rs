@@ -1,5 +1,6 @@
 pub mod any;
 pub mod array;
+pub mod builtins;
 pub mod bytecode;
 pub mod callback;
 pub mod closure;
@@ -20,6 +21,7 @@ pub mod value;
 
 pub use self::{
     array::Array,
+    builtins::BuiltIns,
     bytecode::ByteCode,
     callback::{Callback, CallbackFn},
     closure::{Closure, Constant, FunctionRef, Prototype},

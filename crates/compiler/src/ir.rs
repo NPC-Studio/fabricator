@@ -166,6 +166,7 @@ pub enum Instruction<S> {
     Globals,
     This,
     Other,
+    CurrentClosure,
     OpenThisScope(ThisScope, InstId),
     CloseThisScope(ThisScope),
     NewObject,
@@ -343,6 +344,7 @@ impl<S> Instruction<S> {
             Instruction::Globals => true,
             Instruction::This => true,
             Instruction::Other => true,
+            Instruction::CurrentClosure => true,
             Instruction::NewObject => true,
             Instruction::NewArray => true,
             Instruction::ArgumentCount => true,
@@ -444,7 +446,7 @@ impl Exit {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub instructions: Vec<InstId>,
     pub exit: Exit,
@@ -467,7 +469,10 @@ pub type ShadowVarSet = IdMap<ShadowVar, ()>;
 pub type ThisScopeSet = IdMap<ThisScope, ()>;
 pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
 
+#[derive(Clone)]
 pub struct Function<S> {
+    pub is_constructor: bool,
+
     pub reference: FunctionRef,
     pub instructions: InstructionMap<S>,
     pub spans: SpanMap,
@@ -545,6 +550,9 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::Other => {
                         writeln!(f, "other()")?;
+                    }
+                    Instruction::CurrentClosure => {
+                        writeln!(f, "current_closure()")?;
                     }
                     Instruction::OpenThisScope(scope, this) => {
                         writeln!(

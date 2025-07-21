@@ -316,8 +316,8 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
 
                 let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
                     ScriptMode::Compat
-                } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
-                    ScriptMode::Full
+                } else if ext.eq_ignore_ascii_case(ScriptMode::Modern.extension()) {
+                    ScriptMode::Modern
                 } else {
                     bail!("unknown event script extension {:?}", ext);
                 };
@@ -395,8 +395,8 @@ fn read_script(base_path: PathBuf, yy_script: YyScript) -> Result<Script, Error>
 
             let mode = if ext.eq_ignore_ascii_case(ScriptMode::Compat.extension()) {
                 ScriptMode::Compat
-            } else if ext.eq_ignore_ascii_case(ScriptMode::Full.extension()) {
-                ScriptMode::Full
+            } else if ext.eq_ignore_ascii_case(ScriptMode::Modern.extension()) {
+                ScriptMode::Modern
             } else {
                 bail!("unknown event script extension {:?}", ext);
             };

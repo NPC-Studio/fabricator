@@ -31,6 +31,7 @@ impl<S> HeapVarDescriptor<S> {
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Prototype<S> {
+    pub is_constructor: bool,
     pub reference: vm::FunctionRef,
     pub bytecode: vm::ByteCode,
     pub constants: Box<[Constant<S>]>,
@@ -42,6 +43,7 @@ pub struct Prototype<S> {
 impl<S> Prototype<S> {
     pub fn map_string<S2>(self, map: impl Fn(S) -> S2) -> Prototype<S2> {
         let Self {
+            is_constructor,
             reference,
             bytecode,
             constants,
@@ -55,6 +57,7 @@ impl<S> Prototype<S> {
         let heap_vars = heap_vars.into_iter().map(|h| h.map_string(&map)).collect();
 
         Prototype {
+            is_constructor,
             reference,
             bytecode,
             constants,
@@ -84,6 +87,7 @@ impl<'gc> Prototype<vm::String<'gc>> {
         }
 
         let Self {
+            is_constructor,
             reference,
             bytecode,
             constants,
@@ -118,6 +122,12 @@ impl<'gc> Prototype<vm::String<'gc>> {
             })
             .collect();
 
+        let constructor_parent = if is_constructor {
+            Some(vm::Object::new(mc))
+        } else {
+            None
+        };
+
         Gc::new(
             mc,
             vm::Prototype {
@@ -128,6 +138,7 @@ impl<'gc> Prototype<vm::String<'gc>> {
                 constants,
                 prototypes,
                 static_vars: static_vars.into_boxed_slice(),
+                constructor_parent,
                 used_registers,
                 heap_vars,
             },

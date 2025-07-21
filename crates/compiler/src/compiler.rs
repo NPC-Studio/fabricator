@@ -80,15 +80,15 @@ impl CompileSettings {
         }
     }
 
-    pub fn full() -> Self {
+    pub fn modern() -> Self {
         Self {
             parse: ParseSettings::strict(),
-            ir_gen: IrGenSettings::full(),
+            ir_gen: IrGenSettings::modern(),
         }
     }
 
     /// If the given path has a (case-insensitive) `.gml` extension, then compile in compat mode,
-    /// otherwise full.
+    /// otherwise modern.
     pub fn from_path(path: &Path) -> Self {
         if path
             .extension()
@@ -96,7 +96,7 @@ impl CompileSettings {
         {
             Self::compat()
         } else {
-            Self::full()
+            Self::modern()
         }
     }
 }
@@ -220,6 +220,12 @@ struct Chunk<'gc> {
     compile_settings: CompileSettings,
 }
 
+pub struct ChunkOutput<'gc> {
+    pub unoptimized_ir: ir::Function<vm::String<'gc>>,
+    pub optimized_ir: ir::Function<vm::String<'gc>>,
+    pub prototype: Gc<'gc, vm::Prototype<'gc>>,
+}
+
 impl<'gc> Compiler<'gc> {
     /// Compile a single chunk.
     ///
@@ -232,11 +238,11 @@ impl<'gc> Compiler<'gc> {
         settings: CompileSettings,
         chunk_name: impl Into<String>,
         code: &str,
-    ) -> Result<(Gc<'gc, vm::Prototype<'gc>>, ImportItems<'gc>), CompileError> {
+    ) -> Result<(ChunkOutput<'gc>, ImportItems<'gc>), CompileError> {
         let mut this = Self::new(ctx, config, imports);
         this.add_chunk(settings, chunk_name, code)?;
-        let (mut prototypes, imports) = this.compile()?;
-        Ok((prototypes.pop().unwrap(), imports))
+        let (mut outputs, imports) = this.compile()?;
+        Ok((outputs.pop().unwrap(), imports))
     }
 
     pub fn new(
@@ -286,9 +292,7 @@ impl<'gc> Compiler<'gc> {
         Ok(())
     }
 
-    pub fn compile(
-        self,
-    ) -> Result<(Vec<Gc<'gc, vm::Prototype<'gc>>>, ImportItems<'gc>), CompileError> {
+    pub fn compile(self) -> Result<(Vec<ChunkOutput<'gc>>, ImportItems<'gc>), CompileError> {
         let Self {
             ctx,
             config,
@@ -480,26 +484,18 @@ impl<'gc> Compiler<'gc> {
 
             match &export.kind {
                 ExportKind::Function(func_stmt) => {
-                    assert!(
-                        !func_stmt.is_constructor && func_stmt.inherit.is_none(),
-                        "constructor functions are not supported yet"
-                    );
+                    let get_magic = |m: &vm::String| {
+                        let i = magic.find(m)?;
+                        Some(if magic.get(i).unwrap().read_only() {
+                            MagicMode::ReadOnly
+                        } else {
+                            MagicMode::ReadWrite
+                        })
+                    };
 
                     let mut ir = compile_settings
                         .ir_gen
-                        .gen_ir(
-                            vm::FunctionRef::Chunk,
-                            &func_stmt.parameters,
-                            &func_stmt.body,
-                            |m| {
-                                let i = magic.find(m)?;
-                                Some(if magic.get(i).unwrap().read_only() {
-                                    MagicMode::ReadOnly
-                                } else {
-                                    MagicMode::ReadWrite
-                                })
-                            },
-                        )
+                        .gen_func_stmt_ir(VmInterner::new(ctx), export.span, func_stmt, get_magic)
                         .map_err(|e| {
                             let line_number = chunk.line_number(e.span.start());
                             CompileError {
@@ -528,12 +524,12 @@ impl<'gc> Compiler<'gc> {
             }
         }
 
-        let mut prototypes = Vec::new();
+        let mut outputs = Vec::new();
 
         for (chunk, block, compile_settings) in parsed_chunks {
-            let mut ir = compile_settings
+            let unoptimized_ir = compile_settings
                 .ir_gen
-                .gen_ir(vm::FunctionRef::Chunk, &[], &block, |m| {
+                .gen_chunk_ir(&block, |m| {
                     let i = magic.find(m)?;
                     Some(if magic.get(i).unwrap().read_only() {
                         MagicMode::ReadOnly
@@ -550,14 +546,20 @@ impl<'gc> Compiler<'gc> {
                     }
                 })?;
 
-            verify_ir(&ir).expect("Internal IR generation error");
-            optimize_ir(&mut ir);
-            verify_ir(&ir).expect("Internal IR optimization error");
-            let proto = gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
+            verify_ir(&unoptimized_ir).expect("Internal IR generation error");
+            let mut optimized_ir = unoptimized_ir.clone();
+            optimize_ir(&mut optimized_ir);
+            verify_ir(&optimized_ir).expect("Internal IR optimization error");
+            let proto =
+                gen_prototype(&optimized_ir, |n| magic.find(n)).expect("Internal Codegen Error");
 
             let vm_proto = proto.into_vm(&ctx, chunk, magic);
 
-            prototypes.push(vm_proto);
+            outputs.push(ChunkOutput {
+                unoptimized_ir,
+                optimized_ir,
+                prototype: vm_proto,
+            });
         }
 
         let imports = ImportItems {
@@ -574,6 +576,6 @@ impl<'gc> Compiler<'gc> {
             magic,
         };
 
-        Ok((prototypes, imports))
+        Ok((outputs, imports))
     }
 }

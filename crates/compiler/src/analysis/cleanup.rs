@@ -42,17 +42,17 @@ pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
 
 /// Clean all variables that are never used in any block.
 ///
-/// Any variable instruction counts as a use, as well as `Closure` instructions that reference an
-/// upper variable.
+/// Both `GetVariable` and `SetVariable` count as a use, as well as `Closure` instructions whose
+/// closure references an upper variable in this function.
+///
+/// If a variable is unused, any `OpenVariable` or `CloseVariable` instructions for that variable
+/// will also be removed.
 pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
     let mut used_variables = IndexSet::new();
 
     for inst in ir.instructions.values() {
         match *inst {
-            ir::Instruction::OpenVariable(var_id)
-            | ir::Instruction::GetVariable(var_id)
-            | ir::Instruction::SetVariable(var_id, _)
-            | ir::Instruction::CloseVariable(var_id) => {
+            ir::Instruction::GetVariable(var_id) | ir::Instruction::SetVariable(var_id, _) => {
                 used_variables.insert(var_id.index() as usize);
             }
             ir::Instruction::Closure(func) => {
@@ -63,6 +63,18 @@ pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
                         used_variables.insert(var_id.index() as usize);
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    // Remove open / close instructions for any unused variables.
+    for inst in ir.instructions.values_mut() {
+        match inst {
+            ir::Instruction::OpenVariable(var_id) | ir::Instruction::CloseVariable(var_id)
+                if !used_variables.contains(var_id.index() as usize) =>
+            {
+                *inst = ir::Instruction::NoOp;
             }
             _ => {}
         }

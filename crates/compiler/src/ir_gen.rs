@@ -3,10 +3,10 @@ use std::{
     hash::Hash,
 };
 
-use fabricator_vm::{FunctionRef, Span};
+use fabricator_vm::{BuiltIns, FunctionRef, RefName, Span};
 use thiserror::Error;
 
-use crate::{ast, constant::Constant, ir};
+use crate::{ast, constant::Constant, ir, string_interner::StringInterner};
 
 /// Descriptor for magic values available to the IR generator.
 ///
@@ -29,6 +29,16 @@ pub enum IrGenErrorKind {
     ReadOnlyMagic,
     #[error("parameter default value is not a constant")]
     ParameterDefaultNotConstant,
+    #[error("cannot reference a pseudo-variable as a normal variable")]
+    PseudoVarAccessed,
+    #[error("constructor functions are not permitted")]
+    ConstructorsNotAllowed,
+    #[error("static variables in constructors must be at the top-level of the function block")]
+    ConstructorStaticNotTopLevel,
+    #[error("static variable in constructor does not have a unique name")]
+    ConstructorStaticNotUnique,
+    #[error("function not allowed to have a return statement with an argument")]
+    CannotReturnValue,
 }
 
 #[derive(Debug, Error)]
@@ -62,13 +72,30 @@ pub struct IrGenSettings {
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Closures#creating_closures_in_loops_a_common_mistake>
     pub allow_closures: bool,
+
+    /// Allow `constructor` annotated function statements with optional inheritance.
+    ///
+    /// These desugar to the equivalent manual implementation creating a new `this` object and a
+    /// static variable holding the shared super object.
+    ///
+    /// All `static` variables must be declared at the top level of the function with unique names,
+    /// and are interpreted as fields on a shared super object. Declaring a `constructor` function
+    /// *disables* normal function statics, and all statics not at the top-level trigger errors.
+    /// These variables fake and not allowed to be referenced as real variables (but may still be
+    /// shadowed).
+    ///
+    /// This option is included for compatibility purposes only, it is more straightforward to
+    /// handle constructors and inheritance manually, and doing so does not disable normal static
+    /// variables.
+    pub allow_constructors: bool,
 }
 
 impl IrGenSettings {
-    pub fn full() -> Self {
+    pub fn modern() -> Self {
         IrGenSettings {
             lexical_scoping: true,
             allow_closures: true,
+            allow_constructors: false,
         }
     }
 
@@ -76,24 +103,68 @@ impl IrGenSettings {
         IrGenSettings {
             lexical_scoping: false,
             allow_closures: false,
+            allow_constructors: true,
         }
     }
 
-    pub fn gen_ir<S>(
+    pub fn gen_chunk_ir<S>(
         self,
-        func_ref: FunctionRef,
-        parameters: &[ast::Parameter<S>],
         block: &ast::Block<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone,
     {
-        let mut compiler = FunctionCompiler::new(self, func_ref, &find_magic);
-        compiler.declare_parameters(parameters)?;
+        let mut compiler = FunctionCompiler::new(self, FunctionRef::Chunk, &find_magic);
         compiler.block(block)?;
         Ok(compiler.function)
     }
+
+    pub fn gen_func_stmt_ir<S>(
+        self,
+        interner: impl StringInterner<String = S>,
+        func_span: Span,
+        func_stmt: &ast::FunctionStatement<S>,
+        find_magic: impl Fn(&S) -> Option<MagicMode>,
+    ) -> Result<ir::Function<S>, IrGenError>
+    where
+        S: Eq + Hash + Clone + AsRef<str>,
+    {
+        let mut compiler = FunctionCompiler::new(
+            self,
+            FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_span),
+            &find_magic,
+        );
+        compiler.declare_parameters(&func_stmt.parameters)?;
+        if func_stmt.is_constructor {
+            if !self.allow_constructors {
+                return Err(IrGenError {
+                    kind: IrGenErrorKind::ConstructorsNotAllowed,
+                    span: func_span,
+                });
+            }
+            compiler.constructor(
+                interner,
+                func_stmt
+                    .inherit
+                    .as_ref()
+                    .map(|(span, inherit)| (*span, inherit)),
+                &func_stmt.body,
+            )?;
+        } else {
+            compiler.block(&func_stmt.body)?;
+        }
+        Ok(compiler.function)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+enum VarDecl {
+    // Variable declaration references a real IR variable.
+    Real(ir::VarId),
+    // Variable declaration looks like a variable declaration but is not a real variable, so
+    // accessing it must trigger an error.
+    Pseudo,
 }
 
 struct FunctionCompiler<'a, S> {
@@ -102,8 +173,17 @@ struct FunctionCompiler<'a, S> {
 
     function: ir::Function<S>,
     current_block: ir::BlockId,
+    // If we have a final block to jump to, jump here instead of returning. Disallows arbitrary
+    // return values.
+    final_block: Option<ir::BlockId>,
+
+    // Variable names declared in the current scope.
     scopes: Vec<HashSet<S>>,
-    variables: HashMap<S, Vec<ir::VarId>>,
+
+    // Stack of declared variables for each variable name.
+    //
+    // Each variable declared in a scope will push an entry for the corresponding variable here.
+    variables: HashMap<S, Vec<VarDecl>>,
 }
 
 impl<'a, S> FunctionCompiler<'a, S>
@@ -133,6 +213,7 @@ where
         blocks[start_block].exit = ir::Exit::Jump(first_block);
 
         let function = ir::Function {
+            is_constructor: false,
             reference,
             instructions,
             spans,
@@ -149,6 +230,7 @@ where
             find_magic,
             function,
             current_block: first_block,
+            final_block: None,
             // Even with no lexical scoping, all functions must have one top-level scope.
             scopes: vec![HashSet::new()],
             variables: Default::default(),
@@ -158,7 +240,9 @@ where
     fn declare_parameters(&mut self, parameters: &[ast::Parameter<S>]) -> Result<(), IrGenError> {
         let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
         for (param_index, param) in parameters.into_iter().enumerate() {
-            let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned);
+            let arg_var = self
+                .declare_var(param.name.clone(), Some(ir::Variable::Owned))
+                .unwrap();
 
             if let Some(default) = &param.default {
                 let def_value = default.clone().fold_constant().ok_or_else(|| IrGenError {
@@ -222,6 +306,186 @@ where
         Ok(())
     }
 
+    fn constructor(
+        &mut self,
+        mut interner: impl StringInterner<String = S>,
+        inherit: Option<(Span, &ast::CallExpr<S>)>,
+        main_block: &ast::Block<S>,
+    ) -> Result<(), IrGenError> {
+        self.function.is_constructor = true;
+
+        // Create a hidden static variable to hold whether the constructor static object is
+        // initialized.
+        let is_initialized = self
+            .function
+            .variables
+            .insert(ir::Variable::Static(Constant::Boolean(false)));
+
+        let get_constructor_super = self.push_instruction(
+            Span::null(),
+            ir::Instruction::GetMagic(interner.intern(BuiltIns::GET_CONSTRUCTOR_SUPER)),
+        );
+
+        let set_super = self.push_instruction(
+            Span::null(),
+            ir::Instruction::GetMagic(interner.intern(BuiltIns::SET_SUPER)),
+        );
+
+        let init_block = self.function.blocks.insert(ir::Block::default());
+        let successor_block = self.function.blocks.insert(ir::Block::default());
+        let final_block = self.function.blocks.insert(ir::Block::default());
+        self.final_block = Some(final_block);
+
+        let check_initialized =
+            self.push_instruction(Span::null(), ir::Instruction::GetVariable(is_initialized));
+        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+            cond: check_initialized,
+            if_false: init_block,
+            if_true: successor_block,
+        };
+
+        self.function.blocks[self.current_block].exit = ir::Exit::Jump(init_block);
+        self.current_block = init_block;
+
+        let this_closure = self.push_instruction(Span::null(), ir::Instruction::CurrentClosure);
+
+        let our_super = self.push_instruction(
+            Span::null(),
+            ir::Instruction::Call {
+                func: get_constructor_super,
+                this: None,
+                args: vec![this_closure],
+                return_value: true,
+            },
+        );
+
+        let mut parent_func = None;
+
+        if let Some((_, inherit)) = inherit {
+            let parent = self.commit_expression(&inherit.base)?;
+
+            let parent_super = self.push_instruction(
+                Span::null(),
+                ir::Instruction::Call {
+                    func: get_constructor_super,
+                    this: None,
+                    args: vec![parent],
+                    return_value: true,
+                },
+            );
+
+            self.push_instruction(
+                Span::null(),
+                ir::Instruction::Call {
+                    func: set_super,
+                    this: None,
+                    args: vec![our_super, parent_super],
+                    return_value: false,
+                },
+            );
+
+            parent_func = Some(parent);
+        }
+
+        let mut static_names = HashSet::new();
+
+        for stmt in &main_block.statements {
+            if let ast::StatementKind::Static(static_decl) = &*stmt.kind {
+                if !static_names.insert(&static_decl.name) {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::ConstructorStaticNotUnique,
+                        span: stmt.span,
+                    });
+                }
+
+                let key = self.push_instruction(
+                    stmt.span,
+                    ir::Instruction::Constant(Constant::String(static_decl.name.clone())),
+                );
+                let value = self.commit_expression(&static_decl.value)?;
+
+                self.push_instruction(
+                    stmt.span,
+                    ir::Instruction::SetField {
+                        object: our_super,
+                        key,
+                        value,
+                    },
+                );
+            }
+        }
+
+        let troo = self.push_instruction(
+            Span::null(),
+            ir::Instruction::Constant(Constant::Boolean(true)),
+        );
+        self.push_instruction(
+            Span::null(),
+            ir::Instruction::SetVariable(is_initialized, troo),
+        );
+
+        self.function.blocks[init_block].exit = ir::Exit::Jump(successor_block);
+        self.current_block = successor_block;
+
+        let this = if let Some(parent_func) = parent_func {
+            let Some((inherit_span, inherit)) = inherit else {
+                unreachable!();
+            };
+
+            let mut args = Vec::new();
+            for arg in &inherit.arguments {
+                args.push(self.commit_expression(arg)?);
+            }
+
+            self.push_instruction(
+                inherit_span,
+                ir::Instruction::Call {
+                    func: parent_func,
+                    this: None,
+                    args,
+                    return_value: true,
+                },
+            )
+        } else {
+            self.push_instruction(Span::null(), ir::Instruction::NewObject)
+        };
+
+        self.push_instruction(
+            Span::null(),
+            ir::Instruction::Call {
+                func: set_super,
+                this: None,
+                args: vec![this, our_super],
+                return_value: false,
+            },
+        );
+
+        let this_scope = self.function.this_scopes.insert(());
+        self.push_instruction(
+            Span::null(),
+            ir::Instruction::OpenThisScope(this_scope, this),
+        );
+
+        {
+            self.push_scope();
+
+            for stmt in &main_block.statements {
+                if !matches!(&*stmt.kind, ast::StatementKind::Static(_)) {
+                    self.statement(stmt)?;
+                }
+            }
+
+            self.pop_scope();
+        }
+
+        self.function.blocks[self.current_block].exit = ir::Exit::Jump(final_block);
+        self.current_block = final_block;
+
+        self.function.blocks[self.current_block].exit = ir::Exit::Return { value: Some(this) };
+
+        Ok(())
+    }
+
     fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
         {
             self.push_scope();
@@ -251,12 +515,19 @@ where
             }
             ast::StatementKind::Var(var_decl) => self.var_statement(statement.span, var_decl),
             ast::StatementKind::Static(static_decl) => {
-                self.static_statement(statement.span, static_decl)
+                if self.function.is_constructor {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::ConstructorStaticNotTopLevel,
+                        span: statement.span,
+                    });
+                } else {
+                    self.static_statement(statement.span, static_decl)
+                }
             }
             ast::StatementKind::Assignment(assignment_statement) => {
                 self.assignment_statement(statement.span, assignment_statement)
             }
-            ast::StatementKind::Return(return_) => self.return_statement(return_),
+            ast::StatementKind::Return(return_) => self.return_statement(statement.span, return_),
             ast::StatementKind::If(if_statement) => self.if_statement(if_statement),
             ast::StatementKind::For(for_statement) => self.for_statement(for_statement),
             ast::StatementKind::Block(block) => self.block(block),
@@ -272,7 +543,9 @@ where
         span: Span,
         var_decl: &ast::Declaration<S>,
     ) -> Result<(), IrGenError> {
-        let var_id = self.declare_var(var_decl.name.clone(), ir::Variable::Owned);
+        let var_id = self
+            .declare_var(var_decl.name.clone(), Some(ir::Variable::Owned))
+            .unwrap();
         let inst_id = self.commit_expression(&var_decl.value)?;
         self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
         Ok(())
@@ -286,7 +559,10 @@ where
         if let Some(constant) = static_decl.value.clone().fold_constant() {
             // If our static is a constant, then we can just initialize it when the prototype is
             // created.
-            self.declare_var(static_decl.name.clone(), ir::Variable::Static(constant));
+            self.declare_var(
+                static_decl.name.clone(),
+                Some(ir::Variable::Static(constant)),
+            );
         } else {
             // Otherwise, we need to initialize two static variables, a hidden one for the
             // initialization state and a visible one to hold the initialized value.
@@ -297,10 +573,12 @@ where
                 .variables
                 .insert(ir::Variable::Static(Constant::Boolean(false)));
             // Create a normal static variable that holds the real value.
-            let var_id = self.declare_var(
-                static_decl.name.clone(),
-                ir::Variable::Static(Constant::Undefined),
-            );
+            let var_id = self
+                .declare_var(
+                    static_decl.name.clone(),
+                    Some(ir::Variable::Static(Constant::Undefined)),
+                )
+                .unwrap();
 
             let init_block = self.function.blocks.insert(ir::Block::default());
             let successor = self.function.blocks.insert(ir::Block::default());
@@ -353,7 +631,7 @@ where
 
         let (target, old) = match &assignment_statement.target {
             ast::AssignmentTarget::Name(name) => {
-                if let Some(var_id) = self.get_var(name) {
+                if let Some(var_id) = self.get_var(span, name)? {
                     (Target::Var(var_id), ir::Instruction::GetVariable(var_id))
                 } else if let Some(mode) = (self.find_magic)(name) {
                     if mode == MagicMode::ReadOnly {
@@ -492,8 +770,16 @@ where
 
     fn return_statement(
         &mut self,
+        span: Span,
         return_statement: &ast::ReturnStatement<S>,
     ) -> Result<(), IrGenError> {
+        if self.final_block.is_some() && return_statement.value.is_some() {
+            return Err(IrGenError {
+                kind: IrGenErrorKind::CannotReturnValue,
+                span,
+            });
+        }
+
         let exit = if let Some(value) = &return_statement.value {
             let val = self.commit_expression(value)?;
             ir::Exit::Return { value: Some(val) }
@@ -594,7 +880,7 @@ where
                 self.push_instruction(span, ir::Instruction::Constant(c.clone()))
             }
             ast::ExpressionKind::Name(s) => {
-                if let Some(var_id) = self.get_var(s) {
+                if let Some(var_id) = self.get_var(span, s)? {
                     self.push_instruction(span, ir::Instruction::GetVariable(var_id))
                 } else if (self.find_magic)(s).is_some() {
                     self.push_instruction(span, ir::Instruction::GetMagic(s.clone()))
@@ -789,7 +1075,13 @@ where
         if self.settings.allow_closures {
             for (n, l) in &self.variables {
                 let &v = l.last().unwrap();
-                compiler.declare_var(n.clone(), ir::Variable::Upper(v));
+                compiler.declare_var(
+                    n.clone(),
+                    match v {
+                        VarDecl::Real(var_id) => Some(ir::Variable::Upper(var_id)),
+                        VarDecl::Pseudo => None,
+                    },
+                );
             }
         }
 
@@ -816,24 +1108,37 @@ where
                     if entry.get().is_empty() {
                         entry.remove();
                     }
-                    if self.function.variables[var_id].is_owned() {
-                        self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
+                    if let VarDecl::Real(var_id) = var_id {
+                        if self.function.variables[var_id].is_owned() {
+                            self.push_instruction(
+                                Span::null(),
+                                ir::Instruction::CloseVariable(var_id),
+                            );
+                        }
                     }
                 }
             }
         }
     }
 
-    fn declare_var(&mut self, vname: S, var: ir::Variable<S>) -> ir::VarId {
-        let is_owned = var.is_owned();
+    fn declare_var(&mut self, vname: S, var: Option<ir::Variable<S>>) -> Option<ir::VarId> {
         let in_scope = !self.scopes.last_mut().unwrap().insert(vname.clone());
         let variable_stack = self.variables.entry(vname).or_default();
 
-        let var_id = self.function.variables.insert(var);
         if in_scope {
+            // This variable was already in-scope, remove it so we can replace it.
             variable_stack.pop().unwrap();
         }
-        variable_stack.push(var_id);
+
+        let Some(var) = var else {
+            variable_stack.push(VarDecl::Pseudo);
+            return None;
+        };
+
+        let is_owned = var.is_owned();
+
+        let var_id = self.function.variables.insert(var);
+        variable_stack.push(VarDecl::Real(var_id));
 
         if is_owned {
             if self.settings.lexical_scoping {
@@ -855,11 +1160,21 @@ where
             }
         }
 
-        var_id
+        Some(var_id)
     }
 
-    fn get_var(&mut self, vname: &S) -> Option<ir::VarId> {
-        self.variables.get(vname).and_then(|s| s.last().copied())
+    fn get_var(&mut self, span: Span, vname: &S) -> Result<Option<ir::VarId>, IrGenError> {
+        if let Some(var) = self.variables.get(vname).and_then(|s| s.last().copied()) {
+            match var {
+                VarDecl::Real(var_id) => Ok(Some(var_id)),
+                VarDecl::Pseudo => Err(IrGenError {
+                    kind: IrGenErrorKind::PseudoVarAccessed,
+                    span,
+                }),
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {

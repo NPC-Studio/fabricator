@@ -35,6 +35,7 @@ impl Id {
 ///
 /// Extremely fast and space efficient, lookup is just calling `Vec::get` on the `Id`'s index and
 /// then comparing the entry generation.
+#[derive(Clone)]
 pub struct IdMap<V> {
     slots: Vec<Slot<V>>,
     next_free: Index,
@@ -55,6 +56,32 @@ impl<T> Slot<T> {
     fn is_vacant(&self) -> bool {
         // Even generations mean the slot is vacant, odd generations mean it is occupied.
         self.generation % 2 == 0
+    }
+}
+
+impl<T: Clone> Clone for Slot<T> {
+    fn clone(&self) -> Self {
+        if self.is_vacant() {
+            // SAFETY: We just checked that the slot is vacant.
+            unsafe {
+                Slot {
+                    u: SlotUnion {
+                        next_free: self.u.next_free,
+                    },
+                    generation: self.generation,
+                }
+            }
+        } else {
+            // SAFETY: We just checked that the slot is full.
+            unsafe {
+                Slot {
+                    u: SlotUnion {
+                        value: self.u.value.clone(),
+                    },
+                    generation: self.generation,
+                }
+            }
+        }
     }
 }
 

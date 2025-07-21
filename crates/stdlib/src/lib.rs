@@ -17,32 +17,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
 
         impl<'gc> vm::Singleton<'gc> for StdlibSingleton<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
-                let mut stdlib = vm::MagicSet::new();
-
-                let method = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                    let Some(func) = stack.get(1).to_function() else {
-                        return Err(vm::Error::msg(
-                            "`method` must be called on a callback or closure",
-                        ));
-                    };
-
-                    match stack.get(0) {
-                        obj @ (vm::Value::Undefined
-                        | vm::Value::Object(_)
-                        | vm::Value::UserData(_)) => {
-                            stack.clear();
-                            stack.push_back(func.rebind(&ctx, obj).into());
-                            Ok(())
-                        }
-                        _ => Err(vm::Error::msg(
-                            "`method` self value must be an object, userdata, or undefined",
-                        )),
-                    }
-                });
-                stdlib.insert(
-                    ctx.intern("method"),
-                    MagicConstant::new_ptr(&ctx, method.into()),
-                );
+                let mut stdlib = vm::BuiltIns::new(&ctx).magic_set(ctx);
 
                 stdlib.insert(
                     ctx.intern("pi"),

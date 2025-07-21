@@ -21,8 +21,8 @@ pub enum ParseErrorKind {
     BadNumber,
     #[error("function declarations with inheritance must be annotated with `constructor`")]
     InheritWithoutConstructor,
-    #[error("parser settings forbid `constructor` annotations and `new` on call expressions")]
-    ConstructorsDisallowed,
+    #[error("parser settings forbid `new` on call expressions")]
+    NewDisallowed,
 }
 
 #[derive(Debug, Error)]
@@ -37,22 +37,22 @@ pub struct ParseSettings {
     /// Require semicolons at the end of all statements other than block-like statements like `if`
     /// and `for`.
     pub strict_semicolons: bool,
-    /// Allow `constructor` annotated functions and `new` before function call expressions.
-    pub allow_constructors: bool,
+    /// Allow `new` before function call expressions.
+    pub allow_new: bool,
 }
 
 impl ParseSettings {
     pub fn strict() -> Self {
         ParseSettings {
             strict_semicolons: true,
-            allow_constructors: false,
+            allow_new: false,
         }
     }
 
     pub fn compat() -> Self {
         ParseSettings {
             strict_semicolons: false,
-            allow_constructors: true,
+            allow_new: true,
         }
     }
 
@@ -162,7 +162,7 @@ where
                     self.advance(1);
                     let expr = self.parse_expression()?;
 
-                    let ast::ExpressionKind::Call(expr) = *expr.kind else {
+                    let ast::ExpressionKind::Call(call_expr) = *expr.kind else {
                         return Err(ParseError {
                             kind: ParseErrorKind::Unexpected {
                                 unexpected: "<expression>",
@@ -172,7 +172,7 @@ where
                         });
                     };
 
-                    inherit = Some(expr);
+                    inherit = Some((expr.span, call_expr));
                 } else {
                     inherit = None;
                 }
@@ -192,13 +192,6 @@ where
                 if !is_constructor && inherit.is_some() {
                     return Err(ParseError {
                         kind: ParseErrorKind::InheritWithoutConstructor,
-                        span,
-                    });
-                }
-
-                if is_constructor && !self.settings.allow_constructors {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::ConstructorsDisallowed,
                         span,
                     });
                 }
@@ -690,9 +683,9 @@ where
 
                 match &mut *expr.kind {
                     ast::ExpressionKind::Call(call_expr) => {
-                        if !self.settings.allow_constructors {
+                        if !self.settings.allow_new {
                             return Err(ParseError {
-                                kind: ParseErrorKind::ConstructorsDisallowed,
+                                kind: ParseErrorKind::NewDisallowed,
                                 span: expr.span,
                             });
                         }

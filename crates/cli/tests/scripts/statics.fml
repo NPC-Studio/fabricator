@@ -1,9 +1,63 @@
-function inc_static() {
+// Statics are variables which have "prototype" storage duration.
+//
+// In practice, this simply means that every declared static variable exists exactly once in the
+// program.
+function static_test_1() {
 	static a_static = 0;
 	a_static += 1;
 	return a_static;
 }
 
-assert(inc_static() == 1);
-assert(inc_static() == 2);
-assert(inc_static() == 3);
+assert(static_test_1() == 1);
+assert(static_test_1() == 2);
+assert(static_test_1() == 3);
+
+// Statics are *real variables* in that they have scope and follow all the normal variable rules.
+function static_test_2() {
+	var sum = 0;
+
+	{
+		static a = 0;
+		a += 1;
+		sum += a;
+	}
+
+	{
+		static a = 0;
+		a += 1;
+		sum += a;
+	}
+
+	return sum;
+}
+
+assert(static_test_2() == 2);
+assert(static_test_2() == 4);
+assert(static_test_2() == 6);
+
+// They can even be upvalues used by closures, the same as normal variables.
+//
+// Every created closure will reference the *same* static instance, the same as happens with any
+// other use of a static variable.
+function static_test_3() {
+	static a_static = 0;
+
+	var f1 = function() {
+		a_static += 1;
+		return a_static;
+	};
+
+	var f2 = function() {
+		a_static += 1;
+		return a_static;
+	};
+
+	return [f1, f2];
+}
+
+var a = static_test_3();
+var b = static_test_3();
+assert(a[0]() == 1);
+assert(a[1]() == 2);
+assert(b[0]() == 3);
+assert(b[1]() == 4);

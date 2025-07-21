@@ -8,6 +8,7 @@ use crate::{
     debug::{Chunk, RefName, Span},
     instructions::HeapIdx,
     magic::MagicSet,
+    object::Object,
     string::String,
     value::Value,
 };
@@ -81,6 +82,7 @@ pub struct Prototype<'gc> {
     pub constants: Box<[Constant<'gc>]>,
     pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
     pub static_vars: Box<[SharedValue<'gc>]>,
+    pub constructor_parent: Option<Object<'gc>>,
     pub used_registers: usize,
     pub heap_vars: Box<[HeapVarDescriptor]>,
 }

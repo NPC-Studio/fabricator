@@ -50,6 +50,7 @@ macro_rules! __new_id_type {
 #[doc(inline)]
 pub use crate::__new_id_type as new_id_type;
 
+#[derive(Clone)]
 pub struct IdMap<I, V> {
     map: id_map::IdMap<V>,
     _marker: PhantomData<I>,
