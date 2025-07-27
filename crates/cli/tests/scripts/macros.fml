@@ -2,3 +2,5 @@
 #macro ONE 1
 
 assert(TWO == 2);
+
+return true;

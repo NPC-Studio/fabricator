@@ -39,6 +39,12 @@ pub enum IrGenErrorKind {
     ConstructorStaticNotUnique,
     #[error("function not allowed to have a return statement with an argument")]
     CannotReturnValue,
+    #[error("break statement with no target")]
+    BreakWithNoTarget,
+    #[error("continue statement with no target")]
+    ContinueWithNoTarget,
+    #[error("statement after unconditional jump")]
+    StatementWithNoCurrentBlock,
 }
 
 #[derive(Debug, Error)]
@@ -117,7 +123,7 @@ impl IrGenSettings {
     {
         let mut compiler = FunctionCompiler::new(self, FunctionRef::Chunk, &find_magic);
         compiler.block(block)?;
-        Ok(compiler.function)
+        Ok(compiler.finish())
     }
 
     pub fn gen_func_stmt_ir<S>(
@@ -154,7 +160,7 @@ impl IrGenSettings {
         } else {
             compiler.block(&func_stmt.body)?;
         }
-        Ok(compiler.function)
+        Ok(compiler.finish())
     }
 }
 
@@ -172,10 +178,16 @@ struct FunctionCompiler<'a, S> {
     find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
 
     function: ir::Function<S>,
-    current_block: ir::BlockId,
+
     // If we have a final block to jump to, jump here instead of returning. Setting this disallows
     // return statements with values.
     final_block: Option<ir::BlockId>,
+
+    // This will be `Some` if the current block is unfinished and can be appended to.
+    current_block: Option<ir::BlockId>,
+
+    break_target_stack: Vec<ir::BlockId>,
+    continue_target_stack: Vec<ir::BlockId>,
 
     // Variable names declared in the current scope.
     scopes: Vec<HashSet<S>>,
@@ -229,8 +241,10 @@ where
             settings,
             find_magic,
             function,
-            current_block: first_block,
             final_block: None,
+            current_block: Some(first_block),
+            continue_target_stack: Vec::new(),
+            break_target_stack: Vec::new(),
             // Even with no lexical scoping, all functions must have one top-level scope.
             scopes: vec![HashSet::new()],
             variables: Default::default(),
@@ -263,39 +277,35 @@ where
                     },
                 );
 
-                let provided_block = self.function.blocks.insert(ir::Block::default());
-                let not_provided_block = self.function.blocks.insert(ir::Block::default());
-                let successor_block = self.function.blocks.insert(ir::Block::default());
+                let provided_block = self.new_block();
+                let not_provided_block = self.new_block();
+                let successor_block = self.new_block();
 
-                self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+                self.end_current_block(ir::Exit::Branch {
                     cond: arg_provided,
                     if_true: provided_block,
                     if_false: not_provided_block,
-                };
+                });
 
-                self.current_block = provided_block;
-                {
-                    let pop_arg_inst =
-                        self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
-                    self.push_instruction(
-                        Span::null(),
-                        ir::Instruction::SetVariable(arg_var, pop_arg_inst),
-                    );
-                }
-                self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor_block);
+                self.start_new_block(provided_block);
+                let pop_arg_inst =
+                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::SetVariable(arg_var, pop_arg_inst),
+                );
+                self.end_current_block(ir::Exit::Jump(successor_block));
 
-                self.current_block = not_provided_block;
-                {
-                    let def_value_inst =
-                        self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
-                    self.push_instruction(
-                        Span::null(),
-                        ir::Instruction::SetVariable(arg_var, def_value_inst),
-                    );
-                }
-                self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor_block);
+                self.start_new_block(not_provided_block);
+                let def_value_inst =
+                    self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
+                self.push_instruction(
+                    Span::null(),
+                    ir::Instruction::SetVariable(arg_var, def_value_inst),
+                );
+                self.end_current_block(ir::Exit::Jump(successor_block));
 
-                self.current_block = successor_block;
+                self.start_new_block(successor_block);
             } else {
                 let pop_arg =
                     self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
@@ -331,21 +341,16 @@ where
             ir::Instruction::GetMagic(interner.intern(BuiltIns::SET_SUPER)),
         );
 
-        let init_block = self.function.blocks.insert(ir::Block::default());
-        let successor_block = self.function.blocks.insert(ir::Block::default());
-        let final_block = self.function.blocks.insert(ir::Block::default());
+        let init_block = self.new_block();
+        let successor_block = self.new_block();
+        let final_block = self.new_block();
         self.final_block = Some(final_block);
 
-        let check_initialized =
-            self.push_instruction(Span::null(), ir::Instruction::GetVariable(is_initialized));
-        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
-            cond: check_initialized,
-            if_false: init_block,
-            if_true: successor_block,
+        let parent_func = if let Some((_, inherit)) = inherit {
+            Some(self.commit_expression(&inherit.base)?)
+        } else {
+            None
         };
-
-        self.function.blocks[self.current_block].exit = ir::Exit::Jump(init_block);
-        self.current_block = init_block;
 
         let this_closure = self.push_instruction(Span::null(), ir::Instruction::CurrentClosure);
 
@@ -359,17 +364,23 @@ where
             },
         );
 
-        let mut parent_func = None;
+        let check_initialized =
+            self.push_instruction(Span::null(), ir::Instruction::GetVariable(is_initialized));
+        self.end_current_block(ir::Exit::Branch {
+            cond: check_initialized,
+            if_false: init_block,
+            if_true: successor_block,
+        });
 
-        if let Some((_, inherit)) = inherit {
-            let parent = self.commit_expression(&inherit.base)?;
+        self.start_new_block(init_block);
 
+        if inherit.is_some() {
             let parent_super = self.push_instruction(
                 Span::null(),
                 ir::Instruction::Call {
                     func: get_constructor_super,
                     this: None,
-                    args: vec![parent],
+                    args: vec![parent_func.unwrap()],
                     return_value: true,
                 },
             );
@@ -383,8 +394,6 @@ where
                     return_value: false,
                 },
             );
-
-            parent_func = Some(parent);
         }
 
         let mut static_names = HashSet::new();
@@ -424,8 +433,9 @@ where
             ir::Instruction::SetVariable(is_initialized, true_),
         );
 
-        self.function.blocks[init_block].exit = ir::Exit::Jump(successor_block);
-        self.current_block = successor_block;
+        self.end_current_block(ir::Exit::Jump(successor_block));
+
+        self.start_new_block(successor_block);
 
         let this = if let Some(parent_func) = parent_func {
             let Some((inherit_span, inherit)) = inherit else {
@@ -466,49 +476,65 @@ where
             ir::Instruction::OpenThisScope(this_scope, this),
         );
 
-        {
-            self.push_scope();
+        self.push_scope();
 
-            for stmt in &main_block.statements {
-                match &*stmt.kind {
-                    ast::StatementKind::Static(declaration) => {
-                        // Declare a pseudo-variable when encountering the static statement.
-                        // This variable's sole purpose is to prevent accessing a constructor
-                        // `static`, which *looks* like a variable but is not usable as a variable
-                        // in expressions.
-                        self.declare_var(declaration.name.clone(), None);
-                    }
-                    _ => {
-                        self.statement(stmt)?;
-                    }
+        for stmt in &main_block.statements {
+            match &*stmt.kind {
+                ast::StatementKind::Static(declaration) => {
+                    // Declare a pseudo-variable when encountering the static statement.
+                    // This variable's sole purpose is to prevent accessing a constructor
+                    // `static`, which *looks* like a variable but is not usable as a variable
+                    // in expressions.
+                    self.declare_var(declaration.name.clone(), None);
+                }
+                _ => {
+                    self.statement(stmt)?;
                 }
             }
-
-            self.pop_scope();
         }
 
-        self.function.blocks[self.current_block].exit = ir::Exit::Jump(final_block);
-        self.current_block = final_block;
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(final_block));
+        }
 
-        self.function.blocks[self.current_block].exit = ir::Exit::Return { value: Some(this) };
+        self.pop_scope();
+
+        self.start_new_block(final_block);
+        self.end_current_block(ir::Exit::Return { value: Some(this) });
 
         Ok(())
     }
 
-    fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
-        {
-            self.push_scope();
-
-            for statement in &block.statements {
-                self.statement(statement)?;
-            }
-
-            self.pop_scope();
+    fn finish(mut self) -> ir::Function<S> {
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Return { value: None });
         }
+
+        assert!(self.break_target_stack.is_empty());
+        assert!(self.continue_target_stack.is_empty());
+
+        self.function
+    }
+
+    fn block(&mut self, block: &ast::Block<S>) -> Result<(), IrGenError> {
+        self.push_scope();
+
+        for statement in &block.statements {
+            self.statement(statement)?;
+        }
+
+        self.pop_scope();
         Ok(())
     }
 
     fn statement(&mut self, statement: &ast::Statement<S>) -> Result<(), IrGenError> {
+        if self.current_block.is_none() {
+            return Err(IrGenError {
+                kind: IrGenErrorKind::StatementWithNoCurrentBlock,
+                span: statement.span,
+            });
+        }
+
         match &*statement.kind {
             ast::StatementKind::Enum(_) => {
                 return Err(IrGenError {
@@ -544,6 +570,9 @@ where
                 let _ = self.call_expr(statement.span, function_call, false)?;
                 Ok(())
             }
+            ast::StatementKind::Switch(switch_statement) => self.switch_statement(switch_statement),
+            ast::StatementKind::Break => self.break_statement(statement.span),
+            ast::StatementKind::Continue => self.continue_statement(statement.span),
         }
     }
 
@@ -589,27 +618,28 @@ where
                 )
                 .unwrap();
 
-            let init_block = self.function.blocks.insert(ir::Block::default());
-            let successor = self.function.blocks.insert(ir::Block::default());
+            let init_block = self.new_block();
+            let successor = self.new_block();
 
             let check_initialized =
                 self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
-            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+            self.end_current_block(ir::Exit::Branch {
                 cond: check_initialized,
                 if_false: init_block,
                 if_true: successor,
-            };
+            });
 
-            self.current_block = init_block;
+            self.start_new_block(init_block);
 
             let value = self.commit_expression(&static_decl.value)?;
             self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
             let true_ =
                 self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
             self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
-            self.function.blocks[init_block].exit = ir::Exit::Jump(successor);
 
-            self.current_block = successor;
+            self.end_current_block(ir::Exit::Jump(successor));
+
+            self.start_new_block(successor);
         }
 
         Ok(())
@@ -795,91 +825,168 @@ where
         } else {
             ir::Exit::Return { value: None }
         };
-        self.function.blocks[self.current_block].exit = exit;
-        self.current_block = self.function.blocks.insert(ir::Block::default());
+        self.end_current_block(exit);
         Ok(())
     }
 
     fn if_statement(&mut self, if_statement: &ast::IfStatement<S>) -> Result<(), IrGenError> {
         let cond = self.commit_expression(&if_statement.condition)?;
-        let then_block = self.function.blocks.insert(ir::Block::default());
-        let else_block = self.function.blocks.insert(ir::Block::default());
-        let successor = self.function.blocks.insert(ir::Block::default());
+        let then_block = self.new_block();
+        let else_block = self.new_block();
+        let successor = self.new_block();
 
-        self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+        self.end_current_block(ir::Exit::Branch {
             cond,
             if_true: then_block,
             if_false: else_block,
-        };
+        });
 
-        self.current_block = then_block;
-        {
+        self.start_new_block(then_block);
+        self.push_scope();
+        self.statement(&if_statement.then_stmt)?;
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(successor));
+        }
+        self.pop_scope();
+
+        self.start_new_block(else_block);
+        if let Some(else_stmt) = &if_statement.else_stmt {
             self.push_scope();
-            self.statement(&if_statement.then_stmt)?;
+            self.statement(else_stmt)?;
             self.pop_scope();
         }
-        self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor);
-
-        self.current_block = else_block;
-        if let Some(else_stmt) = &if_statement.else_stmt {
-            {
-                self.push_scope();
-                self.statement(else_stmt)?;
-                self.pop_scope();
-            }
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(successor));
         }
-        self.function.blocks[self.current_block].exit = ir::Exit::Jump(successor);
 
-        self.current_block = successor;
+        self.start_new_block(successor);
         Ok(())
     }
 
     fn for_statement(&mut self, for_statement: &ast::ForStatement<S>) -> Result<(), IrGenError> {
-        {
-            self.push_scope();
+        self.push_scope();
+        self.statement(&for_statement.initializer)?;
 
-            let body = self.function.blocks.insert(ir::Block::default());
-            let successor = self.function.blocks.insert(ir::Block::default());
+        if self.current_block.is_some() {
+            let cond_block = self.new_block();
+            let body_block = self.new_block();
+            let iter_block = self.new_block();
+            let successor_block = self.new_block();
 
-            self.statement(&for_statement.initializer)?;
+            self.push_break_target(successor_block);
+            self.push_continue_target(iter_block);
+
+            self.end_current_block(ir::Exit::Jump(cond_block));
+            self.start_new_block(cond_block);
+
             let cond = self.commit_expression(&for_statement.condition)?;
-
-            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
+            self.end_current_block(ir::Exit::Branch {
                 cond,
-                if_true: body,
-                if_false: successor,
-            };
-            self.current_block = body;
+                if_true: body_block,
+                if_false: successor_block,
+            });
 
-            // The condition expression is used again at the end, so we guard the body scope so it
-            // doesn't affect the condition.
-            {
-                self.push_scope();
-                self.statement(&for_statement.body)?;
-                self.pop_scope();
-            }
+            self.start_new_block(body_block);
+            self.push_scope();
+            self.statement(&for_statement.body)?;
+            self.pop_scope();
 
-            // We surround the iterator statement so variable declarations have no effect outside
-            // of it.
-            {
+            if self.current_block.is_some() {
+                self.end_current_block(ir::Exit::Jump(iter_block));
+                self.start_new_block(iter_block);
+
                 self.push_scope();
                 self.statement(&for_statement.iterator)?;
                 self.pop_scope();
+
+                if self.current_block.is_some() {
+                    self.end_current_block(ir::Exit::Jump(cond_block));
+                }
             }
 
-            let cond = self.commit_expression(&for_statement.condition)?;
-            self.function.blocks[self.current_block].exit = ir::Exit::Branch {
-                cond,
-                if_true: body,
-                if_false: successor,
-            };
+            self.start_new_block(successor_block);
 
-            self.current_block = successor;
-
-            self.pop_scope();
+            self.pop_continue_target(iter_block);
+            self.pop_break_target(successor_block);
         }
 
+        self.pop_scope();
         Ok(())
+    }
+
+    fn switch_statement(
+        &mut self,
+        switch_stmt: &ast::SwitchStatement<S>,
+    ) -> Result<(), IrGenError> {
+        let target = self.commit_expression(&switch_stmt.target)?;
+
+        let successor_block = self.new_block();
+        self.push_break_target(successor_block);
+
+        for (expr, body) in &switch_stmt.cases {
+            let expr = self.commit_expression(expr)?;
+            let is_equal = self.push_instruction(
+                Span::null(),
+                ir::Instruction::BinOp {
+                    left: expr,
+                    right: target,
+                    op: ir::BinOp::Equal,
+                },
+            );
+
+            let next_block = self.new_block();
+
+            let body_block = self.new_block();
+            self.end_current_block(ir::Exit::Branch {
+                cond: is_equal,
+                if_false: next_block,
+                if_true: body_block,
+            });
+
+            self.start_new_block(body_block);
+            self.block(body)?;
+            if self.current_block.is_some() {
+                self.end_current_block(ir::Exit::Jump(successor_block));
+            }
+
+            self.start_new_block(next_block);
+        }
+
+        if let Some(default) = &switch_stmt.default {
+            self.block(default)?;
+            if self.current_block.is_some() {
+                self.end_current_block(ir::Exit::Jump(successor_block));
+            }
+        }
+
+        self.start_new_block(successor_block);
+        self.pop_break_target(successor_block);
+
+        Ok(())
+    }
+
+    fn break_statement(&mut self, span: Span) -> Result<(), IrGenError> {
+        if let Some(&break_target) = self.break_target_stack.last() {
+            self.end_current_block(ir::Exit::Jump(break_target));
+            Ok(())
+        } else {
+            Err(IrGenError {
+                kind: IrGenErrorKind::BreakWithNoTarget,
+                span,
+            })
+        }
+    }
+
+    fn continue_statement(&mut self, span: Span) -> Result<(), IrGenError> {
+        if let Some(&continue_target) = self.continue_target_stack.last() {
+            self.end_current_block(ir::Exit::Jump(continue_target));
+            Ok(())
+        } else {
+            Err(IrGenError {
+                kind: IrGenErrorKind::ContinueWithNoTarget,
+                span,
+            })
+        }
     }
 
     fn commit_expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
@@ -1118,7 +1225,9 @@ where
                         entry.remove();
                     }
                     if let VarDecl::Real(var_id) = var_id {
-                        if self.function.variables[var_id].is_owned() {
+                        if self.function.variables[var_id].is_owned()
+                            && self.current_block.is_some()
+                        {
                             self.push_instruction(
                                 Span::null(),
                                 ir::Instruction::CloseVariable(var_id),
@@ -1188,9 +1297,54 @@ where
         }
     }
 
+    fn new_block(&mut self) -> ir::BlockId {
+        self.function.blocks.insert(ir::Block::default())
+    }
+
+    fn end_current_block(&mut self, exit: ir::Exit) {
+        let current_block = self.current_block.expect("no current block to end");
+        self.function.blocks[current_block].exit = exit;
+        self.current_block = None;
+    }
+
+    fn start_new_block(&mut self, block_id: ir::BlockId) {
+        assert!(
+            self.current_block.is_none(),
+            "cannot start new block when current block is not finished"
+        );
+        self.current_block = Some(block_id);
+    }
+
+    fn push_break_target(&mut self, block_id: ir::BlockId) {
+        self.break_target_stack.push(block_id);
+    }
+
+    fn pop_break_target(&mut self, block_id: ir::BlockId) {
+        assert_eq!(
+            self.break_target_stack.pop(),
+            Some(block_id),
+            "mismatched break target pop"
+        );
+    }
+
+    fn push_continue_target(&mut self, block_id: ir::BlockId) {
+        self.continue_target_stack.push(block_id);
+    }
+
+    fn pop_continue_target(&mut self, block_id: ir::BlockId) {
+        assert_eq!(
+            self.continue_target_stack.pop(),
+            Some(block_id),
+            "mismatched continue target pop"
+        );
+    }
+
     fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {
+        let current_block = self
+            .current_block
+            .expect("no current block to push instruction");
         let inst_id = self.function.instructions.insert(inst);
-        self.function.blocks[self.current_block]
+        self.function.blocks[current_block]
             .instructions
             .push(inst_id);
         if !span.is_null() {

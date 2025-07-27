@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use arrayvec::ArrayVec;
 use fabricator_vm::Span;
 use thiserror::Error;
@@ -65,6 +63,13 @@ impl ParseSettings {
     }
 }
 
+enum StatementTrailer {
+    // Statement may have a trailing semicolon, depending on parser settings.
+    SemiColonAllowed,
+    // Statement must not have a trailing semicolon
+    NoSemiColon,
+}
+
 struct Parser<I, S> {
     settings: ParseSettings,
     token_iter: I,
@@ -87,151 +92,103 @@ where
     }
 
     fn parse(&mut self) -> Result<ast::Block<S>, ParseError> {
-        let block = self.parse_block()?;
-
-        self.look_ahead(1);
-        let last = self.peek(0);
-        match &last.kind {
-            TokenKind::EndOfStream => Ok(block),
-            _ => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&last.kind),
-                    expected: "<statement>",
-                },
-                span: last.span,
-            }),
-        }
+        self.parse_block(|t| matches!(t, TokenKind::EndOfStream))
     }
 
-    fn parse_block(&mut self) -> Result<ast::Block<S>, ParseError> {
+    fn parse_block(
+        &mut self,
+        stop: impl Fn(&TokenKind<S>) -> bool,
+    ) -> Result<ast::Block<S>, ParseError> {
         let mut statements = Vec::new();
         loop {
             self.look_ahead(1);
-            if matches!(
-                self.peek(0).kind,
-                TokenKind::RightBrace | TokenKind::EndOfStream
-            ) {
+            let next = self.peek(0);
+            if stop(&next.kind) {
                 break;
             }
 
-            let stmt = self.parse_statement()?;
-
-            if self.settings.strict_semicolons {
-                if !matches!(
-                    &*stmt.kind,
-                    ast::StatementKind::Block(_)
-                        | ast::StatementKind::Enum(_)
-                        | ast::StatementKind::Function(_)
-                        | ast::StatementKind::If(_)
-                        | ast::StatementKind::For(_)
-                ) {
-                    self.parse_token(TokenKind::SemiColon)?;
-                }
-            } else {
-                self.look_ahead(1);
-                if matches!(self.peek(0).kind, TokenKind::SemiColon) {
-                    self.advance(1);
-                }
+            if matches!(&next.kind, TokenKind::SemiColon) {
+                self.advance(1);
+                continue;
             }
 
-            statements.push(stmt);
+            statements.push(self.parse_statement()?);
         }
 
         Ok(ast::Block { statements })
     }
 
+    /// Parse a statement including any trailing semicolon, if it is expected.
     fn parse_statement(&mut self) -> Result<ast::Statement<S>, ParseError> {
         self.look_ahead(1);
-        let &Token { ref kind, mut span } = self.peek(0);
-        match kind {
+        let (stmt, trailer) = self.parse_statement_body()?;
+
+        match trailer {
+            StatementTrailer::SemiColonAllowed => {
+                if self.settings.strict_semicolons {
+                    self.parse_token(TokenKind::SemiColon)?;
+                } else {
+                    self.look_ahead(1);
+                    if matches!(self.peek(0).kind, TokenKind::SemiColon) {
+                        self.advance(1);
+                    }
+                }
+            }
+            StatementTrailer::NoSemiColon => {}
+        }
+
+        Ok(stmt)
+    }
+
+    /// Parse a statement, not including any trailing semicolon.
+    fn parse_statement_body(
+        &mut self,
+    ) -> Result<(ast::Statement<S>, StatementTrailer), ParseError> {
+        self.look_ahead(1);
+        let &Token {
+            kind: ref next_kind,
+            span: next_span,
+        } = self.peek(0);
+
+        let kind;
+        let mut span;
+        let trailer;
+
+        match next_kind {
             TokenKind::Enum => {
-                let (stmt, span) = self.parse_enum_statement()?;
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Enum(stmt)),
-                    span,
-                })
+                let (stmt, s) = self.parse_enum_statement()?;
+                span = s;
+                kind = ast::StatementKind::Enum(stmt);
+                trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Function => {
-                self.advance(1);
-                let name = self.parse_identifier()?.0;
-                let parameters = self.parse_parameter_list()?.0;
-
-                self.look_ahead(1);
-                let inherit;
-                if matches!(self.peek(0).kind, TokenKind::Colon) {
-                    self.advance(1);
-                    let expr = self.parse_expression()?;
-
-                    let ast::ExpressionKind::Call(call_expr) = *expr.kind else {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected: "<expression>",
-                                expected: "<call expression>",
-                            },
-                            span: expr.span,
-                        });
-                    };
-
-                    inherit = Some((expr.span, call_expr));
-                } else {
-                    inherit = None;
-                }
-
-                self.look_ahead(1);
-                let is_constructor = if matches!(self.peek(0).kind, TokenKind::Constructor) {
-                    self.advance(1);
-                    true
-                } else {
-                    false
-                };
-
-                self.parse_token(TokenKind::LeftBrace)?;
-                let body = self.parse_block()?;
-                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
-
-                if !is_constructor && inherit.is_some() {
-                    return Err(ParseError {
-                        kind: ParseErrorKind::InheritWithoutConstructor,
-                        span,
-                    });
-                }
-
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Function(ast::FunctionStatement {
-                        name,
-                        is_constructor,
-                        inherit,
-                        parameters,
-                        body,
-                    })),
-                    span,
-                })
+                let (stmt, s) = self.parse_function_statement()?;
+                span = s;
+                kind = ast::StatementKind::Function(stmt);
+                trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Var => {
                 self.advance(1);
                 let name = self.parse_identifier()?.0;
                 self.parse_token(TokenKind::Equal)?;
                 let value = self.parse_expression()?;
-                span = span.combine(value.span);
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Var(ast::Declaration { name, value })),
-                    span,
-                })
+                span = next_span.combine(value.span);
+                kind = ast::StatementKind::Var(ast::Declaration { name, value });
+                trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Static => {
                 self.advance(1);
                 let name = self.parse_identifier()?.0;
                 self.parse_token(TokenKind::Equal)?;
                 let value = self.parse_expression()?;
-                span = span.combine(value.span);
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Static(ast::Declaration { name, value })),
-                    span,
-                })
+                span = next_span.combine(value.span);
+                kind = ast::StatementKind::Static(ast::Declaration { name, value });
+                trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Return => {
                 self.advance(1);
                 self.look_ahead(1);
+                span = next_span;
                 let value = if matches!(self.peek(0).kind, TokenKind::SemiColon) {
                     None
                 } else {
@@ -239,25 +196,20 @@ where
                     span = span.combine(expr.span);
                     Some(expr)
                 };
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Return(ast::ReturnStatement { value })),
-                    span,
-                })
+                kind = ast::StatementKind::Return(ast::ReturnStatement { value });
+                trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Exit => {
                 self.advance(1);
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Return(ast::ReturnStatement {
-                        value: None,
-                    })),
-                    span,
-                })
+                span = next_span;
+                kind = ast::StatementKind::Return(ast::ReturnStatement { value: None });
+                trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::If => {
                 self.advance(1);
                 let condition = self.parse_expression()?;
                 let then_stmt = self.parse_statement()?;
-                span = span.combine(then_stmt.span);
+                span = next_span.combine(then_stmt.span);
 
                 let mut else_stmt = None;
 
@@ -271,45 +223,58 @@ where
                     else_stmt = Some(stmt);
                 }
 
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::If(ast::IfStatement {
-                        condition,
-                        then_stmt,
-                        else_stmt,
-                    })),
-                    span,
-                })
+                kind = ast::StatementKind::If(ast::IfStatement {
+                    condition,
+                    then_stmt,
+                    else_stmt,
+                });
+                trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::For => {
                 self.advance(1);
                 self.parse_token(TokenKind::LeftParen)?;
-                let initializer = self.parse_statement()?;
+                let initializer = self.parse_statement_body()?.0;
                 self.parse_token(TokenKind::SemiColon)?;
                 let condition = self.parse_expression()?;
                 self.parse_token(TokenKind::SemiColon)?;
-                let iterator = self.parse_statement()?;
+                let iterator = self.parse_statement_body()?.0;
                 self.parse_token(TokenKind::RightParen)?;
                 let body = self.parse_statement()?;
 
-                span = span.combine(body.span);
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::For(ast::ForStatement {
-                        initializer,
-                        condition,
-                        iterator,
-                        body,
-                    })),
-                    span,
-                })
+                span = next_span.combine(body.span);
+
+                kind = ast::StatementKind::For(ast::ForStatement {
+                    initializer,
+                    condition,
+                    iterator,
+                    body,
+                });
+                trailer = StatementTrailer::NoSemiColon;
+            }
+            TokenKind::Switch => {
+                let (stmt, s) = self.parse_switch_statement()?;
+                span = s;
+                kind = ast::StatementKind::Switch(stmt);
+                trailer = StatementTrailer::NoSemiColon;
+            }
+            TokenKind::Break => {
+                self.advance(1);
+                span = next_span;
+                kind = ast::StatementKind::Break;
+                trailer = StatementTrailer::SemiColonAllowed;
+            }
+            TokenKind::Continue => {
+                self.advance(1);
+                span = next_span;
+                kind = ast::StatementKind::Continue;
+                trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::LeftBrace => {
                 self.advance(1);
-                let block = self.parse_block()?;
-                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
-                Ok(ast::Statement {
-                    kind: Box::new(ast::StatementKind::Block(block)),
-                    span,
-                })
+                let block = self.parse_block(|t| matches!(t, TokenKind::RightBrace))?;
+                span = next_span.combine(self.parse_token(TokenKind::RightBrace).unwrap());
+                kind = ast::StatementKind::Block(block);
+                trailer = StatementTrailer::NoSemiColon;
             }
             _ => {
                 let expr = match self.parse_suffixed_expression() {
@@ -331,7 +296,7 @@ where
 
                 span = expr.span;
 
-                let kind = match *expr.kind {
+                kind = match *expr.kind {
                     ast::ExpressionKind::Call(call) => ast::StatementKind::Call(call),
                     expr @ (ast::ExpressionKind::Name(_)
                     | ast::ExpressionKind::Field(_)
@@ -379,13 +344,76 @@ where
                         });
                     }
                 };
-
-                Ok(ast::Statement {
-                    kind: Box::new(kind),
-                    span,
-                })
+                trailer = StatementTrailer::SemiColonAllowed;
             }
+        };
+
+        Ok((
+            ast::Statement {
+                kind: Box::new(kind),
+                span,
+            },
+            trailer,
+        ))
+    }
+
+    fn parse_function_statement(
+        &mut self,
+    ) -> Result<(ast::FunctionStatement<S>, Span), ParseError> {
+        let mut span = self.parse_token(TokenKind::Function)?;
+        let name = self.parse_identifier()?.0;
+        let parameters = self.parse_parameter_list()?.0;
+
+        self.look_ahead(1);
+        let inherit;
+        if matches!(self.peek(0).kind, TokenKind::Colon) {
+            self.advance(1);
+            let expr = self.parse_expression()?;
+
+            let ast::ExpressionKind::Call(call_expr) = *expr.kind else {
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: "<expression>",
+                        expected: "<call expression>",
+                    },
+                    span: expr.span,
+                });
+            };
+
+            inherit = Some((expr.span, call_expr));
+        } else {
+            inherit = None;
         }
+
+        self.look_ahead(1);
+        let is_constructor = if matches!(self.peek(0).kind, TokenKind::Constructor) {
+            self.advance(1);
+            true
+        } else {
+            false
+        };
+
+        self.parse_token(TokenKind::LeftBrace)?;
+        let body = self.parse_block(|t| matches!(t, TokenKind::RightBrace))?;
+        span = span.combine(self.parse_token(TokenKind::RightBrace).unwrap());
+
+        if !is_constructor && inherit.is_some() {
+            return Err(ParseError {
+                kind: ParseErrorKind::InheritWithoutConstructor,
+                span,
+            });
+        }
+
+        Ok((
+            ast::FunctionStatement {
+                name,
+                is_constructor,
+                inherit,
+                parameters,
+                body,
+            },
+            span,
+        ))
     }
 
     fn parse_enum_statement(&mut self) -> Result<(ast::EnumStatement<S>, Span), ParseError> {
@@ -415,6 +443,77 @@ where
         )?);
 
         Ok((ast::EnumStatement { name, variants }, span))
+    }
+
+    fn parse_switch_statement(&mut self) -> Result<(ast::SwitchStatement<S>, Span), ParseError> {
+        let mut span = self.parse_token(TokenKind::Switch)?;
+        let target = self.parse_expression()?;
+        self.parse_token(TokenKind::LeftBrace)?;
+
+        let mut cases = Vec::new();
+        let mut default = None;
+
+        loop {
+            self.look_ahead(1);
+            let next = self.peek(0);
+
+            if matches!(&next.kind, TokenKind::RightBrace) {
+                span = span.combine(next.span);
+                self.advance(1);
+                break;
+            } else if default.is_some() {
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        unexpected: token_indicator(&next.kind),
+                        expected: token_indicator::<()>(&TokenKind::RightBrace),
+                    },
+                    span: next.span,
+                });
+            }
+
+            match &next.kind {
+                TokenKind::Case => {
+                    self.advance(1);
+                    let condition = self.parse_expression()?;
+                    self.parse_token(TokenKind::Colon)?;
+                    let block = self.parse_block(|t| {
+                        matches!(
+                            t,
+                            TokenKind::Case | TokenKind::Default | TokenKind::RightBrace
+                        )
+                    })?;
+                    cases.push((condition, block));
+                }
+                TokenKind::Default => {
+                    self.advance(1);
+                    self.parse_token(TokenKind::Colon)?;
+                    default = Some(self.parse_block(|t| {
+                        matches!(
+                            t,
+                            TokenKind::Case | TokenKind::Default | TokenKind::RightBrace
+                        )
+                    })?);
+                }
+                token => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: token_indicator(&token),
+                            expected: "<switch statement case>",
+                        },
+                        span,
+                    });
+                }
+            }
+        }
+
+        Ok((
+            ast::SwitchStatement {
+                target,
+                cases,
+                default,
+            },
+            span,
+        ))
     }
 
     fn parse_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
@@ -664,8 +763,8 @@ where
                 let parameters = self.parse_parameter_list()?.0;
 
                 self.parse_token(TokenKind::LeftBrace)?;
-                let body = self.parse_block()?;
-                span = span.combine(self.parse_token(TokenKind::RightBrace)?);
+                let body = self.parse_block(|t| matches!(t, TokenKind::RightBrace))?;
+                span = span.combine(self.parse_token(TokenKind::RightBrace).unwrap());
 
                 Ok(ast::Expression {
                     kind: Box::new(ast::ExpressionKind::Function(ast::FunctionExpr {
@@ -786,8 +885,7 @@ where
     ) -> Result<Span, ParseError> {
         let mut span = self.parse_token(left_delimiter)?;
 
-        let is_right_delimiter =
-            |kind: &TokenKind<S>| kind.as_string_ref().map_string(|_| ()) == right_delimiter;
+        let is_right_delimiter = |kind: &TokenKind<S>| kind.as_unit_string() == right_delimiter;
 
         loop {
             self.look_ahead(1);
@@ -840,7 +938,7 @@ where
     fn parse_token(&mut self, expected: TokenKind<()>) -> Result<Span, ParseError> {
         let Token { kind, span } = self.next();
 
-        if kind.as_string_ref().map_string(|_| ()) == expected {
+        if kind.as_unit_string() == expected {
             Ok(span)
         } else {
             Err(ParseError {
@@ -999,7 +1097,9 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Static => "static",
         TokenKind::Switch => "switch",
         TokenKind::Case => "case",
+        TokenKind::Default => "default",
         TokenKind::Break => "break",
+        TokenKind::Continue => "continue",
         TokenKind::If => "if",
         TokenKind::Else => "else",
         TokenKind::For => "for",
@@ -1124,8 +1224,20 @@ mod tests {
 
             var i = 1_234;
             var j = new Foo();
+
+            switch i {
+                case 1_234: {}
+                default: {}
+            }
         "#;
 
-        parse(ParseSettings::compat(), SOURCE).unwrap();
+        parse(
+            ParseSettings {
+                strict_semicolons: true,
+                allow_new: true,
+            },
+            SOURCE,
+        )
+        .unwrap();
     }
 }

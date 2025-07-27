@@ -1,4 +1,4 @@
-pub mod block_merge;
+pub mod block_simplification;
 pub mod cleanup;
 pub mod constant_folding;
 pub mod dead_code_elim;

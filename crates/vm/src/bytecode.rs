@@ -109,13 +109,11 @@ impl ByteCode {
             inst_positions.push(pos);
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
+        inst_positions.push(pos);
 
         let calc_jump = |cur: usize, offset: i16| {
             // Encode jumps from the end of the current instruction
-            let cur_pos = inst_positions
-                .get(cur + 1)
-                .copied()
-                .unwrap_or(inst_positions.len()) as isize;
+            let cur_pos = inst_positions.get(cur + 1).copied().unwrap() as isize;
             let jump_pos = inst_positions[(cur as isize + offset as isize) as usize] as isize;
             i16::try_from(jump_pos - cur_pos).map_err(|_| ByteCodeEncodingError::JumpOutOfRange)
         };

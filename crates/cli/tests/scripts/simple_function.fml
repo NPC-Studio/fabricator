@@ -5,3 +5,5 @@ var f = function(a, b) {
 assert(f(1, 2) == 3);
 assert(f(2, 3) == 5);
 assert(f(3, 4, 5) == 7);
+
+return true;

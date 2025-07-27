@@ -13,3 +13,5 @@ var def_args_lambda = function(a=2, b=3) {
 assert(def_args_lambda() == 5);
 assert(def_args_lambda(3) == 6);
 assert(def_args_lambda(3, 4) == 7);
+
+return true;

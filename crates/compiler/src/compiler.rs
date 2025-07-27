@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     analysis::{
-        block_merge::merge_blocks,
+        block_simplification::{block_branch_to_jump, merge_blocks, redirect_empty_blocks},
         cleanup::{
             clean_instructions, clean_unreachable_blocks, clean_unused_functions,
             clean_unused_shadow_vars, clean_unused_this_scopes, clean_unused_variables,
@@ -166,6 +166,8 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
     eliminate_copies(ir);
     fold_constants(ir);
     eliminate_dead_code(ir);
+    block_branch_to_jump(ir);
+    redirect_empty_blocks(ir);
     merge_blocks(ir);
 
     clean_unreachable_blocks(ir);

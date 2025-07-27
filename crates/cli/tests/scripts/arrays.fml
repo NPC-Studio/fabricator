@@ -20,3 +20,4 @@ assert(a[1] == 11);
 assert(a[2] == 12);
 assert(a[3] == 13);
 
+return true;

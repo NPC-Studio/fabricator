@@ -61,3 +61,5 @@ assert(a[0]() == 1);
 assert(a[1]() == 2);
 assert(b[0]() == 3);
 assert(b[1]() == 4);
+
+return true;

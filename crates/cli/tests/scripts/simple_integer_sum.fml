@@ -3,3 +3,5 @@ for (var i = 1; i <= 100000; i += 1) {
     sum += i;
 }
 assert(sum == 5000050000);
+
+return true;

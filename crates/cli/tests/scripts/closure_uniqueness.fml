@@ -16,3 +16,5 @@ assert(arr[9]() == 9);
 assert(arr[0]() == 1);
 assert(arr[1]() == 2);
 assert(arr[9]() == 10);
+
+return true;

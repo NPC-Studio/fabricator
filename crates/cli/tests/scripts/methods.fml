@@ -67,3 +67,5 @@ obj_d.get = function() {
 };
 
 assert(obj_d.get() == 3);
+
+return true;

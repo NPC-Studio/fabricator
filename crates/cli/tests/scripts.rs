@@ -7,7 +7,7 @@ use fabricator_compiler as compiler;
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
 
-fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
+fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, vm::Error> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
@@ -26,8 +26,8 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<(), vm::Error> {
         let closure = vm::Closure::new(&ctx, output.prototype, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
-        thread.exec(ctx, closure)?;
-        Ok(())
+        let res = thread.exec(ctx, closure)?;
+        Ok(res.len() == 1 && res[0] == vm::Value::Boolean(true))
     })
 }
 
@@ -41,13 +41,22 @@ fn run_tests(dir: &str) -> bool {
         if let Some(ext) = path.extension() {
             if ext.eq_ignore_ascii_case("fml") || ext.eq_ignore_ascii_case("gml") {
                 let _ = writeln!(stdout(), "running {:?}", path);
-                if let Err(err) = run_code(
+                match run_code(
                     path.to_string_lossy().as_ref(),
                     &code,
                     ext.eq_ignore_ascii_case("gml"),
                 ) {
-                    let _ = writeln!(stdout(), "error encountered running {:?}: {:?}", path, err);
-                    all_passed = false;
+                    Ok(ret_true) => {
+                        if !ret_true {
+                            let _ = writeln!(stdout(), "script {:?} did not return `true`", path);
+                            all_passed = false;
+                        }
+                    }
+                    Err(err) => {
+                        let _ =
+                            writeln!(stdout(), "error encountered running {:?}: {:?}", path, err);
+                        all_passed = false;
+                    }
                 }
             }
         } else {

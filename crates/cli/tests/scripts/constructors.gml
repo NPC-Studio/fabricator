@@ -34,3 +34,4 @@ assert(t4.bar == 2);
 assert(t4.baz == 3);
 assert(t4.qux == 4);
 
+return true;

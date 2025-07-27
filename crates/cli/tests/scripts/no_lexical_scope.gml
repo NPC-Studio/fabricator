@@ -10,3 +10,5 @@ for (var j = 0; j < 1; j += 1) {
 }
 
 assert(i == 3);
+
+return true;

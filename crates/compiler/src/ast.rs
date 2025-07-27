@@ -26,7 +26,10 @@ pub enum StatementKind<S> {
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
     For(ForStatement<S>),
+    Switch(SwitchStatement<S>),
     Call(CallExpr<S>),
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,13 @@ pub struct ForStatement<S> {
     pub condition: Expression<S>,
     pub iterator: Statement<S>,
     pub body: Statement<S>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchStatement<S> {
+    pub target: Expression<S>,
+    pub cases: Vec<(Expression<S>, Block<S>)>,
+    pub default: Option<Block<S>>,
 }
 
 #[derive(Debug, Clone)]
@@ -269,12 +279,23 @@ impl<S> Statement<S> {
                 visitor.visit_stmt(&for_stmt.iterator)?;
                 visitor.visit_stmt(&for_stmt.body)?;
             }
+            StatementKind::Switch(switch_stmt) => {
+                visitor.visit_expr(&switch_stmt.target)?;
+                for (case_expr, case_block) in &switch_stmt.cases {
+                    visitor.visit_expr(case_expr)?;
+                    visitor.visit_block(case_block)?;
+                }
+                if let Some(default_block) = &switch_stmt.default {
+                    visitor.visit_block(default_block)?;
+                }
+            }
             StatementKind::Call(call_expr) => {
                 visitor.visit_expr(&call_expr.base)?;
                 for arg in &call_expr.arguments {
                     visitor.visit_expr(arg)?;
                 }
             }
+            StatementKind::Break | StatementKind::Continue => {}
         }
         ControlFlow::Continue(())
     }
@@ -329,12 +350,23 @@ impl<S> Statement<S> {
                 visitor.visit_stmt_mut(&mut for_stmt.iterator)?;
                 visitor.visit_stmt_mut(&mut for_stmt.body)?;
             }
+            StatementKind::Switch(switch_stmt) => {
+                visitor.visit_expr_mut(&mut switch_stmt.target)?;
+                for (case_expr, case_block) in &mut switch_stmt.cases {
+                    visitor.visit_expr_mut(case_expr)?;
+                    visitor.visit_block_mut(case_block)?;
+                }
+                if let Some(default_block) = &mut switch_stmt.default {
+                    visitor.visit_block_mut(default_block)?;
+                }
+            }
             StatementKind::Call(call_expr) => {
                 visitor.visit_expr_mut(&mut call_expr.base)?;
                 for arg in &mut call_expr.arguments {
                     visitor.visit_expr_mut(arg)?;
                 }
             }
+            StatementKind::Break | StatementKind::Continue => {}
         }
         ControlFlow::Continue(())
     }

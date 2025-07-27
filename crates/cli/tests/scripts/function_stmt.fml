@@ -7,3 +7,5 @@ function my_fun_1() {
 function my_fun_2() {
 	return 2;
 }
+
+return true;

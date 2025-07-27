@@ -17,3 +17,4 @@ assert(a() == 1);
 assert(b() == 2);
 assert(c() == 3);
 
+return true;

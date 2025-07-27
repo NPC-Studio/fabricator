@@ -6,3 +6,5 @@ if i == 1 {
 }
 
 assert(j == 2);
+
+return true;

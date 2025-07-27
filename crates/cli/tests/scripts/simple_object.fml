@@ -5,3 +5,5 @@ var obj = {
 
 assert(obj.a == 1);
 assert(obj.b == 2);
+
+return true;

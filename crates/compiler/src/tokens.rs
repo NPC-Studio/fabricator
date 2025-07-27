@@ -67,7 +67,9 @@ pub enum TokenKind<S> {
 
     Switch,
     Case,
+    Default,
     Break,
+    Continue,
     If,
     Else,
     For,
@@ -147,7 +149,9 @@ impl<S> TokenKind<S> {
             TokenKind::Static => TokenKind::Static,
             TokenKind::Switch => TokenKind::Switch,
             TokenKind::Case => TokenKind::Case,
+            TokenKind::Default => TokenKind::Default,
             TokenKind::Break => TokenKind::Break,
+            TokenKind::Continue => TokenKind::Continue,
             TokenKind::If => TokenKind::If,
             TokenKind::Else => TokenKind::Else,
             TokenKind::For => TokenKind::For,
@@ -224,7 +228,9 @@ impl<S> TokenKind<S> {
             TokenKind::Static => TokenKind::Static,
             TokenKind::Switch => TokenKind::Switch,
             TokenKind::Case => TokenKind::Case,
+            TokenKind::Default => TokenKind::Default,
             TokenKind::Break => TokenKind::Break,
+            TokenKind::Continue => TokenKind::Continue,
             TokenKind::If => TokenKind::If,
             TokenKind::Else => TokenKind::Else,
             TokenKind::For => TokenKind::For,
@@ -246,6 +252,10 @@ impl<S> TokenKind<S> {
             TokenKind::Identifier(i) => TokenKind::Identifier(map(i)),
             TokenKind::String(s) => TokenKind::String(map(s)),
         }
+    }
+
+    pub fn as_unit_string(&self) -> TokenKind<()> {
+        self.as_string_ref().map_string(|_| ())
     }
 }
 
@@ -354,8 +364,12 @@ impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
             (TokenKind::Switch, _) => false,
             (TokenKind::Case, TokenKind::Case) => true,
             (TokenKind::Case, _) => false,
+            (TokenKind::Default, TokenKind::Default) => true,
+            (TokenKind::Default, _) => false,
             (TokenKind::Break, TokenKind::Break) => true,
             (TokenKind::Break, _) => false,
+            (TokenKind::Continue, TokenKind::Continue) => true,
+            (TokenKind::Continue, _) => false,
             (TokenKind::If, TokenKind::If) => true,
             (TokenKind::If, _) => false,
             (TokenKind::Else, TokenKind::Else) => true,
