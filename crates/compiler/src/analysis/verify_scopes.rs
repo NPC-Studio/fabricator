@@ -231,8 +231,8 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let troo = instructions.insert(ir::Instruction::Constant(Constant::Boolean(true)));
-        block_a.instructions.push(troo);
+        let true_ = instructions.insert(ir::Instruction::Constant(Constant::Boolean(true)));
+        block_a.instructions.push(true_);
         let this = instructions.insert(ir::Instruction::NewObject);
         block_a.instructions.push(this);
         block_a
@@ -240,7 +240,7 @@ mod tests {
             .push(instructions.insert(ir::Instruction::OpenThisScope(scope, this)));
 
         block_a.exit = ir::Exit::Branch {
-            cond: troo,
+            cond: true_,
             if_false: block_b_id,
             if_true: block_a_id,
         };

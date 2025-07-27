@@ -26,7 +26,7 @@ pub fn create_state(
     project: &Project,
     config_name: &str,
 ) -> Result<State, Error> {
-    // TODO: Hard code tick rate, normally configured by 'options/main/options_main.yy'.
+    // TODO: Hard coded tick rate, normally configured by 'options/main/options_main.yy'.
     const TICK_RATE: f64 = 60.0;
 
     let mut sprites = IdMap::<SpriteId, Sprite>::new();

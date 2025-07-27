@@ -330,10 +330,10 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                 continue;
             }
 
-            let makro = &self.macros[macro_index];
+            let macro_ = &self.macros[macro_index];
 
             let mut has_unevaluated_dependency = false;
-            for token in &makro.tokens {
+            for token in &macro_.tokens {
                 if let TokenKind::Identifier(ident) = &token.kind {
                     if let Some(ind) = self
                         .macro_dict
@@ -376,8 +376,8 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
         for macro_index in eval_order {
             let mut expanded_tokens = Vec::new();
-            let makro = &self.macros[macro_index];
-            for token in &makro.tokens {
+            let macro_ = &self.macros[macro_index];
+            for token in &macro_.tokens {
                 let ind = match &token.kind {
                     TokenKind::Identifier(ident) => self
                         .macro_dict
@@ -401,10 +401,10 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             resolved_macros.insert(
                 macro_index,
                 Macro {
-                    name: makro.name.clone(),
-                    config: makro.config.clone(),
+                    name: macro_.name.clone(),
+                    config: macro_.config.clone(),
                     tokens: expanded_tokens,
-                    span: makro.span,
+                    span: macro_.span,
                 },
             );
         }

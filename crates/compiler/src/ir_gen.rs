@@ -173,8 +173,8 @@ struct FunctionCompiler<'a, S> {
 
     function: ir::Function<S>,
     current_block: ir::BlockId,
-    // If we have a final block to jump to, jump here instead of returning. Disallows arbitrary
-    // return values.
+    // If we have a final block to jump to, jump here instead of returning. Setting this disallows
+    // return statements with values.
     final_block: Option<ir::BlockId>,
 
     // Variable names declared in the current scope.
@@ -415,13 +415,13 @@ where
             }
         }
 
-        let troo = self.push_instruction(
+        let true_ = self.push_instruction(
             Span::null(),
             ir::Instruction::Constant(Constant::Boolean(true)),
         );
         self.push_instruction(
             Span::null(),
-            ir::Instruction::SetVariable(is_initialized, troo),
+            ir::Instruction::SetVariable(is_initialized, true_),
         );
 
         self.function.blocks[init_block].exit = ir::Exit::Jump(successor_block);
@@ -470,8 +470,17 @@ where
             self.push_scope();
 
             for stmt in &main_block.statements {
-                if !matches!(&*stmt.kind, ast::StatementKind::Static(_)) {
-                    self.statement(stmt)?;
+                match &*stmt.kind {
+                    ast::StatementKind::Static(declaration) => {
+                        // Declare a pseudo-variable when encountering the static statement.
+                        // This variable's sole purpose is to prevent accessing a constructor
+                        // `static`, which *looks* like a variable but is not usable as a variable
+                        // in expressions.
+                        self.declare_var(declaration.name.clone(), None);
+                    }
+                    _ => {
+                        self.statement(stmt)?;
+                    }
                 }
             }
 
@@ -595,9 +604,9 @@ where
 
             let value = self.commit_expression(&static_decl.value)?;
             self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
-            let troo =
+            let true_ =
                 self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
-            self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, troo));
+            self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
             self.function.blocks[init_block].exit = ir::Exit::Jump(successor);
 
             self.current_block = successor;
@@ -1121,6 +1130,8 @@ where
         }
     }
 
+    // Declare a variable in the current scope. If the IR variable is `None`, declares a
+    // pseudo-variable.
     fn declare_var(&mut self, vname: S, var: Option<ir::Variable<S>>) -> Option<ir::VarId> {
         let in_scope = !self.scopes.last_mut().unwrap().insert(vname.clone());
         let variable_stack = self.variables.entry(vname).or_default();

@@ -67,7 +67,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(project: Project, config: &str) -> Result<Self, Error> {
-        // TODO: Hard code texture page size normally configured by
+        // TODO: Hard coded texture page size normally configured by
         // 'options/<platform>/options_<platform>.yy'.
         const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
 

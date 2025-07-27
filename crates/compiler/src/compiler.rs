@@ -325,7 +325,7 @@ impl<'gc> Compiler<'gc> {
         let resolved_macros = match macros.clone().resolve(Some(config.as_str())) {
             Ok(macros) => macros,
             Err(err) => {
-                let makro = macros.get(err.0).unwrap();
+                let macro_ = macros.get(err.0).unwrap();
                 let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
                     Ok(i) => i,
                     Err(i) => i
@@ -333,7 +333,7 @@ impl<'gc> Compiler<'gc> {
                         .expect("pre-existing macros should not have recursion errors"),
                 };
                 let chunk = &chunks[chunk_index];
-                let line_number = chunk.line_numbers.line(makro.span.start());
+                let line_number = chunk.line_numbers.line(macro_.span.start());
                 return Err(CompileError {
                     kind: CompileErrorKind::RecursiveMacro(err),
                     chunk_name: chunk.name.clone(),
