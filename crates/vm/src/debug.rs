@@ -24,12 +24,14 @@ impl Span {
         Self { start, end }
     }
 
-    /// Returns an empty span with both `start` and `end` set to usize::MAX.
+    /// Returns a maximally empty span with `start` set to `usize::MAX` and `end` set to `0`.
+    ///
+    /// Combining any span with a null span will result in the combined span.
     #[must_use]
     pub fn null() -> Self {
         Self {
             start: usize::MAX,
-            end: usize::MAX,
+            end: 0,
         }
     }
 

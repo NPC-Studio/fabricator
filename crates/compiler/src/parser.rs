@@ -106,6 +106,7 @@ where
         stop: impl Fn(&TokenKind<S>) -> bool,
     ) -> Result<ast::Block<S>, ParseError> {
         let mut statements = Vec::new();
+        let mut span = Span::null();
         loop {
             self.look_ahead(1);
             let next = self.peek(0);
@@ -118,10 +119,12 @@ where
                 continue;
             }
 
-            statements.push(self.parse_statement()?);
+            let stmt = self.parse_statement()?;
+            span = span.combine(stmt.span);
+            statements.push(stmt);
         }
 
-        Ok(ast::Block { statements })
+        Ok(ast::Block { statements, span })
     }
 
     /// Parse a statement including any trailing semicolon, if it is expected.
@@ -373,8 +376,8 @@ where
         let mut span = self.parse_token(decl_token)?;
         let mut decls = Vec::new();
         loop {
-            let (name, name_span) = self.parse_identifier()?;
-            span = span.combine(name_span);
+            let name = self.parse_identifier()?;
+            span = span.combine(name.span);
 
             self.look_ahead(1);
             let value;
@@ -404,7 +407,7 @@ where
         &mut self,
     ) -> Result<(ast::FunctionStatement<S>, Span), ParseError> {
         let mut span = self.parse_token(TokenKind::Function)?;
-        let name = self.parse_identifier()?.0;
+        let name = self.parse_identifier()?;
         let parameters = self.parse_parameter_list()?.0;
 
         self.look_ahead(1);
@@ -423,7 +426,7 @@ where
                 });
             };
 
-            inherit = Some((expr.span, call_expr));
+            inherit = Some(call_expr);
         } else {
             inherit = None;
         }
@@ -461,7 +464,7 @@ where
 
     fn parse_enum_statement(&mut self) -> Result<(ast::EnumStatement<S>, Span), ParseError> {
         let mut span = self.parse_token(TokenKind::Enum)?;
-        let name = self.parse_identifier()?.0;
+        let name = self.parse_identifier()?;
 
         let mut variants = Vec::new();
 
@@ -469,7 +472,7 @@ where
             TokenKind::LeftBrace,
             TokenKind::RightBrace,
             |this| {
-                let key = this.parse_identifier()?.0;
+                let key = this.parse_identifier()?;
 
                 this.look_ahead(1);
                 let value = if matches!(this.peek(0).kind, TokenKind::Equal) {
@@ -516,16 +519,23 @@ where
 
             match &next.kind {
                 TokenKind::Case => {
+                    let mut span = next.span;
+
                     self.advance(1);
-                    let condition = self.parse_expression()?;
+                    let compare = self.parse_expression()?;
                     self.parse_token(TokenKind::Colon)?;
-                    let block = self.parse_block(|t| {
+                    let body = self.parse_block(|t| {
                         matches!(
                             t,
                             TokenKind::Case | TokenKind::Default | TokenKind::RightBrace
                         )
                     })?;
-                    cases.push((condition, block));
+                    span = span.combine(body.span);
+                    cases.push(ast::SwitchCase {
+                        compare,
+                        body,
+                        span,
+                    });
                 }
                 TokenKind::Default => {
                     self.advance(1);
@@ -671,18 +681,19 @@ where
                     )?);
 
                     expr = ast::Expression {
-                        kind: Box::new(ast::ExpressionKind::Call(ast::CallExpr {
+                        kind: Box::new(ast::ExpressionKind::Call(ast::Call {
                             base: expr,
                             arguments,
                             has_new: false,
+                            span,
                         })),
                         span,
                     };
                 }
                 TokenKind::Dot => {
                     self.advance(1);
-                    let (field, fspan) = self.parse_identifier()?;
-                    let span = expr.span.combine(fspan);
+                    let field = self.parse_identifier()?;
+                    let span = expr.span.combine(field.span);
                     expr = ast::Expression {
                         kind: Box::new(ast::ExpressionKind::Field(ast::FieldExpr {
                             base: expr,
@@ -756,7 +767,7 @@ where
                 })
             }
             TokenKind::Identifier(n) => Ok(ast::Expression {
-                kind: Box::new(ast::ExpressionKind::Name(n)),
+                kind: Box::new(ast::ExpressionKind::Ident(ast::Ident::new(n, span))),
                 span,
             }),
             TokenKind::Global => Ok(ast::Expression {
@@ -923,9 +934,9 @@ where
                 }
             }
             TokenKind::LeftBrace => {
-                let (pairs, span) = self.parse_object()?;
+                let (fields, span) = self.parse_object()?;
                 Ok(ast::Expression {
-                    kind: Box::new(ast::ExpressionKind::Object(pairs)),
+                    kind: Box::new(ast::ExpressionKind::Object(fields)),
                     span,
                 })
             }
@@ -940,21 +951,26 @@ where
         }
     }
 
-    fn parse_object(&mut self) -> Result<(Vec<(S, ast::Expression<S>)>, Span), ParseError> {
-        let mut entries = Vec::new();
+    fn parse_object(&mut self) -> Result<(Vec<ast::Field<S>>, Span), ParseError> {
+        let mut fields = Vec::new();
 
         let span =
             self.parse_comma_separated_list(TokenKind::LeftBrace, TokenKind::RightBrace, |this| {
-                let key = this.parse_identifier()?.0;
-                this.parse_token(TokenKind::Colon)?;
-                let value = this.parse_expression()?;
+                let key = this.parse_identifier()?;
 
-                entries.push((key, value));
+                this.look_ahead(1);
+                if matches!(this.peek(0).kind, TokenKind::Colon) {
+                    this.parse_token(TokenKind::Colon)?;
+                    let value = this.parse_expression()?;
+                    fields.push(ast::Field::Value(key, value));
+                } else {
+                    fields.push(ast::Field::Init(key));
+                }
 
                 Ok(())
             })?;
 
-        Ok((entries, span))
+        Ok((fields, span))
     }
 
     fn parse_array(&mut self) -> Result<(Vec<ast::Expression<S>>, Span), ParseError> {
@@ -976,7 +992,7 @@ where
         let mut parameters = Vec::new();
         let span =
             self.parse_comma_separated_list(TokenKind::LeftParen, TokenKind::RightParen, |this| {
-                let name = this.parse_identifier()?.0;
+                let name = this.parse_identifier()?;
 
                 this.look_ahead(1);
                 let default = if matches!(this.peek(0).kind, TokenKind::Equal) {
@@ -1040,10 +1056,10 @@ where
         Ok(span)
     }
 
-    fn parse_identifier(&mut self) -> Result<(S, Span), ParseError> {
+    fn parse_identifier(&mut self) -> Result<ast::Ident<S>, ParseError> {
         let Token { kind, span } = self.next();
         match kind {
-            TokenKind::Identifier(ident) => Ok((ident, span)),
+            TokenKind::Identifier(ident) => Ok(ast::Ident { inner: ident, span }),
             t => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&t),
@@ -1128,7 +1144,7 @@ where
 
 fn get_mutable_expr<S>(expr: ast::Expression<S>) -> Result<ast::MutableExpr<S>, ParseError> {
     match *expr.kind {
-        ast::ExpressionKind::Name(name) => Ok(ast::MutableExpr::Name(name)),
+        ast::ExpressionKind::Ident(name) => Ok(ast::MutableExpr::Ident(name)),
         ast::ExpressionKind::Field(field_expr) => Ok(ast::MutableExpr::Field(field_expr)),
         ast::ExpressionKind::Index(index_expr) => Ok(ast::MutableExpr::Index(index_expr)),
         ast::ExpressionKind::Group(expr) => get_mutable_expr(expr),

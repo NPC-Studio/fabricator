@@ -151,14 +151,7 @@ impl IrGenSettings {
                     span: func_span,
                 });
             }
-            compiler.constructor(
-                interner,
-                func_stmt
-                    .inherit
-                    .as_ref()
-                    .map(|(span, inherit)| (*span, inherit)),
-                &func_stmt.body,
-            )?;
+            compiler.constructor(interner, func_stmt.inherit.as_ref(), &func_stmt.body)?;
         } else {
             compiler.block(&func_stmt.body)?;
         }
@@ -209,12 +202,12 @@ struct FunctionCompiler<'a, S> {
     continue_target_stack: Vec<ir::BlockId>,
 
     // Variable names declared in the current scope.
-    scopes: Vec<HashSet<S>>,
+    scopes: Vec<HashSet<ast::Ident<S>>>,
 
     // Stack of declared variables for each variable name.
     //
     // Each variable declared in a scope will push an entry for the corresponding variable here.
-    variables: HashMap<S, Vec<VarDecl>>,
+    variables: HashMap<ast::Ident<S>, Vec<VarDecl>>,
 }
 
 impl<'a, S> FunctionCompiler<'a, S>
@@ -308,18 +301,18 @@ where
 
                 self.start_new_block(provided_block);
                 let pop_arg_inst =
-                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
+                    self.push_instruction(param.name.span, ir::Instruction::Argument(param_index));
                 self.push_instruction(
-                    Span::null(),
+                    param.name.span,
                     ir::Instruction::SetVariable(arg_var, pop_arg_inst),
                 );
                 self.end_current_block(ir::Exit::Jump(successor_block));
 
                 self.start_new_block(not_provided_block);
                 let def_value_inst =
-                    self.push_instruction(Span::null(), ir::Instruction::Constant(def_value));
+                    self.push_instruction(default.span, ir::Instruction::Constant(def_value));
                 self.push_instruction(
-                    Span::null(),
+                    default.span,
                     ir::Instruction::SetVariable(arg_var, def_value_inst),
                 );
                 self.end_current_block(ir::Exit::Jump(successor_block));
@@ -327,8 +320,11 @@ where
                 self.start_new_block(successor_block);
             } else {
                 let pop_arg =
-                    self.push_instruction(Span::null(), ir::Instruction::Argument(param_index));
-                self.push_instruction(Span::null(), ir::Instruction::SetVariable(arg_var, pop_arg));
+                    self.push_instruction(param.name.span, ir::Instruction::Argument(param_index));
+                self.push_instruction(
+                    param.name.span,
+                    ir::Instruction::SetVariable(arg_var, pop_arg),
+                );
             };
         }
 
@@ -338,7 +334,7 @@ where
     fn constructor(
         &mut self,
         mut interner: impl StringInterner<String = S>,
-        inherit: Option<(Span, &ast::CallExpr<S>)>,
+        inherit: Option<&ast::Call<S>>,
         main_block: &ast::Block<S>,
     ) -> Result<(), IrGenError> {
         self.function.is_constructor = true;
@@ -365,7 +361,7 @@ where
         let final_block = self.new_block();
         self.final_block = Some(final_block);
 
-        let parent_func = if let Some((_, inherit)) = inherit {
+        let parent_func = if let Some(inherit) = inherit {
             Some(self.expression(&inherit.base)?)
         } else {
             None
@@ -429,7 +425,7 @@ where
 
                     let key = self.push_instruction(
                         stmt.span,
-                        ir::Instruction::Constant(Constant::String(decl.name.clone())),
+                        ir::Instruction::Constant(Constant::String(decl.name.inner.clone())),
                     );
                     let value =
                         self.expression(decl.value.as_ref().ok_or_else(|| IrGenError {
@@ -463,7 +459,7 @@ where
         self.start_new_block(successor_block);
 
         let this = if let Some(parent_func) = parent_func {
-            let Some((inherit_span, inherit)) = inherit else {
+            let Some(inherit) = inherit else {
                 unreachable!();
             };
 
@@ -473,7 +469,7 @@ where
             }
 
             self.push_instruction(
-                inherit_span,
+                inherit.span,
                 ir::Instruction::Call {
                     func: parent_func,
                     this: None,
@@ -948,14 +944,14 @@ where
         let successor_block = self.new_block();
         self.push_break_target(successor_block);
 
-        for (expr, body) in &switch_stmt.cases {
-            let expr = self.expression(expr)?;
+        for case in &switch_stmt.cases {
+            let compare = self.expression(&case.compare)?;
             let is_equal = self.push_instruction(
-                Span::null(),
+                case.compare.span,
                 ir::Instruction::BinOp {
-                    left: expr,
+                    left: target,
                     op: ir::BinOp::Equal,
-                    right: target,
+                    right: compare,
                 },
             );
 
@@ -969,7 +965,7 @@ where
             });
 
             self.start_new_block(body_block);
-            self.block(body)?;
+            self.block(&case.body)?;
             if self.current_block.is_some() {
                 self.end_current_block(ir::Exit::Jump(successor_block));
             }
@@ -1020,20 +1016,7 @@ where
             ast::ExpressionKind::Constant(c) => {
                 self.push_instruction(span, ir::Instruction::Constant(c.clone()))
             }
-            ast::ExpressionKind::Name(s) => {
-                if let Some(var_id) = self.get_var(span, s)? {
-                    self.push_instruction(span, ir::Instruction::GetVariable(var_id))
-                } else if (self.find_magic)(s).is_some() {
-                    self.push_instruction(span, ir::Instruction::GetMagic(s.clone()))
-                } else {
-                    let this = self.push_instruction(span, ir::Instruction::This);
-                    let key = self.push_instruction(
-                        span,
-                        ir::Instruction::Constant(Constant::String(s.clone())),
-                    );
-                    self.push_instruction(span, ir::Instruction::GetField { object: this, key })
-                }
-            }
+            ast::ExpressionKind::Ident(s) => self.ident_expr(span, s)?,
             ast::ExpressionKind::Global => self.push_instruction(span, ir::Instruction::Globals),
             ast::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
             ast::ExpressionKind::Other => self.push_instruction(span, ir::Instruction::Other),
@@ -1041,33 +1024,53 @@ where
             ast::ExpressionKind::Object(fields) => {
                 let object = self.push_instruction(span, ir::Instruction::NewObject);
 
-                for (field, value) in fields {
-                    let this_scope =
-                        if matches!(value.kind.as_ref(), ast::ExpressionKind::Function(_)) {
-                            // Within a struct literal, closures always bind `self` to the struct currently
-                            // being created.
-                            let this_scope = self.function.this_scopes.insert(());
+                for field in fields {
+                    match field {
+                        ast::Field::Value(name, value) => {
+                            let this_scope = if matches!(
+                                value.kind.as_ref(),
+                                ast::ExpressionKind::Function(_)
+                            ) {
+                                // Within a struct literal, closures always bind `self` to the
+                                // struct currently being created.
+                                let this_scope = self.function.this_scopes.insert(());
+                                self.push_instruction(
+                                    span,
+                                    ir::Instruction::OpenThisScope(this_scope, object),
+                                );
+                                Some(this_scope)
+                            } else {
+                                None
+                            };
+
+                            let value = self.expression(value)?;
                             self.push_instruction(
                                 span,
-                                ir::Instruction::OpenThisScope(this_scope, object),
+                                ir::Instruction::SetFieldConst {
+                                    object,
+                                    key: Constant::String(name.inner.clone()),
+                                    value,
+                                },
                             );
-                            Some(this_scope)
-                        } else {
-                            None
-                        };
 
-                    let value = self.expression(value)?;
-                    self.push_instruction(
-                        span,
-                        ir::Instruction::SetFieldConst {
-                            object,
-                            key: Constant::String(field.clone()),
-                            value,
-                        },
-                    );
-
-                    if let Some(this_scope) = this_scope {
-                        self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
+                            if let Some(this_scope) = this_scope {
+                                self.push_instruction(
+                                    span,
+                                    ir::Instruction::CloseThisScope(this_scope),
+                                );
+                            }
+                        }
+                        ast::Field::Init(name) => {
+                            let value = self.ident_expr(name.span, name)?;
+                            self.push_instruction(
+                                span,
+                                ir::Instruction::SetFieldConst {
+                                    object,
+                                    key: Constant::String(name.inner.clone()),
+                                    value,
+                                },
+                            );
+                        }
                     }
                 }
 
@@ -1273,7 +1276,7 @@ where
                 let base = self.expression(&field_expr.base)?;
                 let field = self.push_instruction(
                     span,
-                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                    ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
                 );
                 self.push_instruction(
                     span,
@@ -1294,7 +1297,7 @@ where
     fn call_expr(
         &mut self,
         span: Span,
-        func: &ast::CallExpr<S>,
+        func: &ast::Call<S>,
         return_value: bool,
     ) -> Result<ir::InstId, IrGenError> {
         enum Call {
@@ -1311,7 +1314,7 @@ where
             let object = self.expression(&field_expr.base)?;
             let key = self.push_instruction(
                 func.base.span,
-                ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
             );
             let func =
                 self.push_instruction(func.base.span, ir::Instruction::GetField { object, key });
@@ -1382,6 +1385,21 @@ where
         self.push_instruction(span, ir::Instruction::CloseVariable(res_var));
 
         Ok(res)
+    }
+
+    fn ident_expr(&mut self, span: Span, ident: &ast::Ident<S>) -> Result<ir::InstId, IrGenError> {
+        Ok(if let Some(var_id) = self.get_var(span, ident)? {
+            self.push_instruction(span, ir::Instruction::GetVariable(var_id))
+        } else if (self.find_magic)(ident).is_some() {
+            self.push_instruction(span, ir::Instruction::GetMagic(ident.inner.clone()))
+        } else {
+            let this = self.push_instruction(span, ir::Instruction::This);
+            let key = self.push_instruction(
+                span,
+                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+            );
+            self.push_instruction(span, ir::Instruction::GetField { object: this, key })
+        })
     }
 
     fn short_circuit_and(
@@ -1496,10 +1514,10 @@ where
         target: &ast::MutableExpr<S>,
     ) -> Result<MutableTarget<S>, IrGenError> {
         Ok(match target {
-            ast::MutableExpr::Name(name) => {
-                if let Some(var_id) = self.get_var(span, name)? {
+            ast::MutableExpr::Ident(ident) => {
+                if let Some(var_id) = self.get_var(span, ident)? {
                     MutableTarget::Var(var_id)
-                } else if let Some(mode) = (self.find_magic)(name) {
+                } else if let Some(mode) = (self.find_magic)(ident) {
                     if mode == MagicMode::ReadOnly {
                         return Err(IrGenError {
                             kind: IrGenErrorKind::ReadOnlyMagic,
@@ -1507,11 +1525,11 @@ where
                         });
                     }
 
-                    MutableTarget::Magic(name.clone())
+                    MutableTarget::Magic(ident.inner.clone())
                 } else {
                     let key = self.push_instruction(
                         span,
-                        ir::Instruction::Constant(Constant::String(name.clone())),
+                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
                     );
                     MutableTarget::This { key }
                 }
@@ -1520,7 +1538,7 @@ where
                 let object = self.expression(&field_expr.base)?;
                 let key = self.push_instruction(
                     span,
-                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                    ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
                 );
                 MutableTarget::Field { object, key }
             }
@@ -1619,6 +1637,7 @@ where
         if self.settings.lexical_scoping {
             if let Some(out_of_scope) = self.scopes.pop() {
                 for vname in out_of_scope {
+                    let vname_span = vname.span;
                     let hash_map::Entry::Occupied(mut entry) = self.variables.entry(vname) else {
                         unreachable!();
                     };
@@ -1631,7 +1650,7 @@ where
                             && self.current_block.is_some()
                         {
                             self.push_instruction(
-                                Span::null(),
+                                vname_span,
                                 ir::Instruction::CloseVariable(var_id),
                             );
                         }
@@ -1643,7 +1662,11 @@ where
 
     // Declare a variable in the current scope. If the IR variable is `None`, declares a
     // pseudo-variable.
-    fn declare_var(&mut self, vname: S, var: Option<ir::Variable<S>>) -> Option<ir::VarId> {
+    fn declare_var(
+        &mut self,
+        vname: ast::Ident<S>,
+        var: Option<ir::Variable<S>>,
+    ) -> Option<ir::VarId> {
         let in_scope = !self.scopes.last_mut().unwrap().insert(vname.clone());
         let variable_stack = self.variables.entry(vname).or_default();
 

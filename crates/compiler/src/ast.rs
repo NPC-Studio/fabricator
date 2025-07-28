@@ -1,4 +1,9 @@
-use std::{fmt::Debug, ops::ControlFlow};
+use std::{
+    borrow,
+    fmt::Debug,
+    hash,
+    ops::{self, ControlFlow},
+};
 
 use fabricator_vm::Span;
 
@@ -7,6 +12,7 @@ use crate::constant::Constant;
 #[derive(Debug, Clone)]
 pub struct Block<S> {
     pub statements: Vec<Statement<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +35,7 @@ pub enum StatementKind<S> {
     While(WhileStatement<S>),
     Repeat(Statement<S>),
     Switch(SwitchStatement<S>),
-    Call(CallExpr<S>),
+    Call(Call<S>),
     Prefix(MutationOp, MutableExpr<S>),
     Postfix(MutableExpr<S>, MutationOp),
     Break,
@@ -38,22 +44,22 @@ pub enum StatementKind<S> {
 
 #[derive(Debug, Clone)]
 pub struct EnumStatement<S> {
-    pub name: S,
-    pub variants: Vec<(S, Option<Expression<S>>)>,
+    pub name: Ident<S>,
+    pub variants: Vec<(Ident<S>, Option<Expression<S>>)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionStatement<S> {
-    pub name: S,
+    pub name: Ident<S>,
     pub is_constructor: bool,
-    pub inherit: Option<(Span, CallExpr<S>)>,
+    pub inherit: Option<Call<S>>,
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Declaration<S> {
-    pub name: S,
+    pub name: Ident<S>,
     pub value: Option<Expression<S>>,
 }
 
@@ -66,7 +72,7 @@ pub struct AssignmentStatement<S> {
 
 #[derive(Debug, Clone)]
 pub enum MutableExpr<S> {
-    Name(S),
+    Ident(Ident<S>),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
 }
@@ -100,8 +106,15 @@ pub struct WhileStatement<S> {
 #[derive(Debug, Clone)]
 pub struct SwitchStatement<S> {
     pub target: Expression<S>,
-    pub cases: Vec<(Expression<S>, Block<S>)>,
+    pub cases: Vec<SwitchCase<S>>,
     pub default: Option<Block<S>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchCase<S> {
+    pub compare: Expression<S>,
+    pub body: Block<S>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -110,9 +123,9 @@ pub enum ExpressionKind<S> {
     This,
     Other,
     Constant(Constant<S>),
-    Name(S),
+    Ident(Ident<S>),
     Group(Expression<S>),
-    Object(Vec<(S, Expression<S>)>),
+    Object(Vec<Field<S>>),
     Array(Vec<Expression<S>>),
     Unary(UnaryOp, Expression<S>),
     Prefix(MutationOp, MutableExpr<S>),
@@ -120,7 +133,7 @@ pub enum ExpressionKind<S> {
     Binary(Expression<S>, BinaryOp, Expression<S>),
     Ternary(TernaryExpr<S>),
     Function(FunctionExpr<S>),
-    Call(CallExpr<S>),
+    Call(Call<S>),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
 }
@@ -145,16 +158,9 @@ pub struct FunctionExpr<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct CallExpr<S> {
-    pub base: Expression<S>,
-    pub arguments: Vec<Expression<S>>,
-    pub has_new: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct FieldExpr<S> {
     pub base: Expression<S>,
-    pub field: S,
+    pub field: Ident<S>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,9 +171,63 @@ pub struct IndexExpr<S> {
 }
 
 #[derive(Debug, Clone)]
+pub struct Call<S> {
+    pub base: Expression<S>,
+    pub arguments: Vec<Expression<S>>,
+    pub has_new: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct Parameter<S> {
-    pub name: S,
+    pub name: Ident<S>,
     pub default: Option<Expression<S>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Field<S> {
+    Value(Ident<S>, Expression<S>),
+    Init(Ident<S>),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Ident<S> {
+    pub inner: S,
+    pub span: Span,
+}
+
+impl<S> Ident<S> {
+    pub fn new(inner: S, span: Span) -> Self {
+        Self { inner, span }
+    }
+}
+
+impl<S: PartialEq> PartialEq for Ident<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.eq(&other.inner)
+    }
+}
+
+impl<S: Eq> Eq for Ident<S> {}
+
+impl<S: hash::Hash> hash::Hash for Ident<S> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.inner.hash(state);
+    }
+}
+
+impl<S> ops::Deref for Ident<S> {
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<S> borrow::Borrow<S> for Ident<S> {
+    fn borrow(&self) -> &S {
+        &self.inner
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -382,9 +442,9 @@ impl<S> Expression<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self.kind.as_ref() {
             ExpressionKind::Group(expr) => visitor.visit_expr(expr)?,
-            ExpressionKind::Object(items) => {
-                for (_, item) in items {
-                    visitor.visit_expr(item)?;
+            ExpressionKind::Object(fields) => {
+                for field in fields {
+                    field.walk(visitor)?;
                 }
             }
             ExpressionKind::Array(items) => {
@@ -414,7 +474,7 @@ impl<S> Expression<S> {
             ExpressionKind::Index(index_expr) => {
                 index_expr.walk(visitor)?;
             }
-            ExpressionKind::Name(_)
+            ExpressionKind::Ident(_)
             | ExpressionKind::Global
             | ExpressionKind::This
             | ExpressionKind::Other
@@ -426,9 +486,9 @@ impl<S> Expression<S> {
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self.kind.as_mut() {
             ExpressionKind::Group(expr) => visitor.visit_expr_mut(expr)?,
-            ExpressionKind::Object(items) => {
-                for (_, item) in items {
-                    visitor.visit_expr_mut(item)?;
+            ExpressionKind::Object(fields) => {
+                for field in fields {
+                    field.walk_mut(visitor)?;
                 }
             }
             ExpressionKind::Array(items) => {
@@ -458,7 +518,7 @@ impl<S> Expression<S> {
             ExpressionKind::Index(index_expr) => {
                 index_expr.walk_mut(visitor)?;
             }
-            ExpressionKind::Name(_)
+            ExpressionKind::Ident(_)
             | ExpressionKind::Global
             | ExpressionKind::This
             | ExpressionKind::Other
@@ -524,8 +584,8 @@ impl<S> EnumStatement<S> {
 
 impl<S> FunctionStatement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        if let Some((_, expr)) = &self.inherit {
-            expr.walk(visitor)?;
+        if let Some(call) = &self.inherit {
+            call.walk(visitor)?;
         }
         for parameter in &self.parameters {
             parameter.walk(visitor)?;
@@ -535,8 +595,8 @@ impl<S> FunctionStatement<S> {
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        if let Some((_, expr)) = &mut self.inherit {
-            expr.walk_mut(visitor)?;
+        if let Some(call) = &mut self.inherit {
+            call.walk_mut(visitor)?;
         }
         for parameter in &mut self.parameters {
             parameter.walk_mut(visitor)?;
@@ -579,7 +639,7 @@ impl<S> AssignmentStatement<S> {
 impl<S> MutableExpr<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self {
-            MutableExpr::Name(_) => {}
+            MutableExpr::Ident(_) => {}
             MutableExpr::Field(field_expr) => {
                 visitor.visit_expr(&field_expr.base)?;
             }
@@ -593,7 +653,7 @@ impl<S> MutableExpr<S> {
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         match self {
-            MutableExpr::Name(_) => {}
+            MutableExpr::Ident(_) => {}
             MutableExpr::Field(field_expr) => {
                 visitor.visit_expr_mut(&mut field_expr.base)?;
             }
@@ -677,9 +737,8 @@ impl<S> WhileStatement<S> {
 impl<S> SwitchStatement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.target)?;
-        for (case_expr, case_block) in &self.cases {
-            visitor.visit_expr(case_expr)?;
-            visitor.visit_block(case_block)?;
+        for case in &self.cases {
+            case.walk(visitor)?;
         }
         if let Some(default_block) = &self.default {
             visitor.visit_block(default_block)?;
@@ -689,13 +748,26 @@ impl<S> SwitchStatement<S> {
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr_mut(&mut self.target)?;
-        for (case_expr, case_block) in &mut self.cases {
-            visitor.visit_expr_mut(case_expr)?;
-            visitor.visit_block_mut(case_block)?;
+        for case in &mut self.cases {
+            case.walk_mut(visitor)?;
         }
         if let Some(default_block) = &mut self.default {
             visitor.visit_block_mut(default_block)?;
         }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> SwitchCase<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.compare)?;
+        visitor.visit_block(&self.body)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.compare)?;
+        visitor.visit_block_mut(&mut self.body)?;
         ControlFlow::Continue(())
     }
 }
@@ -734,7 +806,7 @@ impl<S> FunctionExpr<S> {
     }
 }
 
-impl<S> CallExpr<S> {
+impl<S> Call<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.base)?;
         for arg in &self.arguments {
@@ -789,6 +861,24 @@ impl<S> Parameter<S> {
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         if let Some(default) = &mut self.default {
             visitor.visit_expr_mut(default)?;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> Field<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            Field::Value(_, expr) => visitor.visit_expr(expr)?,
+            Field::Init(_) => {}
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            Field::Value(_, expr) => visitor.visit_expr_mut(expr)?,
+            Field::Init(_) => {}
         }
         ControlFlow::Continue(())
     }

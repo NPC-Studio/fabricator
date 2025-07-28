@@ -115,7 +115,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             };
 
             let mut enum_ = Enum {
-                name: enum_stmt.name,
+                name: enum_stmt.name.inner,
                 span: stmt.span,
                 variants: HashMap::new(),
             };
@@ -128,11 +128,11 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
                     })?;
-                    enum_.variants.insert(name, value);
+                    enum_.variants.insert(name.inner, value);
                 } else {
                     enum_
                         .variants
-                        .insert(name, Constant::Integer(implicit_index));
+                        .insert(name.inner, Constant::Integer(implicit_index));
                     implicit_index += 1;
                 };
             }
@@ -185,7 +185,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 expr: &mut ast::Expression<S>,
             ) -> ControlFlow<Self::Break> {
                 match &mut *expr.kind {
-                    ast::ExpressionKind::Name(ident) => {
+                    ast::ExpressionKind::Ident(ident) => {
                         if let Some(&index) = self.0.dict.get(ident) {
                             return ControlFlow::Break(EnumEvaluationError {
                                 kind: EnumEvaluationErrorKind::BadVariant(index),
@@ -194,7 +194,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                         }
                     }
                     ast::ExpressionKind::Field(field_expr) => {
-                        if let ast::ExpressionKind::Name(ident) = &*field_expr.base.kind {
+                        if let ast::ExpressionKind::Ident(ident) = &*field_expr.base.kind {
                             if let Some(&index) = self.0.dict.get(ident) {
                                 if let Some(var) =
                                     self.0.enums[index].variants.get(&field_expr.field)

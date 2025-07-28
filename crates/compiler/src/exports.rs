@@ -89,7 +89,7 @@ impl<S: Clone + Eq + Hash> ExportSet<S> {
         for stmt in exports {
             let export = match *stmt.kind {
                 ast::StatementKind::Function(func_stmt) => Export {
-                    name: func_stmt.name.clone(),
+                    name: func_stmt.name.inner.clone(),
                     span: stmt.span,
                     kind: ExportKind::Function(func_stmt),
                 },

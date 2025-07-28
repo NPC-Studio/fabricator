@@ -1,0 +1,11 @@
+var b = 2;
+
+var s = {
+    a: 1,
+    b,
+};
+
+assert(s.a == 1);
+assert(s.b == 2);
+
+return true;
