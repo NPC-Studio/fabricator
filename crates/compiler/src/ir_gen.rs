@@ -180,7 +180,7 @@ enum MutableTarget<S> {
     },
     Index {
         array: ir::InstId,
-        index: ir::InstId,
+        indexes: Vec<ir::InstId>,
     },
     Magic(S),
 }
@@ -598,7 +598,7 @@ where
             ast::StatementKind::If(if_stmt) => self.if_statement(if_stmt),
             ast::StatementKind::For(for_stmt) => self.for_statement(for_stmt),
             ast::StatementKind::While(while_stmt) => self.while_statement(while_stmt),
-            ast::StatementKind::Repeat(stmt) => self.repeat_statement(stmt),
+            ast::StatementKind::Repeat(repeat_stmt) => self.repeat_statement(repeat_stmt),
             ast::StatementKind::Switch(switch_stmt) => self.switch_statement(switch_stmt),
             ast::StatementKind::Call(function_call) => {
                 let _ = self.call_expr(statement.span, function_call, false)?;
@@ -910,26 +910,72 @@ where
         Ok(())
     }
 
-    fn repeat_statement(&mut self, stmt: &ast::Statement<S>) -> Result<(), IrGenError> {
+    fn repeat_statement(
+        &mut self,
+        repeat_stmt: &ast::RepeatStatement<S>,
+    ) -> Result<(), IrGenError> {
+        let times = self.expression(&repeat_stmt.times)?;
+        let one = self.push_instruction(
+            Span::null(),
+            ir::Instruction::Constant(Constant::Integer(1)),
+        );
+
+        let dec_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(
+            repeat_stmt.times.span,
+            ir::Instruction::OpenVariable(dec_var),
+        );
+        self.push_instruction(
+            repeat_stmt.times.span,
+            ir::Instruction::SetVariable(dec_var, times),
+        );
+
+        let cond_block = self.new_block();
         let body_block = self.new_block();
         let successor_block = self.new_block();
 
         self.push_break_target(successor_block);
-        self.push_continue_target(body_block);
+        self.push_continue_target(cond_block);
 
-        self.end_current_block(ir::Exit::Jump(body_block));
+        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.start_new_block(cond_block);
+
+        let prev = self.push_instruction(
+            repeat_stmt.times.span,
+            ir::Instruction::GetVariable(dec_var),
+        );
+        self.end_current_block(ir::Exit::Branch {
+            cond: prev,
+            if_true: body_block,
+            if_false: successor_block,
+        });
+
         self.start_new_block(body_block);
+
+        let dec = self.push_instruction(
+            repeat_stmt.times.span,
+            ir::Instruction::BinOp {
+                left: prev,
+                op: ir::BinOp::Sub,
+                right: one,
+            },
+        );
+        self.push_instruction(
+            repeat_stmt.times.span,
+            ir::Instruction::SetVariable(dec_var, dec),
+        );
+
         self.push_scope();
-        self.statement(stmt)?;
+        self.statement(&repeat_stmt.body)?;
         self.pop_scope();
 
         if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(body_block));
+            self.end_current_block(ir::Exit::Jump(cond_block));
         }
 
         self.start_new_block(successor_block);
 
-        self.pop_continue_target(body_block);
+        self.pop_continue_target(cond_block);
         self.pop_break_target(successor_block);
 
         Ok(())
@@ -1288,8 +1334,17 @@ where
             }
             ast::ExpressionKind::Index(index_expr) => {
                 let base = self.expression(&index_expr.base)?;
-                let index = self.expression(&index_expr.index)?;
-                self.push_instruction(span, ir::Instruction::GetIndex { array: base, index })
+                let mut indexes = Vec::new();
+                for index in &index_expr.indexes {
+                    indexes.push(self.expression(index)?);
+                }
+                self.push_instruction(
+                    span,
+                    ir::Instruction::GetIndex {
+                        array: base,
+                        indexes,
+                    },
+                )
             }
         })
     }
@@ -1544,8 +1599,11 @@ where
             }
             ast::MutableExpr::Index(index_expr) => {
                 let array = self.expression(&index_expr.base)?;
-                let index = self.expression(&index_expr.index)?;
-                MutableTarget::Index { array, index }
+                let mut indexes = Vec::new();
+                for index in &index_expr.indexes {
+                    indexes.push(self.expression(index)?);
+                }
+                MutableTarget::Index { array, indexes }
             }
         })
     }
@@ -1558,7 +1616,7 @@ where
                 ir::Instruction::GetField { object: this, key }
             }
             MutableTarget::Field { object, key } => ir::Instruction::GetField { object, key },
-            MutableTarget::Index { array, index } => ir::Instruction::GetIndex { array, index },
+            MutableTarget::Index { array, indexes } => ir::Instruction::GetIndex { array, indexes },
             MutableTarget::Magic(name) => ir::Instruction::GetMagic(name),
         };
         self.push_instruction(span, inst)
@@ -1583,12 +1641,12 @@ where
             MutableTarget::Field { object, key } => {
                 self.push_instruction(span, ir::Instruction::SetField { object, key, value });
             }
-            MutableTarget::Index { array, index } => {
+            MutableTarget::Index { array, indexes } => {
                 self.push_instruction(
                     span,
                     ir::Instruction::SetIndex {
                         array,
-                        index,
+                        indexes,
                         value,
                     },
                 );

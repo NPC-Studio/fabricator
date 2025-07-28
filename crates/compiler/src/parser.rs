@@ -268,10 +268,11 @@ where
             TokenKind::Repeat => {
                 self.advance(1);
 
+                let times = self.parse_expression()?;
                 let body = self.parse_statement()?;
                 span = next_span.combine(body.span);
 
-                kind = ast::StatementKind::Repeat(body);
+                kind = ast::StatementKind::Repeat(ast::RepeatStatement { times, body });
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Switch => {
@@ -724,7 +725,20 @@ where
                         });
                     }
 
-                    let index = self.parse_expression()?;
+                    let mut indexes = Vec::new();
+
+                    loop {
+                        let index = self.parse_expression()?;
+                        indexes.push(index);
+
+                        self.look_ahead(1);
+                        if matches!(self.peek(0).kind, TokenKind::Comma) {
+                            self.advance(1);
+                        } else {
+                            break;
+                        }
+                    }
+
                     let span = expr
                         .span
                         .combine(self.parse_token(TokenKind::RightBracket)?);
@@ -732,7 +746,7 @@ where
                         kind: Box::new(ast::ExpressionKind::Index(ast::IndexExpr {
                             base: expr,
                             accessor_type,
-                            index,
+                            indexes,
                         })),
                         span,
                     };

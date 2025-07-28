@@ -210,8 +210,11 @@ impl RegisterAllocation {
                             }
 
                             if let Some(outgoing) = other_shadow_range.outgoing_range {
-                                if upsilon_reach.outgoing_reach[&block_id]
-                                    .iter()
+                                if upsilon_reach
+                                    .outgoing_reach
+                                    .get(&block_id)
+                                    .into_iter()
+                                    .flatten()
                                     .copied()
                                     .any(upsilon_source_conflict)
                                 {

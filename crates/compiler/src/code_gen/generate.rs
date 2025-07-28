@@ -317,29 +317,81 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::GetIndex { array, index } => {
-                    vm_instructions.push((
-                        Instruction::GetIndex {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                            array: reg_alloc.instruction_registers[array],
-                            index: reg_alloc.instruction_registers[index],
-                        },
-                        span,
-                    ));
+                ir::Instruction::GetIndex { array, ref indexes } => {
+                    if indexes.len() == 1 {
+                        vm_instructions.push((
+                            Instruction::GetIndex {
+                                dest: reg_alloc.instruction_registers[inst_id],
+                                array: reg_alloc.instruction_registers[array],
+                                index: reg_alloc.instruction_registers[indexes[0]],
+                            },
+                            span,
+                        ));
+                    } else {
+                        let index_count = indexes
+                            .len()
+                            .try_into()
+                            .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+
+                        for &index in indexes {
+                            vm_instructions.push((
+                                Instruction::Push {
+                                    source: reg_alloc.instruction_registers[index],
+                                    len: 1,
+                                },
+                                span,
+                            ));
+                        }
+
+                        vm_instructions.push((
+                            Instruction::GetIndexMulti {
+                                dest: reg_alloc.instruction_registers[inst_id],
+                                array: reg_alloc.instruction_registers[array],
+                                len: index_count,
+                            },
+                            span,
+                        ));
+                    }
                 }
                 ir::Instruction::SetIndex {
                     array,
-                    index,
+                    ref indexes,
                     value,
                 } => {
-                    vm_instructions.push((
-                        Instruction::SetIndex {
-                            array: reg_alloc.instruction_registers[array],
-                            index: reg_alloc.instruction_registers[index],
-                            value: reg_alloc.instruction_registers[value],
-                        },
-                        span,
-                    ));
+                    if indexes.len() == 1 {
+                        vm_instructions.push((
+                            Instruction::SetIndex {
+                                array: reg_alloc.instruction_registers[array],
+                                index: reg_alloc.instruction_registers[indexes[0]],
+                                value: reg_alloc.instruction_registers[value],
+                            },
+                            span,
+                        ));
+                    } else {
+                        let index_count = indexes
+                            .len()
+                            .try_into()
+                            .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+
+                        for &index in indexes {
+                            vm_instructions.push((
+                                Instruction::Push {
+                                    source: reg_alloc.instruction_registers[index],
+                                    len: 1,
+                                },
+                                span,
+                            ));
+                        }
+
+                        vm_instructions.push((
+                            Instruction::SetIndexMulti {
+                                array: reg_alloc.instruction_registers[array],
+                                len: index_count,
+                                value: reg_alloc.instruction_registers[value],
+                            },
+                            span,
+                        ));
+                    }
                 }
                 ir::Instruction::GetIndexConst { array, ref index } => {
                     vm_instructions.push((

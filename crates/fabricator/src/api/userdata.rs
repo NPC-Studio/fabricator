@@ -161,7 +161,7 @@ where
         &self,
         _ctx: vm::Context<'gc>,
         _ud: vm::UserData<'gc>,
-        _index: vm::Value<'gc>,
+        _indexes: &[vm::Value<'gc>],
     ) -> Result<vm::Value<'gc>, vm::Error> {
         Err(vm::Error::msg("no index access"))
     }
@@ -170,7 +170,7 @@ where
         &self,
         _ctx: vm::Context<'gc>,
         _ud: vm::UserData<'gc>,
-        _index: vm::Value<'gc>,
+        _indexes: &[vm::Value<'gc>],
         _value: vm::Value<'gc>,
     ) -> Result<(), vm::Error> {
         Err(vm::Error::msg("no index access"))

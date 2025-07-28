@@ -63,22 +63,26 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                         new_inst = Some(ir::Instruction::SetFieldConst { object, key, value })
                     }
                 }
-                ir::Instruction::GetIndex { array, index } => {
-                    if let Some(index) = get_constant(index) {
-                        new_inst = Some(ir::Instruction::GetIndexConst { array, index })
+                ir::Instruction::GetIndex { array, indexes } => {
+                    if indexes.len() == 1 {
+                        if let Some(index) = get_constant(indexes[0]) {
+                            new_inst = Some(ir::Instruction::GetIndexConst { array, index })
+                        }
                     }
                 }
                 ir::Instruction::SetIndex {
                     array,
-                    index,
+                    indexes,
                     value,
                 } => {
-                    if let Some(index) = get_constant(index) {
-                        new_inst = Some(ir::Instruction::SetIndexConst {
-                            array,
-                            index,
-                            value,
-                        })
+                    if indexes.len() == 1 {
+                        if let Some(index) = get_constant(indexes[0]) {
+                            new_inst = Some(ir::Instruction::SetIndexConst {
+                                array,
+                                index,
+                                value,
+                            })
+                        }
                     }
                 }
                 _ => {}

@@ -196,11 +196,11 @@ pub enum Instruction<S> {
     },
     GetIndex {
         array: InstId,
-        index: InstId,
+        indexes: Vec<InstId>,
     },
     SetIndex {
         array: InstId,
-        index: InstId,
+        indexes: Vec<InstId>,
         value: InstId,
     },
     GetIndexConst {
@@ -266,12 +266,12 @@ impl<S> Instruction<S> {
             &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
             &Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
-            &Instruction::GetIndex { array, index } => make_iter!([array, index]),
-            &Instruction::SetIndex {
+            Instruction::GetIndex { array, indexes } => make_iter!([*array], indexes),
+            Instruction::SetIndex {
                 array,
-                index,
+                indexes,
                 value,
-            } => make_iter!([array, index, value]),
+            } => make_iter!([*array, *value], indexes),
             &Instruction::GetIndexConst { array, .. } => make_iter!([array]),
             &Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
             &Instruction::Upsilon(_, source) => make_iter!([source]),
@@ -312,12 +312,12 @@ impl<S> Instruction<S> {
             Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             Instruction::GetFieldConst { object, .. } => make_iter!([object]),
             Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
-            Instruction::GetIndex { array, index } => make_iter!([array, index]),
+            Instruction::GetIndex { array, indexes } => make_iter!([array], indexes),
             Instruction::SetIndex {
                 array,
-                index,
+                indexes,
                 value,
-            } => make_iter!([array, index, value]),
+            } => make_iter!([array, value], indexes),
             Instruction::GetIndexConst { array, .. } => make_iter!([array]),
             Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
             Instruction::Upsilon(_, source) => make_iter!([source]),
@@ -614,31 +614,39 @@ impl<S: AsRef<str>> Function<S> {
                             value.index()
                         )?;
                     }
-                    Instruction::GetIndex { array, index } => {
-                        writeln!(
-                            f,
-                            "get_index(array = I{}, index = I{})",
-                            array.index(),
-                            index.index(),
-                        )?;
+                    Instruction::GetIndex { array, indexes } => {
+                        write!(f, "get_index(array = I{}, indexes = [", array.index(),)?;
+                        for (i, &ind) in indexes.iter().enumerate() {
+                            if i != 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "I{}", ind.index())?;
+                        }
+                        writeln!(f, "])")?;
                     }
                     Instruction::SetIndex {
                         array,
-                        index,
+                        indexes,
                         value,
                     } => {
-                        writeln!(
+                        write!(
                             f,
-                            "set_index(array = I{}, index = I{}, value = I{})",
+                            "set_index(array = I{}, value = I{}, indexes = [",
                             array.index(),
-                            index.index(),
-                            value.index(),
+                            value.index()
                         )?;
+                        for (i, &ind) in indexes.iter().enumerate() {
+                            if i != 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "I{}", ind.index())?;
+                        }
+                        writeln!(f, "])")?;
                     }
                     Instruction::GetIndexConst { array, index } => {
                         writeln!(
                             f,
-                            "get_index(array = I{}, index = {:?})",
+                            "get_index(array = I{}, indexes = [{:?}])",
                             array.index(),
                             index.as_str(),
                         )?;
@@ -650,10 +658,10 @@ impl<S: AsRef<str>> Function<S> {
                     } => {
                         writeln!(
                             f,
-                            "set_index(array = I{}, index = {:?}, value = I{})",
+                            "set_index(array = I{}, value = I{}, indexes = [{:?}])",
                             array.index(),
+                            value.index(),
                             index.as_str(),
-                            value.index()
                         )?;
                     }
                     Instruction::Phi(shadow) => {

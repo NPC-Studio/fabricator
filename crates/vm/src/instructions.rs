@@ -51,14 +51,17 @@ macro_rules! for_each_instruction {
             [simple] new_array = NewArray { dest: RegIdx };
             [simple] arg_count = ArgCount { dest: RegIdx };
             [simple] argument = Argument { dest: RegIdx, index: ArgIdx };
+
             [simple] get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             [simple] set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
             [simple] get_field_const = GetFieldConst { dest: RegIdx, object: RegIdx, key: ConstIdx };
             [simple] set_field_const = SetFieldConst  { object: RegIdx, key: ConstIdx, value: RegIdx };
+
             [simple] get_index = GetIndex { dest: RegIdx, array: RegIdx, index: RegIdx };
             [simple] set_index = SetIndex  { array: RegIdx, index: RegIdx, value: RegIdx };
             [simple] get_index_const = GetIndexConst { dest: RegIdx, array: RegIdx, index: ConstIdx };
             [simple] set_index_const = SetIndexConst { array: RegIdx, index: ConstIdx, value: RegIdx };
+
             [simple] move_ = Move { dest: RegIdx, source: RegIdx };
             [simple] not = Not { dest: RegIdx, arg: RegIdx };
             [simple] neg = Neg { dest: RegIdx, arg: RegIdx };
@@ -83,6 +86,14 @@ macro_rules! for_each_instruction {
             [simple]
             /// Pop `len` values from the stack to registers starting at `dest`.
             pop = Pop { dest: RegIdx, len: ArgIdx };
+
+            [simple]
+            /// Get an index from a value with multiple indexes from the stack.
+            get_index_multi = GetIndexMulti { dest: RegIdx, array: RegIdx, len: ArgIdx };
+
+            [simple]
+            /// Set an index on a value with multiple indexes from the stack.
+            set_index_multi = SetIndexMulti { array: RegIdx, len: ArgIdx, value: RegIdx };
 
             [simple]
             /// Push the given register as the new `self`, making the previous self the new `other`,

@@ -33,7 +33,7 @@ pub enum StatementKind<S> {
     If(IfStatement<S>),
     For(ForStatement<S>),
     While(WhileStatement<S>),
-    Repeat(Statement<S>),
+    Repeat(RepeatStatement<S>),
     Switch(SwitchStatement<S>),
     Call(Call<S>),
     Prefix(MutationOp, MutableExpr<S>),
@@ -104,6 +104,12 @@ pub struct WhileStatement<S> {
 }
 
 #[derive(Debug, Clone)]
+pub struct RepeatStatement<S> {
+    pub times: Expression<S>,
+    pub body: Statement<S>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SwitchStatement<S> {
     pub target: Expression<S>,
     pub cases: Vec<SwitchCase<S>>,
@@ -167,7 +173,7 @@ pub struct FieldExpr<S> {
 pub struct IndexExpr<S> {
     pub base: Expression<S>,
     pub accessor_type: Option<AccessorType>,
-    pub index: Expression<S>,
+    pub indexes: Vec<Expression<S>>,
 }
 
 #[derive(Debug, Clone)]
@@ -363,8 +369,8 @@ impl<S> Statement<S> {
             StatementKind::While(while_stmt) => {
                 while_stmt.walk(visitor)?;
             }
-            StatementKind::Repeat(stmt) => {
-                visitor.visit_stmt(stmt)?;
+            StatementKind::Repeat(repeat_stmt) => {
+                repeat_stmt.walk(visitor)?;
             }
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk(visitor)?;
@@ -417,8 +423,8 @@ impl<S> Statement<S> {
             StatementKind::While(while_stmt) => {
                 while_stmt.walk_mut(visitor)?;
             }
-            StatementKind::Repeat(stmt) => {
-                visitor.visit_stmt_mut(stmt)?;
+            StatementKind::Repeat(repeat_stmt) => {
+                repeat_stmt.walk_mut(visitor)?;
             }
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk_mut(visitor)?;
@@ -644,8 +650,7 @@ impl<S> MutableExpr<S> {
                 visitor.visit_expr(&field_expr.base)?;
             }
             MutableExpr::Index(index_expr) => {
-                visitor.visit_expr(&index_expr.base)?;
-                visitor.visit_expr(&index_expr.index)?;
+                index_expr.walk(visitor)?;
             }
         }
         ControlFlow::Continue(())
@@ -658,8 +663,7 @@ impl<S> MutableExpr<S> {
                 visitor.visit_expr_mut(&mut field_expr.base)?;
             }
             MutableExpr::Index(index_expr) => {
-                visitor.visit_expr_mut(&mut index_expr.base)?;
-                visitor.visit_expr_mut(&mut index_expr.index)?;
+                index_expr.walk_mut(visitor)?;
             }
         }
         ControlFlow::Continue(())
@@ -729,6 +733,20 @@ impl<S> WhileStatement<S> {
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr_mut(&mut self.condition)?;
+        visitor.visit_stmt_mut(&mut self.body)?;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> RepeatStatement<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.times)?;
+        visitor.visit_stmt(&self.body)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.times)?;
         visitor.visit_stmt_mut(&mut self.body)?;
         ControlFlow::Continue(())
     }
@@ -839,13 +857,17 @@ impl<S> FieldExpr<S> {
 impl<S> IndexExpr<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.base)?;
-        visitor.visit_expr(&self.index)?;
+        for expr in &self.indexes {
+            visitor.visit_expr(expr)?;
+        }
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr_mut(&mut self.base)?;
-        visitor.visit_expr_mut(&mut self.index)?;
+        for expr in &mut self.indexes {
+            visitor.visit_expr_mut(expr)?;
+        }
         ControlFlow::Continue(())
     }
 }

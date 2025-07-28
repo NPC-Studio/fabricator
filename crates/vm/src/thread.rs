@@ -284,7 +284,7 @@ fn dispatch<'gc>(
 
     impl<'gc, 'a> Dispatch<'gc, 'a> {
         #[inline]
-        fn do_get_field(&mut self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
+        fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
             match obj {
                 Value::Object(object) => object.get(key).ok_or(OpError::NoSuchField.into()),
                 Value::UserData(user_data) => {
@@ -300,7 +300,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn do_set_field(
-            &mut self,
+            &self,
             obj: Value<'gc>,
             key: String<'gc>,
             value: Value<'gc>,
@@ -324,13 +324,16 @@ fn dispatch<'gc>(
 
         #[inline]
         fn do_get_index(
-            &mut self,
+            &self,
             array: Value<'gc>,
-            index: Value<'gc>,
+            indexes: &[Value<'gc>],
         ) -> Result<Value<'gc>, Error> {
             match array {
                 Value::Array(array) => {
-                    let index = index
+                    if indexes.len() != 1 {
+                        return Err(OpError::BadIndex.into());
+                    }
+                    let index = indexes[0]
                         .to_integer()
                         .and_then(|i| i.try_into().ok())
                         .ok_or(OpError::BadIndex)?;
@@ -338,7 +341,7 @@ fn dispatch<'gc>(
                 }
                 Value::UserData(user_data) => {
                     if let Some(methods) = user_data.methods() {
-                        methods.get_index(self.ctx, user_data, index)
+                        methods.get_index(self.ctx, user_data, indexes)
                     } else {
                         Err(OpError::BadArray.into())
                     }
@@ -349,14 +352,18 @@ fn dispatch<'gc>(
 
         #[inline]
         fn do_set_index(
-            &mut self,
+            &self,
             array: Value<'gc>,
-            index: Value<'gc>,
+            indexes: &[Value<'gc>],
             value: Value<'gc>,
         ) -> Result<(), Error> {
             match array {
                 Value::Array(array) => {
-                    let index = index
+                    if indexes.len() != 1 {
+                        return Err(OpError::BadIndex.into());
+                    }
+
+                    let index = indexes[0]
                         .to_integer()
                         .and_then(|i| i.try_into().ok())
                         .ok_or(OpError::BadIndex)?;
@@ -365,7 +372,7 @@ fn dispatch<'gc>(
                 }
                 Value::UserData(user_data) => {
                     if let Some(methods) = user_data.methods() {
-                        methods.set_index(self.ctx, user_data, index, value)
+                        methods.set_index(self.ctx, user_data, indexes, value)
                     } else {
                         Err(OpError::BadObject.into())
                     }
@@ -601,7 +608,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.do_get_index(
                 self.registers[array as usize],
-                self.registers[index as usize],
+                &[self.registers[index as usize]],
             )?;
             Ok(())
         }
@@ -615,7 +622,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.do_set_index(
                 self.registers[array as usize],
-                self.registers[index as usize],
+                &[self.registers[index as usize]],
                 self.registers[value as usize],
             )?;
             Ok(())
@@ -630,7 +637,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.do_get_index(
                 self.registers[array as usize],
-                self.closure.prototype().constants[index as usize].to_value(),
+                &[self.closure.prototype().constants[index as usize].to_value()],
             )?;
             Ok(())
         }
@@ -644,7 +651,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.do_set_index(
                 self.registers[array as usize],
-                self.closure.prototype().constants[index as usize].to_value(),
+                &[self.closure.prototype().constants[index as usize].to_value()],
                 self.registers[value as usize],
             )?;
             Ok(())
@@ -832,6 +839,41 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        fn get_index_multi(
+            &mut self,
+            dest: RegIdx,
+            array: RegIdx,
+            len: ArgIdx,
+        ) -> Result<(), Self::Error> {
+            if self.stack.len() - self.num_args < len as usize {
+                return Err(OpError::StackUnderflow.into());
+            }
+
+            self.registers[dest as usize] = self.do_get_index(
+                self.registers[array as usize],
+                &self.stack[self.stack.len() - len as usize..],
+            )?;
+            Ok(())
+        }
+
+        fn set_index_multi(
+            &mut self,
+            array: RegIdx,
+            len: ArgIdx,
+            value: RegIdx,
+        ) -> Result<(), Self::Error> {
+            if self.stack.len() - self.num_args < len as usize {
+                return Err(OpError::StackUnderflow.into());
+            }
+
+            self.do_set_index(
+                self.registers[array as usize],
+                &self.stack[self.stack.len() - len as usize..],
+                self.registers[value as usize],
+            )?;
+            Ok(())
+        }
+
         #[inline]
         fn push_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
             let prev_this = *self.this;
@@ -889,7 +931,7 @@ fn dispatch<'gc>(
                 .to_function()
                 .ok_or(OpError::BadCall)?;
 
-            if self.stack.len() < self.num_args + arguments as usize {
+            if self.stack.len() - self.num_args < arguments as usize {
                 return Err(OpError::StackUnderflow.into());
             }
 
@@ -914,7 +956,7 @@ fn dispatch<'gc>(
 
         #[inline]
         fn return_(&mut self, count: ArgIdx) -> Result<Self::Break, Self::Error> {
-            if self.stack.len() < self.num_args + count as usize {
+            if self.stack.len() - self.num_args < count as usize {
                 return Err(OpError::StackUnderflow.into());
             }
 

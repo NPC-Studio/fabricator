@@ -29,14 +29,19 @@
 
 {
     var i = 0;
-    repeat {
+    repeat 7 {
         i += 1;
-        if i == 7 {
+    }
+    assert(i == 7);
+
+    var i = 0;
+    repeat 9 {
+        i += 1;
+        if i == 5 {
             break;
         }
     }
-
-    assert(i == 7);
+    assert(i == 5);
 }
 
 return true;

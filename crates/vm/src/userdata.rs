@@ -3,7 +3,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use gc_arena::{arena::Root, barrier, lock, Collect, Gc, Mutation, Rootable, Static};
+use gc_arena::{Collect, Gc, Mutation, Rootable, Static, arena::Root, barrier, lock};
 use thiserror::Error;
 
 use crate::{
@@ -38,14 +38,14 @@ pub trait UserDataMethods<'gc> {
         &self,
         ctx: Context<'gc>,
         ud: UserData<'gc>,
-        index: Value<'gc>,
+        indexes: &[Value<'gc>],
     ) -> Result<Value<'gc>, Error>;
 
     fn set_index(
         &self,
         ctx: Context<'gc>,
         ud: UserData<'gc>,
-        index: Value<'gc>,
+        indexes: &[Value<'gc>],
         value: Value<'gc>,
     ) -> Result<(), Error>;
 }
