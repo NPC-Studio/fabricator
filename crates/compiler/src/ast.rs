@@ -28,6 +28,8 @@ pub enum StatementKind<S> {
     For(ForStatement<S>),
     Switch(SwitchStatement<S>),
     Call(CallExpr<S>),
+    Prefix(MutationOp, MutableExpr<S>),
+    Postfix(MutableExpr<S>, MutationOp),
     Break,
     Continue,
 }
@@ -55,13 +57,13 @@ pub struct Declaration<S> {
 
 #[derive(Debug, Clone)]
 pub struct AssignmentStatement<S> {
-    pub target: AssignmentTarget<S>,
+    pub target: MutableExpr<S>,
     pub op: AssignmentOp,
     pub value: Expression<S>,
 }
 
 #[derive(Debug, Clone)]
-pub enum AssignmentTarget<S> {
+pub enum MutableExpr<S> {
     Name(S),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
@@ -105,6 +107,8 @@ pub enum ExpressionKind<S> {
     Object(Vec<(S, Expression<S>)>),
     Array(Vec<Expression<S>>),
     Unary(UnaryOp, Expression<S>),
+    Prefix(MutationOp, MutableExpr<S>),
+    Postfix(MutableExpr<S>, MutationOp),
     Binary(Expression<S>, BinaryOp, Expression<S>),
     Function(FunctionExpr<S>),
     Call(CallExpr<S>),
@@ -153,6 +157,12 @@ pub struct Parameter<S> {
 pub enum UnaryOp {
     Not,
     Minus,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum MutationOp {
+    Increment,
+    Decrement,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -255,16 +265,7 @@ impl<S> Statement<S> {
                 }
             }
             StatementKind::Assignment(assignment_stmt) => {
-                match &assignment_stmt.target {
-                    AssignmentTarget::Name(_) => {}
-                    AssignmentTarget::Field(field_expr) => {
-                        visitor.visit_expr(&field_expr.base)?;
-                    }
-                    AssignmentTarget::Index(index_expr) => {
-                        visitor.visit_expr(&index_expr.base)?;
-                        visitor.visit_expr(&index_expr.index)?;
-                    }
-                }
+                assignment_stmt.target.walk(visitor)?;
                 visitor.visit_expr(&assignment_stmt.value)?;
             }
             StatementKind::Return(ret_stmt) => {
@@ -301,6 +302,12 @@ impl<S> Statement<S> {
                     visitor.visit_expr(arg)?;
                 }
             }
+            StatementKind::Prefix(_, target) => {
+                target.walk(visitor)?;
+            }
+            StatementKind::Postfix(target, _) => {
+                target.walk(visitor)?;
+            }
             StatementKind::Break | StatementKind::Continue => {}
         }
         ControlFlow::Continue(())
@@ -330,16 +337,7 @@ impl<S> Statement<S> {
                 }
             }
             StatementKind::Assignment(assignment_stmt) => {
-                match &mut assignment_stmt.target {
-                    AssignmentTarget::Name(_) => {}
-                    AssignmentTarget::Field(field_expr) => {
-                        visitor.visit_expr_mut(&mut field_expr.base)?;
-                    }
-                    AssignmentTarget::Index(index_expr) => {
-                        visitor.visit_expr_mut(&mut index_expr.base)?;
-                        visitor.visit_expr_mut(&mut index_expr.index)?;
-                    }
-                }
+                assignment_stmt.target.walk_mut(visitor)?;
                 visitor.visit_expr_mut(&mut assignment_stmt.value)?;
             }
             StatementKind::Return(ret_stmt) => {
@@ -376,6 +374,12 @@ impl<S> Statement<S> {
                     visitor.visit_expr_mut(arg)?;
                 }
             }
+            StatementKind::Prefix(_, target) => {
+                target.walk_mut(visitor)?;
+            }
+            StatementKind::Postfix(target, _) => {
+                target.walk_mut(visitor)?;
+            }
             StatementKind::Break | StatementKind::Continue => {}
         }
         ControlFlow::Continue(())
@@ -397,6 +401,8 @@ impl<S> Expression<S> {
                 }
             }
             ExpressionKind::Unary(_, expr) => visitor.visit_expr(expr)?,
+            ExpressionKind::Prefix(_, target) => target.walk(visitor)?,
+            ExpressionKind::Postfix(target, _) => target.walk(visitor)?,
             ExpressionKind::Binary(left, _, right) => {
                 visitor.visit_expr(left)?;
                 visitor.visit_expr(right)?;
@@ -440,6 +446,8 @@ impl<S> Expression<S> {
                 }
             }
             ExpressionKind::Unary(_, expr) => visitor.visit_expr_mut(expr)?,
+            ExpressionKind::Prefix(_, target) => target.walk_mut(visitor)?,
+            ExpressionKind::Postfix(target, _) => target.walk_mut(visitor)?,
             ExpressionKind::Binary(left, _, right) => {
                 visitor.visit_expr_mut(left)?;
                 visitor.visit_expr_mut(right)?;
@@ -500,5 +508,35 @@ impl<S> Expression<S> {
             }
             _ => None,
         }
+    }
+}
+
+impl<S> MutableExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            MutableExpr::Name(_) => {}
+            MutableExpr::Field(field_expr) => {
+                visitor.visit_expr(&field_expr.base)?;
+            }
+            MutableExpr::Index(index_expr) => {
+                visitor.visit_expr(&index_expr.base)?;
+                visitor.visit_expr(&index_expr.index)?;
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            MutableExpr::Name(_) => {}
+            MutableExpr::Field(field_expr) => {
+                visitor.visit_expr_mut(&mut field_expr.base)?;
+            }
+            MutableExpr::Index(index_expr) => {
+                visitor.visit_expr_mut(&mut index_expr.base)?;
+                visitor.visit_expr_mut(&mut index_expr.index)?;
+            }
+        }
+        ControlFlow::Continue(())
     }
 }

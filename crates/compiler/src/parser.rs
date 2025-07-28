@@ -271,7 +271,7 @@ where
                 trailer = StatementTrailer::NoSemiColon;
             }
             _ => {
-                let expr = match self.parse_suffixed_expression() {
+                let expr = match self.parse_expression() {
                     Ok(expr) => expr,
                     Err(ParseError {
                         kind: ParseErrorKind::Unexpected { unexpected, .. },
@@ -290,45 +290,23 @@ where
 
                 span = expr.span;
 
-                kind = match *expr.kind {
-                    ast::ExpressionKind::Call(call) => ast::StatementKind::Call(call),
-                    expr @ (ast::ExpressionKind::Name(_)
-                    | ast::ExpressionKind::Field(_)
-                    | ast::ExpressionKind::Index(_)) => {
-                        let target = match expr {
-                            ast::ExpressionKind::Name(name) => ast::AssignmentTarget::Name(name),
-                            ast::ExpressionKind::Field(field) => {
-                                ast::AssignmentTarget::Field(field)
-                            }
-                            ast::ExpressionKind::Index(index) => {
-                                ast::AssignmentTarget::Index(index)
-                            }
-                            _ => unreachable!(),
-                        };
+                if let ast::ExpressionKind::Call(call) = *expr.kind {
+                    kind = ast::StatementKind::Call(call);
+                } else if let ast::ExpressionKind::Prefix(op, expr) = *expr.kind {
+                    kind = ast::StatementKind::Prefix(op, expr);
+                } else if let ast::ExpressionKind::Postfix(expr, op) = *expr.kind {
+                    kind = ast::StatementKind::Postfix(expr, op);
+                } else {
+                    let target = get_mutable_expr(expr).map_err(|_| ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: "<non-statement expression>",
+                            expected: "<statement>",
+                        },
+                        span,
+                    })?;
 
-                        self.look_ahead(1);
-                        let Some(assignment_op) = get_assignment_operator(&self.peek(0).kind)
-                        else {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::Unexpected {
-                                    unexpected: "<non-statement expression>",
-                                    expected: "<statement>",
-                                },
-                                span,
-                            });
-                        };
-                        self.advance(1);
-
-                        let value = self.parse_expression()?;
-                        span = span.combine(value.span);
-
-                        ast::StatementKind::Assignment(ast::AssignmentStatement {
-                            target,
-                            op: assignment_op,
-                            value,
-                        })
-                    }
-                    _ => {
+                    self.look_ahead(1);
+                    let Some(assignment_op) = get_assignment_operator(&self.peek(0).kind) else {
                         return Err(ParseError {
                             kind: ParseErrorKind::Unexpected {
                                 unexpected: "<non-statement expression>",
@@ -336,8 +314,19 @@ where
                             },
                             span,
                         });
-                    }
-                };
+                    };
+                    self.advance(1);
+
+                    let value = self.parse_expression()?;
+                    span = span.combine(value.span);
+
+                    kind = ast::StatementKind::Assignment(ast::AssignmentStatement {
+                        target,
+                        op: assignment_op,
+                        value,
+                    });
+                }
+
                 trailer = StatementTrailer::SemiColonAllowed;
             }
         };
@@ -541,14 +530,26 @@ where
         priority_limit: OperatorPriority,
     ) -> Result<ast::Expression<S>, ParseError> {
         self.look_ahead(1);
-        let next = self.peek(0);
-        let mut expr = if let Some(unary_op) = get_unary_operator(&next.kind) {
-            let mut span = next.span;
+        let &Token {
+            kind: ref next_kind,
+            span: next_span,
+        } = self.peek(0);
+
+        let mut expr = if let Some(unary_op) = get_unary_operator(next_kind) {
             self.advance(1);
             let target = self.parse_sub_expression(UNARY_PRIORITY)?;
-            span = span.combine(target.span);
+            let span = next_span.combine(target.span);
             ast::Expression {
                 kind: Box::new(ast::ExpressionKind::Unary(unary_op, target)),
+                span,
+            }
+        } else if let Some(prefix_op) = get_mutation_operator(next_kind) {
+            self.advance(1);
+            let target = self.parse_sub_expression(UNARY_PRIORITY)?;
+            let span = next_span.combine(target.span);
+            let target = get_mutable_expr(target)?;
+            ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Prefix(prefix_op, target)),
                 span,
             }
         } else {
@@ -587,7 +588,11 @@ where
         let mut expr = self.parse_primary_expression()?;
         loop {
             self.look_ahead(1);
-            match &self.peek(0).kind {
+            let &Token {
+                kind: ref next_kind,
+                span: next_span,
+            } = self.peek(0);
+            match next_kind {
                 TokenKind::LeftParen => {
                     let mut arguments = Vec::new();
 
@@ -635,7 +640,19 @@ where
                         span,
                     };
                 }
-                _ => break,
+                token => {
+                    if let Some(postfix_op) = get_mutation_operator(token) {
+                        let span = expr.span.combine(next_span);
+                        let target = get_mutable_expr(expr)?;
+                        self.advance(1);
+                        expr = ast::Expression {
+                            kind: Box::new(ast::ExpressionKind::Postfix(target, postfix_op)),
+                            span,
+                        };
+                    } else {
+                        break;
+                    }
+                }
             }
         }
         Ok(expr)
@@ -793,7 +810,7 @@ where
             TokenKind::New => {
                 self.advance(1);
 
-                let mut expr = self.parse_suffixed_expression()?;
+                let mut expr = self.parse_expression()?;
                 expr.span = span.combine(expr.span);
 
                 match &mut *expr.kind {
@@ -1023,10 +1040,34 @@ where
     }
 }
 
+fn get_mutable_expr<S>(expr: ast::Expression<S>) -> Result<ast::MutableExpr<S>, ParseError> {
+    match *expr.kind {
+        ast::ExpressionKind::Name(name) => Ok(ast::MutableExpr::Name(name)),
+        ast::ExpressionKind::Field(field_expr) => Ok(ast::MutableExpr::Field(field_expr)),
+        ast::ExpressionKind::Index(index_expr) => Ok(ast::MutableExpr::Index(index_expr)),
+        ast::ExpressionKind::Group(expr) => get_mutable_expr(expr),
+        _ => Err(ParseError {
+            kind: ParseErrorKind::Unexpected {
+                unexpected: "<immutable expression>",
+                expected: "<mutable expression>",
+            },
+            span: expr.span,
+        }),
+    }
+}
+
 fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<ast::UnaryOp> {
     match *token {
         TokenKind::Minus => Some(ast::UnaryOp::Minus),
         TokenKind::Bang => Some(ast::UnaryOp::Not),
+        _ => None,
+    }
+}
+
+fn get_mutation_operator<S>(token: &TokenKind<S>) -> Option<ast::MutationOp> {
+    match *token {
+        TokenKind::DoublePlus => Some(ast::MutationOp::Increment),
+        TokenKind::DoubleMinus => Some(ast::MutationOp::Decrement),
         _ => None,
     }
 }

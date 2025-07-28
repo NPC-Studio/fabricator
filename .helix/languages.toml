@@ -1,0 +1,15 @@
+[[language]]
+name = "GML"
+scope = "source.gml"
+injection-regex = "gml"
+file-types = ["gml"]
+comment-tokens = "//"
+indent = { tab-width = 4, unit = "    " }
+
+[[language]]
+name = "FML"
+scope = "source.fml"
+injection-regex = "fml"
+file-types = ["fml"]
+comment-tokens = "//"
+indent = { tab-width = 4, unit = "    " }

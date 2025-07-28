@@ -349,7 +349,7 @@ where
         self.final_block = Some(final_block);
 
         let parent_func = if let Some((_, inherit)) = inherit {
-            Some(self.commit_expression(&inherit.base)?)
+            Some(self.expression(&inherit.base)?)
         } else {
             None
         };
@@ -414,11 +414,9 @@ where
                     ir::Instruction::Constant(Constant::String(static_decl.name.clone())),
                 );
                 let value =
-                    self.commit_expression(static_decl.value.as_ref().ok_or_else(|| {
-                        IrGenError {
-                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
-                            span: stmt.span,
-                        }
+                    self.expression(static_decl.value.as_ref().ok_or_else(|| IrGenError {
+                        kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+                        span: stmt.span,
                     })?)?;
 
                 self.push_instruction(
@@ -452,7 +450,7 @@ where
 
             let mut args = Vec::new();
             for arg in &inherit.arguments {
-                args.push(self.commit_expression(arg)?);
+                args.push(self.expression(arg)?);
             }
 
             self.push_instruction(
@@ -544,6 +542,7 @@ where
         }
 
         match &*statement.kind {
+            ast::StatementKind::Block(block) => self.block(block),
             ast::StatementKind::Enum(_) => {
                 return Err(IrGenError {
                     kind: IrGenErrorKind::MisplacedEnum,
@@ -573,12 +572,19 @@ where
             ast::StatementKind::Return(return_) => self.return_statement(statement.span, return_),
             ast::StatementKind::If(if_statement) => self.if_statement(if_statement),
             ast::StatementKind::For(for_statement) => self.for_statement(for_statement),
-            ast::StatementKind::Block(block) => self.block(block),
+            ast::StatementKind::Switch(switch_statement) => self.switch_statement(switch_statement),
             ast::StatementKind::Call(function_call) => {
                 let _ = self.call_expr(statement.span, function_call, false)?;
                 Ok(())
             }
-            ast::StatementKind::Switch(switch_statement) => self.switch_statement(switch_statement),
+            ast::StatementKind::Prefix(op, expr) => {
+                self.mutation_op(statement.span, expr, *op)?;
+                Ok(())
+            }
+            ast::StatementKind::Postfix(expr, op) => {
+                self.mutation_op(statement.span, expr, *op)?;
+                Ok(())
+            }
             ast::StatementKind::Break => self.break_statement(statement.span),
             ast::StatementKind::Continue => self.continue_statement(statement.span),
         }
@@ -593,7 +599,7 @@ where
             .declare_var(var_decl.name.clone(), Some(ir::Variable::Owned))
             .unwrap();
         if let Some(value) = &var_decl.value {
-            let inst_id = self.commit_expression(value)?;
+            let inst_id = self.expression(value)?;
             self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
         }
         Ok(())
@@ -642,7 +648,7 @@ where
 
                 self.start_new_block(init_block);
 
-                let value = self.commit_expression(value)?;
+                let value = self.expression(value)?;
                 self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
                 let true_ =
                     self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
@@ -668,114 +674,50 @@ where
         span: Span,
         assignment_statement: &ast::AssignmentStatement<S>,
     ) -> Result<(), IrGenError> {
-        enum Target<S> {
-            Var(ir::VarId),
-            This {
-                key: ir::InstId,
-            },
-            Field {
-                object: ir::InstId,
-                key: ir::InstId,
-            },
-            Index {
-                array: ir::InstId,
-                index: ir::InstId,
-            },
-            Magic(S),
-        }
-
-        let this = self.push_instruction(span, ir::Instruction::This);
-
-        let (target, old) = match &assignment_statement.target {
-            ast::AssignmentTarget::Name(name) => {
-                if let Some(var_id) = self.get_var(span, name)? {
-                    (Target::Var(var_id), ir::Instruction::GetVariable(var_id))
-                } else if let Some(mode) = (self.find_magic)(name) {
-                    if mode == MagicMode::ReadOnly {
-                        return Err(IrGenError {
-                            kind: IrGenErrorKind::ReadOnlyMagic,
-                            span,
-                        });
-                    }
-                    (
-                        Target::Magic(name.clone()),
-                        ir::Instruction::GetMagic(name.clone()),
-                    )
-                } else {
-                    let key = self.push_instruction(
-                        span,
-                        ir::Instruction::Constant(Constant::String(name.clone())),
-                    );
-                    (
-                        Target::This { key },
-                        ir::Instruction::GetField { object: this, key },
-                    )
-                }
-            }
-            ast::AssignmentTarget::Field(field_expr) => {
-                let object = self.commit_expression(&field_expr.base)?;
-                let key = self.push_instruction(
-                    span,
-                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
-                );
-                (
-                    Target::Field { object, key },
-                    ir::Instruction::GetField { object, key },
-                )
-            }
-            ast::AssignmentTarget::Index(index_expr) => {
-                let array = self.commit_expression(&index_expr.base)?;
-                let index = self.commit_expression(&index_expr.index)?;
-                (
-                    Target::Index { array, index },
-                    ir::Instruction::GetIndex { array, index },
-                )
-            }
-        };
-
-        let val = self.commit_expression(&assignment_statement.value)?;
+        let target = self.mutable_target(span, &assignment_statement.target)?;
+        let val = self.expression(&assignment_statement.value)?;
 
         let assign = match assignment_statement.op {
             ast::AssignmentOp::Equal => val,
             ast::AssignmentOp::PlusEqual => {
-                let old = self.push_instruction(span, old);
+                let prev = self.read_mutable_target(span, target.clone());
                 self.push_instruction(
                     span,
                     ir::Instruction::BinOp {
-                        left: old,
+                        left: prev,
                         right: val,
                         op: ir::BinOp::Add,
                     },
                 )
             }
             ast::AssignmentOp::MinusEqual => {
-                let old = self.push_instruction(span, old);
+                let prev = self.read_mutable_target(span, target.clone());
                 self.push_instruction(
                     span,
                     ir::Instruction::BinOp {
-                        left: old,
+                        left: prev,
                         right: val,
                         op: ir::BinOp::Sub,
                     },
                 )
             }
             ast::AssignmentOp::MultEqual => {
-                let old = self.push_instruction(span, old);
+                let prev = self.read_mutable_target(span, target.clone());
                 self.push_instruction(
                     span,
                     ir::Instruction::BinOp {
-                        left: old,
+                        left: prev,
                         right: val,
                         op: ir::BinOp::Mult,
                     },
                 )
             }
             ast::AssignmentOp::DivEqual => {
-                let old = self.push_instruction(span, old);
+                let prev = self.read_mutable_target(span, target.clone());
                 self.push_instruction(
                     span,
                     ir::Instruction::BinOp {
-                        left: old,
+                        left: prev,
                         right: val,
                         op: ir::BinOp::Div,
                     },
@@ -783,44 +725,7 @@ where
             }
         };
 
-        match target {
-            Target::Var(var_id) => {
-                self.push_instruction(span, ir::Instruction::SetVariable(var_id, assign));
-            }
-            Target::This { key } => {
-                self.push_instruction(
-                    span,
-                    ir::Instruction::SetField {
-                        object: this,
-                        key,
-                        value: assign,
-                    },
-                );
-            }
-            Target::Field { object, key } => {
-                self.push_instruction(
-                    span,
-                    ir::Instruction::SetField {
-                        object,
-                        key,
-                        value: assign,
-                    },
-                );
-            }
-            Target::Index { array, index } => {
-                self.push_instruction(
-                    span,
-                    ir::Instruction::SetIndex {
-                        array,
-                        index,
-                        value: assign,
-                    },
-                );
-            }
-            Target::Magic(magic) => {
-                self.push_instruction(span, ir::Instruction::SetMagic(magic, assign));
-            }
-        }
+        self.write_mutable_target(span, target, assign);
 
         Ok(())
     }
@@ -838,7 +743,7 @@ where
         }
 
         let exit = if let Some(value) = &return_statement.value {
-            let val = self.commit_expression(value)?;
+            let val = self.expression(value)?;
             ir::Exit::Return { value: Some(val) }
         } else {
             ir::Exit::Return { value: None }
@@ -848,7 +753,7 @@ where
     }
 
     fn if_statement(&mut self, if_statement: &ast::IfStatement<S>) -> Result<(), IrGenError> {
-        let cond = self.commit_expression(&if_statement.condition)?;
+        let cond = self.expression(&if_statement.condition)?;
         let then_block = self.new_block();
         let else_block = self.new_block();
         let successor = self.new_block();
@@ -897,7 +802,7 @@ where
             self.end_current_block(ir::Exit::Jump(cond_block));
             self.start_new_block(cond_block);
 
-            let cond = self.commit_expression(&for_statement.condition)?;
+            let cond = self.expression(&for_statement.condition)?;
             self.end_current_block(ir::Exit::Branch {
                 cond,
                 if_true: body_block,
@@ -936,13 +841,13 @@ where
         &mut self,
         switch_stmt: &ast::SwitchStatement<S>,
     ) -> Result<(), IrGenError> {
-        let target = self.commit_expression(&switch_stmt.target)?;
+        let target = self.expression(&switch_stmt.target)?;
 
         let successor_block = self.new_block();
         self.push_break_target(successor_block);
 
         for (expr, body) in &switch_stmt.cases {
-            let expr = self.commit_expression(expr)?;
+            let expr = self.expression(expr)?;
             let is_equal = self.push_instruction(
                 Span::null(),
                 ir::Instruction::BinOp {
@@ -1007,7 +912,7 @@ where
         }
     }
 
-    fn commit_expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
+    fn expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
         let span = expr.span;
         Ok(match &*expr.kind {
             ast::ExpressionKind::Constant(c) => {
@@ -1030,7 +935,7 @@ where
             ast::ExpressionKind::Global => self.push_instruction(span, ir::Instruction::Globals),
             ast::ExpressionKind::This => self.push_instruction(span, ir::Instruction::This),
             ast::ExpressionKind::Other => self.push_instruction(span, ir::Instruction::Other),
-            ast::ExpressionKind::Group(expr) => self.commit_expression(expr)?,
+            ast::ExpressionKind::Group(expr) => self.expression(expr)?,
             ast::ExpressionKind::Object(fields) => {
                 let object = self.push_instruction(span, ir::Instruction::NewObject);
 
@@ -1049,7 +954,7 @@ where
                             None
                         };
 
-                    let value = self.commit_expression(value)?;
+                    let value = self.expression(value)?;
                     self.push_instruction(
                         span,
                         ir::Instruction::SetFieldConst {
@@ -1069,7 +974,7 @@ where
             ast::ExpressionKind::Array(values) => {
                 let array = self.push_instruction(span, ir::Instruction::NewArray);
                 for (i, value) in values.iter().enumerate() {
-                    let value = self.commit_expression(value)?;
+                    let value = self.expression(value)?;
                     self.push_instruction(
                         span,
                         ir::Instruction::SetIndexConst {
@@ -1083,7 +988,7 @@ where
             }
             ast::ExpressionKind::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
-                    source: self.commit_expression(expr)?,
+                    source: self.expression(expr)?,
                     op: match op {
                         ast::UnaryOp::Not => ir::UnOp::Not,
                         ast::UnaryOp::Minus => ir::UnOp::Neg,
@@ -1091,9 +996,11 @@ where
                 };
                 self.push_instruction(span, inst)
             }
+            ast::ExpressionKind::Prefix(op, target) => self.mutation_op(expr.span, target, *op)?.1,
+            ast::ExpressionKind::Postfix(target, op) => self.mutation_op(expr.span, target, *op)?.0,
             ast::ExpressionKind::Binary(left, op, right) => {
-                let left = self.commit_expression(left)?;
-                let right = self.commit_expression(right)?;
+                let left = self.expression(left)?;
+                let right = self.expression(right)?;
                 let op = match op {
                     ast::BinaryOp::Add => ir::BinOp::Add,
                     ast::BinaryOp::Sub => ir::BinOp::Sub,
@@ -1122,7 +1029,7 @@ where
             }
             ast::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
             ast::ExpressionKind::Field(field_expr) => {
-                let base = self.commit_expression(&field_expr.base)?;
+                let base = self.expression(&field_expr.base)?;
                 let field = self.push_instruction(
                     span,
                     ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
@@ -1136,8 +1043,8 @@ where
                 )
             }
             ast::ExpressionKind::Index(index_expr) => {
-                let base = self.commit_expression(&index_expr.base)?;
-                let index = self.commit_expression(&index_expr.index)?;
+                let base = self.expression(&index_expr.base)?;
+                let index = self.expression(&index_expr.index)?;
                 self.push_instruction(span, ir::Instruction::GetIndex { array: base, index })
             }
         })
@@ -1160,7 +1067,7 @@ where
         // Function calls on fields are interpreted as "methods", and implicitly bind the containing
         // object as `self` for the function call.
         let call = if let ast::ExpressionKind::Field(field_expr) = &*func.base.kind {
-            let object = self.commit_expression(&field_expr.base)?;
+            let object = self.expression(&field_expr.base)?;
             let key = self.push_instruction(
                 func.base.span,
                 ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
@@ -1169,12 +1076,12 @@ where
                 self.push_instruction(func.base.span, ir::Instruction::GetField { object, key });
             Call::Method { func, object }
         } else {
-            Call::Function(self.commit_expression(&func.base)?)
+            Call::Function(self.expression(&func.base)?)
         };
 
         let mut args = Vec::new();
         for arg in &func.arguments {
-            args.push(self.commit_expression(arg)?);
+            args.push(self.expression(arg)?);
         }
 
         Ok(match call {
@@ -1197,6 +1104,125 @@ where
                 },
             ),
         })
+    }
+
+    /// Evaluate a `MutationOp` on a `MutableExpr`.
+    ///
+    /// Returns a tuple of the old and new values for the `MutableExpr`.
+    fn mutation_op(
+        &mut self,
+        span: Span,
+        target: &ast::MutableExpr<S>,
+        op: ast::MutationOp,
+    ) -> Result<(ir::InstId, ir::InstId), IrGenError> {
+        let target = self.mutable_target(span, target)?;
+        let old = self.read_mutable_target(span, target.clone());
+        let one = self.push_instruction(span, ir::Instruction::Constant(Constant::Integer(1)));
+        let op = match op {
+            ast::MutationOp::Increment => ir::BinOp::Add,
+            ast::MutationOp::Decrement => ir::BinOp::Sub,
+        };
+        let new = self.push_instruction(
+            span,
+            ir::Instruction::BinOp {
+                left: old,
+                right: one,
+                op,
+            },
+        );
+        self.write_mutable_target(span, target, new);
+        Ok((old, new))
+    }
+
+    fn mutable_target(
+        &mut self,
+        span: Span,
+        target: &ast::MutableExpr<S>,
+    ) -> Result<MutableTarget<S>, IrGenError> {
+        Ok(match target {
+            ast::MutableExpr::Name(name) => {
+                if let Some(var_id) = self.get_var(span, name)? {
+                    MutableTarget::Var(var_id)
+                } else if let Some(mode) = (self.find_magic)(name) {
+                    if mode == MagicMode::ReadOnly {
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ReadOnlyMagic,
+                            span,
+                        });
+                    }
+
+                    MutableTarget::Magic(name.clone())
+                } else {
+                    let key = self.push_instruction(
+                        span,
+                        ir::Instruction::Constant(Constant::String(name.clone())),
+                    );
+                    MutableTarget::This { key }
+                }
+            }
+            ast::MutableExpr::Field(field_expr) => {
+                let object = self.expression(&field_expr.base)?;
+                let key = self.push_instruction(
+                    span,
+                    ir::Instruction::Constant(Constant::String(field_expr.field.clone())),
+                );
+                MutableTarget::Field { object, key }
+            }
+            ast::MutableExpr::Index(index_expr) => {
+                let array = self.expression(&index_expr.base)?;
+                let index = self.expression(&index_expr.index)?;
+                MutableTarget::Index { array, index }
+            }
+        })
+    }
+
+    fn read_mutable_target(&mut self, span: Span, target: MutableTarget<S>) -> ir::InstId {
+        let inst = match target {
+            MutableTarget::Var(var_id) => ir::Instruction::GetVariable(var_id),
+            MutableTarget::This { key } => {
+                let this = self.push_instruction(span, ir::Instruction::This);
+                ir::Instruction::GetField { object: this, key }
+            }
+            MutableTarget::Field { object, key } => ir::Instruction::GetField { object, key },
+            MutableTarget::Index { array, index } => ir::Instruction::GetIndex { array, index },
+            MutableTarget::Magic(name) => ir::Instruction::GetMagic(name),
+        };
+        self.push_instruction(span, inst)
+    }
+
+    fn write_mutable_target(&mut self, span: Span, target: MutableTarget<S>, value: ir::InstId) {
+        match target {
+            MutableTarget::Var(var_id) => {
+                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+            }
+            MutableTarget::This { key } => {
+                let this = self.push_instruction(span, ir::Instruction::This);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetField {
+                        object: this,
+                        key,
+                        value,
+                    },
+                );
+            }
+            MutableTarget::Field { object, key } => {
+                self.push_instruction(span, ir::Instruction::SetField { object, key, value });
+            }
+            MutableTarget::Index { array, index } => {
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetIndex {
+                        array,
+                        index,
+                        value,
+                    },
+                );
+            }
+            MutableTarget::Magic(magic) => {
+                self.push_instruction(span, ir::Instruction::SetMagic(magic, value));
+            }
+        }
     }
 
     fn inner_function(
@@ -1372,4 +1398,21 @@ where
         }
         inst_id
     }
+}
+
+#[derive(Debug, Clone)]
+enum MutableTarget<S> {
+    Var(ir::VarId),
+    This {
+        key: ir::InstId,
+    },
+    Field {
+        object: ir::InstId,
+        key: ir::InstId,
+    },
+    Index {
+        array: ir::InstId,
+        index: ir::InstId,
+    },
+    Magic(S),
 }
