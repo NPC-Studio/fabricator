@@ -211,6 +211,14 @@ where
                 self.advance(2);
                 TokenKind::DoublePipe
             }
+            (Some('<'), Some('<'), _) => {
+                self.advance(2);
+                TokenKind::DoubleLess
+            }
+            (Some('>'), Some('>'), _) => {
+                self.advance(2);
+                TokenKind::DoubleGreater
+            }
             (Some('('), _, _) => {
                 self.advance(1);
                 TokenKind::LeftParen

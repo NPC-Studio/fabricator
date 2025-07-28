@@ -599,9 +599,11 @@ where
                 self.assignment_statement(statement.span, assignment_statement)
             }
             ast::StatementKind::Return(return_) => self.return_statement(statement.span, return_),
-            ast::StatementKind::If(if_statement) => self.if_statement(if_statement),
-            ast::StatementKind::For(for_statement) => self.for_statement(for_statement),
-            ast::StatementKind::Switch(switch_statement) => self.switch_statement(switch_statement),
+            ast::StatementKind::If(if_stmt) => self.if_statement(if_stmt),
+            ast::StatementKind::For(for_stmt) => self.for_statement(for_stmt),
+            ast::StatementKind::While(while_stmt) => self.while_statement(while_stmt),
+            ast::StatementKind::Repeat(stmt) => self.repeat_statement(stmt),
+            ast::StatementKind::Switch(switch_stmt) => self.switch_statement(switch_stmt),
             ast::StatementKind::Call(function_call) => {
                 let _ = self.call_expr(statement.span, function_call, false)?;
                 Ok(())
@@ -874,6 +876,66 @@ where
         }
 
         self.pop_scope();
+        Ok(())
+    }
+
+    fn while_statement(&mut self, while_stmt: &ast::WhileStatement<S>) -> Result<(), IrGenError> {
+        let cond_block = self.new_block();
+        let body_block = self.new_block();
+        let successor_block = self.new_block();
+
+        self.push_break_target(successor_block);
+        self.push_continue_target(cond_block);
+
+        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.start_new_block(cond_block);
+
+        let cond = self.expression(&while_stmt.condition)?;
+        self.end_current_block(ir::Exit::Branch {
+            cond,
+            if_true: body_block,
+            if_false: successor_block,
+        });
+
+        self.start_new_block(body_block);
+        self.push_scope();
+        self.statement(&while_stmt.body)?;
+        self.pop_scope();
+
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(cond_block));
+        }
+
+        self.start_new_block(successor_block);
+
+        self.pop_continue_target(cond_block);
+        self.pop_break_target(successor_block);
+
+        Ok(())
+    }
+
+    fn repeat_statement(&mut self, stmt: &ast::Statement<S>) -> Result<(), IrGenError> {
+        let body_block = self.new_block();
+        let successor_block = self.new_block();
+
+        self.push_break_target(successor_block);
+        self.push_continue_target(body_block);
+
+        self.end_current_block(ir::Exit::Jump(body_block));
+        self.start_new_block(body_block);
+        self.push_scope();
+        self.statement(stmt)?;
+        self.pop_scope();
+
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(body_block));
+        }
+
+        self.start_new_block(successor_block);
+
+        self.pop_continue_target(body_block);
+        self.pop_break_target(successor_block);
+
         Ok(())
     }
 

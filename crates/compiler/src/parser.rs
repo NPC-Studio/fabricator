@@ -251,6 +251,26 @@ where
                 });
                 trailer = StatementTrailer::NoSemiColon;
             }
+            TokenKind::While => {
+                self.advance(1);
+
+                let condition = self.parse_expression()?;
+                let body = self.parse_statement()?;
+
+                span = next_span.combine(body.span);
+
+                kind = ast::StatementKind::While(ast::WhileStatement { condition, body });
+                trailer = StatementTrailer::NoSemiColon;
+            }
+            TokenKind::Repeat => {
+                self.advance(1);
+
+                let body = self.parse_statement()?;
+                span = next_span.combine(body.span);
+
+                kind = ast::StatementKind::Repeat(body);
+                trailer = StatementTrailer::NoSemiColon;
+            }
             TokenKind::Switch => {
                 let (stmt, s) = self.parse_switch_statement()?;
                 span = s;
@@ -1231,6 +1251,8 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::DoubleMinus => "--",
         TokenKind::DoubleAmpersand => "&&",
         TokenKind::DoublePipe => "||",
+        TokenKind::DoubleLess => "<<",
+        TokenKind::DoubleGreater => ">>",
         TokenKind::Enum => "enum",
         TokenKind::Function => "function",
         TokenKind::Constructor => "constructor",

@@ -26,6 +26,8 @@ pub enum StatementKind<S> {
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
     For(ForStatement<S>),
+    While(WhileStatement<S>),
+    Repeat(Statement<S>),
     Switch(SwitchStatement<S>),
     Call(CallExpr<S>),
     Prefix(MutationOp, MutableExpr<S>),
@@ -86,6 +88,12 @@ pub struct ForStatement<S> {
     pub initializer: Statement<S>,
     pub condition: Expression<S>,
     pub iterator: Statement<S>,
+    pub body: Statement<S>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhileStatement<S> {
+    pub condition: Expression<S>,
     pub body: Statement<S>,
 }
 
@@ -292,6 +300,12 @@ impl<S> Statement<S> {
             StatementKind::For(for_stmt) => {
                 for_stmt.walk(visitor)?;
             }
+            StatementKind::While(while_stmt) => {
+                while_stmt.walk(visitor)?;
+            }
+            StatementKind::Repeat(stmt) => {
+                visitor.visit_stmt(stmt)?;
+            }
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk(visitor)?;
             }
@@ -339,6 +353,12 @@ impl<S> Statement<S> {
             }
             StatementKind::For(for_stmt) => {
                 for_stmt.walk_mut(visitor)?;
+            }
+            StatementKind::While(while_stmt) => {
+                while_stmt.walk_mut(visitor)?;
+            }
+            StatementKind::Repeat(stmt) => {
+                visitor.visit_stmt_mut(stmt)?;
             }
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk_mut(visitor)?;
@@ -635,6 +655,20 @@ impl<S> ForStatement<S> {
         visitor.visit_stmt_mut(&mut self.initializer)?;
         visitor.visit_expr_mut(&mut self.condition)?;
         visitor.visit_stmt_mut(&mut self.iterator)?;
+        visitor.visit_stmt_mut(&mut self.body)?;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> WhileStatement<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.condition)?;
+        visitor.visit_stmt(&self.body)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.condition)?;
         visitor.visit_stmt_mut(&mut self.body)?;
         ControlFlow::Continue(())
     }
