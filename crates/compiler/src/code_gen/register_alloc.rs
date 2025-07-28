@@ -34,7 +34,7 @@ impl RegisterAllocation {
         let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
         let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
 
-        let upsilon_reach = compute_upsilon_reachability(ir, &shadow_liveness);
+        let upsilon_reach_map = compute_upsilon_reachability(ir, &shadow_liveness);
 
         // First, we assign shadow variables and the instructions they can coalesce with via graph
         // coloring.
@@ -62,7 +62,6 @@ impl RegisterAllocation {
         let mut assigned_shadow_registers = SecondaryMap::<ir::ShadowVar, RegIdx>::new();
 
         for shadow_var in shadow_liveness.live_shadow_vars() {
-            let upsilon_reach = &upsilon_reach[shadow_var];
             let mut interfering_registers = [0u8; 256];
 
             // For each live block for the given shadow variable, check interference with any
@@ -72,18 +71,19 @@ impl RegisterAllocation {
             for (block_id, shadow_range) in shadow_liveness.live_ranges(shadow_var) {
                 let shadow_ranges = InterferenceRange::all_from_shadow_range(shadow_range);
 
-                'next_var: for (other_shadow_var, &other_shadow_reg) in
+                'next_var: for (assigned_shadow_var, &assigned_shadow_reg) in
                     assigned_shadow_registers.iter()
                 {
-                    if let Some(other_shadow_range) =
-                        shadow_liveness.live_range_in_block(block_id, other_shadow_var)
+                    if let Some(assigned_shadow_range) =
+                        shadow_liveness.live_range_in_block(block_id, assigned_shadow_var)
                     {
-                        for other_shadow_range in
-                            InterferenceRange::all_from_shadow_range(other_shadow_range)
+                        for assigned_shadow_range in
+                            InterferenceRange::all_from_shadow_range(assigned_shadow_range)
                         {
                             for shadow_range in shadow_ranges.clone() {
-                                if shadow_range.interferes(other_shadow_range) {
-                                    interfering_registers.set_bit(other_shadow_reg as usize, true);
+                                if shadow_range.interferes(assigned_shadow_range) {
+                                    interfering_registers
+                                        .set_bit(assigned_shadow_reg as usize, true);
                                     continue 'next_var;
                                 }
                             }
@@ -161,20 +161,22 @@ impl RegisterAllocation {
                     for (block_id, inst_range) in instruction_liveness.live_ranges(inst_id) {
                         let inst_range = InterferenceRange::from_instruction_range(inst_range);
 
-                        for (other_shadow_var, &other_shadow_reg) in
+                        for (assigned_shadow_var, &assigned_shadow_reg) in
                             assigned_shadow_registers.iter()
                         {
                             // We can't possibly interfere if we aren't using the same register.
-                            if other_shadow_reg != assigned_reg {
+                            if assigned_shadow_reg != assigned_reg {
                                 continue;
                             }
 
-                            // Nor can we interfere if the other variable is not live in this block.
-                            let Some(other_shadow_range) =
-                                shadow_liveness.live_range_in_block(block_id, other_shadow_var)
+                            // Nor can we interfere if the shadow var is not live in this block.
+                            let Some(assigned_shadow_range) =
+                                shadow_liveness.live_range_in_block(block_id, assigned_shadow_var)
                             else {
                                 continue;
                             };
+
+                            let assigned_upsilon_reach = &upsilon_reach_map[assigned_shadow_var];
 
                             // Return true if the source instruction for the given upsilon is any
                             // instruction other than the one we are trying to coalesce.
@@ -194,8 +196,8 @@ impl RegisterAllocation {
                             // the coalescing variable to any shadow variable does not prevent them
                             // from sharing the same register.
 
-                            if let Some(incoming) = other_shadow_range.incoming_range {
-                                if upsilon_reach
+                            if let Some(incoming) = assigned_shadow_range.incoming_range {
+                                if assigned_upsilon_reach
                                     .live_upsilons
                                     .iter()
                                     .copied()
@@ -209,12 +211,9 @@ impl RegisterAllocation {
                                 }
                             }
 
-                            if let Some(outgoing) = other_shadow_range.outgoing_range {
-                                if upsilon_reach
-                                    .outgoing_reach
-                                    .get(&block_id)
-                                    .into_iter()
-                                    .flatten()
+                            if let Some(outgoing) = assigned_shadow_range.outgoing_range {
+                                if assigned_upsilon_reach.outgoing_reach[&block_id]
+                                    .iter()
                                     .copied()
                                     .any(upsilon_source_conflict)
                                 {
