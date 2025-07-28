@@ -149,6 +149,11 @@ impl RegisterAllocation {
                 }
             }
 
+            // We shouldn't try and coalesce instruction registers that have already been coalesced
+            // with some other shadow var.
+            coalescing_instructions
+                .retain(|&inst_id| !coalesced_instruction_registers.contains(inst_id));
+
             // For each instruction we would like to coalesce, check if it interferes with
             // any shadow variable that shares the assigned register (this will also check for
             // interference with the current shadow variable), and then also check if it interferes
@@ -251,7 +256,11 @@ impl RegisterAllocation {
             // coalesce.
 
             for inst_id in coalesced_instructions {
-                coalesced_instruction_registers.insert(inst_id, assigned_reg);
+                assert!(
+                    coalesced_instruction_registers
+                        .insert(inst_id, assigned_reg)
+                        .is_none()
+                );
             }
         }
 
