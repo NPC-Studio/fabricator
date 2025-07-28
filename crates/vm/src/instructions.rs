@@ -74,6 +74,7 @@ macro_rules! for_each_instruction {
             [simple] test_less_equal = TestLessEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] and = And { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] or = Or { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] null_coalesce = NullCoalesce { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [simple]
             /// Push `len` values starting at the `source` register to the stack.

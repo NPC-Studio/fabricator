@@ -27,7 +27,12 @@ assert(4.9 div 3.1 == 1);
 	assert(++i == 1);
 	assert(i++ == 1);
 	assert(i == 2);
+	assert(i-- == 2);
+	assert(--i == 0);
 }
+
+assert(undefined ?? 3 == 3);
+assert(4 ?? 3 == 4);
 
 assert(black_box(true) && true);
 assert(!(black_box(true) && false));
@@ -58,6 +63,11 @@ assert(black_box(4.9) div 3.1 == 1);
 	assert(++i == 1);
 	assert(i++ == 1);
 	assert(i == 2);
+	assert(i-- == 2);
+	assert(--i == 0);
 }
+
+assert(undefined ?? black_box(3) == 3);
+assert(4 ?? black_box(3) == 4);
 
 return true;

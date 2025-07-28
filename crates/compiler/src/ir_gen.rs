@@ -401,32 +401,34 @@ where
         let mut static_names = HashSet::new();
 
         for stmt in &main_block.statements {
-            if let ast::StatementKind::Static(static_decl) = &*stmt.kind {
-                if !static_names.insert(&static_decl.name) {
-                    return Err(IrGenError {
-                        kind: IrGenErrorKind::ConstructorStaticNotUnique,
-                        span: stmt.span,
-                    });
+            if let ast::StatementKind::Static(decls) = &*stmt.kind {
+                for decl in decls {
+                    if !static_names.insert(&decl.name) {
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ConstructorStaticNotUnique,
+                            span: stmt.span,
+                        });
+                    }
+
+                    let key = self.push_instruction(
+                        stmt.span,
+                        ir::Instruction::Constant(Constant::String(decl.name.clone())),
+                    );
+                    let value =
+                        self.expression(decl.value.as_ref().ok_or_else(|| IrGenError {
+                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+                            span: stmt.span,
+                        })?)?;
+
+                    self.push_instruction(
+                        stmt.span,
+                        ir::Instruction::SetField {
+                            object: our_super,
+                            key,
+                            value,
+                        },
+                    );
                 }
-
-                let key = self.push_instruction(
-                    stmt.span,
-                    ir::Instruction::Constant(Constant::String(static_decl.name.clone())),
-                );
-                let value =
-                    self.expression(static_decl.value.as_ref().ok_or_else(|| IrGenError {
-                        kind: IrGenErrorKind::ConstructorStaticNotInitialized,
-                        span: stmt.span,
-                    })?)?;
-
-                self.push_instruction(
-                    stmt.span,
-                    ir::Instruction::SetField {
-                        object: our_super,
-                        key,
-                        value,
-                    },
-                );
             }
         }
 
@@ -486,12 +488,14 @@ where
 
         for stmt in &main_block.statements {
             match &*stmt.kind {
-                ast::StatementKind::Static(declaration) => {
-                    // Declare a pseudo-variable when encountering the static statement.
-                    // This variable's sole purpose is to prevent accessing a constructor
-                    // `static`, which *looks* like a variable but is not usable as a variable
-                    // in expressions.
-                    self.declare_var(declaration.name.clone(), None);
+                ast::StatementKind::Static(decls) => {
+                    for decl in decls {
+                        // Declare a pseudo-variable when encountering the static statement.
+                        // This variable's sole purpose is to prevent accessing a constructor
+                        // `static`, which *looks* like a variable but is not usable as a variable
+                        // in expressions.
+                        self.declare_var(decl.name.clone(), None);
+                    }
                 }
                 _ => {
                     self.statement(stmt)?;
@@ -555,16 +559,24 @@ where
                     span: statement.span,
                 });
             }
-            ast::StatementKind::Var(var_decl) => self.var_statement(statement.span, var_decl),
-            ast::StatementKind::Static(static_decl) => {
+            ast::StatementKind::Var(var_decls) => {
+                for var_decl in var_decls {
+                    self.var_declaration(statement.span, var_decl)?;
+                }
+                Ok(())
+            }
+            ast::StatementKind::Static(static_decls) => {
                 if self.function.is_constructor {
                     return Err(IrGenError {
                         kind: IrGenErrorKind::ConstructorStaticNotTopLevel,
                         span: statement.span,
                     });
-                } else {
-                    self.static_statement(statement.span, static_decl)
                 }
+
+                for static_decl in static_decls {
+                    self.static_declaration(statement.span, static_decl)?;
+                }
+                Ok(())
             }
             ast::StatementKind::Assignment(assignment_statement) => {
                 self.assignment_statement(statement.span, assignment_statement)
@@ -590,7 +602,7 @@ where
         }
     }
 
-    fn var_statement(
+    fn var_declaration(
         &mut self,
         span: Span,
         var_decl: &ast::Declaration<S>,
@@ -605,7 +617,7 @@ where
         Ok(())
     }
 
-    fn static_statement(
+    fn static_declaration(
         &mut self,
         span: Span,
         static_decl: &ast::Declaration<S>,
@@ -720,6 +732,17 @@ where
                         left: prev,
                         right: val,
                         op: ir::BinOp::Div,
+                    },
+                )
+            }
+            ast::AssignmentOp::NullCoalesce => {
+                let prev = self.read_mutable_target(span, target.clone());
+                self.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left: prev,
+                        right: val,
+                        op: ir::BinOp::NullCoalesce,
                     },
                 )
             }
@@ -1016,6 +1039,7 @@ where
                     ast::BinaryOp::GreaterEqual => ir::BinOp::GreaterEqual,
                     ast::BinaryOp::And => ir::BinOp::And,
                     ast::BinaryOp::Or => ir::BinOp::Or,
+                    ast::BinaryOp::NullCoalesce => ir::BinOp::NullCoalesce,
                 };
                 self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
             }

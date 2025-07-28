@@ -114,7 +114,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 _ => unreachable!(),
             };
 
-            let mut enom = Enum {
+            let mut enum_ = Enum {
                 name: enum_stmt.name,
                 span: stmt.span,
                 variants: HashMap::new(),
@@ -128,16 +128,17 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
                     })?;
-                    enom.variants.insert(name, value);
+                    enum_.variants.insert(name, value);
                 } else {
-                    enom.variants
+                    enum_
+                        .variants
                         .insert(name, Constant::Integer(implicit_index));
                     implicit_index += 1;
                 };
             }
 
-            self.dict.insert(enom.name.clone(), self.enums.len());
-            self.enums.push(enom);
+            self.dict.insert(enum_.name.clone(), self.enums.len());
+            self.enums.push(enum_);
         }
 
         Ok(())
@@ -154,7 +155,17 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 let shadows = match stmt.kind.as_ref() {
                     ast::StatementKind::Enum(enum_stmt) => self.0.dict.get(&enum_stmt.name),
                     ast::StatementKind::Function(func_stmt) => self.0.dict.get(&func_stmt.name),
-                    ast::StatementKind::Var(var_stmt) => self.0.dict.get(&var_stmt.name),
+                    ast::StatementKind::Var(decls) => {
+                        let mut shadow = None;
+                        for decl in decls {
+                            let res = self.0.dict.get(&decl.name);
+                            if res.is_some() {
+                                shadow = res;
+                                break;
+                            }
+                        }
+                        shadow
+                    }
                     _ => None,
                 }
                 .copied();

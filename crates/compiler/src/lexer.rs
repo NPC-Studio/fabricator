@@ -31,7 +31,7 @@ pub struct LexError {
 pub struct Lexer<'a, S> {
     interner: S,
     source: &'a str,
-    peek_buffer: ArrayVec<char, 2>,
+    peek_buffer: ArrayVec<char, 3>,
     string_buffer: String,
     position: usize,
 }
@@ -124,8 +124,8 @@ where
         self.skip_whitespace();
 
         let start_position = self.position;
-        let kind = match (self.peek(0), self.peek(1)) {
-            (Some(c), n) if is_newline(c) => {
+        let kind = match (self.peek(0), self.peek(1), self.peek(2)) {
+            (Some(c), n, _) if is_newline(c) => {
                 self.advance(1);
                 // If we have a second newline character immediately following the first one and
                 // it is a *different* newline character, then lex the pair "\n\r" or "\r\n" as a
@@ -135,10 +135,10 @@ where
                 }
                 TokenKind::Newline
             }
-            (Some(c), _) if c.is_ascii_whitespace() => {
+            (Some(c), _, _) if c.is_ascii_whitespace() => {
                 unreachable!("whitespace should have been skipped")
             }
-            (Some(c), Some(n)) if c == '#' && is_identifier_start_char(n) => {
+            (Some(c), Some(n), _) if c == '#' && is_identifier_start_char(n) => {
                 self.advance(1);
                 self.read_identifier();
                 match self.string_buffer.as_str() {
@@ -151,167 +151,175 @@ where
                     }
                 }
             }
-            (Some('!'), Some('=')) => {
+            (Some('?'), Some('?'), Some('=')) => {
+                self.advance(3);
+                TokenKind::DoubleQuestionMarkEqual
+            }
+            (Some('!'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::BangEqual
             }
-            (Some('='), Some('=')) => {
+            (Some('='), Some('='), _) => {
                 self.advance(2);
                 TokenKind::DoubleEqual
             }
-            (Some('+'), Some('=')) => {
+            (Some('+'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::PlusEqual
             }
-            (Some('-'), Some('=')) => {
+            (Some('-'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::MinusEqual
             }
-            (Some('*'), Some('=')) => {
+            (Some('*'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::StarEqual
             }
-            (Some('/'), Some('=')) => {
+            (Some('/'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::SlashEqual
             }
-            (Some('%'), Some('=')) => {
+            (Some('%'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::PercentEqual
             }
-            (Some('<'), Some('=')) => {
+            (Some('<'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::LessEqual
             }
-            (Some('>'), Some('=')) => {
+            (Some('>'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::GreaterEqual
             }
-            (Some('+'), Some('+')) => {
+            (Some('?'), Some('?'), _) => {
+                self.advance(2);
+                TokenKind::DoubleQuestionMark
+            }
+            (Some('+'), Some('+'), _) => {
                 self.advance(2);
                 TokenKind::DoublePlus
             }
-            (Some('-'), Some('-')) => {
+            (Some('-'), Some('-'), _) => {
                 self.advance(2);
                 TokenKind::DoubleMinus
             }
-            (Some('&'), Some('&')) => {
+            (Some('&'), Some('&'), _) => {
                 self.advance(2);
                 TokenKind::DoubleAmpersand
             }
-            (Some('|'), Some('|')) => {
+            (Some('|'), Some('|'), _) => {
                 self.advance(2);
                 TokenKind::DoublePipe
             }
-            (Some('('), _) => {
+            (Some('('), _, _) => {
                 self.advance(1);
                 TokenKind::LeftParen
             }
-            (Some(')'), _) => {
+            (Some(')'), _, _) => {
                 self.advance(1);
                 TokenKind::RightParen
             }
-            (Some('['), _) => {
+            (Some('['), _, _) => {
                 self.advance(1);
                 TokenKind::LeftBracket
             }
-            (Some(']'), _) => {
+            (Some(']'), _, _) => {
                 self.advance(1);
                 TokenKind::RightBracket
             }
-            (Some('{'), _) => {
+            (Some('{'), _, _) => {
                 self.advance(1);
                 TokenKind::LeftBrace
             }
-            (Some('}'), _) => {
+            (Some('}'), _, _) => {
                 self.advance(1);
                 TokenKind::RightBrace
             }
-            (Some(':'), _) => {
+            (Some(':'), _, _) => {
                 self.advance(1);
                 TokenKind::Colon
             }
-            (Some(';'), _) => {
+            (Some(';'), _, _) => {
                 self.advance(1);
                 TokenKind::SemiColon
             }
-            (Some(','), _) => {
+            (Some(','), _, _) => {
                 self.advance(1);
                 TokenKind::Comma
             }
-            (Some('.'), _) => {
+            (Some('.'), _, _) => {
                 self.advance(1);
                 TokenKind::Dot
             }
-            (Some('+'), _) => {
+            (Some('+'), _, _) => {
                 self.advance(1);
                 TokenKind::Plus
             }
-            (Some('-'), _) => {
+            (Some('-'), _, _) => {
                 self.advance(1);
                 TokenKind::Minus
             }
-            (Some('!'), _) => {
+            (Some('!'), _, _) => {
                 self.advance(1);
                 TokenKind::Bang
             }
-            (Some('/'), _) => {
+            (Some('/'), _, _) => {
                 self.advance(1);
                 TokenKind::Slash
             }
-            (Some('*'), _) => {
+            (Some('*'), _, _) => {
                 self.advance(1);
                 TokenKind::Star
             }
-            (Some('%'), _) => {
+            (Some('%'), _, _) => {
                 self.advance(1);
                 TokenKind::Percent
             }
-            (Some('&'), _) => {
+            (Some('&'), _, _) => {
                 self.advance(1);
                 TokenKind::Ampersand
             }
-            (Some('|'), _) => {
+            (Some('|'), _, _) => {
                 self.advance(1);
                 TokenKind::Pipe
             }
-            (Some('~'), _) => {
+            (Some('~'), _, _) => {
                 self.advance(1);
                 TokenKind::Tilde
             }
-            (Some('?'), _) => {
+            (Some('?'), _, _) => {
                 self.advance(1);
                 TokenKind::QuestionMark
             }
-            (Some('#'), _) => {
+            (Some('#'), _, _) => {
                 self.advance(1);
                 TokenKind::Octothorpe
             }
-            (Some('@'), _) => {
+            (Some('@'), _, _) => {
                 self.advance(1);
                 TokenKind::AtSign
             }
-            (Some('$'), _) => {
+            (Some('$'), _, _) => {
                 self.advance(1);
                 TokenKind::Dollar
             }
-            (Some('='), _) => {
+            (Some('='), _, _) => {
                 self.advance(1);
                 TokenKind::Equal
             }
-            (Some('<'), _) => {
+            (Some('<'), _, _) => {
                 self.advance(1);
                 TokenKind::Less
             }
-            (Some('>'), _) => {
+            (Some('>'), _, _) => {
                 self.advance(1);
                 TokenKind::Greater
             }
-            (Some('"'), _) => {
+            (Some('"'), _, _) => {
                 self.read_string()?;
                 TokenKind::String(self.interner.intern(self.string_buffer.as_str()))
             }
-            (Some(c), _) if is_identifier_start_char(c) => {
+            (Some(c), _, _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
                     "mod" => TokenKind::Mod,
@@ -344,14 +352,14 @@ where
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }
-            (Some(c), _) if c.is_ascii_digit() => self.read_numeral(),
-            (Some(c), _) => {
+            (Some(c), _, _) if c.is_ascii_digit() => self.read_numeral(),
+            (Some(c), _, _) => {
                 return Err(LexError {
                     kind: LexErrorKind::UnexpectedCharacter(c),
                     span: Span::new(start_position, start_position + 1),
                 });
             }
-            (None, _) => TokenKind::EndOfStream,
+            (None, _, _) => TokenKind::EndOfStream,
         };
 
         Ok(Token {

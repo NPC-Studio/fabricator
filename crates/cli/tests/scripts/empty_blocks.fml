@@ -1,5 +1,4 @@
-var i = 1;
-var j = 0;
+var i = 1, j = 0;
 
 if i == 1 {
 	j = 2;

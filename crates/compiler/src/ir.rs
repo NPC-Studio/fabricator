@@ -37,6 +37,7 @@ pub enum BinOp {
     GreaterEqual,
     And,
     Or,
+    NullCoalesce,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -711,6 +712,9 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         BinOp::Or => {
                             writeln!(f, "or(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::NullCoalesce => {
+                            writeln!(f, "null_coalesce(I{}, I{})", left.index(), right.index())?;
                         }
                     },
                     Instruction::Call {

@@ -55,6 +55,11 @@ impl<S: Hash> Hash for Constant<S> {
 
 impl<S> Constant<S> {
     #[inline]
+    pub fn is_undefined(&self) -> bool {
+        matches!(&self, Constant::Undefined)
+    }
+
+    #[inline]
     pub fn to_bool(&self) -> bool {
         match *self {
             Constant::Undefined => false,

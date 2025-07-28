@@ -484,6 +484,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ir::BinOp::Or => {
                             vm_instructions.push((Instruction::Or { dest, left, right }, span));
                         }
+                        ir::BinOp::NullCoalesce => {
+                            vm_instructions
+                                .push((Instruction::NullCoalesce { dest, left, right }, span));
+                        }
                     }
                 }
                 ir::Instruction::Call {

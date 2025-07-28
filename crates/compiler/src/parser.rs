@@ -21,6 +21,8 @@ pub enum ParseErrorKind {
     InheritWithoutConstructor,
     #[error("parser settings forbid `new` on call expressions")]
     NewDisallowed,
+    #[error("accessor indexing is disallowed")]
+    AccessorsDisallowed,
 }
 
 #[derive(Debug, Error)]
@@ -37,6 +39,8 @@ pub struct ParseSettings {
     pub strict_semicolons: bool,
     /// Allow `new` before function call expressions.
     pub allow_new: bool,
+    /// Allow `|` `?` `#` `@` `$` accessors.
+    pub allow_accessors: bool,
 }
 
 impl ParseSettings {
@@ -44,6 +48,7 @@ impl ParseSettings {
         ParseSettings {
             strict_semicolons: true,
             allow_new: false,
+            allow_accessors: false,
         }
     }
 
@@ -51,6 +56,7 @@ impl ParseSettings {
         ParseSettings {
             strict_semicolons: false,
             allow_new: true,
+            allow_accessors: true,
         }
     }
 
@@ -168,15 +174,15 @@ where
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Var => {
-                let (decl, s) = self.parse_declaration(TokenKind::Var)?;
+                let (decls, s) = self.parse_declaration_list(TokenKind::Var)?;
                 span = s;
-                kind = ast::StatementKind::Var(decl);
+                kind = ast::StatementKind::Var(decls);
                 trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Static => {
-                let (decl, s) = self.parse_declaration(TokenKind::Static)?;
+                let (decls, s) = self.parse_declaration_list(TokenKind::Static)?;
                 span = s;
-                kind = ast::StatementKind::Static(decl);
+                kind = ast::StatementKind::Static(decls);
                 trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Return => {
@@ -340,26 +346,38 @@ where
         ))
     }
 
-    fn parse_declaration(
+    fn parse_declaration_list(
         &mut self,
         decl_token: TokenKind<()>,
-    ) -> Result<(ast::Declaration<S>, Span), ParseError> {
+    ) -> Result<(Vec<ast::Declaration<S>>, Span), ParseError> {
         let mut span = self.parse_token(decl_token)?;
-        let (name, name_span) = self.parse_identifier()?;
-        span = span.combine(name_span);
+        let mut decls = Vec::new();
+        loop {
+            let (name, name_span) = self.parse_identifier()?;
+            span = span.combine(name_span);
 
-        self.look_ahead(1);
-        let value;
-        if matches!(self.peek(0).kind, TokenKind::Equal) {
-            self.parse_token(TokenKind::Equal)?;
-            let val = self.parse_expression()?;
-            span = span.combine(val.span);
-            value = Some(val);
-        } else {
-            value = None;
+            self.look_ahead(1);
+            let value;
+            if matches!(self.peek(0).kind, TokenKind::Equal) {
+                self.advance(1);
+                let val = self.parse_expression()?;
+                span = span.combine(val.span);
+                value = Some(val);
+            } else {
+                value = None;
+            }
+
+            decls.push(ast::Declaration { name, value });
+
+            self.look_ahead(1);
+            if matches!(self.peek(0).kind, TokenKind::Comma) {
+                self.advance(1)
+            } else {
+                break;
+            }
         }
 
-        Ok((ast::Declaration { name, value }, span))
+        Ok((decls, span))
     }
 
     fn parse_function_statement(
@@ -535,21 +553,21 @@ where
             span: next_span,
         } = self.peek(0);
 
-        let mut expr = if let Some(unary_op) = get_unary_operator(next_kind) {
-            self.advance(1);
-            let target = self.parse_sub_expression(UNARY_PRIORITY)?;
-            let span = next_span.combine(target.span);
-            ast::Expression {
-                kind: Box::new(ast::ExpressionKind::Unary(unary_op, target)),
-                span,
-            }
-        } else if let Some(prefix_op) = get_mutation_operator(next_kind) {
+        let mut expr = if let Some(prefix_op) = get_mutation_operator(next_kind) {
             self.advance(1);
             let target = self.parse_sub_expression(UNARY_PRIORITY)?;
             let span = next_span.combine(target.span);
             let target = get_mutable_expr(target)?;
             ast::Expression {
                 kind: Box::new(ast::ExpressionKind::Prefix(prefix_op, target)),
+                span,
+            }
+        } else if let Some(unary_op) = get_unary_operator(next_kind) {
+            self.advance(1);
+            let target = self.parse_sub_expression(UNARY_PRIORITY)?;
+            let span = next_span.combine(target.span);
+            ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Unary(unary_op, target)),
                 span,
             }
         } else {
@@ -628,6 +646,26 @@ where
                 }
                 TokenKind::LeftBracket => {
                     self.advance(1);
+
+                    self.look_ahead(1);
+                    let &Token {
+                        kind: ref next_kind,
+                        span: next_span,
+                    } = self.peek(0);
+                    let accessor_type = if let Some(accessor_type) = get_accessor_type(next_kind) {
+                        self.advance(1);
+                        Some(accessor_type)
+                    } else {
+                        None
+                    };
+
+                    if accessor_type.is_some() && !self.settings.allow_accessors {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::AccessorsDisallowed,
+                            span: next_span,
+                        });
+                    }
+
                     let index = self.parse_expression()?;
                     let span = expr
                         .span
@@ -635,6 +673,7 @@ where
                     expr = ast::Expression {
                         kind: Box::new(ast::ExpressionKind::Index(ast::IndexExpr {
                             base: expr,
+                            accessor_type,
                             index,
                         })),
                         span,
@@ -1089,6 +1128,7 @@ fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<ast::BinaryOp> {
         TokenKind::GreaterEqual => Some(ast::BinaryOp::GreaterEqual),
         TokenKind::DoubleAmpersand => Some(ast::BinaryOp::And),
         TokenKind::DoublePipe => Some(ast::BinaryOp::Or),
+        TokenKind::DoubleQuestionMark => Some(ast::BinaryOp::NullCoalesce),
         _ => None,
     }
 }
@@ -1100,6 +1140,18 @@ fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<ast::AssignmentOp>
         TokenKind::MinusEqual => Some(ast::AssignmentOp::MinusEqual),
         TokenKind::StarEqual => Some(ast::AssignmentOp::MultEqual),
         TokenKind::SlashEqual => Some(ast::AssignmentOp::DivEqual),
+        TokenKind::DoubleQuestionMarkEqual => Some(ast::AssignmentOp::NullCoalesce),
+        _ => None,
+    }
+}
+
+fn get_accessor_type<S>(token: &TokenKind<S>) -> Option<ast::AccessorType> {
+    match *token {
+        TokenKind::Pipe => Some(ast::AccessorType::List),
+        TokenKind::QuestionMark => Some(ast::AccessorType::Map),
+        TokenKind::Octothorpe => Some(ast::AccessorType::Grid),
+        TokenKind::AtSign => Some(ast::AccessorType::Array),
+        TokenKind::Dollar => Some(ast::AccessorType::Struct),
         _ => None,
     }
 }
@@ -1140,12 +1192,14 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::StarEqual => "*=",
         TokenKind::SlashEqual => "/=",
         TokenKind::PercentEqual => "%=",
+        TokenKind::DoubleQuestionMarkEqual => "??=",
         TokenKind::DoubleEqual => "==",
         TokenKind::BangEqual => "!=",
         TokenKind::Less => "<",
         TokenKind::LessEqual => "<=",
         TokenKind::Greater => ">",
         TokenKind::GreaterEqual => ">=",
+        TokenKind::DoubleQuestionMark => "??",
         TokenKind::DoublePlus => "++",
         TokenKind::DoubleMinus => "--",
         TokenKind::DoubleAmpersand => "&&",
@@ -1212,6 +1266,7 @@ fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriori
         ast::BinaryOp::GreaterEqual => (3, 3),
         ast::BinaryOp::And => (2, 2),
         ast::BinaryOp::Or => (1, 1),
+        ast::BinaryOp::NullCoalesce => (1, 1),
     }
 }
 
@@ -1291,12 +1346,16 @@ mod tests {
                 case 1_234: {}
                 default: {}
             }
+
+            var a = [1, 2, 3];
+            print(a[@ 1]);
         "#;
 
         parse(
             ParseSettings {
                 strict_semicolons: true,
                 allow_new: true,
+                allow_accessors: true,
             },
             SOURCE,
         )

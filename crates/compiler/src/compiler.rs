@@ -394,13 +394,13 @@ impl<'gc> Compiler<'gc> {
             }
 
             for i in prev_enum_len..enums.len() {
-                let enom = enums.get(i).unwrap();
-                if magic.find(&enom.name).is_some() {
-                    let line_number = chunk.line_number(enom.span.start());
+                let enum_ = enums.get(i).unwrap();
+                if magic.find(&enum_.name).is_some() {
+                    let line_number = chunk.line_number(enum_.span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ItemShadowsMagic {
-                            name: enom.name.as_str().to_owned(),
-                            span: enom.span,
+                            name: enum_.name.as_str().to_owned(),
+                            span: enum_.span,
                         },
                         chunk_name: chunk.name().clone(),
                         line_number,

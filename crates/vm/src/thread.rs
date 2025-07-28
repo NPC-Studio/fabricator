@@ -792,6 +792,19 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        fn null_coalesce(
+            &mut self,
+            dest: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
+        ) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = if left.is_undefined() { right } else { left };
+            Ok(())
+        }
+
         #[inline]
         fn check(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
             Ok(self.registers[test as usize].to_bool() == is_true)
