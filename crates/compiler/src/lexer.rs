@@ -314,6 +314,8 @@ where
             (Some(c), _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
+                    "mod" => TokenKind::Mod,
+                    "div" => TokenKind::Div,
                     "enum" => TokenKind::Enum,
                     "function" => TokenKind::Function,
                     "constructor" => TokenKind::Constructor,

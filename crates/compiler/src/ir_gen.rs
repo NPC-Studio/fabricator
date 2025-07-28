@@ -37,6 +37,8 @@ pub enum IrGenErrorKind {
     ConstructorStaticNotTopLevel,
     #[error("static variable in constructor does not have a unique name")]
     ConstructorStaticNotUnique,
+    #[error("static variables in constructors must be initialized")]
+    ConstructorStaticNotInitialized,
     #[error("function not allowed to have a return statement with an argument")]
     CannotReturnValue,
     #[error("break statement with no target")]
@@ -411,7 +413,13 @@ where
                     stmt.span,
                     ir::Instruction::Constant(Constant::String(static_decl.name.clone())),
                 );
-                let value = self.commit_expression(&static_decl.value)?;
+                let value =
+                    self.commit_expression(static_decl.value.as_ref().ok_or_else(|| {
+                        IrGenError {
+                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+                            span: stmt.span,
+                        }
+                    })?)?;
 
                 self.push_instruction(
                     stmt.span,
@@ -584,8 +592,10 @@ where
         let var_id = self
             .declare_var(var_decl.name.clone(), Some(ir::Variable::Owned))
             .unwrap();
-        let inst_id = self.commit_expression(&var_decl.value)?;
-        self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
+        if let Some(value) = &var_decl.value {
+            let inst_id = self.commit_expression(value)?;
+            self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
+        }
         Ok(())
     }
 
@@ -594,52 +604,60 @@ where
         span: Span,
         static_decl: &ast::Declaration<S>,
     ) -> Result<(), IrGenError> {
-        if let Some(constant) = static_decl.value.clone().fold_constant() {
-            // If our static is a constant, then we can just initialize it when the prototype is
-            // created.
+        if let Some(value) = &static_decl.value {
+            if let Some(constant) = value.clone().fold_constant() {
+                // If our static is a constant, then we can just initialize it when the prototype is
+                // created.
+                self.declare_var(
+                    static_decl.name.clone(),
+                    Some(ir::Variable::Static(constant)),
+                );
+            } else {
+                // Otherwise, we need to initialize two static variables, a hidden one for the
+                // initialization state and a visible one to hold the initialized value.
+
+                // Create a hidden static variable to hold whether the real static is initialized.
+                let is_initialized = self
+                    .function
+                    .variables
+                    .insert(ir::Variable::Static(Constant::Boolean(false)));
+                // Create a normal static variable that holds the real value.
+                let var_id = self
+                    .declare_var(
+                        static_decl.name.clone(),
+                        Some(ir::Variable::Static(Constant::Undefined)),
+                    )
+                    .unwrap();
+
+                let init_block = self.new_block();
+                let successor = self.new_block();
+
+                let check_initialized =
+                    self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
+                self.end_current_block(ir::Exit::Branch {
+                    cond: check_initialized,
+                    if_false: init_block,
+                    if_true: successor,
+                });
+
+                self.start_new_block(init_block);
+
+                let value = self.commit_expression(value)?;
+                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+                let true_ =
+                    self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
+                self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
+
+                self.end_current_block(ir::Exit::Jump(successor));
+
+                self.start_new_block(successor);
+            }
+        } else {
+            // If our static has no value then it is just initialized as `Undefined`.
             self.declare_var(
                 static_decl.name.clone(),
-                Some(ir::Variable::Static(constant)),
+                Some(ir::Variable::Static(Constant::Undefined)),
             );
-        } else {
-            // Otherwise, we need to initialize two static variables, a hidden one for the
-            // initialization state and a visible one to hold the initialized value.
-
-            // Create a hidden static variable to hold whether the real static is initialized.
-            let is_initialized = self
-                .function
-                .variables
-                .insert(ir::Variable::Static(Constant::Boolean(false)));
-            // Create a normal static variable that holds the real value.
-            let var_id = self
-                .declare_var(
-                    static_decl.name.clone(),
-                    Some(ir::Variable::Static(Constant::Undefined)),
-                )
-                .unwrap();
-
-            let init_block = self.new_block();
-            let successor = self.new_block();
-
-            let check_initialized =
-                self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
-            self.end_current_block(ir::Exit::Branch {
-                cond: check_initialized,
-                if_false: init_block,
-                if_true: successor,
-            });
-
-            self.start_new_block(init_block);
-
-            let value = self.commit_expression(&static_decl.value)?;
-            self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
-            let true_ =
-                self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
-            self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
-
-            self.end_current_block(ir::Exit::Jump(successor));
-
-            self.start_new_block(successor);
         }
 
         Ok(())
@@ -1081,6 +1099,8 @@ where
                     ast::BinaryOp::Sub => ir::BinOp::Sub,
                     ast::BinaryOp::Mult => ir::BinOp::Mult,
                     ast::BinaryOp::Div => ir::BinOp::Div,
+                    ast::BinaryOp::Rem => ir::BinOp::Rem,
+                    ast::BinaryOp::IDiv => ir::BinOp::IDiv,
                     ast::BinaryOp::Equal => ir::BinOp::Equal,
                     ast::BinaryOp::NotEqual => ir::BinOp::NotEqual,
                     ast::BinaryOp::LessThan => ir::BinOp::LessThan,

@@ -62,16 +62,18 @@ macro_rules! for_each_instruction {
             [simple] move_ = Move { dest: RegIdx, source: RegIdx };
             [simple] not = Not { dest: RegIdx, arg: RegIdx };
             [simple] neg = Neg { dest: RegIdx, arg: RegIdx };
-            [simple] add = Add { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] sub = Sub { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] mult = Mult { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] div = Div { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] test_equal = TestEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] test_not_equal = TestNotEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] test_less = TestLess { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] test_less_equal = TestLessEqual { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] and = And { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
-            [simple] or = Or { dest: RegIdx, arg1: RegIdx, arg2: RegIdx };
+            [simple] add = Add { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] sub = Sub { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] mult = Mult { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] div = Div { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] rem = Rem { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] idiv = IDiv { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] test_equal = TestEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] test_not_equal = TestNotEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] test_less = TestLess { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] test_less_equal = TestLessEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] and = And { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] or = Or { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [simple]
             /// Push `len` values starting at the `source` register to the stack.

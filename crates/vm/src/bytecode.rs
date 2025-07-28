@@ -478,8 +478,8 @@ mod tests {
             },
             Instruction::Jump { offset: 1 },
             Instruction::TestEqual {
-                arg1: 3,
-                arg2: 4,
+                left: 3,
+                right: 4,
                 dest: 5,
             },
             Instruction::JumpIf {

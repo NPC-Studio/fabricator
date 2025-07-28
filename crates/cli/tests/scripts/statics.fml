@@ -3,7 +3,7 @@
 // In practice, this simply means that every declared static variable exists exactly once in the
 // program.
 function static_test_1() {
-	static a_static = 0;
+	static a_static = black_box(0);
 	a_static += 1;
 	return a_static;
 }
@@ -35,7 +35,7 @@ assert(static_test_2() == 2);
 assert(static_test_2() == 4);
 assert(static_test_2() == 6);
 
-// They can even be upvalues used by closures, the same as normal variables.
+// They can even be upvalues of closures, the same as normal variables.
 //
 // Every created closure will reference the *same* static instance, the same as happens with any
 // other use of a static variable.

@@ -38,6 +38,8 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                             ir::BinOp::Sub => l.sub(r),
                             ir::BinOp::Mult => l.mult(r),
                             ir::BinOp::Div => l.div(r),
+                            ir::BinOp::Rem => l.rem(r),
+                            ir::BinOp::IDiv => l.idiv(r),
                             ir::BinOp::Equal => l.equal(r).map(Constant::Boolean),
                             ir::BinOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
                             ir::BinOp::LessThan => l.less_than(r).map(Constant::Boolean),

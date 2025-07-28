@@ -117,11 +117,43 @@ impl<S> Constant<S> {
     pub fn div(self, other: Constant<S>) -> Option<Constant<S>> {
         match (self, other) {
             (Constant::Integer(a), Constant::Integer(b)) => {
-                Some(Constant::Integer(a.wrapping_div(b)))
+                Some(Constant::Float(a as f64 / b as f64))
             }
             (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 / b)),
             (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a / b as f64)),
             (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a / b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn rem(self, other: Constant<S>) -> Option<Constant<S>> {
+        match (self, other) {
+            (Constant::Integer(a), Constant::Integer(b)) => {
+                Some(Constant::Integer(a.wrapping_rem(b)))
+            }
+            (Constant::Integer(a), Constant::Float(b)) => Some(Constant::Float(a as f64 % b)),
+            (Constant::Float(a), Constant::Integer(b)) => Some(Constant::Float(a % b as f64)),
+            (Constant::Float(a), Constant::Float(b)) => Some(Constant::Float(a % b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn idiv(self, other: Constant<S>) -> Option<Constant<S>> {
+        match (self, other) {
+            (Constant::Integer(a), Constant::Integer(b)) => {
+                Some(Constant::Integer(a.wrapping_div(b)))
+            }
+            (Constant::Integer(a), Constant::Float(b)) => {
+                Some(Constant::Integer(a.wrapping_div(b.floor() as i64)))
+            }
+            (Constant::Float(a), Constant::Integer(b)) => {
+                Some(Constant::Integer((a.floor() as i64).wrapping_div(b)))
+            }
+            (Constant::Float(a), Constant::Float(b)) => Some(Constant::Integer(
+                (a.floor() as i64).wrapping_div(b.floor() as i64),
+            )),
             _ => None,
         }
     }

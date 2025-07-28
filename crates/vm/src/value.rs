@@ -220,6 +220,34 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_rem(b))),
+            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 % b)),
+            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a % b as f64)),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a % b)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn idiv(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_div(b))),
+            (Value::Integer(a), Value::Float(b)) => {
+                Some(Value::Integer(a.wrapping_div(b.floor() as i64)))
+            }
+            (Value::Float(a), Value::Integer(b)) => {
+                Some(Value::Integer((a.floor() as i64).wrapping_div(b)))
+            }
+            (Value::Float(a), Value::Float(b)) => Some(Value::Integer(
+                (a.floor() as i64).wrapping_div(b.floor() as i64),
+            )),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn equal(self, other: Value<'gc>) -> bool {
         match (self, other) {
             (Value::Undefined, Value::Undefined) => true,

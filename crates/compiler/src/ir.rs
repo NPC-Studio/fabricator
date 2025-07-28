@@ -27,6 +27,8 @@ pub enum BinOp {
     Sub,
     Mult,
     Div,
+    Rem,
+    IDiv,
     Equal,
     NotEqual,
     LessThan,
@@ -679,6 +681,12 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         BinOp::Div => {
                             writeln!(f, "div(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::Rem => {
+                            writeln!(f, "rem(I{}, I{})", left.index(), right.index())?;
+                        }
+                        BinOp::IDiv => {
+                            writeln!(f, "idiv(I{}, I{})", left.index(), right.index())?;
                         }
                         BinOp::LessThan => {
                             writeln!(f, "less_than(I{}, I{})", left.index(), right.index())?;

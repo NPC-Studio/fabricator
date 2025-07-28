@@ -168,21 +168,15 @@ where
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Var => {
-                self.advance(1);
-                let name = self.parse_identifier()?.0;
-                self.parse_token(TokenKind::Equal)?;
-                let value = self.parse_expression()?;
-                span = next_span.combine(value.span);
-                kind = ast::StatementKind::Var(ast::Declaration { name, value });
+                let (decl, s) = self.parse_declaration(TokenKind::Var)?;
+                span = s;
+                kind = ast::StatementKind::Var(decl);
                 trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Static => {
-                self.advance(1);
-                let name = self.parse_identifier()?.0;
-                self.parse_token(TokenKind::Equal)?;
-                let value = self.parse_expression()?;
-                span = next_span.combine(value.span);
-                kind = ast::StatementKind::Static(ast::Declaration { name, value });
+                let (decl, s) = self.parse_declaration(TokenKind::Static)?;
+                span = s;
+                kind = ast::StatementKind::Static(decl);
                 trailer = StatementTrailer::SemiColonAllowed;
             }
             TokenKind::Return => {
@@ -355,6 +349,28 @@ where
             },
             trailer,
         ))
+    }
+
+    fn parse_declaration(
+        &mut self,
+        decl_token: TokenKind<()>,
+    ) -> Result<(ast::Declaration<S>, Span), ParseError> {
+        let mut span = self.parse_token(decl_token)?;
+        let (name, name_span) = self.parse_identifier()?;
+        span = span.combine(name_span);
+
+        self.look_ahead(1);
+        let value;
+        if matches!(self.peek(0).kind, TokenKind::Equal) {
+            self.parse_token(TokenKind::Equal)?;
+            let val = self.parse_expression()?;
+            span = span.combine(val.span);
+            value = Some(val);
+        } else {
+            value = None;
+        }
+
+        Ok((ast::Declaration { name, value }, span))
     }
 
     fn parse_function_statement(
@@ -1017,10 +1033,13 @@ fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<ast::UnaryOp> {
 
 fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<ast::BinaryOp> {
     match *token {
-        TokenKind::Star => Some(ast::BinaryOp::Mult),
-        TokenKind::Slash => Some(ast::BinaryOp::Div),
         TokenKind::Plus => Some(ast::BinaryOp::Add),
         TokenKind::Minus => Some(ast::BinaryOp::Sub),
+        TokenKind::Star => Some(ast::BinaryOp::Mult),
+        TokenKind::Slash => Some(ast::BinaryOp::Div),
+        TokenKind::Percent => Some(ast::BinaryOp::Rem),
+        TokenKind::Mod => Some(ast::BinaryOp::Rem),
+        TokenKind::Div => Some(ast::BinaryOp::IDiv),
         TokenKind::DoubleEqual => Some(ast::BinaryOp::Equal),
         TokenKind::BangEqual => Some(ast::BinaryOp::NotEqual),
         TokenKind::Less => Some(ast::BinaryOp::LessThan),
@@ -1064,12 +1083,12 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Bang => "!",
         TokenKind::Slash => "/",
         TokenKind::Star => "*",
-        TokenKind::Mod => "mod",
-        TokenKind::Div => "div",
         TokenKind::Percent => "%",
         TokenKind::Ampersand => "&",
         TokenKind::Pipe => "|",
         TokenKind::Tilde => "~",
+        TokenKind::Div => "div",
+        TokenKind::Mod => "mod",
         TokenKind::QuestionMark => "?",
         TokenKind::Octothorpe => "#",
         TokenKind::AtSign => "@",
@@ -1089,7 +1108,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::DoublePlus => "++",
         TokenKind::DoubleMinus => "--",
         TokenKind::DoubleAmpersand => "&&",
-        TokenKind::DoublePipe => "--",
+        TokenKind::DoublePipe => "||",
         TokenKind::Enum => "enum",
         TokenKind::Function => "function",
         TokenKind::Constructor => "constructor",
@@ -1140,6 +1159,8 @@ fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriori
     match operator {
         ast::BinaryOp::Mult => (5, 5),
         ast::BinaryOp::Div => (5, 5),
+        ast::BinaryOp::Rem => (5, 5),
+        ast::BinaryOp::IDiv => (5, 5),
         ast::BinaryOp::Add => (4, 4),
         ast::BinaryOp::Sub => (4, 4),
         ast::BinaryOp::NotEqual => (3, 3),

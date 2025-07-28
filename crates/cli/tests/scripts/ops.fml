@@ -18,6 +18,10 @@ assert(3 / 3 == 1);
 assert(3 + 3 == 6);
 assert(3 - 3 == 0);
 
+assert(2 % 3 == 2);
+assert(4 mod 3 == 1);
+assert(4.9 div 3.1 == 1);
+
 assert(black_box(true) && true);
 assert(!(black_box(true) && false));
 assert(black_box(true) || false);
@@ -37,5 +41,9 @@ assert(black_box(3) * 3 == 9);
 assert(black_box(3) / 3 == 1);
 assert(black_box(3) + 3 == 6);
 assert(black_box(3) - 3 == 0);
+
+assert(black_box(2) % 3 == 2);
+assert(black_box(4) mod 3 == 1);
+assert(black_box(4.9) div 3.1 == 1);
 
 return true;

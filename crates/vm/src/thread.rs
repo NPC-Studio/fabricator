@@ -671,36 +671,52 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn add(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn add(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.add(arg2).ok_or(OpError::BadOp)?;
+            *dest = left.add(right).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
         #[inline]
-        fn sub(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn sub(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.sub(arg2).ok_or(OpError::BadOp)?;
+            *dest = left.sub(right).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
-        fn mult(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn mult(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.mult(arg2).ok_or(OpError::BadOp)?;
+            *dest = left.mult(right).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
-        fn div(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn div(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.div(arg2).ok_or(OpError::BadOp)?;
+            *dest = left.div(right).ok_or(OpError::BadOp)?;
+            Ok(())
+        }
+
+        fn rem(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = left.rem(right).ok_or(OpError::BadOp)?;
+            Ok(())
+        }
+
+        fn idiv(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
+            let dest = &mut self.registers[dest as usize];
+            *dest = left.idiv(right).ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -708,13 +724,13 @@ fn dispatch<'gc>(
         fn test_equal(
             &mut self,
             dest: RegIdx,
-            arg1: RegIdx,
-            arg2: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
         ) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = arg1.equal(arg2).into();
+            *dest = left.equal(right).into();
             Ok(())
         }
 
@@ -722,13 +738,13 @@ fn dispatch<'gc>(
         fn test_not_equal(
             &mut self,
             dest: RegIdx,
-            arg1: RegIdx,
-            arg2: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
         ) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = (!arg1.equal(arg2)).into();
+            *dest = (!left.equal(right)).into();
             Ok(())
         }
 
@@ -736,11 +752,11 @@ fn dispatch<'gc>(
         fn test_less(
             &mut self,
             dest: RegIdx,
-            arg1: RegIdx,
-            arg2: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
         ) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.registers[arg1 as usize]
-                .less_than(self.registers[arg2 as usize])
+            self.registers[dest as usize] = self.registers[left as usize]
+                .less_than(self.registers[right as usize])
                 .ok_or(OpError::BadOp)?
                 .into();
             Ok(())
@@ -750,29 +766,29 @@ fn dispatch<'gc>(
         fn test_less_equal(
             &mut self,
             dest: RegIdx,
-            arg1: RegIdx,
-            arg2: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
         ) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.registers[arg1 as usize]
-                .less_equal(self.registers[arg2 as usize])
+            self.registers[dest as usize] = self.registers[left as usize]
+                .less_equal(self.registers[right as usize])
                 .ok_or(OpError::BadOp)?
                 .into();
             Ok(())
         }
 
-        fn and(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn and(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = (arg1.to_bool() && arg2.to_bool()).into();
+            *dest = (left.to_bool() && right.to_bool()).into();
             Ok(())
         }
 
-        fn or(&mut self, dest: RegIdx, arg1: RegIdx, arg2: RegIdx) -> Result<(), Self::Error> {
-            let arg1 = self.registers[arg1 as usize];
-            let arg2 = self.registers[arg2 as usize];
+        fn or(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+            let left = self.registers[left as usize];
+            let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = (arg1.to_bool() || arg2.to_bool()).into();
+            *dest = (left.to_bool() || right.to_bool()).into();
             Ok(())
         }
 
