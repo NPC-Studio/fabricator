@@ -110,6 +110,7 @@ pub enum ExpressionKind<S> {
     Prefix(MutationOp, MutableExpr<S>),
     Postfix(MutableExpr<S>, MutationOp),
     Binary(Expression<S>, BinaryOp, Expression<S>),
+    Ternary(TernaryExpr<S>),
     Function(FunctionExpr<S>),
     Call(CallExpr<S>),
     Field(FieldExpr<S>),
@@ -120,6 +121,13 @@ pub enum ExpressionKind<S> {
 pub struct Expression<S> {
     pub kind: Box<ExpressionKind<S>>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TernaryExpr<S> {
+    pub cond: Expression<S>,
+    pub if_true: Expression<S>,
+    pub if_false: Expression<S>,
 }
 
 #[derive(Debug, Clone)]
@@ -371,6 +379,9 @@ impl<S> Expression<S> {
                 visitor.visit_expr(left)?;
                 visitor.visit_expr(right)?;
             }
+            ExpressionKind::Ternary(ternary) => {
+                ternary.walk(visitor)?;
+            }
             ExpressionKind::Function(func_expr) => {
                 func_expr.walk(visitor)?;
             }
@@ -411,6 +422,9 @@ impl<S> Expression<S> {
             ExpressionKind::Binary(left, _, right) => {
                 visitor.visit_expr_mut(left)?;
                 visitor.visit_expr_mut(right)?;
+            }
+            ExpressionKind::Ternary(ternary) => {
+                ternary.walk_mut(visitor)?;
             }
             ExpressionKind::Function(func_expr) => {
                 func_expr.walk_mut(visitor)?;
@@ -648,6 +662,22 @@ impl<S> SwitchStatement<S> {
         if let Some(default_block) = &mut self.default {
             visitor.visit_block_mut(default_block)?;
         }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> TernaryExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.cond)?;
+        visitor.visit_expr(&self.if_true)?;
+        visitor.visit_expr(&self.if_false)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.cond)?;
+        visitor.visit_expr_mut(&mut self.if_true)?;
+        visitor.visit_expr_mut(&mut self.if_false)?;
         ControlFlow::Continue(())
     }
 }

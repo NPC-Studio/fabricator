@@ -215,13 +215,13 @@ pub enum Instruction<S> {
     Phi(ShadowVar),
     Upsilon(ShadowVar, InstId),
     UnOp {
-        source: InstId,
         op: UnOp,
+        source: InstId,
     },
     BinOp {
         left: InstId,
-        right: InstId,
         op: BinOp,
+        right: InstId,
     },
     Call {
         func: InstId,
@@ -398,8 +398,8 @@ pub enum Exit {
     Jump(BlockId),
     Branch {
         cond: InstId,
-        if_false: BlockId,
         if_true: BlockId,
+        if_false: BlockId,
     },
 }
 
@@ -662,7 +662,7 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::Upsilon(shadow, source) => {
                         writeln!(f, "upsilon(S{}, I{})", shadow.index(), source.index())?;
                     }
-                    Instruction::UnOp { source, op } => match op {
+                    Instruction::UnOp { op, source } => match op {
                         UnOp::Not => {
                             writeln!(f, "not(I{})", source.index())?;
                         }
@@ -670,7 +670,7 @@ impl<S: AsRef<str>> Function<S> {
                             writeln!(f, "neg(I{})", source.index())?;
                         }
                     },
-                    Instruction::BinOp { left, right, op } => match op {
+                    Instruction::BinOp { left, op, right } => match op {
                         BinOp::Add => {
                             writeln!(f, "add(I{}, I{})", left.index(), right.index())?;
                         }

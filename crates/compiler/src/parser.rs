@@ -540,7 +540,34 @@ where
     }
 
     fn parse_expression(&mut self) -> Result<ast::Expression<S>, ParseError> {
-        self.parse_sub_expression(MIN_PRIORITY)
+        let mut expr = self.parse_sub_expression(MIN_PRIORITY)?;
+
+        // Handle ternary operators, which have lower precedence than all unary and binary operators.
+        loop {
+            self.look_ahead(1);
+            if !matches!(self.peek(0).kind, TokenKind::QuestionMark) {
+                break;
+            }
+
+            self.advance(1);
+
+            let cond = expr;
+            let if_true = self.parse_expression()?;
+            self.parse_token(TokenKind::Colon)?;
+            let if_false = self.parse_expression()?;
+
+            let span = cond.span.combine(if_false.span);
+            expr = ast::Expression {
+                kind: Box::new(ast::ExpressionKind::Ternary(ast::TernaryExpr {
+                    cond,
+                    if_true,
+                    if_false,
+                })),
+                span,
+            };
+        }
+
+        Ok(expr)
     }
 
     fn parse_sub_expression(

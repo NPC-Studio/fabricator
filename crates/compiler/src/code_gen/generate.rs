@@ -396,7 +396,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::Instruction::UnOp { source, op } => {
+                ir::Instruction::UnOp { op, source } => {
                     let output_reg = reg_alloc.instruction_registers[inst_id];
                     match op {
                         ir::UnOp::Not => {
@@ -419,7 +419,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::Instruction::BinOp { left, right, op } => {
+                ir::Instruction::BinOp { left, op, right } => {
                     let dest = reg_alloc.instruction_registers[inst_id];
                     let left = reg_alloc.instruction_registers[left];
                     let right = reg_alloc.instruction_registers[right];

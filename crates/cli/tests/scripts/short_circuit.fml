@@ -1,0 +1,73 @@
+var state = 0;
+
+var side_effect = function() {
+    state += 1;
+    return true;
+};
+
+var r;
+
+
+r = false && side_effect();
+assert(state == 0);
+
+r = true && side_effect();
+assert(state == 1);
+
+r = false || side_effect();
+assert(state == 2);
+
+r = true || side_effect();
+assert(state == 2);
+
+r = undefined ?? side_effect();
+assert(state == 3);
+
+r = false ?? side_effect();
+assert(state == 3);
+
+r = true ? 1 : side_effect();
+assert(state == 3);
+
+r = false ? 1 : side_effect();
+assert(state == 4);
+
+r = true ? side_effect() : 1;
+assert(state == 5);
+
+r = false ? side_effect() : 1;
+assert(state == 5);
+
+state = 0;
+
+r = black_box(false) && side_effect();
+assert(state == 0);
+
+r = black_box(true) && side_effect();
+assert(state == 1);
+
+r = black_box(false) || side_effect();
+assert(state == 2);
+
+r = black_box(true) || side_effect();
+assert(state == 2);
+
+r = black_box(undefined) ?? side_effect();
+assert(state == 3);
+
+r = black_box(false) ?? side_effect();
+assert(state == 3);
+
+r = true ? 1 : side_effect();
+assert(state == 3);
+
+r = false ? 1 : side_effect();
+assert(state == 4);
+
+r = true ? side_effect() : 1;
+assert(state == 5);
+
+r = false ? side_effect() : 1;
+assert(state == 5);
+
+return true;

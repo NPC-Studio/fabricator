@@ -166,8 +166,10 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
     eliminate_copies(ir);
     fold_constants(ir);
     eliminate_dead_code(ir);
+
     block_branch_to_jump(ir);
     redirect_empty_blocks(ir);
+    clean_unreachable_blocks(ir);
     merge_blocks(ir);
 
     clean_unreachable_blocks(ir);

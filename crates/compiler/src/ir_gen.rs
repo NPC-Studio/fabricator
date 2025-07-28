@@ -175,6 +175,23 @@ enum VarDecl {
     Pseudo,
 }
 
+#[derive(Debug, Clone)]
+enum MutableTarget<S> {
+    Var(ir::VarId),
+    This {
+        key: ir::InstId,
+    },
+    Field {
+        object: ir::InstId,
+        key: ir::InstId,
+    },
+    Index {
+        array: ir::InstId,
+        index: ir::InstId,
+    },
+    Magic(S),
+}
+
 struct FunctionCompiler<'a, S> {
     settings: IrGenSettings,
     find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
@@ -274,8 +291,8 @@ where
                     Span::null(),
                     ir::Instruction::BinOp {
                         left: arg_index,
-                        right: arg_count,
                         op: ir::BinOp::LessThan,
+                        right: arg_count,
                     },
                 );
 
@@ -370,8 +387,8 @@ where
             self.push_instruction(Span::null(), ir::Instruction::GetVariable(is_initialized));
         self.end_current_block(ir::Exit::Branch {
             cond: check_initialized,
-            if_false: init_block,
             if_true: successor_block,
+            if_false: init_block,
         });
 
         self.start_new_block(init_block);
@@ -654,8 +671,8 @@ where
                     self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
                 self.end_current_block(ir::Exit::Branch {
                     cond: check_initialized,
-                    if_false: init_block,
                     if_true: successor,
+                    if_false: init_block,
                 });
 
                 self.start_new_block(init_block);
@@ -697,8 +714,8 @@ where
                     span,
                     ir::Instruction::BinOp {
                         left: prev,
-                        right: val,
                         op: ir::BinOp::Add,
+                        right: val,
                     },
                 )
             }
@@ -708,8 +725,8 @@ where
                     span,
                     ir::Instruction::BinOp {
                         left: prev,
-                        right: val,
                         op: ir::BinOp::Sub,
+                        right: val,
                     },
                 )
             }
@@ -719,8 +736,8 @@ where
                     span,
                     ir::Instruction::BinOp {
                         left: prev,
-                        right: val,
                         op: ir::BinOp::Mult,
+                        right: val,
                     },
                 )
             }
@@ -730,8 +747,8 @@ where
                     span,
                     ir::Instruction::BinOp {
                         left: prev,
-                        right: val,
                         op: ir::BinOp::Div,
+                        right: val,
                     },
                 )
             }
@@ -741,8 +758,8 @@ where
                     span,
                     ir::Instruction::BinOp {
                         left: prev,
-                        right: val,
                         op: ir::BinOp::NullCoalesce,
+                        right: val,
                     },
                 )
             }
@@ -875,8 +892,8 @@ where
                 Span::null(),
                 ir::Instruction::BinOp {
                     left: expr,
-                    right: target,
                     op: ir::BinOp::Equal,
+                    right: target,
                 },
             );
 
@@ -885,8 +902,8 @@ where
             let body_block = self.new_block();
             self.end_current_block(ir::Exit::Branch {
                 cond: is_equal,
-                if_false: next_block,
                 if_true: body_block,
+                if_false: next_block,
             });
 
             self.start_new_block(body_block);
@@ -1011,37 +1028,175 @@ where
             }
             ast::ExpressionKind::Unary(op, expr) => {
                 let inst = ir::Instruction::UnOp {
-                    source: self.expression(expr)?,
                     op: match op {
                         ast::UnaryOp::Not => ir::UnOp::Not,
                         ast::UnaryOp::Minus => ir::UnOp::Neg,
                     },
+                    source: self.expression(expr)?,
                 };
                 self.push_instruction(span, inst)
             }
             ast::ExpressionKind::Prefix(op, target) => self.mutation_op(expr.span, target, *op)?.1,
             ast::ExpressionKind::Postfix(target, op) => self.mutation_op(expr.span, target, *op)?.0,
-            ast::ExpressionKind::Binary(left, op, right) => {
-                let left = self.expression(left)?;
-                let right = self.expression(right)?;
-                let op = match op {
-                    ast::BinaryOp::Add => ir::BinOp::Add,
-                    ast::BinaryOp::Sub => ir::BinOp::Sub,
-                    ast::BinaryOp::Mult => ir::BinOp::Mult,
-                    ast::BinaryOp::Div => ir::BinOp::Div,
-                    ast::BinaryOp::Rem => ir::BinOp::Rem,
-                    ast::BinaryOp::IDiv => ir::BinOp::IDiv,
-                    ast::BinaryOp::Equal => ir::BinOp::Equal,
-                    ast::BinaryOp::NotEqual => ir::BinOp::NotEqual,
-                    ast::BinaryOp::LessThan => ir::BinOp::LessThan,
-                    ast::BinaryOp::LessEqual => ir::BinOp::LessEqual,
-                    ast::BinaryOp::GreaterThan => ir::BinOp::GreaterThan,
-                    ast::BinaryOp::GreaterEqual => ir::BinOp::GreaterEqual,
-                    ast::BinaryOp::And => ir::BinOp::And,
-                    ast::BinaryOp::Or => ir::BinOp::Or,
-                    ast::BinaryOp::NullCoalesce => ir::BinOp::NullCoalesce,
-                };
-                self.push_instruction(span, ir::Instruction::BinOp { left, right, op })
+            ast::ExpressionKind::Binary(left, op, right) => match op {
+                ast::BinaryOp::Add => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Add,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::Sub => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Sub,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::Mult => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Mult,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::Div => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Div,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::Rem => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Rem,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::IDiv => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::IDiv,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::Equal => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Equal,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::NotEqual => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::NotEqual,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::LessThan => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::LessThan,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::LessEqual => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::LessEqual,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::GreaterThan => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::GreaterThan,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::GreaterEqual => {
+                    let left = self.expression(left)?;
+                    let right = self.expression(right)?;
+                    self.push_instruction(
+                        span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::GreaterEqual,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::And => self.short_circuit_and(span, left, right)?,
+                ast::BinaryOp::Or => self.short_circuit_or(span, left, right)?,
+                ast::BinaryOp::NullCoalesce => {
+                    self.short_circuit_null_coalesce(span, left, right)?
+                }
+            },
+            ast::ExpressionKind::Ternary(ternary) => {
+                let cond = self.expression(&ternary.cond)?;
+                self.if_expression(
+                    span,
+                    cond,
+                    |this| this.expression(&ternary.if_true),
+                    |this| this.expression(&ternary.if_false),
+                )?
             }
             ast::ExpressionKind::Function(func_expr) => {
                 let func_id = self.inner_function(
@@ -1130,6 +1285,121 @@ where
         })
     }
 
+    fn if_expression(
+        &mut self,
+        span: Span,
+        cond: ir::InstId,
+        if_true: impl FnOnce(&mut Self) -> Result<ir::InstId, IrGenError>,
+        if_false: impl FnOnce(&mut Self) -> Result<ir::InstId, IrGenError>,
+    ) -> Result<ir::InstId, IrGenError> {
+        let res_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(span, ir::Instruction::OpenVariable(res_var));
+
+        let if_true_block = self.new_block();
+        let if_false_block = self.new_block();
+        let successor = self.new_block();
+
+        self.end_current_block(ir::Exit::Branch {
+            cond,
+            if_true: if_true_block,
+            if_false: if_false_block,
+        });
+
+        self.start_new_block(if_true_block);
+        let if_true_res = if_true(self)?;
+        self.push_instruction(span, ir::Instruction::SetVariable(res_var, if_true_res));
+        self.end_current_block(ir::Exit::Jump(successor));
+
+        self.start_new_block(if_false_block);
+        let if_false_res = if_false(self)?;
+        self.push_instruction(span, ir::Instruction::SetVariable(res_var, if_false_res));
+        self.end_current_block(ir::Exit::Jump(successor));
+
+        self.start_new_block(successor);
+        let res = self.push_instruction(span, ir::Instruction::GetVariable(res_var));
+        self.push_instruction(span, ir::Instruction::CloseVariable(res_var));
+
+        Ok(res)
+    }
+
+    fn short_circuit_and(
+        &mut self,
+        span: Span,
+        left: &ast::Expression<S>,
+        right: &ast::Expression<S>,
+    ) -> Result<ir::InstId, IrGenError> {
+        let left = self.expression(left)?;
+        self.if_expression(
+            span,
+            left,
+            |this| {
+                let right = this.expression(right)?;
+                Ok(this.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left,
+                        op: ir::BinOp::And,
+                        right,
+                    },
+                ))
+            },
+            |this| {
+                Ok(
+                    this.push_instruction(
+                        span,
+                        ir::Instruction::Constant(Constant::Boolean(false)),
+                    ),
+                )
+            },
+        )
+    }
+
+    fn short_circuit_or(
+        &mut self,
+        span: Span,
+        left: &ast::Expression<S>,
+        right: &ast::Expression<S>,
+    ) -> Result<ir::InstId, IrGenError> {
+        let left = self.expression(left)?;
+        self.if_expression(
+            span,
+            left,
+            |this| {
+                Ok(this.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true))))
+            },
+            |this| {
+                let right = this.expression(right)?;
+                Ok(this.push_instruction(
+                    span,
+                    ir::Instruction::BinOp {
+                        left,
+                        op: ir::BinOp::Or,
+                        right,
+                    },
+                ))
+            },
+        )
+    }
+
+    fn short_circuit_null_coalesce(
+        &mut self,
+        span: Span,
+        left: &ast::Expression<S>,
+        right: &ast::Expression<S>,
+    ) -> Result<ir::InstId, IrGenError> {
+        let left = self.expression(left)?;
+        let undefined = self.push_instruction(span, ir::Instruction::Undefined);
+        let cond = self.push_instruction(
+            span,
+            ir::Instruction::BinOp {
+                left,
+                op: ir::BinOp::Equal,
+                right: undefined,
+            },
+        );
+        self.if_expression(span, cond, |this| this.expression(right), |_| Ok(left))
+    }
+
     /// Evaluate a `MutationOp` on a `MutableExpr`.
     ///
     /// Returns a tuple of the old and new values for the `MutableExpr`.
@@ -1150,8 +1420,8 @@ where
             span,
             ir::Instruction::BinOp {
                 left: old,
-                right: one,
                 op,
+                right: one,
             },
         );
         self.write_mutable_target(span, target, new);
@@ -1422,21 +1692,4 @@ where
         }
         inst_id
     }
-}
-
-#[derive(Debug, Clone)]
-enum MutableTarget<S> {
-    Var(ir::VarId),
-    This {
-        key: ir::InstId,
-    },
-    Field {
-        object: ir::InstId,
-        key: ir::InstId,
-    },
-    Index {
-        array: ir::InstId,
-        index: ir::InstId,
-    },
-    Magic(S),
 }

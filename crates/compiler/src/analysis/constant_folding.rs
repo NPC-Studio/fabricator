@@ -22,7 +22,7 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                 ir::Instruction::Copy(source) => {
                     new_inst = get_constant(source).map(ir::Instruction::Constant);
                 }
-                ir::Instruction::UnOp { source, op } => {
+                ir::Instruction::UnOp { op, source } => {
                     if let Some(c) = get_constant(source) {
                         new_inst = match op {
                             ir::UnOp::Not => Some(Constant::Boolean(!c.to_bool())),
@@ -31,7 +31,7 @@ pub fn fold_constants<S: Clone>(ir: &mut ir::Function<S>) {
                         .map(ir::Instruction::Constant);
                     }
                 }
-                ir::Instruction::BinOp { left, right, op } => {
+                ir::Instruction::BinOp { left, op, right } => {
                     if let (Some(l), Some(r)) = (get_constant(left), get_constant(right)) {
                         new_inst = match op {
                             ir::BinOp::Add => l.add(r),
