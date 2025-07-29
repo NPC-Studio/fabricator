@@ -263,7 +263,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node_index, depth)) = self.stack.pop() {
-            let node = &self.nodes[node_index as usize];
+            let node = &self.nodes[node_index];
             let lower_depth = depth + 1;
 
             // For each dimension, we can potentially limit *one* of the left or right k-d nodes

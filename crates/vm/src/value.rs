@@ -21,9 +21,10 @@ impl<'gc> Function<'gc> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Collect)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
+    #[default]
     Undefined,
     Boolean(bool),
     Integer(i64),
@@ -34,12 +35,6 @@ pub enum Value<'gc> {
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
     UserData(UserData<'gc>),
-}
-
-impl<'gc> Default for Value<'gc> {
-    fn default() -> Self {
-        Value::Undefined
-    }
 }
 
 impl<'gc> From<bool> for Value<'gc> {

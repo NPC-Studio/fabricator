@@ -265,13 +265,13 @@ where
 
     fn declare_parameters(&mut self, parameters: &[ast::Parameter<S>]) -> Result<(), IrGenError> {
         let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
-        for (param_index, param) in parameters.into_iter().enumerate() {
+        for (param_index, param) in parameters.iter().enumerate() {
             let arg_var = self
                 .declare_var(param.name.clone(), Some(ir::Variable::Owned))
                 .unwrap();
 
             if let Some(default) = &param.default {
-                let def_value = default.clone().fold_constant().ok_or_else(|| IrGenError {
+                let def_value = default.clone().fold_constant().ok_or(IrGenError {
                     kind: IrGenErrorKind::ParameterDefaultNotConstant,
                     span: default.span,
                 })?;
@@ -427,11 +427,10 @@ where
                         stmt.span,
                         ir::Instruction::Constant(Constant::String(decl.name.inner.clone())),
                     );
-                    let value =
-                        self.expression(decl.value.as_ref().ok_or_else(|| IrGenError {
-                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
-                            span: stmt.span,
-                        })?)?;
+                    let value = self.expression(decl.value.as_ref().ok_or(IrGenError {
+                        kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+                        span: stmt.span,
+                    })?)?;
 
                     self.push_instruction(
                         stmt.span,
@@ -560,18 +559,14 @@ where
 
         match &*statement.kind {
             ast::StatementKind::Block(block) => self.block(block),
-            ast::StatementKind::Enum(_) => {
-                return Err(IrGenError {
-                    kind: IrGenErrorKind::MisplacedEnum,
-                    span: statement.span,
-                });
-            }
-            ast::StatementKind::Function(_) => {
-                return Err(IrGenError {
-                    kind: IrGenErrorKind::MisplacedFunctionStmt,
-                    span: statement.span,
-                });
-            }
+            ast::StatementKind::Enum(_) => Err(IrGenError {
+                kind: IrGenErrorKind::MisplacedEnum,
+                span: statement.span,
+            }),
+            ast::StatementKind::Function(_) => Err(IrGenError {
+                kind: IrGenErrorKind::MisplacedFunctionStmt,
+                span: statement.span,
+            }),
             ast::StatementKind::Var(var_decls) => {
                 for var_decl in var_decls {
                     self.var_declaration(statement.span, var_decl)?;

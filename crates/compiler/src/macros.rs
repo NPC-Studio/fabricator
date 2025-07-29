@@ -221,25 +221,17 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                 }
 
                 let mut macro_tokens = Vec::new();
-                loop {
-                    match token_iter.peek() {
-                        Some(t) => {
-                            if matches!(t.kind, TokenKind::EndOfStream | TokenKind::Newline) {
-                                break;
-                            } else {
-                                let token = token_iter.next().unwrap();
-                                macro_span = macro_span.combine(token.span);
-                                macro_tokens.push(token);
-                            }
-                        }
-                        None => break,
+                while let Some(t) = token_iter.peek() {
+                    if matches!(t.kind, TokenKind::EndOfStream | TokenKind::Newline) {
+                        break;
+                    } else {
+                        let token = token_iter.next().unwrap();
+                        macro_span = macro_span.combine(token.span);
+                        macro_tokens.push(token);
                     }
                 }
 
-                let named = self
-                    .macro_dict
-                    .entry(macro_name.clone())
-                    .or_insert_with(Default::default);
+                let named = self.macro_dict.entry(macro_name.clone()).or_default();
 
                 if let Some(config) = config.clone() {
                     match named.for_config.entry(config) {

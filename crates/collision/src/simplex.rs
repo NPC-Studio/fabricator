@@ -61,8 +61,8 @@ where
     /// Add a unique point to the given simplex.
     ///
     /// `eq_tol` is the *squared* equality tolerance for the matching point check. If the simplex
-    /// length is already 3, or if any point in the simplex `x` satisfies the condition `(p
-    /// - x).square_length() <= eq_tol`, then this function will do nothing and return false.
+    /// length is already 3, or if any point in the simplex `x` satisfies the condition
+    /// `(p - x).square_length() <= eq_tol`, then this function will do nothing and return false.
     /// Otherwise, the point will be added to the simplex at the end and this function will return
     /// true.
     pub fn add_unique_point(&mut self, point: SupportPoint<N, C>, eq_tol: N) -> bool {

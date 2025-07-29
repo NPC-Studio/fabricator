@@ -45,7 +45,7 @@ struct AppState {
 }
 
 impl AppState {
-    async fn new(window: Arc<Window>, project_file: &Path, config: &String) -> AppState {
+    async fn new(window: Arc<Window>, project_file: &Path, config: &str) -> AppState {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -62,7 +62,7 @@ impl AppState {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let game = fab::Game::new(fab::Project::load(&project_file).unwrap(), config).unwrap();
+        let game = fab::Game::new(fab::Project::load(project_file).unwrap(), config).unwrap();
 
         let pipeline = pipeline::Pipeline::new(&device, surface_format.add_srgb_suffix());
 

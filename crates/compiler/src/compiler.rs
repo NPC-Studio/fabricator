@@ -478,7 +478,7 @@ impl<'gc> Compiler<'gc> {
         // For each exported item, produce a real magic value for it.
 
         for (i, export) in exports.iter().enumerate() {
-            let chunk_index = match export_chunk_indexes.binary_search_by(|i| i.cmp(&i)) {
+            let chunk_index = match export_chunk_indexes.binary_search_by(|j| j.cmp(&i)) {
                 Ok(i) => i,
                 Err(i) => i.checked_sub(1).unwrap(),
             };

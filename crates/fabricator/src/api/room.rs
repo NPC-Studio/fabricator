@@ -5,7 +5,7 @@ use crate::{
     state::{Configuration, RoomId, State},
 };
 
-pub fn room_api<'gc, 'a>(
+pub fn room_api<'gc>(
     ctx: vm::Context<'gc>,
     config: &Configuration,
 ) -> Result<vm::MagicSet<'gc>, DuplicateMagicName> {

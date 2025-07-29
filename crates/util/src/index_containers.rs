@@ -1,4 +1,4 @@
-use std::{mem, ops};
+use std::ops;
 
 use crate::bit_containers::BitVec;
 
@@ -56,7 +56,7 @@ impl<V> IndexMap<V> {
     }
 
     pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
-        mem::replace(self.get_mut_option(i), Some(v))
+        self.get_mut_option(i).replace(v)
     }
 
     pub fn remove(&mut self, i: usize) -> Option<V> {

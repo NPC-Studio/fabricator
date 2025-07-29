@@ -204,7 +204,7 @@ impl<S> Constant<S> {
             Constant::Boolean(b) => Constant::Boolean(*b),
             Constant::Integer(i) => Constant::Integer(*i),
             Constant::Float(f) => Constant::Float(*f),
-            Constant::String(s) => Constant::String(&s),
+            Constant::String(s) => Constant::String(s),
         }
     }
 

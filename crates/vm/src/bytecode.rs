@@ -179,7 +179,7 @@ impl ByteCode {
     pub fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
         for (i, inst) in self.decode().map(|(i, _)| i).enumerate() {
             write!(f, "{:indent$}", "", indent = indent as usize)?;
-            write!(f, "{}: ", i)?;
+            write!(f, "{i}: ")?;
             inst.pretty_print(f)?;
             writeln!(f)?;
         }

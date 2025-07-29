@@ -56,12 +56,13 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
         }
 
         for (inst_index, inst_id) in block.instructions.iter().copied().enumerate() {
-            let inst = ir.instructions.get(inst_id).ok_or_else(|| {
-                ReferenceVerificationError::BadInstruction {
-                    bad: inst_id,
-                    inst_location: (block_id, inst_index),
-                }
-            })?;
+            let inst =
+                ir.instructions
+                    .get(inst_id)
+                    .ok_or(ReferenceVerificationError::BadInstruction {
+                        bad: inst_id,
+                        inst_location: (block_id, inst_index),
+                    })?;
 
             for source in inst.sources() {
                 if !ir.instructions.contains(source) {

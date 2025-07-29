@@ -16,19 +16,19 @@ impl<N: num::Float> LineProjection<N> {
     pub fn project(p: Vec2<N>, line: [Vec2<N>; 2]) -> Self {
         use LinePoint::*;
 
-        let _0 = N::zero();
-        let _1 = N::one();
+        let zero = N::zero();
+        let one = N::one();
 
         let [a, b] = line;
         let ab = b - a;
         let t = ab.dot(p - a) / ab.length_squared();
 
-        if t <= _0 {
+        if t <= zero {
             Self::Point(A)
-        } else if t >= _1 {
+        } else if t >= one {
             Self::Point(B)
         } else {
-            Self::Line([_1 - t, t])
+            Self::Line([one - t, t])
         }
     }
 }
@@ -55,8 +55,8 @@ impl<N: num::Float> TriangleProjection<N> {
         //
         // Real Time Collision Detection, Ericson (2005)
 
-        let _0 = N::zero();
-        let _1 = N::one();
+        let zero = N::zero();
+        let one = N::one();
 
         let [a, b, c] = tri;
 
@@ -67,7 +67,7 @@ impl<N: num::Float> TriangleProjection<N> {
         let ab_ap = ab.dot(ap);
         let ac_ap = ac.dot(ap);
 
-        if ab_ap <= _0 && ac_ap <= _0 {
+        if ab_ap <= zero && ac_ap <= zero {
             return Self::Point(A);
         }
 
@@ -75,7 +75,7 @@ impl<N: num::Float> TriangleProjection<N> {
         let ab_bp = ab.dot(bp);
         let ac_bp = ac.dot(bp);
 
-        if ab_bp >= _0 && ac_bp <= ab_bp {
+        if ab_bp >= zero && ac_bp <= ab_bp {
             return Self::Point(B);
         }
 
@@ -83,28 +83,28 @@ impl<N: num::Float> TriangleProjection<N> {
         let ab_cp = ab.dot(cp);
         let ac_cp = ac.dot(cp);
 
-        if ac_cp >= _0 && ab_cp <= ac_cp {
+        if ac_cp >= zero && ab_cp <= ac_cp {
             return Self::Point(C);
         }
 
         let n = ab.perp_dot(ac);
         let vc = n * ab.perp_dot(ap);
-        if vc <= _0 && ab_ap >= _0 && ab_bp <= _0 {
+        if vc <= zero && ab_ap >= zero && ab_bp <= zero {
             let t = ab_ap / ab.length_squared();
-            return Self::Line([A, B], [_1 - t, t]);
+            return Self::Line([A, B], [one - t, t]);
         }
 
         let vb = -n * ac.perp_dot(cp);
-        if vb <= _0 && ac_ap >= _0 && ac_cp <= _0 {
+        if vb <= zero && ac_ap >= zero && ac_cp <= zero {
             let t = ac_ap / ac.length_squared();
-            return Self::Line([A, C], [_1 - t, t]);
+            return Self::Line([A, C], [one - t, t]);
         }
 
         let bc = c - b;
         let va = n * bc.perp_dot(bp);
-        if va <= _0 && ac_bp >= ab_bp && ab_cp >= ac_cp {
+        if va <= zero && ac_bp >= ab_bp && ab_cp >= ac_cp {
             let t = bc.dot(bp) / bc.length_squared();
-            return Self::Line([B, C], [_1 - t, t]);
+            return Self::Line([B, C], [one - t, t]);
         }
 
         // The point lies inside the triangle. We don't return barycentric coordinates here, but

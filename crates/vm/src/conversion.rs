@@ -97,7 +97,7 @@ impl<'gc> IntoValue<'gc> for StdString {
     }
 }
 
-impl<'a, 'gc> IntoValue<'gc> for &'a StdString {
+impl<'gc> IntoValue<'gc> for &StdString {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
         Value::String(ctx.intern(self))
     }
@@ -140,7 +140,7 @@ where
 {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
         let array = Array::new(&ctx);
-        for (i, v) in self.into_iter().enumerate().rev() {
+        for (i, v) in self.iter().enumerate().rev() {
             array.set(&ctx, i, v.into_value(ctx));
         }
         array.into()
@@ -283,7 +283,6 @@ impl<'gc, T: FromValue<'gc>> FromValue<'gc> for Vec<T> {
     fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         if let Value::Array(array) = value {
             (0..array.len())
-                .into_iter()
                 .map(|i| T::from_value(ctx, array.get(i)))
                 .collect()
         } else {

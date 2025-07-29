@@ -289,11 +289,11 @@ impl<T: num::Float, const N: usize> Vector<T, N> {
 
     /// Returns the *unsigned* angle between this vector and the given vector.
     pub fn angle_between(self, rhs: Self) -> T {
-        let _1 = num::one::<T>();
+        let one = num::one::<T>();
         num::clamp(
             self.dot(rhs) / (self.length_squared() * rhs.length_squared()).sqrt(),
-            -_1,
-            _1,
+            -one,
+            one,
         )
         .acos()
     }

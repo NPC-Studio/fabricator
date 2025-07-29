@@ -37,7 +37,7 @@ pub trait SupportMap<N> {
     fn support_point(&self, ndir: Vec2<N>) -> SupportPoint<N, Self::Context>;
 }
 
-impl<'a, S, N> SupportMap<N> for &'a S
+impl<S, N> SupportMap<N> for &S
 where
     S: SupportMap<N>,
 {

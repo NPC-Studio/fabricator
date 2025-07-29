@@ -412,8 +412,7 @@ where
         let parameters = self.parse_parameter_list()?.0;
 
         self.look_ahead(1);
-        let inherit;
-        if matches!(self.peek(0).kind, TokenKind::Colon) {
+        let inherit = if matches!(self.peek(0).kind, TokenKind::Colon) {
             self.advance(1);
             let expr = self.parse_expression()?;
 
@@ -427,10 +426,10 @@ where
                 });
             };
 
-            inherit = Some(call_expr);
+            Some(call_expr)
         } else {
-            inherit = None;
-        }
+            None
+        };
 
         self.look_ahead(1);
         let is_constructor = if matches!(self.peek(0).kind, TokenKind::Constructor) {
@@ -551,7 +550,7 @@ where
                 token => {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(&token),
+                            unexpected: token_indicator(token),
                             expected: "<switch statement case>",
                         },
                         span,
@@ -936,15 +935,13 @@ where
                         call_expr.has_new = true;
                         Ok(expr)
                     }
-                    _ => {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::Unexpected {
-                                unexpected: "<suffixed expression>",
-                                expected: "<call expression>",
-                            },
-                            span: expr.span,
-                        });
-                    }
+                    _ => Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            unexpected: "<suffixed expression>",
+                            expected: "<call expression>",
+                        },
+                        span: expr.span,
+                    }),
                 }
             }
             TokenKind::LeftBrace => {

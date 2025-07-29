@@ -33,12 +33,12 @@ pub trait SupportMapExt<N>: SupportMap<N> {
     where
         N: num::Float,
     {
-        let _0 = N::zero();
-        let _1 = N::one();
-        let xmin = self.support_point(Vec2::new(-_1, _0)).point[0];
-        let xmax = self.support_point(Vec2::new(_1, _0)).point[0];
-        let ymin = self.support_point(Vec2::new(_0, -_1)).point[1];
-        let ymax = self.support_point(Vec2::new(_0, _1)).point[1];
+        let zero = N::zero();
+        let one = N::one();
+        let xmin = self.support_point(Vec2::new(-one, zero)).point[0];
+        let xmax = self.support_point(Vec2::new(one, zero)).point[0];
+        let ymin = self.support_point(Vec2::new(zero, -one)).point[1];
+        let ymax = self.support_point(Vec2::new(zero, one)).point[1];
         Box2 {
             min: Vec2::new(xmin, ymin),
             max: Vec2::new(xmax, ymax),

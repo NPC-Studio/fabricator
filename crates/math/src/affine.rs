@@ -11,6 +11,15 @@ pub struct Affine<T, const N: usize> {
 
 pub type Affine2<T> = Affine<T, 2>;
 
+impl<T, const N: usize> Default for Affine<T, N>
+where
+    T: num::Zero + num::One,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, const N: usize> Affine<T, N>
 where
     T: num::Zero + num::One,

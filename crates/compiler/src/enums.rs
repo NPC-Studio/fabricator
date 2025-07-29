@@ -124,7 +124,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
                     let span = expr.span;
-                    let value = expr.fold_constant().ok_or_else(|| EnumError {
+                    let value = expr.fold_constant().ok_or(EnumError {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
                     })?;

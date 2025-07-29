@@ -68,8 +68,7 @@ where
                 read: Box::new(read),
                 write: Box::new(move |_, _, _| {
                     Err(Error::msg(format!(
-                        "cannot set read only property {:?}",
-                        name
+                        "cannot set read only property {name:?}"
                     )))
                 }),
             },

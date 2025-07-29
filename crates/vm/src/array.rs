@@ -39,6 +39,10 @@ impl<'gc> Array<'gc> {
         self.0.borrow().len()
     }
 
+    pub fn is_empty(self) -> bool {
+        self.0.borrow().is_empty()
+    }
+
     pub fn get(self, index: usize) -> Value<'gc> {
         self.0.borrow().get(index).copied().unwrap_or_default()
     }

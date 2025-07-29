@@ -54,7 +54,7 @@ impl InputState {
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&InputState) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with(|state| f(&**state))
+        Self::ctx_cell(ctx).with(|state| f(state))
     }
 }
 
@@ -231,14 +231,14 @@ impl State {
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&State) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with(|state| f(&**state))
+        Self::ctx_cell(ctx).with(|state| f(state))
     }
 
     pub fn ctx_with_mut<'gc, R>(
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&mut State) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with_mut(|state| f(&mut **state))
+        Self::ctx_cell(ctx).with_mut(|state| f(state))
     }
 
     pub fn instance_collision(
@@ -300,14 +300,14 @@ impl DrawingState {
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&DrawingState) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with(|state| f(&**state))
+        Self::ctx_cell(ctx).with(|state| f(state))
     }
 
     pub fn ctx_with_mut<'gc, R>(
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&mut DrawingState) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with_mut(|state| f(&mut **state))
+        Self::ctx_cell(ctx).with_mut(|state| f(state))
     }
 }
 
@@ -326,7 +326,7 @@ impl InstanceState {
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&InstanceState) -> R,
     ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with(|state| f(&**state))
+        Self::ctx_cell(ctx).with(|state| f(state))
     }
 }
 
