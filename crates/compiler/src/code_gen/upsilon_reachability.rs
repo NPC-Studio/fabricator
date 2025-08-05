@@ -141,6 +141,7 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
+            num_parameters: 0,
             is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
@@ -149,6 +150,7 @@ mod tests {
             variables: Default::default(),
             shadow_vars,
             this_scopes: Default::default(),
+            call_scopes: Default::default(),
             functions: Default::default(),
             start_block: block_a_id,
         };
@@ -203,6 +205,7 @@ mod tests {
         block_b.exit = ir::Exit::Jump(block_b_id);
 
         let ir = ir::Function {
+            num_parameters: 0,
             is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
@@ -211,6 +214,7 @@ mod tests {
             variables: Default::default(),
             shadow_vars,
             this_scopes: Default::default(),
+            call_scopes: Default::default(),
             functions: Default::default(),
             start_block: block_a_id,
         };

@@ -2,7 +2,6 @@ use std::fmt;
 
 pub type RegIdx = u8;
 pub type ConstIdx = u16;
-pub type ArgIdx = u8;
 pub type HeapIdx = u8;
 pub type ProtoIdx = u8;
 pub type MagicIdx = u16;
@@ -33,15 +32,29 @@ macro_rules! for_each_instruction {
             /// to disconnect heap variables that are shared with any previously created closures.
             reset_heap = ResetHeap { heap: HeapIdx };
 
-            [simple] closure = Closure { dest: RegIdx, proto: ProtoIdx };
             [simple] globals = Globals { dest: RegIdx };
 
             [simple]
-            /// Set the `dest` register to the current `self` value.
+            /// Get the current value of the `this` register and place it in `dest`.
             this = This { dest: RegIdx };
+
             [simple]
-            /// Set the `dest` register to the current `other` value.
+            /// Copy the `source` register to the `this` register.
+            set_this = SetThis { source: RegIdx };
+
+            [simple]
+            /// Get the current value of the `other` register and place it in `dest`.
             other = Other { dest: RegIdx };
+
+            [simple]
+            /// Copy the `source` register to the `other` register.
+            set_other = SetOther { source: RegIdx };
+
+            [simple]
+            /// Swap the values of the `this` and `other` registers.
+            swap_this_other = SwapThisOther {};
+
+            [simple] closure = Closure { dest: RegIdx, proto: ProtoIdx };
 
             [simple]
             /// Set the `dest` register to the currently executing closure.
@@ -49,8 +62,6 @@ macro_rules! for_each_instruction {
 
             [simple] new_object = NewObject { dest: RegIdx };
             [simple] new_array = NewArray { dest: RegIdx };
-            [simple] arg_count = ArgCount { dest: RegIdx };
-            [simple] argument = Argument { dest: RegIdx, index: ArgIdx };
 
             [simple] get_field = GetField { dest: RegIdx, object: RegIdx, key: RegIdx };
             [simple] set_field = SetField  { object: RegIdx, key: RegIdx, value: RegIdx };
@@ -62,8 +73,12 @@ macro_rules! for_each_instruction {
             [simple] get_index_const = GetIndexConst { dest: RegIdx, array: RegIdx, index: ConstIdx };
             [simple] set_index_const = SetIndexConst { array: RegIdx, index: ConstIdx, value: RegIdx };
 
-            [simple] move_ = Move { dest: RegIdx, source: RegIdx };
+            [simple] copy = Copy { dest: RegIdx, source: RegIdx };
+
             [simple] not = Not { dest: RegIdx, arg: RegIdx };
+            [simple] inc = Inc { dest: RegIdx, arg: RegIdx };
+            [simple] dec = Dec { dest: RegIdx, arg: RegIdx };
+
             [simple] neg = Neg { dest: RegIdx, arg: RegIdx };
             [simple] add = Add { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] sub = Sub { dest: RegIdx, left: RegIdx, right: RegIdx };
@@ -71,39 +86,69 @@ macro_rules! for_each_instruction {
             [simple] div = Div { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] rem = Rem { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] idiv = IDiv { dest: RegIdx, left: RegIdx, right: RegIdx };
+
             [simple] test_equal = TestEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] test_not_equal = TestNotEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] test_less = TestLess { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] test_less_equal = TestLessEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+
             [simple] and = And { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] or = Or { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] null_coalesce = NullCoalesce { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [simple]
-            /// Push `len` values starting at the `source` register to the stack.
-            push = Push { source: RegIdx, len: ArgIdx };
+            /// Get the current size of the stack and place it in the `dest` register.
+            stack_top = StackTop { dest: RegIdx };
 
             [simple]
-            /// Pop `len` values from the stack to registers starting at `dest`.
-            pop = Pop { dest: RegIdx, len: ArgIdx };
+            /// Resize the stack to the size in the `stack_top` register.
+            stack_resize = StackResize { stack_top: RegIdx };
+
+            [simple] stack_resize_const = StackResizeConst { stack_top: ConstIdx };
+
+            [simple]
+            /// Get a value from the stack at the position in the `stack_pos` register.
+            ///
+            /// If the stack position is out of range of the current stack top, then the destination
+            /// register is set to `Undefined`.
+            stack_get = StackGet { dest: RegIdx, stack_pos: RegIdx };
+
+            [simple] stack_get_const = StackGetConst { dest: RegIdx, stack_pos: ConstIdx };
+
+            [simple] stack_get_offset = StackGetOffset {
+                dest: RegIdx,
+                stack_base: RegIdx,
+                offset: ConstIdx
+            };
+
+            [simple]
+            /// Set a value in the stack at the position in the `stack_pos` register.
+            ///
+            /// If the stack position is out of range of the current stack top, the stack is
+            /// implicitly grown to fit the set value.
+            stack_set = StackSet { source: RegIdx, stack_pos: RegIdx };
+
+            [simple]
+            /// Push a value onto the top of the stack.
+            stack_push = StackPush { source: RegIdx };
+
+            [simple]
+            /// Pop a value from the top of the stack.
+            stack_pop = StackPop { dest: RegIdx };
 
             [simple]
             /// Get an index from a value with multiple indexes from the stack.
-            get_index_multi = GetIndexMulti { dest: RegIdx, array: RegIdx, len: ArgIdx };
+            ///
+            /// Index valuess are all stack elements starting above the position in the
+            /// `stack_bottom` register.
+            get_index_multi = GetIndexMulti { dest: RegIdx, array: RegIdx, stack_bottom: RegIdx };
 
             [simple]
             /// Set an index on a value with multiple indexes from the stack.
-            set_index_multi = SetIndexMulti { array: RegIdx, len: ArgIdx, value: RegIdx };
-
-            [simple]
-            /// Push the given register as the new `self`, making the previous self the new `other`,
-            /// and then pushing the previous `other` to the top of the stack.
-            push_this = PushThis { source: RegIdx };
-
-            [simple]
-            /// Undo the operations done by `PushThis`. Set the current `other` value as the new
-            /// `self` and pop the top value off of the stack to become the new `other`.
-            pop_this = PopThis {};
+            ///
+            /// Index valuess are all stack elements starting above the position in the
+            /// `stack_bottom` register.
+            set_index_multi = SetIndexMulti { array: RegIdx, stack_bottom: RegIdx, value: RegIdx };
 
             [simple] get_magic = GetMagic { dest: RegIdx, magic: MagicIdx };
             [simple] set_magic = SetMagic { magic: MagicIdx, source: RegIdx };
@@ -111,13 +156,16 @@ macro_rules! for_each_instruction {
             [jump] jump = Jump { offset: i16 };
             [jump] jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };
 
-            [call] call = Call { func: RegIdx, arguments: ArgIdx, returns: ArgIdx };
-            [call] return_ = Return { count: ArgIdx };
+            [call]
+            /// Call a function with arguments starting at `stack_bottom`.
+            call = Call { func: RegIdx, stack_bottom: RegIdx };
+
+            [call]
+            /// Return with values starting at `stack_bottom`.
+            return_ = Return { stack_bottom: RegIdx };
         }
     };
 }
-
-pub(crate) use for_each_instruction;
 
 macro_rules! define_instruction {
     ($(

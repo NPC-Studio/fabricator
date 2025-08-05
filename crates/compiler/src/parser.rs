@@ -1004,16 +1004,22 @@ where
         let span =
             self.parse_comma_separated_list(TokenKind::LeftParen, TokenKind::RightParen, |this| {
                 let name = this.parse_identifier()?;
+                let mut default = None;
+                let mut span = name.span;
 
                 this.look_ahead(1);
-                let default = if matches!(this.peek(0).kind, TokenKind::Equal) {
+                if matches!(this.peek(0).kind, TokenKind::Equal) {
                     this.advance(1);
-                    Some(this.parse_expression()?)
-                } else {
-                    None
-                };
+                    let expr = this.parse_expression()?;
+                    span = span.combine(expr.span);
+                    default = Some(expr);
+                }
 
-                parameters.push(ast::Parameter { name, default });
+                parameters.push(ast::Parameter {
+                    name,
+                    default,
+                    span,
+                });
                 Ok(())
             })?;
 

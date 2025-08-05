@@ -8,19 +8,21 @@ use crate::{
     analysis::{
         block_simplification::{block_branch_to_jump, merge_blocks, redirect_empty_blocks},
         cleanup::{
-            clean_instructions, clean_unreachable_blocks, clean_unused_functions,
-            clean_unused_shadow_vars, clean_unused_this_scopes, clean_unused_variables,
+            clean_instructions, clean_unreachable_blocks, clean_unused_call_scopes,
+            clean_unused_functions, clean_unused_shadow_vars, clean_unused_this_scopes,
+            clean_unused_variables,
         },
         constant_folding::fold_constants,
         dead_code_elim::eliminate_dead_code,
         eliminate_copies::eliminate_copies,
         instruction_liveness::{InstructionLiveness, InstructionVerificationError},
+        nested_scope_liveness::{ThisScopeLiveness, ThisScopeVerificationError},
         shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
         variable_liveness::{VariableLiveness, VariableVerificationError},
+        verify_arguments::{ArgumentVerificationError, verify_arguments},
         verify_references::{ReferenceVerificationError, verify_references},
-        verify_scopes::{ScopeVerificationError, verify_scopes},
     },
     code_gen::gen_prototype,
     enums::{EnumError, EnumEvaluationError, EnumSet},
@@ -70,6 +72,7 @@ pub struct CompileError {
 pub struct CompileSettings {
     pub parse: ParseSettings,
     pub ir_gen: IrGenSettings,
+    pub optimization_passes: u8,
 }
 
 impl CompileSettings {
@@ -77,6 +80,7 @@ impl CompileSettings {
         Self {
             parse: ParseSettings::compat(),
             ir_gen: IrGenSettings::compat(),
+            optimization_passes: 2,
         }
     }
 
@@ -84,6 +88,7 @@ impl CompileSettings {
         Self {
             parse: ParseSettings::strict(),
             ir_gen: IrGenSettings::modern(),
+            optimization_passes: 2,
         }
     }
 
@@ -98,6 +103,11 @@ impl CompileSettings {
         } else {
             Self::modern()
         }
+    }
+
+    pub fn set_optimization_passes(mut self, passes: u8) -> Self {
+        self.optimization_passes = passes;
+        self
     }
 }
 
@@ -121,22 +131,25 @@ pub enum IrVerificationError {
     #[error(transparent)]
     ReferenceVerification(#[from] ReferenceVerificationError),
     #[error(transparent)]
+    ArgumentVerification(#[from] ArgumentVerificationError),
+    #[error(transparent)]
     InstructionVerification(#[from] InstructionVerificationError),
     #[error(transparent)]
     ShadowVerification(#[from] ShadowVerificationError),
     #[error(transparent)]
     VariableVerification(#[from] VariableVerificationError),
     #[error(transparent)]
-    ScopeVerification(#[from] ScopeVerificationError),
+    ThisScopeVerification(#[from] ThisScopeVerificationError),
 }
 
 /// Verify that IR is well-formed.
 pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationError> {
     verify_references(ir)?;
+    verify_arguments(ir)?;
     InstructionLiveness::compute(ir)?;
     ShadowLiveness::compute(ir)?;
     VariableLiveness::compute(ir)?;
-    verify_scopes(ir)?;
+    ThisScopeLiveness::compute(ir)?;
     Ok(())
 }
 
@@ -177,6 +190,7 @@ pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
     clean_unused_variables(ir);
     clean_unused_shadow_vars(ir);
     clean_unused_this_scopes(ir);
+    clean_unused_call_scopes(ir);
     clean_unused_functions(ir);
 }
 
@@ -224,11 +238,7 @@ struct Chunk<'gc> {
     compile_settings: CompileSettings,
 }
 
-pub struct ChunkOutput<'gc> {
-    pub unoptimized_ir: ir::Function<vm::String<'gc>>,
-    pub optimized_ir: ir::Function<vm::String<'gc>>,
-    pub prototype: Gc<'gc, vm::Prototype<'gc>>,
-}
+pub type DebugOutput<'gc> = Vec<(Gc<'gc, vm::Prototype<'gc>>, ir::Function<vm::String<'gc>>)>;
 
 impl<'gc> Compiler<'gc> {
     /// Compile a single chunk.
@@ -242,11 +252,18 @@ impl<'gc> Compiler<'gc> {
         settings: CompileSettings,
         chunk_name: impl Into<String>,
         code: &str,
-    ) -> Result<(ChunkOutput<'gc>, ImportItems<'gc>), CompileError> {
+    ) -> Result<
+        (
+            Gc<'gc, vm::Prototype<'gc>>,
+            ImportItems<'gc>,
+            DebugOutput<'gc>,
+        ),
+        CompileError,
+    > {
         let mut this = Self::new(ctx, config, imports);
         this.add_chunk(settings, chunk_name, code)?;
-        let (mut outputs, imports) = this.compile()?;
-        Ok((outputs.pop().unwrap(), imports))
+        let (mut outputs, imports, debug_output) = this.compile()?;
+        Ok((outputs.pop().unwrap(), imports, debug_output))
     }
 
     pub fn new(
@@ -296,7 +313,16 @@ impl<'gc> Compiler<'gc> {
         Ok(())
     }
 
-    pub fn compile(self) -> Result<(Vec<ChunkOutput<'gc>>, ImportItems<'gc>), CompileError> {
+    pub fn compile(
+        self,
+    ) -> Result<
+        (
+            Vec<Gc<'gc, vm::Prototype<'gc>>>,
+            ImportItems<'gc>,
+            DebugOutput<'gc>,
+        ),
+        CompileError,
+    > {
         let Self {
             ctx,
             config,
@@ -475,6 +501,9 @@ impl<'gc> Compiler<'gc> {
         let magic = Gc::new(&ctx, magic);
         let magic_write = Gc::write(&ctx, magic);
 
+        // Place every compiled function into a list, for dumping bytecode.
+        let mut debug_output = DebugOutput::new();
+
         // For each exported item, produce a real magic value for it.
 
         for (i, export) in exports.iter().enumerate() {
@@ -510,13 +539,17 @@ impl<'gc> Compiler<'gc> {
                         })?;
 
                     verify_ir(&ir).expect("Internal IR generation error");
-                    optimize_ir(&mut ir);
+                    for _ in 0..compile_settings.optimization_passes {
+                        optimize_ir(&mut ir);
+                    }
                     verify_ir(&ir).expect("Internal IR optimization error");
                     let proto =
                         gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
 
                     let vm_proto = proto.into_vm(&ctx, chunk, magic);
                     let closure = vm::Closure::new(&ctx, vm_proto, vm::Value::Undefined).unwrap();
+
+                    debug_output.push((vm_proto, ir));
 
                     vm::MagicSet::replace(
                         magic_write,
@@ -531,7 +564,7 @@ impl<'gc> Compiler<'gc> {
         let mut outputs = Vec::new();
 
         for (chunk, block, compile_settings) in parsed_chunks {
-            let unoptimized_ir = compile_settings
+            let mut ir = compile_settings
                 .ir_gen
                 .gen_chunk_ir(&block, |m| {
                     let i = magic.find(m)?;
@@ -550,20 +583,16 @@ impl<'gc> Compiler<'gc> {
                     }
                 })?;
 
-            verify_ir(&unoptimized_ir).expect("Internal IR generation error");
-            let mut optimized_ir = unoptimized_ir.clone();
-            optimize_ir(&mut optimized_ir);
-            verify_ir(&optimized_ir).expect("Internal IR optimization error");
-            let proto =
-                gen_prototype(&optimized_ir, |n| magic.find(n)).expect("Internal Codegen Error");
+            verify_ir(&ir).expect("Internal IR generation error");
+            for _ in 0..compile_settings.optimization_passes {
+                optimize_ir(&mut ir);
+            }
+            verify_ir(&ir).expect("Internal IR optimization error");
+            let proto = gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
 
             let vm_proto = proto.into_vm(&ctx, chunk, magic);
-
-            outputs.push(ChunkOutput {
-                unoptimized_ir,
-                optimized_ir,
-                prototype: vm_proto,
-            });
+            debug_output.push((vm_proto, ir));
+            outputs.push(vm_proto);
         }
 
         let imports = ImportItems {
@@ -580,6 +609,6 @@ impl<'gc> Compiler<'gc> {
             magic,
         };
 
-        Ok((outputs, imports))
+        Ok((outputs, imports, debug_output))
     }
 }

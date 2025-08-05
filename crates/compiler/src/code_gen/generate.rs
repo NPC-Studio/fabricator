@@ -61,21 +61,20 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut constants = Vec::new();
     let mut constant_indexes = HashMap::<Constant<S>, instructions::ConstIdx>::new();
 
-    for block in ir.blocks.values() {
-        for &inst_id in &block.instructions {
-            for c in ir.instructions[inst_id].constants() {
-                if let hash_map::Entry::Vacant(vacant) = constant_indexes.entry(c.clone()) {
-                    vacant.insert(
-                        constants
-                            .len()
-                            .try_into()
-                            .map_err(|_| ProtoGenError::ConstantOverflow)?,
-                    );
-                    constants.push(c.clone());
-                }
+    let mut get_const_index = |c: &Constant<S>| -> Result<instructions::ConstIdx, ProtoGenError> {
+        Ok(match constant_indexes.entry(c.clone()) {
+            hash_map::Entry::Vacant(vacant) => {
+                let idx = constants
+                    .len()
+                    .try_into()
+                    .map_err(|_| ProtoGenError::ConstantOverflow)?;
+                vacant.insert(idx);
+                constants.push(c.clone());
+                idx
             }
-        }
-    }
+            hash_map::Entry::Occupied(occupied) => *occupied.get(),
+        })
+    };
 
     let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
@@ -90,6 +89,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut block_vm_starts = SecondaryMap::<ir::BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
 
+    // First, resize the stack to the expected number of arguments.
+    vm_instructions.push((
+        Instruction::StackResizeConst {
+            stack_top: get_const_index(&Constant::Integer(ir.num_parameters.try_into().unwrap()))?,
+        },
+        Span::null(),
+    ));
+
     for (order_index, &block_id) in block_order.iter().enumerate() {
         let block = &ir.blocks[block_id];
         block_vm_starts.insert(block_id, vm_instructions.len());
@@ -103,7 +110,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     let source_reg = reg_alloc.instruction_registers[source];
                     if dest_reg != source_reg {
                         vm_instructions.push((
-                            Instruction::Move {
+                            Instruction::Copy {
                                 dest: dest_reg,
                                 source: source_reg,
                             },
@@ -123,7 +130,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     vm_instructions.push((
                         Instruction::LoadConstant {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            constant: constant_indexes[c],
+                            constant: get_const_index(c)?,
                         },
                         span,
                     ));
@@ -225,16 +232,31 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::OpenThisScope(_, this) => {
+                ir::Instruction::OpenThisScope(scope) => {
+                    vm_instructions.push((Instruction::SwapThisOther {}, span));
                     vm_instructions.push((
-                        Instruction::PushThis {
+                        Instruction::Other {
+                            dest: reg_alloc.this_scope_registers[scope],
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::SetThis(_, this) => {
+                    vm_instructions.push((
+                        Instruction::SetThis {
                             source: reg_alloc.instruction_registers[this],
                         },
                         span,
                     ));
                 }
-                ir::Instruction::CloseThisScope(_) => {
-                    vm_instructions.push((Instruction::PopThis {}, span));
+                ir::Instruction::CloseThisScope(scope) => {
+                    vm_instructions.push((Instruction::SwapThisOther {}, span));
+                    vm_instructions.push((
+                        Instruction::SetOther {
+                            source: reg_alloc.this_scope_registers[scope],
+                        },
+                        span,
+                    ));
                 }
                 ir::Instruction::NewObject => {
                     vm_instructions.push((
@@ -252,23 +274,13 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::ArgumentCount => {
-                    vm_instructions.push((
-                        Instruction::ArgCount {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                        },
-                        span,
-                    ));
-                }
                 ir::Instruction::Argument(index) => {
-                    let index = index
-                        .try_into()
-                        .map_err(|_| ProtoGenError::ArgumentOverflow)?;
-
                     vm_instructions.push((
-                        Instruction::Argument {
+                        Instruction::StackGetConst {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            index,
+                            stack_pos: get_const_index(&Constant::Integer(
+                                index.try_into().unwrap(),
+                            ))?,
                         },
                         span,
                     ));
@@ -298,7 +310,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         Instruction::GetFieldConst {
                             dest: reg_alloc.instruction_registers[inst_id],
                             object: reg_alloc.instruction_registers[object],
-                            key: constant_indexes[key],
+                            key: get_const_index(key)?,
                         },
                         span,
                     ));
@@ -311,7 +323,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     vm_instructions.push((
                         Instruction::SetFieldConst {
                             object: reg_alloc.instruction_registers[object],
-                            key: constant_indexes[key],
+                            key: get_const_index(key)?,
                             value: reg_alloc.instruction_registers[value],
                         },
                         span,
@@ -328,16 +340,13 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             span,
                         ));
                     } else {
-                        let index_count = indexes
-                            .len()
-                            .try_into()
-                            .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+                        let stack_bottom = reg_alloc.temp_registers[0];
+                        vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
 
                         for &index in indexes {
                             vm_instructions.push((
-                                Instruction::Push {
+                                Instruction::StackPush {
                                     source: reg_alloc.instruction_registers[index],
-                                    len: 1,
                                 },
                                 span,
                             ));
@@ -347,7 +356,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             Instruction::GetIndexMulti {
                                 dest: reg_alloc.instruction_registers[inst_id],
                                 array: reg_alloc.instruction_registers[array],
-                                len: index_count,
+                                stack_bottom,
                             },
                             span,
                         ));
@@ -368,16 +377,13 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             span,
                         ));
                     } else {
-                        let index_count = indexes
-                            .len()
-                            .try_into()
-                            .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+                        let stack_bottom = reg_alloc.temp_registers[0];
+                        vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
 
                         for &index in indexes {
                             vm_instructions.push((
-                                Instruction::Push {
+                                Instruction::StackPush {
                                     source: reg_alloc.instruction_registers[index],
-                                    len: 1,
                                 },
                                 span,
                             ));
@@ -386,7 +392,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         vm_instructions.push((
                             Instruction::SetIndexMulti {
                                 array: reg_alloc.instruction_registers[array],
-                                len: index_count,
+                                stack_bottom,
                                 value: reg_alloc.instruction_registers[value],
                             },
                             span,
@@ -398,7 +404,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         Instruction::GetIndexConst {
                             dest: reg_alloc.instruction_registers[inst_id],
                             array: reg_alloc.instruction_registers[array],
-                            index: constant_indexes[index],
+                            index: get_const_index(index)?,
                         },
                         span,
                     ));
@@ -411,7 +417,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     vm_instructions.push((
                         Instruction::SetIndexConst {
                             array: reg_alloc.instruction_registers[array],
-                            index: constant_indexes[index],
+                            index: get_const_index(index)?,
                             value: reg_alloc.instruction_registers[value],
                         },
                         span,
@@ -422,7 +428,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     let dest_reg = reg_alloc.instruction_registers[inst_id];
                     if shadow_reg != dest_reg {
                         vm_instructions.push((
-                            Instruction::Move {
+                            Instruction::Copy {
                                 dest: dest_reg,
                                 source: shadow_reg,
                             },
@@ -439,7 +445,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {
                             vm_instructions.push((
-                                Instruction::Move {
+                                Instruction::Copy {
                                     dest: shadow_reg,
                                     source: source_reg,
                                 },
@@ -542,20 +548,22 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::Instruction::Call {
+                ir::Instruction::OpenCall {
+                    scope,
                     func,
                     this,
                     ref args,
-                    return_value,
                 } => {
-                    let arg_count = args
-                        .len()
-                        .try_into()
-                        .map_err(|_| ProtoGenError::ArgumentOverflow)?;
+                    let stack_bottom = reg_alloc.call_scope_registers[scope];
+                    let prev_other = reg_alloc.temp_registers[0];
+
+                    vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
 
                     if let Some(this) = this {
+                        vm_instructions.push((Instruction::Other { dest: prev_other }, span));
+                        vm_instructions.push((Instruction::SwapThisOther {}, span));
                         vm_instructions.push((
-                            Instruction::PushThis {
+                            Instruction::SetThis {
                                 source: reg_alloc.instruction_registers[this],
                             },
                             span,
@@ -564,66 +572,68 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
                     for &arg in args {
                         vm_instructions.push((
-                            Instruction::Push {
+                            Instruction::StackPush {
                                 source: reg_alloc.instruction_registers[arg],
-                                len: 1,
                             },
                             span,
                         ));
                     }
 
-                    if return_value {
-                        vm_instructions.push((
-                            Instruction::Call {
-                                func: reg_alloc.instruction_registers[func],
-                                arguments: arg_count,
-                                returns: 1,
-                            },
-                            span,
-                        ));
-                        vm_instructions.push((
-                            Instruction::Pop {
-                                dest: reg_alloc.instruction_registers[inst_id],
-                                len: 1,
-                            },
-                            span,
-                        ));
-                    } else {
-                        vm_instructions.push((
-                            Instruction::Call {
-                                func: reg_alloc.instruction_registers[func],
-                                arguments: arg_count,
-                                returns: 0,
-                            },
-                            span,
-                        ));
-                    }
+                    vm_instructions.push((
+                        Instruction::Call {
+                            func: reg_alloc.instruction_registers[func],
+                            stack_bottom,
+                        },
+                        span,
+                    ));
 
                     if this.is_some() {
-                        vm_instructions.push((Instruction::PopThis {}, span));
+                        vm_instructions.push((Instruction::SwapThisOther {}, span));
+                        vm_instructions.push((Instruction::SetOther { source: prev_other }, span));
                     }
+                }
+                ir::Instruction::GetReturn(scope, index) => {
+                    let stack_base = reg_alloc.call_scope_registers[scope];
+                    vm_instructions.push((
+                        Instruction::StackGetOffset {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            stack_base,
+                            offset: get_const_index(&Constant::Integer(index.try_into().unwrap()))?,
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::CloseCall(scope) => {
+                    let stack_bottom = reg_alloc.call_scope_registers[scope];
+                    vm_instructions.push((
+                        Instruction::StackResize {
+                            stack_top: stack_bottom,
+                        },
+                        span,
+                    ));
                 }
             }
         }
 
         match block.exit {
             ir::Exit::Return { value } => {
+                let stack_bottom = reg_alloc.temp_registers[0];
+                vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, Span::null()));
+
                 if let Some(value) = value {
                     vm_instructions.push((
-                        Instruction::Push {
+                        Instruction::StackPush {
                             source: reg_alloc.instruction_registers[value],
-                            len: 1,
                         },
                         Span::null(),
                     ));
-                    vm_instructions.push((Instruction::Return { count: 1 }, Span::null()));
-                } else {
-                    vm_instructions.push((Instruction::Return { count: 0 }, Span::null()));
                 }
+
+                vm_instructions.push((Instruction::Return { stack_bottom }, Span::null()));
             }
             ir::Exit::Jump(block_id) => {
                 // If we are the next block in output order, we don't need to add a jump
-                if *block_order_indexes.get(&block_id).unwrap() != order_index + 1 {
+                if block_order_indexes[&block_id] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), block_id));
                     vm_instructions.push((Instruction::Jump { offset: 0 }, Span::null()));
                 }
@@ -634,8 +644,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 if_false,
             } => {
                 // If we are the next block in output order, we don't need to add a jump.
-
-                if *block_order_indexes.get(&if_true).unwrap() != order_index + 1 {
+                if block_order_indexes[&if_true] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), if_true));
                     vm_instructions.push((
                         Instruction::JumpIf {
@@ -647,7 +656,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     ));
                 }
 
-                if *block_order_indexes.get(&if_false).unwrap() != order_index + 1 {
+                if block_order_indexes[&if_false] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), if_false));
                     vm_instructions.push((
                         Instruction::JumpIf {

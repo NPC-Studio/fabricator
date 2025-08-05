@@ -20,7 +20,11 @@ pub struct Stack<'gc, 'a> {
 
 impl<'gc, 'a> Stack<'gc, 'a> {
     pub fn new(values: &'a mut Vec<Value<'gc>>, bottom: usize) -> Self {
-        assert!(values.len() >= bottom);
+        assert!(
+            values.len() >= bottom,
+            "stack bottom {bottom} is greater than stack len {}",
+            values.len()
+        );
         Self { values, bottom }
     }
 
@@ -29,6 +33,11 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     }
 
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
+        assert!(
+            self.values.len() - self.bottom >= bottom,
+            "sub-stack bottom {bottom} is greater than stack len {}",
+            self.values.len() - self.bottom,
+        );
         Stack {
             values: self.values,
             bottom: self.bottom + bottom,

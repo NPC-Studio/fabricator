@@ -1,7 +1,6 @@
 pub mod any;
 pub mod array;
 pub mod builtins;
-pub mod bytecode;
 pub mod callback;
 pub mod closure;
 pub mod conversion;
@@ -22,12 +21,12 @@ pub mod value;
 pub use self::{
     array::Array,
     builtins::BuiltIns,
-    bytecode::ByteCode,
     callback::{Callback, CallbackFn},
-    closure::{Closure, Constant, FunctionRef, Prototype},
+    closure::{Closure, Constant, Prototype},
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, Variadic},
-    debug::{Chunk, LineNumber, RefName, Span},
+    debug::{Chunk, FunctionRef, LineNumber, RefName, Span},
     error::{Error, TypeError},
+    instructions::ByteCode,
     interpreter::{Context, Interpreter},
     magic::{Magic, MagicSet},
     object::Object,

@@ -4,9 +4,8 @@ use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
 use crate::{
-    bytecode::ByteCode,
-    debug::{Chunk, RefName, Span},
-    instructions::HeapIdx,
+    debug::{Chunk, FunctionRef},
+    instructions::{ByteCode, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     magic::MagicSet,
     object::Object,
     string::String,
@@ -64,30 +63,409 @@ pub enum HeapVarDescriptor {
     UpValue(HeapIdx),
 }
 
-#[derive(Debug, Clone, Collect)]
-#[collect(require_static)]
-pub enum FunctionRef {
-    Named(RefName, Span),
-    Expression(Span),
-    Chunk,
+#[derive(Debug, Error)]
+pub enum PrototypeVerificationError {
+    #[error("inner prototype has an invalid upvalue idx {0}, for prototype {1}")]
+    BadUpValueIdx(HeapIdx, usize),
+    #[error("register index {0} is not in range of `used_registers` at instruction {1}")]
+    BadRegIdx(RegIdx, usize),
+    #[error("const idx {0} out of range at instruction {1}")]
+    BadConstIdx(ConstIdx, usize),
+    #[error("heap idx {0} out of range at instruction {1}")]
+    BadHeapIdx(HeapIdx, usize),
+    #[error("proto idx {0} out of range at instruction {1}")]
+    BadProtoIdx(ProtoIdx, usize),
+    #[error("no magic variable with index {0} at instruction {1}")]
+    BadMagicIdx(MagicIdx, usize),
+    #[error("field constant {0} is not a `Constant::String` at instruction {1}")]
+    FieldIsNotString(ConstIdx, usize),
+    #[error("index constant {0} is not a `Constant::Integer` at instruction {1}")]
+    IndexIsNotInt(ConstIdx, usize),
+    #[error("cannot reset a shared heap variable {0} at instruction {1}")]
+    ResetSharedHeap(HeapIdx, usize),
 }
 
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Prototype<'gc> {
-    pub chunk: Chunk<'gc>,
-    pub reference: FunctionRef,
-    pub magic: Gc<'gc, MagicSet<'gc>>,
-    pub bytecode: ByteCode,
-    pub constants: Box<[Constant<'gc>]>,
-    pub prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
-    pub static_vars: Box<[SharedValue<'gc>]>,
-    pub constructor_parent: Option<Object<'gc>>,
-    pub used_registers: usize,
-    pub heap_vars: Box<[HeapVarDescriptor]>,
+    chunk: Chunk<'gc>,
+    reference: FunctionRef,
+    magic: Gc<'gc, MagicSet<'gc>>,
+    bytecode: ByteCode,
+    constants: Box<[Constant<'gc>]>,
+    prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
+    static_vars: Box<[SharedValue<'gc>]>,
+    heap_vars: Box<[HeapVarDescriptor]>,
+    constructor_parent: Option<Object<'gc>>,
+    used_registers: usize,
 }
 
 impl<'gc> Prototype<'gc> {
+    pub fn new(
+        chunk: Chunk<'gc>,
+        reference: FunctionRef,
+        magic: Gc<'gc, MagicSet<'gc>>,
+        bytecode: ByteCode,
+        constants: Box<[Constant<'gc>]>,
+        prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
+        static_vars: Box<[SharedValue<'gc>]>,
+        heap_vars: Box<[HeapVarDescriptor]>,
+        constructor_parent: Option<Object<'gc>>,
+        used_registers: usize,
+    ) -> Result<Self, PrototypeVerificationError> {
+        for (inner_proto_idx, inner) in prototypes.iter().enumerate() {
+            for &inner_heap_var in &inner.heap_vars {
+                match inner_heap_var {
+                    HeapVarDescriptor::Owned(_) | HeapVarDescriptor::Static(_) => {}
+                    HeapVarDescriptor::UpValue(upvalue_idx) => {
+                        if (upvalue_idx as usize) >= heap_vars.len() {
+                            return Err(PrototypeVerificationError::BadUpValueIdx(
+                                upvalue_idx,
+                                inner_proto_idx,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (inst_index, (inst, _)) in bytecode.decode().enumerate() {
+            let verify_reg_idx = |reg_idx: RegIdx| {
+                if (reg_idx as usize) < used_registers {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::BadRegIdx(reg_idx, inst_index))
+                }
+            };
+
+            let verify_const_idx = |const_idx: ConstIdx| {
+                if (const_idx as usize) < constants.len() {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::BadConstIdx(
+                        const_idx, inst_index,
+                    ))
+                }
+            };
+
+            let verify_heap_idx = |heap_idx: HeapIdx| {
+                if (heap_idx as usize) < heap_vars.len() {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::BadHeapIdx(heap_idx, inst_index))
+                }
+            };
+
+            let verify_proto_idx = |proto_idx: ProtoIdx| {
+                if (proto_idx as usize) < prototypes.len() {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::BadHeapIdx(
+                        proto_idx, inst_index,
+                    ))
+                }
+            };
+
+            let verify_magic_idx = |magic_idx: MagicIdx| {
+                magic
+                    .get(magic_idx as usize)
+                    .map_err(|_| PrototypeVerificationError::BadMagicIdx(magic_idx, inst_index))
+            };
+
+            let verify_const_as_field = |const_idx: MagicIdx| {
+                if matches!(constants[const_idx as usize], Constant::String(_)) {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::FieldIsNotString(
+                        const_idx, inst_index,
+                    ))
+                }
+            };
+
+            let verify_const_as_index = |const_idx: MagicIdx| {
+                if matches!(constants[const_idx as usize], Constant::Integer(_)) {
+                    Ok(())
+                } else {
+                    Err(PrototypeVerificationError::IndexIsNotInt(
+                        const_idx, inst_index,
+                    ))
+                }
+            };
+
+            match inst {
+                Instruction::Undefined { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::LoadConstant { dest, constant } => {
+                    verify_reg_idx(dest)?;
+                    verify_const_idx(constant)?;
+                }
+                Instruction::GetHeap { dest, heap } => {
+                    verify_reg_idx(dest)?;
+                    verify_heap_idx(heap)?;
+                }
+                Instruction::SetHeap { heap, source } => {
+                    verify_heap_idx(heap)?;
+                    verify_reg_idx(source)?;
+                }
+                Instruction::ResetHeap { heap } => {
+                    verify_heap_idx(heap)?;
+                    if !matches!(heap_vars[heap as usize], HeapVarDescriptor::Owned(_)) {
+                        return Err(PrototypeVerificationError::ResetSharedHeap(
+                            heap, inst_index,
+                        ));
+                    }
+                }
+                Instruction::Globals { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::This { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::SetThis { source } => {
+                    verify_reg_idx(source)?;
+                }
+                Instruction::Other { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::SetOther { source } => {
+                    verify_reg_idx(source)?;
+                }
+                Instruction::SwapThisOther {} => {}
+                Instruction::Closure { dest, proto } => {
+                    verify_reg_idx(dest)?;
+                    verify_proto_idx(proto)?;
+                }
+                Instruction::CurrentClosure { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::NewObject { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::NewArray { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::GetField { dest, object, key } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(object)?;
+                    verify_reg_idx(key)?;
+                }
+                Instruction::SetField { object, key, value } => {
+                    verify_reg_idx(object)?;
+                    verify_reg_idx(key)?;
+                    verify_reg_idx(value)?;
+                }
+                Instruction::GetFieldConst { dest, object, key } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(object)?;
+                    verify_const_idx(key)?;
+                    verify_const_as_field(key)?;
+                }
+                Instruction::SetFieldConst { object, key, value } => {
+                    verify_reg_idx(object)?;
+                    verify_const_idx(key)?;
+                    verify_const_as_field(key)?;
+                    verify_reg_idx(value)?;
+                }
+                Instruction::GetIndex { dest, array, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(array)?;
+                    verify_reg_idx(index)?;
+                }
+                Instruction::SetIndex {
+                    array,
+                    index,
+                    value,
+                } => {
+                    verify_reg_idx(array)?;
+                    verify_reg_idx(index)?;
+                    verify_reg_idx(value)?;
+                }
+                Instruction::GetIndexConst { dest, array, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(array)?;
+                    verify_const_idx(index)?;
+                }
+                Instruction::SetIndexConst {
+                    array,
+                    index,
+                    value,
+                } => {
+                    verify_reg_idx(array)?;
+                    verify_const_idx(index)?;
+                    verify_reg_idx(value)?;
+                }
+                Instruction::Copy { dest, source } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(source)?;
+                }
+                Instruction::Not { dest, arg }
+                | Instruction::Inc { dest, arg }
+                | Instruction::Dec { dest, arg }
+                | Instruction::Neg { dest, arg } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(arg)?;
+                }
+                Instruction::Add { dest, left, right }
+                | Instruction::Sub { dest, left, right }
+                | Instruction::Mult { dest, left, right }
+                | Instruction::Div { dest, left, right }
+                | Instruction::Rem { dest, left, right }
+                | Instruction::IDiv { dest, left, right }
+                | Instruction::TestEqual { dest, left, right }
+                | Instruction::TestNotEqual { dest, left, right }
+                | Instruction::TestLess { dest, left, right }
+                | Instruction::TestLessEqual { dest, left, right }
+                | Instruction::And { dest, left, right }
+                | Instruction::Or { dest, left, right }
+                | Instruction::NullCoalesce { dest, left, right } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(left)?;
+                    verify_reg_idx(right)?;
+                }
+                Instruction::StackTop { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::StackResize { stack_top } => {
+                    verify_reg_idx(stack_top)?;
+                }
+                Instruction::StackResizeConst { stack_top } => {
+                    verify_const_idx(stack_top)?;
+                    verify_const_as_index(stack_top)?;
+                }
+                Instruction::StackGet { dest, stack_pos } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(stack_pos)?;
+                }
+                Instruction::StackGetConst { dest, stack_pos } => {
+                    verify_reg_idx(dest)?;
+                    verify_const_idx(stack_pos)?;
+                    verify_const_as_index(stack_pos)?;
+                }
+                Instruction::StackGetOffset {
+                    dest,
+                    stack_base,
+                    offset,
+                } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(stack_base)?;
+                    verify_const_idx(offset)?;
+                    verify_const_as_index(offset)?;
+                }
+                Instruction::StackSet { source, stack_pos } => {
+                    verify_reg_idx(source)?;
+                    verify_reg_idx(stack_pos)?;
+                }
+                Instruction::StackPush { source } => {
+                    verify_reg_idx(source)?;
+                }
+                Instruction::StackPop { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::GetIndexMulti {
+                    dest,
+                    array,
+                    stack_bottom,
+                } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(array)?;
+                    verify_reg_idx(stack_bottom)?;
+                }
+                Instruction::SetIndexMulti {
+                    array,
+                    stack_bottom,
+                    value,
+                } => {
+                    verify_reg_idx(array)?;
+                    verify_reg_idx(stack_bottom)?;
+                    verify_reg_idx(value)?;
+                }
+                Instruction::GetMagic { dest, magic } => {
+                    verify_reg_idx(dest)?;
+                    verify_magic_idx(magic)?;
+                }
+                Instruction::SetMagic { magic, source } => {
+                    verify_magic_idx(magic)?;
+                    verify_reg_idx(source)?;
+                }
+                Instruction::Jump { .. } => {}
+                Instruction::JumpIf { arg, .. } => {
+                    verify_reg_idx(arg)?;
+                }
+                Instruction::Call { func, stack_bottom } => {
+                    verify_reg_idx(func)?;
+                    verify_reg_idx(stack_bottom)?;
+                }
+                Instruction::Return { stack_bottom } => {
+                    verify_reg_idx(stack_bottom)?;
+                }
+            }
+        }
+
+        Ok(Self {
+            chunk,
+            reference,
+            magic,
+            bytecode,
+            constants,
+            prototypes,
+            static_vars,
+            heap_vars,
+            constructor_parent,
+            used_registers,
+        })
+    }
+
+    #[inline]
+    pub fn chunk(&self) -> Chunk<'gc> {
+        self.chunk
+    }
+
+    #[inline]
+    pub fn reference(&self) -> &FunctionRef {
+        &self.reference
+    }
+
+    #[inline]
+    pub fn magic(&self) -> Gc<'gc, MagicSet<'gc>> {
+        self.magic
+    }
+
+    #[inline]
+    pub fn bytecode(&self) -> &ByteCode {
+        &self.bytecode
+    }
+
+    #[inline]
+    pub fn constants(&self) -> &[Constant<'gc>] {
+        &self.constants
+    }
+
+    #[inline]
+    pub fn prototypes(&self) -> &[Gc<'gc, Prototype<'gc>>] {
+        &self.prototypes
+    }
+
+    #[inline]
+    pub fn static_vars(&self) -> &[SharedValue<'gc>] {
+        &self.static_vars
+    }
+
+    #[inline]
+    pub fn heap_vars(&self) -> &[HeapVarDescriptor] {
+        &self.heap_vars
+    }
+
+    #[inline]
+    pub fn constructor_parent(&self) -> Option<Object<'gc>> {
+        self.constructor_parent
+    }
+
+    #[inline]
+    pub fn used_registers(&self) -> usize {
+        self.used_registers
+    }
+
     pub fn has_upvalues(&self) -> bool {
         for &h in &self.heap_vars {
             if matches!(h, HeapVarDescriptor::UpValue(_)) {

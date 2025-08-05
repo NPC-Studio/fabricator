@@ -130,18 +130,19 @@ impl<'gc> Prototype<vm::String<'gc>> {
 
         Gc::new(
             mc,
-            vm::Prototype {
+            vm::Prototype::new(
                 chunk,
                 reference,
                 magic,
                 bytecode,
                 constants,
                 prototypes,
-                static_vars: static_vars.into_boxed_slice(),
+                static_vars.into_boxed_slice(),
+                heap_vars,
                 constructor_parent,
                 used_registers,
-                heap_vars,
-            },
+            )
+            .unwrap(),
         )
     }
 }

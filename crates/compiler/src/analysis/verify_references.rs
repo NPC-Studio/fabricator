@@ -95,11 +95,12 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     }
                 }
 
-                ir::Instruction::OpenThisScope(this_scope, _)
-                | ir::Instruction::CloseThisScope(this_scope) => {
-                    if !ir.this_scopes.contains(this_scope) {
+                ir::Instruction::OpenThisScope(scope)
+                | ir::Instruction::SetThis(scope, _)
+                | ir::Instruction::CloseThisScope(scope) => {
+                    if !ir.this_scopes.contains(scope) {
                         return Err(ReferenceVerificationError::BadThisScope {
-                            bad: this_scope,
+                            bad: scope,
                             inst_location: (block_id, inst_index),
                         });
                     }

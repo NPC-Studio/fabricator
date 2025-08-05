@@ -225,6 +225,7 @@ where
         let variables = ir::VariableMap::new();
         let shadow_vars = ir::ShadowVarSet::new();
         let this_scopes = ir::ThisScopeSet::new();
+        let call_scopes = ir::CallScopeSet::new();
         let functions = ir::FunctionMap::new();
 
         // We leave the start block completely empty except for a jump to the "real" start block.
@@ -237,6 +238,7 @@ where
         blocks[start_block].exit = ir::Exit::Jump(first_block);
 
         let function = ir::Function {
+            num_parameters: 0,
             is_constructor: false,
             reference,
             instructions,
@@ -245,6 +247,7 @@ where
             variables,
             shadow_vars,
             this_scopes,
+            call_scopes,
             functions,
             start_block,
         };
@@ -264,68 +267,38 @@ where
     }
 
     fn declare_parameters(&mut self, parameters: &[ast::Parameter<S>]) -> Result<(), IrGenError> {
-        let arg_count = self.push_instruction(Span::null(), ir::Instruction::ArgumentCount);
+        self.function.num_parameters = parameters.len();
+
         for (param_index, param) in parameters.iter().enumerate() {
             let arg_var = self
                 .declare_var(param.name.clone(), Some(ir::Variable::Owned))
                 .unwrap();
+
+            let mut value =
+                self.push_instruction(param.span, ir::Instruction::Argument(param_index));
 
             if let Some(default) = &param.default {
                 let def_value = default.clone().fold_constant().ok_or(IrGenError {
                     kind: IrGenErrorKind::ParameterDefaultNotConstant,
                     span: default.span,
                 })?;
+                let def_value =
+                    self.push_instruction(param.span, ir::Instruction::Constant(def_value));
 
-                let arg_index = self.push_instruction(
-                    Span::null(),
-                    ir::Instruction::Constant(Constant::Integer(param_index as i64)),
-                );
-                let arg_provided = self.push_instruction(
-                    Span::null(),
+                value = self.push_instruction(
+                    param.span,
                     ir::Instruction::BinOp {
-                        left: arg_index,
-                        op: ir::BinOp::LessThan,
-                        right: arg_count,
+                        left: value,
+                        op: ir::BinOp::NullCoalesce,
+                        right: def_value,
                     },
                 );
-
-                let provided_block = self.new_block();
-                let not_provided_block = self.new_block();
-                let successor_block = self.new_block();
-
-                self.end_current_block(ir::Exit::Branch {
-                    cond: arg_provided,
-                    if_true: provided_block,
-                    if_false: not_provided_block,
-                });
-
-                self.start_new_block(provided_block);
-                let pop_arg_inst =
-                    self.push_instruction(param.name.span, ir::Instruction::Argument(param_index));
-                self.push_instruction(
-                    param.name.span,
-                    ir::Instruction::SetVariable(arg_var, pop_arg_inst),
-                );
-                self.end_current_block(ir::Exit::Jump(successor_block));
-
-                self.start_new_block(not_provided_block);
-                let def_value_inst =
-                    self.push_instruction(default.span, ir::Instruction::Constant(def_value));
-                self.push_instruction(
-                    default.span,
-                    ir::Instruction::SetVariable(arg_var, def_value_inst),
-                );
-                self.end_current_block(ir::Exit::Jump(successor_block));
-
-                self.start_new_block(successor_block);
-            } else {
-                let pop_arg =
-                    self.push_instruction(param.name.span, ir::Instruction::Argument(param_index));
-                self.push_instruction(
-                    param.name.span,
-                    ir::Instruction::SetVariable(arg_var, pop_arg),
-                );
             };
+
+            self.push_instruction(
+                param.name.span,
+                ir::Instruction::SetVariable(arg_var, value),
+            );
         }
 
         Ok(())
@@ -369,15 +342,19 @@ where
 
         let this_closure = self.push_instruction(Span::null(), ir::Instruction::CurrentClosure);
 
-        let our_super = self.push_instruction(
+        let call_scope = self.function.call_scopes.insert(());
+        self.push_instruction(
             Span::null(),
-            ir::Instruction::Call {
+            ir::Instruction::OpenCall {
+                scope: call_scope,
                 func: get_constructor_super,
                 this: None,
                 args: vec![this_closure],
-                return_value: true,
             },
         );
+        let our_super =
+            self.push_instruction(Span::null(), ir::Instruction::GetReturn(call_scope, 0));
+        self.push_instruction(Span::null(), ir::Instruction::CloseCall(call_scope));
 
         let check_initialized =
             self.push_instruction(Span::null(), ir::Instruction::GetVariable(is_initialized));
@@ -390,25 +367,31 @@ where
         self.start_new_block(init_block);
 
         if inherit.is_some() {
-            let parent_super = self.push_instruction(
+            let call_scope = self.function.call_scopes.insert(());
+            self.push_instruction(
                 Span::null(),
-                ir::Instruction::Call {
+                ir::Instruction::OpenCall {
+                    scope: call_scope,
                     func: get_constructor_super,
                     this: None,
                     args: vec![parent_func.unwrap()],
-                    return_value: true,
                 },
             );
+            let parent_super =
+                self.push_instruction(Span::null(), ir::Instruction::GetReturn(call_scope, 0));
+            self.push_instruction(Span::null(), ir::Instruction::CloseCall(call_scope));
 
+            let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
                 Span::null(),
-                ir::Instruction::Call {
+                ir::Instruction::OpenCall {
+                    scope: call_scope,
                     func: set_super,
                     this: None,
                     args: vec![our_super, parent_super],
-                    return_value: false,
                 },
             );
+            self.push_instruction(Span::null(), ir::Instruction::CloseCall(call_scope));
         }
 
         let mut static_names = HashSet::new();
@@ -467,34 +450,39 @@ where
                 args.push(self.expression(arg)?);
             }
 
+            let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
                 inherit.span,
-                ir::Instruction::Call {
+                ir::Instruction::OpenCall {
+                    scope: call_scope,
                     func: parent_func,
                     this: None,
                     args,
-                    return_value: true,
                 },
-            )
+            );
+            let ret =
+                self.push_instruction(inherit.span, ir::Instruction::GetReturn(call_scope, 0));
+            self.push_instruction(Span::null(), ir::Instruction::CloseCall(call_scope));
+            ret
         } else {
             self.push_instruction(Span::null(), ir::Instruction::NewObject)
         };
 
+        let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
             Span::null(),
-            ir::Instruction::Call {
+            ir::Instruction::OpenCall {
+                scope: call_scope,
                 func: set_super,
                 this: None,
                 args: vec![this, our_super],
-                return_value: false,
             },
         );
+        self.push_instruction(Span::null(), ir::Instruction::CloseCall(call_scope));
 
         let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(
-            Span::null(),
-            ir::Instruction::OpenThisScope(this_scope, this),
-        );
+        self.push_instruction(Span::null(), ir::Instruction::OpenThisScope(this_scope));
+        self.push_instruction(Span::null(), ir::Instruction::SetThis(this_scope, this));
 
         self.push_scope();
 
@@ -596,7 +584,7 @@ where
             ast::StatementKind::Repeat(repeat_stmt) => self.repeat_statement(repeat_stmt),
             ast::StatementKind::Switch(switch_stmt) => self.switch_statement(switch_stmt),
             ast::StatementKind::Call(function_call) => {
-                let _ = self.call_expr(statement.span, function_call, false)?;
+                let _ = self.call_expr(statement.span, function_call)?;
                 Ok(())
             }
             ast::StatementKind::Prefix(op, expr) => {
@@ -1077,7 +1065,11 @@ where
                                 let this_scope = self.function.this_scopes.insert(());
                                 self.push_instruction(
                                     span,
-                                    ir::Instruction::OpenThisScope(this_scope, object),
+                                    ir::Instruction::OpenThisScope(this_scope),
+                                );
+                                self.push_instruction(
+                                    span,
+                                    ir::Instruction::SetThis(this_scope, object),
                                 );
                                 Some(this_scope)
                             } else {
@@ -1312,7 +1304,7 @@ where
                 )?;
                 self.push_instruction(span, ir::Instruction::Closure(func_id))
             }
-            ast::ExpressionKind::Call(func) => self.call_expr(span, func, true)?,
+            ast::ExpressionKind::Call(func) => self.call_expr(span, func)?,
             ast::ExpressionKind::Field(field_expr) => {
                 let base = self.expression(&field_expr.base)?;
                 let field = self.push_instruction(
@@ -1344,12 +1336,7 @@ where
         })
     }
 
-    fn call_expr(
-        &mut self,
-        span: Span,
-        func: &ast::Call<S>,
-        return_value: bool,
-    ) -> Result<ir::InstId, IrGenError> {
+    fn call_expr(&mut self, span: Span, func: &ast::Call<S>) -> Result<ir::InstId, IrGenError> {
         enum Call {
             Function(ir::InstId),
             Method {
@@ -1378,26 +1365,35 @@ where
             args.push(self.expression(arg)?);
         }
 
-        Ok(match call {
-            Call::Function(func) => self.push_instruction(
-                span,
-                ir::Instruction::Call {
-                    func,
-                    this: None,
-                    args,
-                    return_value,
-                },
-            ),
-            Call::Method { func, object } => self.push_instruction(
-                span,
-                ir::Instruction::Call {
-                    func,
-                    this: Some(object),
-                    args,
-                    return_value,
-                },
-            ),
-        })
+        let call_scope = self.function.call_scopes.insert(());
+        match call {
+            Call::Function(func) => {
+                self.push_instruction(
+                    span,
+                    ir::Instruction::OpenCall {
+                        scope: call_scope,
+                        func,
+                        this: None,
+                        args,
+                    },
+                );
+            }
+            Call::Method { func, object } => {
+                self.push_instruction(
+                    span,
+                    ir::Instruction::OpenCall {
+                        scope: call_scope,
+                        func,
+                        this: Some(object),
+                        args,
+                    },
+                );
+            }
+        }
+        let ret = self.push_instruction(span, ir::Instruction::GetReturn(call_scope, 0));
+        self.push_instruction(span, ir::Instruction::CloseCall(call_scope));
+
+        Ok(ret)
     }
 
     fn if_expression(

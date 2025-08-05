@@ -1,15 +1,14 @@
-use std::{fmt, ops::ControlFlow};
+use std::{fmt, mem, ops::ControlFlow};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
     array::Array,
-    bytecode,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
     error::Error,
-    instructions::{ArgIdx, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
+    instructions::{self, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
     stack::Stack,
@@ -33,16 +32,8 @@ pub enum OpError {
     NoSuchField,
     #[error("bad call")]
     BadCall,
-    #[error("bad heap index")]
-    BadHeapIdx,
-    #[error("bad closure index")]
-    BadClosureIdx,
-    #[error("bad magic index")]
-    BadMagicIdx,
-    #[error("stack underflow")]
-    StackUnderflow,
-    #[error("only owned heap values can be reset")]
-    ResetHeapNotOwned,
+    #[error("bad stack index")]
+    BadStackIdx,
 }
 
 #[derive(Debug, Error)]
@@ -133,13 +124,12 @@ impl<'gc> ThreadState<'gc> {
         stack_bottom: usize,
     ) -> Result<(), Error> {
         let proto = closure.prototype();
-        assert!(proto.used_registers <= 256);
+        let used_registers = proto.used_registers();
+        assert!(used_registers <= 256);
 
         let register_bottom = self.registers.len();
         self.registers
             .resize(register_bottom + 256, Value::Undefined);
-
-        let num_args = self.stack.len() - stack_bottom;
 
         let heap_bottom = self.heap.len();
         for hd in closure.heap() {
@@ -170,34 +160,26 @@ impl<'gc> ThreadState<'gc> {
                     .unwrap(),
                 &mut self.heap[heap_bottom..],
                 Stack::new(&mut self.stack, stack_bottom),
-                num_args,
             )? {
                 Next::Call {
                     closure,
-                    arguments,
-                    returns,
+                    args_bottom,
                 } => {
                     // We only preserve the registers that the prototype claims to use,
-                    self.registers
-                        .truncate(register_bottom + proto.used_registers);
+                    self.registers.truncate(register_bottom + used_registers);
 
-                    let call_args_bottom = self.stack.len() - arguments as usize;
-                    self.call(ctx, closure, this, other, call_args_bottom)?;
+                    self.call(ctx, closure, this, other, stack_bottom + args_bottom)?;
 
                     // Resize the register slice to be 256 wide.
                     self.registers
                         .resize(register_bottom + 256, Value::Undefined);
-
-                    // Pad stack with undefined values to match the expected return len.
-                    self.stack
-                        .resize(call_args_bottom + returns as usize, Value::Undefined);
                 }
-                Next::Return { count } => {
+                Next::Return { returns_bottom } => {
                     // Clear the registers for this frame.
                     self.registers.truncate(register_bottom);
                     // Drain everything on the stack up until the returns.
                     self.stack
-                        .drain(stack_bottom..self.stack.len() - count as usize);
+                        .drain(stack_bottom..stack_bottom + returns_bottom);
 
                     return Ok(());
                 }
@@ -209,11 +191,10 @@ impl<'gc> ThreadState<'gc> {
 enum Next<'gc> {
     Call {
         closure: Closure<'gc>,
-        arguments: ArgIdx,
-        returns: ArgIdx,
+        args_bottom: usize,
     },
     Return {
-        count: ArgIdx,
+        returns_bottom: usize,
     },
 }
 
@@ -269,17 +250,15 @@ fn dispatch<'gc>(
     registers: &mut [Value<'gc>; 256],
     heap: &mut [OwnedHeapVar<'gc>],
     stack: Stack<'gc, '_>,
-    num_args: usize,
 ) -> Result<Next<'gc>, VmError> {
     struct Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
         this: &'a mut Value<'gc>,
         other: &'a mut Value<'gc>,
-        registers: &'a mut [Value<'gc>],
+        registers: &'a mut [Value<'gc>; 256],
         heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
-        num_args: usize,
     }
 
     impl<'gc, 'a> Dispatch<'gc, 'a> {
@@ -382,7 +361,7 @@ fn dispatch<'gc>(
         }
     }
 
-    impl<'gc, 'a> bytecode::Dispatch for Dispatch<'gc, 'a> {
+    impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         type Break = Next<'gc>;
         type Error = Error;
 
@@ -395,27 +374,88 @@ fn dispatch<'gc>(
         #[inline]
         fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] =
-                self.closure.prototype().constants[constant as usize].to_value();
+                self.closure.prototype().constants()[constant as usize].to_value();
+            Ok(())
+        }
+
+        #[inline]
+        fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => self.heap[idx as usize].get(),
+                HeapVar::Shared(v) => v.get(),
+            };
+            Ok(())
+        }
+
+        #[inline]
+        fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
+            let source = self.registers[source as usize];
+            match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
+                HeapVar::Shared(v) => v.set(&self.ctx, source),
+            };
+            Ok(())
+        }
+
+        #[inline]
+        fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
+            match self.closure.heap()[heap as usize] {
+                HeapVar::Owned(idx) => {
+                    self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
+                    Ok(())
+                }
+                HeapVar::Shared(_) => panic!("reset of shared heap var"),
+            }
+        }
+
+        #[inline]
+        fn globals(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.ctx.globals().into();
+            Ok(())
+        }
+
+        #[inline]
+        fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = *self.this;
+            Ok(())
+        }
+
+        #[inline]
+        fn set_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
+            *self.this = self.registers[source as usize];
+            Ok(())
+        }
+
+        #[inline]
+        fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = *self.other;
+            Ok(())
+        }
+
+        #[inline]
+        fn set_other(&mut self, source: RegIdx) -> Result<(), Self::Error> {
+            *self.other = self.registers[source as usize];
+            Ok(())
+        }
+
+        #[inline]
+        fn swap_this_other(&mut self) -> Result<(), Self::Error> {
+            mem::swap(self.this, self.other);
             Ok(())
         }
 
         #[inline]
         fn closure(&mut self, dest: RegIdx, proto: ProtoIdx) -> Result<(), Self::Error> {
-            let proto = *self
-                .closure
-                .prototype()
-                .prototypes
-                .get(proto as usize)
-                .ok_or(OpError::BadClosureIdx)?;
+            let proto = self.closure.prototype().prototypes()[proto as usize];
 
             let mut heap = Vec::new();
-            for &hd in &proto.heap_vars {
+            for &hd in proto.heap_vars() {
                 match hd {
                     HeapVarDescriptor::Owned(idx) => {
                         heap.push(HeapVar::Owned(idx));
                     }
                     HeapVarDescriptor::Static(idx) => {
-                        heap.push(HeapVar::Shared(proto.static_vars[idx as usize]))
+                        heap.push(HeapVar::Shared(proto.static_vars()[idx as usize]))
                     }
                     HeapVarDescriptor::UpValue(idx) => {
                         heap.push(HeapVar::Shared(match self.closure.heap()[idx as usize] {
@@ -439,68 +479,6 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = match *self
-                .closure
-                .heap()
-                .get(heap as usize)
-                .ok_or(OpError::BadHeapIdx)?
-            {
-                HeapVar::Owned(idx) => self.heap[idx as usize].get(),
-                HeapVar::Shared(v) => v.get(),
-            };
-            Ok(())
-        }
-
-        #[inline]
-        fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
-            let source = self.registers[source as usize];
-            match *self
-                .closure
-                .heap()
-                .get(heap as usize)
-                .ok_or(OpError::BadHeapIdx)?
-            {
-                HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
-                HeapVar::Shared(v) => v.set(&self.ctx, source),
-            };
-            Ok(())
-        }
-
-        #[inline]
-        fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
-            match *self
-                .closure
-                .heap()
-                .get(heap as usize)
-                .ok_or(OpError::BadHeapIdx)?
-            {
-                HeapVar::Owned(idx) => {
-                    self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
-                    Ok(())
-                }
-                HeapVar::Shared(_) => Err(OpError::ResetHeapNotOwned.into()),
-            }
-        }
-
-        #[inline]
-        fn globals(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.ctx.globals().into();
-            Ok(())
-        }
-
-        #[inline]
-        fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = *self.this;
-            Ok(())
-        }
-
-        #[inline]
-        fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = *self.other;
-            Ok(())
-        }
-
         fn current_closure(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.closure.into();
             Ok(())
@@ -515,22 +493,6 @@ fn dispatch<'gc>(
         #[inline]
         fn new_array(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = Array::new(&self.ctx).into();
-            Ok(())
-        }
-
-        #[inline]
-        fn arg_count(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = Value::Integer(self.num_args as i64);
-            Ok(())
-        }
-
-        #[inline]
-        fn argument(&mut self, dest: RegIdx, index: ArgIdx) -> Result<(), Self::Error> {
-            if (index as usize) < self.num_args {
-                self.registers[dest as usize] = self.stack.get(index as usize);
-            } else {
-                self.registers[dest as usize] = Value::Undefined;
-            }
             Ok(())
         }
 
@@ -574,8 +536,8 @@ fn dispatch<'gc>(
             object: RegIdx,
             key: ConstIdx,
         ) -> Result<(), Self::Error> {
-            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
-                return Err(OpError::BadKey.into());
+            let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
+                panic!("const key is not a string");
             };
             self.registers[dest as usize] =
                 self.do_get_field(self.registers[object as usize], key)?;
@@ -589,8 +551,8 @@ fn dispatch<'gc>(
             key: ConstIdx,
             value: RegIdx,
         ) -> Result<(), Self::Error> {
-            let Constant::String(key) = self.closure.prototype().constants[key as usize] else {
-                return Err(OpError::BadKey.into());
+            let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
+                panic!("const key is not a string");
             };
             self.do_set_field(
                 self.registers[object as usize],
@@ -637,7 +599,7 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.do_get_index(
                 self.registers[array as usize],
-                &[self.closure.prototype().constants[index as usize].to_value()],
+                &[self.closure.prototype().constants()[index as usize].to_value()],
             )?;
             Ok(())
         }
@@ -651,14 +613,14 @@ fn dispatch<'gc>(
         ) -> Result<(), Self::Error> {
             self.do_set_index(
                 self.registers[array as usize],
-                &[self.closure.prototype().constants[index as usize].to_value()],
+                &[self.closure.prototype().constants()[index as usize].to_value()],
                 self.registers[value as usize],
             )?;
             Ok(())
         }
 
         #[inline]
-        fn move_(&mut self, dest: RegIdx, source: RegIdx) -> Result<(), Self::Error> {
+        fn copy(&mut self, dest: RegIdx, source: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[source as usize];
             Ok(())
         }
@@ -666,6 +628,22 @@ fn dispatch<'gc>(
         #[inline]
         fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = (!self.registers[arg as usize].to_bool()).into();
+            Ok(())
+        }
+
+        #[inline]
+        fn inc(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize]
+                .add(Value::Integer(1))
+                .ok_or(OpError::BadOp)?;
+            Ok(())
+        }
+
+        #[inline]
+        fn dec(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize]
+                .sub(Value::Integer(1))
+                .ok_or(OpError::BadOp)?;
             Ok(())
         }
 
@@ -695,6 +673,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn mult(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -703,6 +682,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn div(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -711,6 +691,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn rem(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -719,6 +700,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn idiv(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -783,6 +765,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn and(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -791,6 +774,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn or(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
@@ -799,6 +783,7 @@ fn dispatch<'gc>(
             Ok(())
         }
 
+        #[inline]
         fn null_coalesce(
             &mut self,
             dest: RegIdx,
@@ -818,81 +803,151 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn push(&mut self, source: RegIdx, len: ArgIdx) -> Result<(), Self::Error> {
-            for i in 0..len {
-                self.stack
-                    .sub_stack(self.num_args)
-                    .push_back(self.registers[source as usize + i as usize]);
-            }
+        fn stack_top(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = (self.stack.len() as i64).into();
             Ok(())
         }
 
         #[inline]
-        fn pop(&mut self, dest: RegIdx, len: ArgIdx) -> Result<(), Self::Error> {
-            for i in (0..len).rev() {
-                self.registers[dest as usize + i as usize] = self
-                    .stack
-                    .sub_stack(self.num_args)
-                    .pop_back()
-                    .ok_or(OpError::StackUnderflow)?;
-            }
+        fn stack_resize(&mut self, stack_top: RegIdx) -> Result<(), Self::Error> {
+            let stack_top = self.registers[stack_top as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            self.stack.resize(stack_top);
             Ok(())
         }
 
+        #[inline]
+        fn stack_resize_const(&mut self, stack_pos: ConstIdx) -> Result<(), Self::Error> {
+            let stack_top = self.closure.prototype().constants()[stack_pos as usize]
+                .to_value()
+                .to_integer()
+                .expect("const index is not integer")
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            self.stack.resize(stack_top);
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_get(&mut self, dest: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
+            let stack_idx = self.registers[stack_pos as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            // We return `Undefined` if the `stack_idx` is out of range.
+            self.registers[dest as usize] = self.stack.get(stack_idx);
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_get_const(
+            &mut self,
+            dest: RegIdx,
+            stack_pos: ConstIdx,
+        ) -> Result<(), Self::Error> {
+            let stack_idx = self.closure.prototype().constants()[stack_pos as usize]
+                .to_value()
+                .to_integer()
+                .expect("const index is not integer")
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            // We return `Undefined` if the `stack_idx` is out of range.
+            self.registers[dest as usize] = self.stack.get(stack_idx);
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_get_offset(
+            &mut self,
+            dest: RegIdx,
+            stack_base: RegIdx,
+            offset: ConstIdx,
+        ) -> Result<(), Self::Error> {
+            let offset = self.closure.prototype().constants()[offset as usize]
+                .to_value()
+                .to_integer()
+                .expect("const index is not integer");
+            let stack_idx = self.registers[stack_base as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .checked_add(offset)
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            // We return `Undefined` if the `stack_idx` is out of range.
+            self.registers[dest as usize] = self.stack.get(stack_idx);
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_set(&mut self, source: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
+            let stack_idx: usize = self.registers[stack_pos as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            // We need to implicitly grow the stack if the register is out of range.
+            if stack_idx >= self.stack.len() {
+                self.stack.resize(stack_idx + 1);
+            }
+            self.stack[stack_idx] = self.registers[source as usize];
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_push(&mut self, source: RegIdx) -> Result<(), Self::Error> {
+            self.stack.push_back(self.registers[source as usize]);
+            Ok(())
+        }
+
+        #[inline]
+        fn stack_pop(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.stack.pop_back().unwrap_or_default();
+            Ok(())
+        }
+
+        #[inline]
         fn get_index_multi(
             &mut self,
             dest: RegIdx,
             array: RegIdx,
-            len: ArgIdx,
+            stack_bottom: RegIdx,
         ) -> Result<(), Self::Error> {
-            if self.stack.len() - self.num_args < len as usize {
-                return Err(OpError::StackUnderflow.into());
-            }
+            let mut stack_bottom: usize = self.registers[stack_bottom as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            stack_bottom = stack_bottom.min(self.stack.len());
 
-            self.registers[dest as usize] = self.do_get_index(
-                self.registers[array as usize],
-                &self.stack[self.stack.len() - len as usize..],
-            )?;
+            self.registers[dest as usize] =
+                self.do_get_index(self.registers[array as usize], &self.stack[stack_bottom..])?;
             Ok(())
         }
 
+        #[inline]
         fn set_index_multi(
             &mut self,
             array: RegIdx,
-            len: ArgIdx,
+            stack_bottom: RegIdx,
             value: RegIdx,
         ) -> Result<(), Self::Error> {
-            if self.stack.len() - self.num_args < len as usize {
-                return Err(OpError::StackUnderflow.into());
-            }
+            let mut stack_bottom: usize = self.registers[stack_bottom as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            stack_bottom = stack_bottom.min(self.stack.len());
 
             self.do_set_index(
                 self.registers[array as usize],
-                &self.stack[self.stack.len() - len as usize..],
+                &self.stack[stack_bottom..],
                 self.registers[value as usize],
             )?;
-            Ok(())
-        }
-
-        #[inline]
-        fn push_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-            let prev_this = *self.this;
-            let prev_other = *self.other;
-            self.stack.sub_stack(self.num_args).push_back(prev_other);
-            *self.other = prev_this;
-            *self.this = self.registers[source as usize];
-            Ok(())
-        }
-
-        #[inline]
-        fn pop_this(&mut self) -> Result<(), Self::Error> {
-            let old_other = self
-                .stack
-                .sub_stack(self.num_args)
-                .pop_back()
-                .ok_or(OpError::StackUnderflow)?;
-            *self.this = *self.other;
-            *self.other = old_other;
             Ok(())
         }
 
@@ -901,9 +956,9 @@ fn dispatch<'gc>(
             let magic = self
                 .closure
                 .prototype()
-                .magic
+                .magic()
                 .get(magic as usize)
-                .map_err(|_| OpError::BadMagicIdx)?;
+                .expect("magic idx is not valid");
             self.registers[dest as usize] = magic.get(self.ctx)?;
             Ok(())
         }
@@ -913,9 +968,9 @@ fn dispatch<'gc>(
             let magic = self
                 .closure
                 .prototype()
-                .magic
+                .magic()
                 .get(magic as usize)
-                .map_err(|_| OpError::BadMagicIdx)?;
+                .expect("magic idx is not valid");
             magic.set(self.ctx, self.registers[source as usize])?;
             Ok(())
         }
@@ -924,47 +979,51 @@ fn dispatch<'gc>(
         fn call(
             &mut self,
             func: RegIdx,
-            arguments: ArgIdx,
-            returns: ArgIdx,
+            stack_bottom: RegIdx,
         ) -> Result<ControlFlow<Self::Break>, Self::Error> {
             let func = self.registers[func as usize]
                 .to_function()
                 .ok_or(OpError::BadCall)?;
 
-            if self.stack.len() - self.num_args < arguments as usize {
-                return Err(OpError::StackUnderflow.into());
+            let stack_bottom: usize = self.registers[stack_bottom as usize]
+                .to_integer()
+                .ok_or(OpError::BadStackIdx)?
+                .try_into()
+                .map_err(|_| OpError::BadStackIdx)?;
+            if stack_bottom > self.stack.len() {
+                self.stack.resize(stack_bottom);
             }
 
             Ok(match func {
                 Function::Closure(closure) => ControlFlow::Break(Next::Call {
                     closure,
-                    arguments,
-                    returns,
+                    args_bottom: stack_bottom,
                 }),
                 Function::Callback(callback) => {
-                    let call_bottom = self.stack.len() - arguments as usize;
-
-                    callback.call_with(self.ctx, *self.this, self.stack.sub_stack(call_bottom))?;
-
-                    // Pad stack with undefined values to match the expected return len.
-                    self.stack.sub_stack(call_bottom).resize(returns as usize);
-
+                    callback.call_with(self.ctx, *self.this, self.stack.sub_stack(stack_bottom))?;
                     ControlFlow::Continue(())
                 }
             })
         }
 
         #[inline]
-        fn return_(&mut self, count: ArgIdx) -> Result<Self::Break, Self::Error> {
-            if self.stack.len() - self.num_args < count as usize {
-                return Err(OpError::StackUnderflow.into());
-            }
+        fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error> {
+            let stack_bottom = usize::try_from(
+                self.registers[stack_bottom as usize]
+                    .to_integer()
+                    .ok_or(OpError::BadStackIdx)?,
+            )
+            .map_err(|_| OpError::BadStackIdx)?
+            .min(self.stack.len());
 
-            Ok(Next::Return { count })
+            Ok(Next::Return {
+                returns_bottom: stack_bottom,
+            })
         }
     }
 
-    let mut dispatcher = bytecode::Dispatcher::new(&closure.prototype().as_ref().bytecode, *pc);
+    let mut dispatcher =
+        instructions::Dispatcher::new(&closure.prototype().as_ref().bytecode(), *pc);
     let ret = dispatcher.dispatch_loop(&mut Dispatch {
         ctx,
         closure,
@@ -973,7 +1032,6 @@ fn dispatch<'gc>(
         registers,
         heap,
         stack,
-        num_args,
     });
     *pc = dispatcher.pc();
 
@@ -981,13 +1039,14 @@ fn dispatch<'gc>(
         Ok(next) => Ok(next),
         Err(error) => {
             let prototype = closure.prototype();
-            let (ind, inst, span) = prototype.bytecode.instruction_for_pc(*pc).unwrap();
+            let (ind, inst, span) = prototype.bytecode().instruction_for_pc(*pc).unwrap();
+            let chunk = prototype.chunk();
             Err(VmError {
                 error,
-                chunk_name: prototype.chunk.name().clone(),
+                chunk_name: chunk.name().clone(),
                 instruction_index: ind,
                 instruction: inst,
-                line_number: prototype.chunk.line_number(span.start()),
+                line_number: chunk.line_number(span.start()),
             })
         }
     }

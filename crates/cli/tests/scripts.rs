@@ -11,7 +11,7 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, vm::Error> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
-        let (output, _) = compiler::Compiler::compile_chunk(
+        let (proto, _, _) = compiler::Compiler::compile_chunk(
             ctx,
             "default",
             compiler::ImportItems::from_magic(ctx.testing_stdlib()),
@@ -23,7 +23,7 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, vm::Error> {
             name,
             code,
         )?;
-        let closure = vm::Closure::new(&ctx, output.prototype, vm::Value::Undefined).unwrap();
+        let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
         let res = thread.exec(ctx, closure)?;

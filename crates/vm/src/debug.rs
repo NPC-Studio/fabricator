@@ -236,3 +236,11 @@ impl<'gc> Chunk<'gc> {
         (self.0.metadata().methods.line_number)(self.0, byte_offset)
     }
 }
+
+#[derive(Debug, Clone, Collect)]
+#[collect(require_static)]
+pub enum FunctionRef {
+    Named(RefName, Span),
+    Expression(Span),
+    Chunk,
+}

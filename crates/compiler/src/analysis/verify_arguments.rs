@@ -1,0 +1,30 @@
+use thiserror::Error;
+
+use crate::ir;
+
+#[derive(Debug, Error)]
+#[error("instruction references argument that is out of range")]
+pub struct ArgumentVerificationError {
+    pub location: (ir::BlockId, usize),
+    pub argument: usize,
+}
+
+/// Verify all references in all blocks and instructions.
+///
+/// Checks all blocks, does not consider block reachability.
+pub fn verify_arguments<S>(ir: &ir::Function<S>) -> Result<(), ArgumentVerificationError> {
+    for (block_id, block) in ir.blocks.iter() {
+        for (inst_index, inst_id) in block.instructions.iter().copied().enumerate() {
+            if let ir::Instruction::Argument(index) = ir.instructions[inst_id] {
+                if index >= ir.num_parameters {
+                    return Err(ArgumentVerificationError {
+                        location: (block_id, inst_index),
+                        argument: index,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

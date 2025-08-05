@@ -62,6 +62,7 @@ impl<'gc> BuiltIns<'gc> {
     pub const GET_SUPER: &'static str = "get_super";
     pub const SET_SUPER: &'static str = "set_super";
     pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_prototype_super";
+    pub const GET_WITH_LOOP_VALUES: &'static str = "__get_with_loop_values";
 
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
@@ -108,7 +109,7 @@ impl<'gc> BuiltIns<'gc> {
                 format!("in `{}` builtin", Self::GET_CONSTRUCTOR_SUPER),
                 |ctx, _, mut stack| {
                     let closure: Closure = stack.consume(ctx)?;
-                    stack.replace(ctx, closure.prototype().constructor_parent);
+                    stack.replace(ctx, closure.prototype().constructor_parent());
                     Ok(())
                 },
             ),

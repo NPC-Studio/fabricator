@@ -191,14 +191,14 @@ pub fn create_state(
             )?;
         }
 
-        let (scripts, script_imports) = script_compiler.compile()?;
+        let (scripts, script_imports, _) = script_compiler.compile()?;
 
         for (object_name, proj_object) in &project.objects {
             for (&event, script) in &proj_object.event_scripts {
                 code_buf.clear();
                 File::open(&script.path)?.read_to_string(&mut code_buf)?;
                 let name = script.path.to_string_lossy();
-                let (output, _) = compiler::Compiler::compile_chunk(
+                let (proto, _, _) = compiler::Compiler::compile_chunk(
                     ctx,
                     config_name,
                     script_imports,
@@ -212,7 +212,7 @@ pub fn create_state(
                 object_events
                     .entry(object_dict[object_name])
                     .or_default()
-                    .insert(event, ScriptPrototype::new(ctx, output.prototype));
+                    .insert(event, ScriptPrototype::new(ctx, proto));
             }
         }
 
@@ -220,7 +220,7 @@ pub fn create_state(
             magic: ctx.stash(magic),
             scripts: scripts
                 .into_iter()
-                .map(|o| ScriptPrototype::new(ctx, o.prototype))
+                .map(|proto| ScriptPrototype::new(ctx, proto))
                 .collect(),
             object_events,
         })

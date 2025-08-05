@@ -12,6 +12,8 @@ use fabricator_vm as vm;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    #[arg(short, long, default_value_t = 2)]
+    opt_level: u8,
 }
 
 #[derive(Subcommand)]
@@ -31,9 +33,9 @@ fn main() {
                 .read_to_string(&mut code)
                 .unwrap();
 
-            let settings = CompileSettings::from_path(&path);
+            let settings = CompileSettings::from_path(&path).set_optimization_passes(cli.opt_level);
 
-            let (output, _) = Compiler::compile_chunk(
+            let (proto, _, _) = Compiler::compile_chunk(
                 ctx,
                 "default",
                 ImportItems::from_magic(ctx.testing_stdlib()),
@@ -42,7 +44,7 @@ fn main() {
                 &code,
             )
             .unwrap();
-            let closure = vm::Closure::new(&ctx, output.prototype, vm::Value::Undefined).unwrap();
+            let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
             let thread = vm::Thread::new(&ctx);
             println!("returns: {:?}", thread.exec(ctx, closure).unwrap());
@@ -54,9 +56,9 @@ fn main() {
                 .read_to_string(&mut code)
                 .unwrap();
 
-            let settings = CompileSettings::from_path(&path);
+            let settings = CompileSettings::from_path(&path).set_optimization_passes(cli.opt_level);
 
-            let (output, _) = Compiler::compile_chunk(
+            let (_, _, debug) = Compiler::compile_chunk(
                 ctx,
                 "default",
                 ImportItems::from_magic(ctx.testing_stdlib()),
@@ -66,9 +68,29 @@ fn main() {
             )
             .unwrap();
 
-            println!("Compiled IR: {:#?}", output.unoptimized_ir);
-            println!("Optimized IR: {:#?}", output.optimized_ir);
-            println!("Bytecode: {:#?}", output.prototype);
+            for (proto, ir) in debug {
+                let chunk = proto.chunk();
+                match proto.reference() {
+                    vm::FunctionRef::Named(ref_name, span) => {
+                        println!(
+                            "==[Function named {ref_name} at line {}]==",
+                            chunk.line_number(span.start())
+                        );
+                    }
+                    vm::FunctionRef::Expression(span) => {
+                        println!(
+                            "==[Function expression at line {}]==",
+                            chunk.line_number(span.start())
+                        );
+                    }
+                    vm::FunctionRef::Chunk => {
+                        println!("==[Chunk function]==");
+                    }
+                }
+                println!();
+                println!("IR: {:#?}", ir);
+                println!("Bytecode: {:#?}", proto);
+            }
         }
     });
 }

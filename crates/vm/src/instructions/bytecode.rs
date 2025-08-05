@@ -9,15 +9,15 @@ use thiserror::Error;
 
 use crate::{
     debug::Span,
-    instructions::{
-        ArgIdx, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx, for_each_instruction,
-    },
+    instructions::instruction::{ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
 };
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
-    #[error("jump out of range")]
-    JumpOutOfRange,
+    #[error("decoded jump is to a non-existent instruction")]
+    InvalidJump(usize),
+    #[error("encoded jump out of range at instruction {0}")]
+    JumpOutOfRange(usize),
     #[error("no return or jump as last instruction")]
     BadLastInstruction,
 }
@@ -81,7 +81,7 @@ impl ByteCode {
 
         let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
             Some(i) if i < insts.len() => Ok(()),
-            _ => Err(ByteCodeEncodingError::JumpOutOfRange),
+            _ => Err(ByteCodeEncodingError::InvalidJump(i)),
         };
 
         for (i, &inst) in insts.iter().enumerate() {
@@ -115,7 +115,8 @@ impl ByteCode {
             // Encode jumps from the end of the current instruction
             let cur_pos = inst_positions.get(cur + 1).copied().unwrap() as isize;
             let jump_pos = inst_positions[(cur as isize + offset as isize) as usize] as isize;
-            i16::try_from(jump_pos - cur_pos).map_err(|_| ByteCodeEncodingError::JumpOutOfRange)
+            i16::try_from(jump_pos - cur_pos)
+                .map_err(|_| ByteCodeEncodingError::JumpOutOfRange(cur))
         };
 
         let mut bytes = Vec::new();
@@ -355,16 +356,15 @@ impl<'a> Dispatcher<'a> {
                         OpCode::Call => {
                             let params::Call {
                                 func,
-                                arguments,
-                                returns,
+                                stack_bottom,
                             } = bytecode_read(&mut self.ptr);
-                            if let ControlFlow::Break(b) = dispatch.call(func, arguments, returns)? {
+                            if let ControlFlow::Break(b) = dispatch.call(func, stack_bottom)? {
                                 return Ok(ControlFlow::Break(b));
                             }
                         }
                         OpCode::Return => {
-                            let params::Return { count } = bytecode_read(&mut self.ptr);
-                            return dispatch.return_(count).map(ControlFlow::Break);
+                            let params::Return { stack_bottom } = bytecode_read(&mut self.ptr);
+                            return dispatch.return_(stack_bottom).map(ControlFlow::Break);
                         }
                     }
                 };
@@ -394,29 +394,14 @@ macro_rules! define_dispatch {
             fn call(
                 &mut self,
                 func: RegIdx,
-                arg_count: ArgIdx,
-                returns: ArgIdx,
+                stack_bottom: RegIdx,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
 
-            fn return_(&mut self, count: ArgIdx) -> Result<Self::Break, Self::Error>;
+            fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error>;
         }
     };
 }
-
 for_each_instruction!(define_dispatch);
-
-macro_rules! define_opcode {
-    ($(
-        [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
-    )*) => {
-        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-        #[repr(u8)]
-        enum OpCode {
-            $($name),*
-        }
-    };
-}
-for_each_instruction!(define_opcode);
 
 mod params {
     use super::*;
@@ -437,8 +422,21 @@ mod params {
     for_each_instruction!(define_params);
 }
 
+macro_rules! define_opcode {
+    ($(
+        [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+    )*) => {
+        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+        #[repr(u8)]
+        enum OpCode {
+            $($name),*
+        }
+    };
+}
+for_each_instruction!(define_opcode);
+
 #[inline]
-fn bytecode_write<T>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
+fn bytecode_write<T: Copy>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
     unsafe {
         let len = buf.len();
         buf.reserve(mem::size_of::<T>());
@@ -449,17 +447,10 @@ fn bytecode_write<T>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
 }
 
 #[inline]
-unsafe fn bytecode_read<T>(ptr: &mut *const MaybeUninit<u8>) -> T {
+unsafe fn bytecode_read<T: Copy>(ptr: &mut *const MaybeUninit<u8>) -> T {
     unsafe {
         let p = *ptr as *const T;
-
-        // I am not sure why this is not optimized automatically, but it's not.
-        let v = if mem::align_of::<T>() == 1 {
-            p.read()
-        } else {
-            p.read_unaligned()
-        };
-
+        let v = p.read_unaligned();
         *ptr = ptr.add(mem::size_of::<T>());
         v
     }
@@ -487,8 +478,8 @@ mod tests {
                 arg: 6,
                 is_true: true,
             },
-            Instruction::Move { source: 7, dest: 8 },
-            Instruction::Return { count: 1 },
+            Instruction::Copy { source: 7, dest: 8 },
+            Instruction::Return { stack_bottom: 0 },
         ];
 
         let bytecode = ByteCode::encode(insts.iter().map(|&i| (i, Span::null()))).unwrap();

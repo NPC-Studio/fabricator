@@ -188,6 +188,7 @@ pub struct Call<S> {
 pub struct Parameter<S> {
     pub name: Ident<S>,
     pub default: Option<Expression<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

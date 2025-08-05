@@ -9,13 +9,13 @@ pub use self::{
     prototype::{HeapVarDescriptor, Prototype},
 };
 
-use fabricator_vm::bytecode;
+use fabricator_vm::instructions;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProtoGenError {
     #[error(transparent)]
-    ByteCodeEncoding(#[from] bytecode::ByteCodeEncodingError),
+    ByteCodeEncoding(#[from] instructions::ByteCodeEncodingError),
     #[error("too many registers used")]
     RegisterOverflow,
     #[error("too many heap variables used")]
@@ -24,8 +24,6 @@ pub enum ProtoGenError {
     ConstantOverflow,
     #[error("too many sub-functions")]
     PrototypeOverflow,
-    #[error("too many arguments")]
-    ArgumentOverflow,
     #[error("jump out of range")]
     JumpOutOfRange,
     #[error("missing magic value")]

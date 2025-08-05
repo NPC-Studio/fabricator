@@ -101,20 +101,39 @@ pub fn clean_unused_shadow_vars<S>(ir: &mut ir::Function<S>) {
 }
 
 pub fn clean_unused_this_scopes<S>(ir: &mut ir::Function<S>) {
-    let mut used_this_scopes = IndexSet::new();
+    let mut used_scopes = IndexSet::new();
 
     for inst in ir.instructions.values() {
         match *inst {
-            ir::Instruction::OpenThisScope(this_scope, _)
-            | ir::Instruction::CloseThisScope(this_scope) => {
-                used_this_scopes.insert(this_scope.index() as usize);
+            ir::Instruction::OpenThisScope(scope)
+            | ir::Instruction::SetThis(scope, _)
+            | ir::Instruction::CloseThisScope(scope) => {
+                used_scopes.insert(scope.index() as usize);
             }
             _ => {}
         }
     }
 
     ir.this_scopes
-        .retain(|id, _| used_this_scopes.contains(id.index() as usize));
+        .retain(|id, _| used_scopes.contains(id.index() as usize));
+}
+
+pub fn clean_unused_call_scopes<S>(ir: &mut ir::Function<S>) {
+    let mut used_scopes = IndexSet::new();
+
+    for inst in ir.instructions.values() {
+        match *inst {
+            ir::Instruction::OpenCall { scope, .. }
+            | ir::Instruction::GetReturn(scope, _)
+            | ir::Instruction::CloseCall(scope) => {
+                used_scopes.insert(scope.index() as usize);
+            }
+            _ => {}
+        }
+    }
+
+    ir.call_scopes
+        .retain(|id, _| used_scopes.contains(id.index() as usize));
 }
 
 pub fn clean_unused_functions<S>(ir: &mut ir::Function<S>) {

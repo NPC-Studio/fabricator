@@ -179,12 +179,17 @@ impl<N: Node> Dominators<N> {
         }
     }
 
+    /// Return true if the given node was reachable when `Dominators` was constructed.
+    pub fn was_reached(&self, n: N) -> bool {
+        self.post_order_indexes.contains(n.index())
+    }
+
     /// Return all reachable nodes in topological dominance order which always starts with the
     /// provided `start` node.
     ///
     /// The specific order is unspecified, but every node in this list will come before any other
     /// nodes that it dominates.
-    pub fn topological_order(&self) -> impl DoubleEndedIterator<Item = N> + '_ {
+    pub fn topological_order(&self) -> impl Iterator<Item = N> + '_ {
         self.post_order.iter().copied().rev()
     }
 
