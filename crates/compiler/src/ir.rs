@@ -18,8 +18,13 @@ new_id_type! {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
+    IsDefined,
+    IsUndefined,
+    Test,
     Not,
     Neg,
+    Increment,
+    Decrement,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -178,6 +183,7 @@ pub enum Instruction<S> {
     NoOp,
     Copy(InstId),
     Undefined,
+    Boolean(bool),
     Constant(Constant<S>),
     Closure(FuncId),
     OpenVariable(VarId),
@@ -349,6 +355,7 @@ impl<S> Instruction<S> {
         match self {
             Instruction::Copy(..) => true,
             Instruction::Undefined => true,
+            Instruction::Boolean(..) => true,
             Instruction::Constant(..) => true,
             Instruction::Closure(..) => true,
             Instruction::GetVariable(..) => true,
@@ -534,6 +541,9 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::Undefined => {
                         writeln!(f, "undefined()")?;
                     }
+                    Instruction::Boolean(b) => {
+                        writeln!(f, "boolean({})", b)?;
+                    }
                     Instruction::Constant(constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;
                     }
@@ -679,11 +689,26 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "upsilon(S{}, I{})", shadow.index(), source.index())?;
                     }
                     Instruction::UnOp { op, source } => match op {
+                        UnOp::IsDefined => {
+                            writeln!(f, "is_defined(I{})", source.index())?;
+                        }
+                        UnOp::IsUndefined => {
+                            writeln!(f, "is_undefined(I{})", source.index())?;
+                        }
+                        UnOp::Test => {
+                            writeln!(f, "into_bool(I{})", source.index())?;
+                        }
                         UnOp::Not => {
                             writeln!(f, "not(I{})", source.index())?;
                         }
                         UnOp::Neg => {
                             writeln!(f, "neg(I{})", source.index())?;
+                        }
+                        UnOp::Increment => {
+                            writeln!(f, "increment(I{})", source.index())?;
+                        }
+                        UnOp::Decrement => {
+                            writeln!(f, "decrement(I{})", source.index())?;
                         }
                     },
                     Instruction::BinOp { left, op, right } => match op {

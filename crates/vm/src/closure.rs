@@ -196,6 +196,9 @@ impl<'gc> Prototype<'gc> {
                 Instruction::Undefined { dest } => {
                     verify_reg_idx(dest)?;
                 }
+                Instruction::Boolean { dest, .. } => {
+                    verify_reg_idx(dest)?;
+                }
                 Instruction::LoadConstant { dest, constant } => {
                     verify_reg_idx(dest)?;
                     verify_const_idx(constant)?;
@@ -299,23 +302,26 @@ impl<'gc> Prototype<'gc> {
                     verify_reg_idx(dest)?;
                     verify_reg_idx(source)?;
                 }
-                Instruction::Not { dest, arg }
-                | Instruction::Inc { dest, arg }
-                | Instruction::Dec { dest, arg }
-                | Instruction::Neg { dest, arg } => {
+                Instruction::IsDefined { dest, arg }
+                | Instruction::IsUndefined { dest, arg }
+                | Instruction::Test { dest, arg }
+                | Instruction::Not { dest, arg }
+                | Instruction::Negate { dest, arg }
+                | Instruction::Increment { dest, arg }
+                | Instruction::Decrement { dest, arg } => {
                     verify_reg_idx(dest)?;
                     verify_reg_idx(arg)?;
                 }
                 Instruction::Add { dest, left, right }
-                | Instruction::Sub { dest, left, right }
-                | Instruction::Mult { dest, left, right }
-                | Instruction::Div { dest, left, right }
-                | Instruction::Rem { dest, left, right }
-                | Instruction::IDiv { dest, left, right }
-                | Instruction::TestEqual { dest, left, right }
-                | Instruction::TestNotEqual { dest, left, right }
-                | Instruction::TestLess { dest, left, right }
-                | Instruction::TestLessEqual { dest, left, right }
+                | Instruction::Subtract { dest, left, right }
+                | Instruction::Multiply { dest, left, right }
+                | Instruction::Divide { dest, left, right }
+                | Instruction::Remainder { dest, left, right }
+                | Instruction::IntDivide { dest, left, right }
+                | Instruction::IsEqual { dest, left, right }
+                | Instruction::IsNotEqual { dest, left, right }
+                | Instruction::IsLess { dest, left, right }
+                | Instruction::IsLessEqual { dest, left, right }
                 | Instruction::And { dest, left, right }
                 | Instruction::Or { dest, left, right }
                 | Instruction::NullCoalesce { dest, left, right } => {

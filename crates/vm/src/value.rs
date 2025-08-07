@@ -137,7 +137,6 @@ impl<'gc> Value<'gc> {
         match self {
             Value::Boolean(b) => Some(if b { 1 } else { 0 }),
             Value::Integer(i) => Some(i),
-            Value::Float(f) => Some(f.round() as i64),
             _ => None,
         }
     }
@@ -164,6 +163,7 @@ impl<'gc> Value<'gc> {
     #[inline]
     pub fn negate(self) -> Option<Value<'gc>> {
         match self {
+            Value::Boolean(b) => Some(Value::Integer(if b { -1 } else { 0 })),
             Value::Integer(i) => Some(Value::Integer(-i)),
             Value::Float(f) => Some(Value::Float(-f)),
             _ => None,
@@ -172,74 +172,76 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_add(b))),
-            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 + b)),
-            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a + b as f64)),
-            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(Value::Integer(a.wrapping_add(b)))
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(Value::Float(a + b))
+        } else {
+            None
         }
     }
 
     #[inline]
     pub fn sub(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_sub(b))),
-            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 - b)),
-            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a - b as f64)),
-            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(Value::Integer(a.wrapping_sub(b)))
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(Value::Float(a - b))
+        } else {
+            None
         }
     }
 
     #[inline]
     pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_mul(b))),
-            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 * b)),
-            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a * b as f64)),
-            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(Value::Integer(a.wrapping_mul(b)))
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(Value::Float(a * b))
+        } else {
+            None
         }
     }
 
     #[inline]
     pub fn div(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_div(b))),
-            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 / b)),
-            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a / b as f64)),
-            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a / b)),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(Value::Float(a / b))
+        } else {
+            None
         }
     }
 
     #[inline]
     pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_rem(b))),
-            (Value::Integer(a), Value::Float(b)) => Some(Value::Float(a as f64 % b)),
-            (Value::Float(a), Value::Integer(b)) => Some(Value::Float(a % b as f64)),
-            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a % b)),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(Value::Integer(a.wrapping_rem(b)))
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(Value::Float(a % b))
+        } else {
+            None
         }
     }
 
     #[inline]
-    pub fn idiv(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(Value::Integer(a.wrapping_div(b))),
-            (Value::Integer(a), Value::Float(b)) => {
-                Some(Value::Integer(a.wrapping_div(b.floor() as i64)))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                Some(Value::Integer((a.floor() as i64).wrapping_div(b)))
-            }
-            (Value::Float(a), Value::Float(b)) => Some(Value::Integer(
-                (a.floor() as i64).wrapping_div(b.floor() as i64),
-            )),
-            _ => None,
-        }
+    pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
+        let self_int = if let Some(i) = self.to_integer() {
+            i
+        } else if let Some(f) = self.to_float() {
+            f.round() as i64
+        } else {
+            return None;
+        };
+
+        let other_int = if let Some(i) = other.to_integer() {
+            i
+        } else if let Some(f) = other.to_float() {
+            f.round() as i64
+        } else {
+            return None;
+        };
+
+        Some(self_int.wrapping_div(other_int))
     }
 
     #[inline]
@@ -248,8 +250,6 @@ impl<'gc> Value<'gc> {
             (Value::Undefined, Value::Undefined) => true,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Integer(a), Value::Float(b)) => (a as f64) == b,
-            (Value::Float(a), Value::Integer(b)) => a == b as f64,
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Object(a), Value::Object(b)) => a == b,
@@ -257,29 +257,37 @@ impl<'gc> Value<'gc> {
             (Value::Closure(a), Value::Closure(b)) => a == b,
             (Value::Callback(a), Value::Callback(b)) => a == b,
             (Value::UserData(a), Value::UserData(b)) => a == b,
-            _ => false,
+            _ => {
+                if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+                    a == b
+                } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+                    a == b
+                } else {
+                    false
+                }
+            }
         }
     }
 
     #[inline]
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(a < b),
-            (Value::Integer(a), Value::Float(b)) => Some((a as f64) < b),
-            (Value::Float(a), Value::Integer(b)) => Some(a < b as f64),
-            (Value::Float(a), Value::Float(b)) => Some(a < b),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(a < b)
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(a < b)
+        } else {
+            None
         }
     }
 
     #[inline]
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
-        match (self, other) {
-            (Value::Integer(a), Value::Integer(b)) => Some(a <= b),
-            (Value::Integer(a), Value::Float(b)) => Some((a as f64) <= b),
-            (Value::Float(a), Value::Integer(b)) => Some(a <= b as f64),
-            (Value::Float(a), Value::Float(b)) => Some(a <= b),
-            _ => None,
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+            Some(a <= b)
+        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+            Some(a <= b)
+        } else {
+            None
         }
     }
 }

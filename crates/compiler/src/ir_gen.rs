@@ -424,10 +424,7 @@ where
             }
         }
 
-        let true_ = self.push_instruction(
-            Span::null(),
-            ir::Instruction::Constant(Constant::Boolean(true)),
-        );
+        let true_ = self.push_instruction(Span::null(), ir::Instruction::Boolean(true));
         self.push_instruction(
             Span::null(),
             ir::Instruction::SetVariable(is_initialized, true_),
@@ -655,8 +652,7 @@ where
 
                 let value = self.expression(value)?;
                 self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
-                let true_ =
-                    self.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true)));
+                let true_ = self.push_instruction(span, ir::Instruction::Boolean(true));
                 self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
 
                 self.end_current_block(ir::Exit::Jump(successor));
@@ -893,10 +889,6 @@ where
         repeat_stmt: &ast::RepeatStatement<S>,
     ) -> Result<(), IrGenError> {
         let times = self.expression(&repeat_stmt.times)?;
-        let one = self.push_instruction(
-            Span::null(),
-            ir::Instruction::Constant(Constant::Integer(1)),
-        );
 
         let dec_var = self.function.variables.insert(ir::Variable::Owned);
         self.push_instruction(
@@ -932,10 +924,9 @@ where
 
         let dec = self.push_instruction(
             repeat_stmt.times.span,
-            ir::Instruction::BinOp {
-                left: prev,
-                op: ir::BinOp::Sub,
-                right: one,
+            ir::Instruction::UnOp {
+                op: ir::UnOp::Decrement,
+                source: prev,
             },
         );
         self.push_instruction(
@@ -1468,14 +1459,7 @@ where
                     },
                 ))
             },
-            |this| {
-                Ok(
-                    this.push_instruction(
-                        span,
-                        ir::Instruction::Constant(Constant::Boolean(false)),
-                    ),
-                )
-            },
+            |this| Ok(this.push_instruction(span, ir::Instruction::Boolean(false))),
         )
     }
 
@@ -1489,9 +1473,7 @@ where
         self.if_expression(
             span,
             left,
-            |this| {
-                Ok(this.push_instruction(span, ir::Instruction::Constant(Constant::Boolean(true))))
-            },
+            |this| Ok(this.push_instruction(span, ir::Instruction::Boolean(true))),
             |this| {
                 let right = this.expression(right)?;
                 Ok(this.push_instruction(
@@ -1513,13 +1495,11 @@ where
         right: &ast::Expression<S>,
     ) -> Result<ir::InstId, IrGenError> {
         let left = self.expression(left)?;
-        let undefined = self.push_instruction(span, ir::Instruction::Undefined);
         let cond = self.push_instruction(
             span,
-            ir::Instruction::BinOp {
-                left,
-                op: ir::BinOp::Equal,
-                right: undefined,
+            ir::Instruction::UnOp {
+                op: ir::UnOp::IsUndefined,
+                source: left,
             },
         );
         self.if_expression(span, cond, |this| this.expression(right), |_| Ok(left))
@@ -1536,19 +1516,11 @@ where
     ) -> Result<(ir::InstId, ir::InstId), IrGenError> {
         let target = self.mutable_target(span, target)?;
         let old = self.read_mutable_target(span, target.clone());
-        let one = self.push_instruction(span, ir::Instruction::Constant(Constant::Integer(1)));
         let op = match op {
-            ast::MutationOp::Increment => ir::BinOp::Add,
-            ast::MutationOp::Decrement => ir::BinOp::Sub,
+            ast::MutationOp::Increment => ir::UnOp::Increment,
+            ast::MutationOp::Decrement => ir::UnOp::Decrement,
         };
-        let new = self.push_instruction(
-            span,
-            ir::Instruction::BinOp {
-                left: old,
-                op,
-                right: one,
-            },
-        );
+        let new = self.push_instruction(span, ir::Instruction::UnOp { op, source: old });
         self.write_mutable_target(span, target, new);
         Ok((old, new))
     }

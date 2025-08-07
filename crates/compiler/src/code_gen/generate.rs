@@ -227,6 +227,15 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
+                ir::Instruction::Boolean(is_true) => {
+                    vm_instructions.push((
+                        Instruction::Boolean {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            is_true,
+                        },
+                        span,
+                    ));
+                }
                 ir::Instruction::Constant(ref c) => {
                     vm_instructions.push((
                         Instruction::LoadConstant {
@@ -560,6 +569,33 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 ir::Instruction::UnOp { op, source } => {
                     let output_reg = reg_alloc.instruction_registers[inst_id];
                     match op {
+                        ir::UnOp::IsUndefined => {
+                            vm_instructions.push((
+                                Instruction::IsUndefined {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
+                        ir::UnOp::IsDefined => {
+                            vm_instructions.push((
+                                Instruction::IsDefined {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
+                        ir::UnOp::Test => {
+                            vm_instructions.push((
+                                Instruction::Test {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
                         ir::UnOp::Not => {
                             vm_instructions.push((
                                 Instruction::Not {
@@ -571,7 +607,25 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                         ir::UnOp::Neg => {
                             vm_instructions.push((
-                                Instruction::Neg {
+                                Instruction::Negate {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
+                        ir::UnOp::Increment => {
+                            vm_instructions.push((
+                                Instruction::Increment {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
+                        ir::UnOp::Decrement => {
+                            vm_instructions.push((
+                                Instruction::Decrement {
                                     dest: output_reg,
                                     arg: reg_alloc.instruction_registers[source],
                                 },
@@ -589,39 +643,42 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             vm_instructions.push((Instruction::Add { dest, left, right }, span));
                         }
                         ir::BinOp::Sub => {
-                            vm_instructions.push((Instruction::Sub { dest, left, right }, span));
+                            vm_instructions
+                                .push((Instruction::Subtract { dest, left, right }, span));
                         }
                         ir::BinOp::Mult => {
-                            vm_instructions.push((Instruction::Mult { dest, left, right }, span));
+                            vm_instructions
+                                .push((Instruction::Multiply { dest, left, right }, span));
                         }
                         ir::BinOp::Div => {
-                            vm_instructions.push((Instruction::Div { dest, left, right }, span));
+                            vm_instructions.push((Instruction::Divide { dest, left, right }, span));
                         }
                         ir::BinOp::Rem => {
-                            vm_instructions.push((Instruction::Rem { dest, left, right }, span));
+                            vm_instructions
+                                .push((Instruction::Remainder { dest, left, right }, span));
                         }
                         ir::BinOp::IDiv => {
-                            vm_instructions.push((Instruction::IDiv { dest, left, right }, span));
+                            vm_instructions
+                                .push((Instruction::IntDivide { dest, left, right }, span));
                         }
                         ir::BinOp::LessThan => {
-                            vm_instructions
-                                .push((Instruction::TestLess { dest, left, right }, span));
+                            vm_instructions.push((Instruction::IsLess { dest, left, right }, span));
                         }
                         ir::BinOp::LessEqual => {
                             vm_instructions
-                                .push((Instruction::TestLessEqual { dest, left, right }, span));
+                                .push((Instruction::IsLessEqual { dest, left, right }, span));
                         }
                         ir::BinOp::Equal => {
                             vm_instructions
-                                .push((Instruction::TestEqual { dest, left, right }, span));
+                                .push((Instruction::IsEqual { dest, left, right }, span));
                         }
                         ir::BinOp::NotEqual => {
                             vm_instructions
-                                .push((Instruction::TestNotEqual { dest, left, right }, span));
+                                .push((Instruction::IsNotEqual { dest, left, right }, span));
                         }
                         ir::BinOp::GreaterThan => {
                             vm_instructions.push((
-                                Instruction::TestLess {
+                                Instruction::IsLess {
                                     dest,
                                     left: right,
                                     right: left,
@@ -631,7 +688,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                         ir::BinOp::GreaterEqual => {
                             vm_instructions.push((
-                                Instruction::TestLessEqual {
+                                Instruction::IsLessEqual {
                                     dest,
                                     left: right,
                                     right: left,

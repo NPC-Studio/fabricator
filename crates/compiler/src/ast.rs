@@ -533,18 +533,31 @@ impl<S> Expression<S> {
         }
         ControlFlow::Continue(())
     }
+}
 
-    pub fn fold_constant(self) -> Option<Constant<S>> {
-        match *self.kind {
-            ExpressionKind::Constant(c) => Some(c),
+impl<S: Eq + Clone> Expression<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        match &*self.kind {
+            ExpressionKind::Constant(c) => Some(c.clone()),
             ExpressionKind::Group(expr) => expr.fold_constant(),
             ExpressionKind::Unary(unary_op, expr) => match unary_op {
                 UnaryOp::Not => Some(Constant::Boolean(!expr.fold_constant()?.to_bool())),
                 UnaryOp::Minus => expr.fold_constant()?.negate(),
             },
             ExpressionKind::Binary(l, op, r) => {
-                let l = l.fold_constant()?;
-                let r = r.fold_constant()?;
+                let l = {
+                    match &*l.kind {
+                        ExpressionKind::Constant(c) => c,
+                        _ => &l.fold_constant()?,
+                    }
+                };
+
+                let r = {
+                    match &*r.kind {
+                        ExpressionKind::Constant(c) => c,
+                        _ => &r.fold_constant()?,
+                    }
+                };
 
                 match op {
                     BinaryOp::Add => l.add(r),
@@ -552,16 +565,20 @@ impl<S> Expression<S> {
                     BinaryOp::Mult => l.mult(r),
                     BinaryOp::Div => l.div(r),
                     BinaryOp::Rem => l.rem(r),
-                    BinaryOp::IDiv => l.idiv(r),
-                    BinaryOp::Equal => l.equal(r).map(Constant::Boolean),
-                    BinaryOp::NotEqual => l.equal(r).map(|b| Constant::Boolean(!b)),
+                    BinaryOp::IDiv => l.idiv(r).map(Constant::Integer),
+                    BinaryOp::Equal => Some(Constant::Boolean(l.equal(r))),
+                    BinaryOp::NotEqual => Some(Constant::Boolean(!l.equal(r))),
                     BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
                     BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
                     BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
                     BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
                     BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
                     BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
-                    BinaryOp::NullCoalesce => Some(if l.is_undefined() { r } else { l }),
+                    BinaryOp::NullCoalesce => Some(if l.is_undefined() {
+                        r.clone()
+                    } else {
+                        l.clone()
+                    }),
                 }
             }
             _ => None,

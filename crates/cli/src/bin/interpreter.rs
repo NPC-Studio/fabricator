@@ -12,7 +12,7 @@ use fabricator_vm as vm;
 struct Cli {
     #[command(subcommand)]
     command: Command,
-    #[arg(short, long, default_value_t = 2)]
+    #[arg(long, short = 'O', default_value_t = 2)]
     opt_level: u8,
 }
 

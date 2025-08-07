@@ -158,7 +158,7 @@ pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationErr
 /// # Panics
 ///
 /// May panic if the provided IR is not well-formed.
-pub fn optimize_ir<S: Clone>(ir: &mut ir::Function<S>) {
+pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
     // Try and eliminate any unused child functions before optimizing them.
     eliminate_dead_code(ir);
     clean_unreachable_blocks(ir);

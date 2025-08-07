@@ -14,6 +14,10 @@ macro_rules! for_each_instruction {
             undefined = Undefined { dest: RegIdx };
 
             [simple]
+            /// Set the `dest` register to `Value::Boolean(val)`.
+            boolean = Boolean { dest: RegIdx, is_true: bool };
+
+            [simple]
             /// Load a constant into the `dest` register.
             load_constant = LoadConstant { dest: RegIdx, constant: ConstIdx };
 
@@ -75,22 +79,26 @@ macro_rules! for_each_instruction {
 
             [simple] copy = Copy { dest: RegIdx, source: RegIdx };
 
+            [simple] is_defined = IsDefined { dest: RegIdx, arg: RegIdx };
+            [simple] is_undefined = IsUndefined { dest: RegIdx, arg: RegIdx };
+            [simple] test = Test { dest: RegIdx, arg: RegIdx };
             [simple] not = Not { dest: RegIdx, arg: RegIdx };
-            [simple] inc = Inc { dest: RegIdx, arg: RegIdx };
-            [simple] dec = Dec { dest: RegIdx, arg: RegIdx };
 
-            [simple] neg = Neg { dest: RegIdx, arg: RegIdx };
+            [simple] negate = Negate { dest: RegIdx, arg: RegIdx };
+            [simple] increment = Increment { dest: RegIdx, arg: RegIdx };
+            [simple] decrement = Decrement { dest: RegIdx, arg: RegIdx };
+
             [simple] add = Add { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] sub = Sub { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] mult = Mult { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] div = Div { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] rem = Rem { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] idiv = IDiv { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] subtract = Subtract { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] multiply = Multiply { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] divide = Divide { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] remainder = Remainder { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] int_divide = IntDivide { dest: RegIdx, left: RegIdx, right: RegIdx };
 
-            [simple] test_equal = TestEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] test_not_equal = TestNotEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] test_less = TestLess { dest: RegIdx, left: RegIdx, right: RegIdx };
-            [simple] test_less_equal = TestLessEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] is_equal = IsEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] is_not_equal = IsNotEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] is_less = IsLess { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [simple] is_less_equal = IsLessEqual { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [simple] and = And { dest: RegIdx, left: RegIdx, right: RegIdx };
             [simple] or = Or { dest: RegIdx, left: RegIdx, right: RegIdx };

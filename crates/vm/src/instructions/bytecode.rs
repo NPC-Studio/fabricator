@@ -468,7 +468,7 @@ mod tests {
                 dest: 2,
             },
             Instruction::Jump { offset: 1 },
-            Instruction::TestEqual {
+            Instruction::IsEqual {
                 left: 3,
                 right: 4,
                 dest: 5,

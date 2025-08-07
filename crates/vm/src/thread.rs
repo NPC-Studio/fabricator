@@ -372,6 +372,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
+        fn boolean(&mut self, dest: RegIdx, is_true: bool) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = Value::Boolean(is_true);
+            Ok(())
+        }
+
+        #[inline]
         fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] =
                 self.closure.prototype().constants()[constant as usize].to_value();
@@ -626,13 +632,39 @@ fn dispatch<'gc>(
         }
 
         #[inline]
+        fn is_defined(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = (!self.registers[arg as usize].is_undefined()).into();
+            Ok(())
+        }
+
+        #[inline]
+        fn is_undefined(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize].is_undefined().into();
+            Ok(())
+        }
+
+        #[inline]
+        fn test(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize].to_bool().into();
+            Ok(())
+        }
+
+        #[inline]
         fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = (!self.registers[arg as usize].to_bool()).into();
             Ok(())
         }
 
         #[inline]
-        fn inc(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+        fn negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+            self.registers[dest as usize] = self.registers[arg as usize]
+                .negate()
+                .ok_or(OpError::BadOp)?;
+            Ok(())
+        }
+
+        #[inline]
+        fn increment(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[arg as usize]
                 .add(Value::Integer(1))
                 .ok_or(OpError::BadOp)?;
@@ -640,17 +672,9 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn dec(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+        fn decrement(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
             self.registers[dest as usize] = self.registers[arg as usize]
                 .sub(Value::Integer(1))
-                .ok_or(OpError::BadOp)?;
-            Ok(())
-        }
-
-        #[inline]
-        fn neg(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-            self.registers[dest as usize] = self.registers[arg as usize]
-                .negate()
                 .ok_or(OpError::BadOp)?;
             Ok(())
         }
@@ -665,7 +689,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn sub(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        fn subtract(
+            &mut self,
+            dest: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
+        ) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
@@ -674,7 +703,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn mult(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        fn multiply(
+            &mut self,
+            dest: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
+        ) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
@@ -683,7 +717,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn div(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        fn divide(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
@@ -692,7 +726,12 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn rem(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        fn remainder(
+            &mut self,
+            dest: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
+        ) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
@@ -701,16 +740,21 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn idiv(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        fn int_divide(
+            &mut self,
+            dest: RegIdx,
+            left: RegIdx,
+            right: RegIdx,
+        ) -> Result<(), Self::Error> {
             let left = self.registers[left as usize];
             let right = self.registers[right as usize];
             let dest = &mut self.registers[dest as usize];
-            *dest = left.idiv(right).ok_or(OpError::BadOp)?;
+            *dest = left.idiv(right).ok_or(OpError::BadOp)?.into();
             Ok(())
         }
 
         #[inline]
-        fn test_equal(
+        fn is_equal(
             &mut self,
             dest: RegIdx,
             left: RegIdx,
@@ -724,7 +768,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_not_equal(
+        fn is_not_equal(
             &mut self,
             dest: RegIdx,
             left: RegIdx,
@@ -738,7 +782,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_less(
+        fn is_less(
             &mut self,
             dest: RegIdx,
             left: RegIdx,
@@ -752,7 +796,7 @@ fn dispatch<'gc>(
         }
 
         #[inline]
-        fn test_less_equal(
+        fn is_less_equal(
             &mut self,
             dest: RegIdx,
             left: RegIdx,
