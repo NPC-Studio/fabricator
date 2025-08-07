@@ -55,6 +55,11 @@ pub struct BuiltIns<'gc> {
     ///
     /// This is an internal compiler support method.
     pub get_constructor_super: Callback<'gc>,
+
+    /// Return the loop function and initial state for a `with` loop on the given object.
+    ///
+    /// This is an internal compiler support method.
+    pub with_loop_iter: Callback<'gc>,
 }
 
 impl<'gc> BuiltIns<'gc> {
@@ -62,7 +67,7 @@ impl<'gc> BuiltIns<'gc> {
     pub const GET_SUPER: &'static str = "get_super";
     pub const SET_SUPER: &'static str = "set_super";
     pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_prototype_super";
-    pub const GET_WITH_LOOP_VALUES: &'static str = "__get_with_loop_values";
+    pub const WITH_LOOP_ITER: &'static str = "__with_loop_iter";
 
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
@@ -113,6 +118,39 @@ impl<'gc> BuiltIns<'gc> {
                     Ok(())
                 },
             ),
+
+            with_loop_iter: {
+                // An iterator function whose state is the single value for iteration.
+                let singleton_iter = Callback::from_fn(mc, |_, _, mut stack| {
+                    stack.push_front(Value::Undefined);
+                    Ok(())
+                });
+
+                Callback::from_fn_with_root_and_err_ctx(
+                    mc,
+                    singleton_iter,
+                    format!("in `{}` builtin", Self::WITH_LOOP_ITER),
+                    |&singleton_iter, ctx, _, mut stack| {
+                        let target: Value = stack.consume(ctx)?;
+                        match target {
+                            Value::Object(object) => {
+                                // Objects are a loop with one iteration of the object.
+                                stack.push_back(singleton_iter.into());
+                                stack.push_back(object.into());
+                                Ok(())
+                            }
+                            Value::UserData(user_data) => {
+                                if let Some(methods) = user_data.methods() {
+                                    methods.iter(ctx, user_data)
+                                } else {
+                                    Err(Error::msg("userdata not iterable"))
+                                }
+                            }
+                            _ => Err(Error::msg("with loop target must be object or userdata")),
+                        }
+                    },
+                )
+            },
         }
     }
 
@@ -140,6 +178,11 @@ impl<'gc> BuiltIns<'gc> {
         magic.insert(
             ctx.intern(Self::GET_CONSTRUCTOR_SUPER),
             MagicConstant::new_ptr(&ctx, self.get_constructor_super.into()),
+        );
+
+        magic.insert(
+            ctx.intern(Self::WITH_LOOP_ITER),
+            MagicConstant::new_ptr(&ctx, self.with_loop_iter.into()),
         );
 
         magic

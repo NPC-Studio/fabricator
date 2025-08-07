@@ -174,6 +174,14 @@ where
     ) -> Result<(), vm::Error> {
         Err(vm::Error::msg("no index access"))
     }
+
+    fn iter(
+        &self,
+        _ctx: fabricator_vm::Context<'gc>,
+        _ud: fabricator_vm::UserData<'gc>,
+    ) -> Result<(), fabricator_vm::Error> {
+        Err(vm::Error::msg("no iteration"))
+    }
 }
 
 #[derive(Collect)]

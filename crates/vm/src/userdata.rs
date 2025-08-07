@@ -48,6 +48,8 @@ pub trait UserDataMethods<'gc> {
         indexes: &[Value<'gc>],
         value: Value<'gc>,
     ) -> Result<(), Error>;
+
+    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), Error>;
 }
 
 /// Meta-data for a `UserData` type.

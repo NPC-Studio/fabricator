@@ -32,9 +32,10 @@ pub enum StatementKind<S> {
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
     For(ForStatement<S>),
-    While(WhileStatement<S>),
-    Repeat(RepeatStatement<S>),
+    While(LoopStatement<S>),
+    Repeat(LoopStatement<S>),
     Switch(SwitchStatement<S>),
+    With(LoopStatement<S>),
     Call(Call<S>),
     Prefix(MutationOp, MutableExpr<S>),
     Postfix(MutableExpr<S>, MutationOp),
@@ -98,14 +99,8 @@ pub struct ForStatement<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct WhileStatement<S> {
-    pub condition: Expression<S>,
-    pub body: Statement<S>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RepeatStatement<S> {
-    pub times: Expression<S>,
+pub struct LoopStatement<S> {
+    pub target: Expression<S>,
     pub body: Statement<S>,
 }
 
@@ -376,6 +371,9 @@ impl<S> Statement<S> {
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk(visitor)?;
             }
+            StatementKind::With(with_stmt) => {
+                with_stmt.walk(visitor)?;
+            }
             StatementKind::Call(call_expr) => {
                 call_expr.walk(visitor)?;
             }
@@ -429,6 +427,9 @@ impl<S> Statement<S> {
             }
             StatementKind::Switch(switch_stmt) => {
                 switch_stmt.walk_mut(visitor)?;
+            }
+            StatementKind::With(with_stmt) => {
+                with_stmt.walk_mut(visitor)?;
             }
             StatementKind::Call(call_expr) => {
                 call_expr.walk_mut(visitor)?;
@@ -742,29 +743,15 @@ impl<S> ForStatement<S> {
     }
 }
 
-impl<S> WhileStatement<S> {
+impl<S> LoopStatement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr(&self.condition)?;
+        visitor.visit_expr(&self.target)?;
         visitor.visit_stmt(&self.body)?;
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr_mut(&mut self.condition)?;
-        visitor.visit_stmt_mut(&mut self.body)?;
-        ControlFlow::Continue(())
-    }
-}
-
-impl<S> RepeatStatement<S> {
-    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr(&self.times)?;
-        visitor.visit_stmt(&self.body)?;
-        ControlFlow::Continue(())
-    }
-
-    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr_mut(&mut self.times)?;
+        visitor.visit_expr_mut(&mut self.target)?;
         visitor.visit_stmt_mut(&mut self.body)?;
         ControlFlow::Continue(())
     }

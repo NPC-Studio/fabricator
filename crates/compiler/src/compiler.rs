@@ -566,7 +566,7 @@ impl<'gc> Compiler<'gc> {
         for (chunk, block, compile_settings) in parsed_chunks {
             let mut ir = compile_settings
                 .ir_gen
-                .gen_chunk_ir(&block, |m| {
+                .gen_chunk_ir(VmInterner::new(self.ctx), &block, |m| {
                     let i = magic.find(m)?;
                     Some(if magic.get(i).unwrap().read_only() {
                         MagicMode::ReadOnly

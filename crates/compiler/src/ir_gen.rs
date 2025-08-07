@@ -117,20 +117,22 @@ impl IrGenSettings {
 
     pub fn gen_chunk_ir<S>(
         self,
+        mut interner: impl StringInterner<String = S>,
         block: &ast::Block<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone,
     {
-        let mut compiler = FunctionCompiler::new(self, FunctionRef::Chunk, &find_magic);
+        let mut compiler =
+            FunctionCompiler::new(self, &mut interner, FunctionRef::Chunk, &find_magic);
         compiler.block(block)?;
         Ok(compiler.finish())
     }
 
     pub fn gen_func_stmt_ir<S>(
         self,
-        interner: impl StringInterner<String = S>,
+        mut interner: impl StringInterner<String = S>,
         func_span: Span,
         func_stmt: &ast::FunctionStatement<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
@@ -140,6 +142,7 @@ impl IrGenSettings {
     {
         let mut compiler = FunctionCompiler::new(
             self,
+            &mut interner,
             FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_span),
             &find_magic,
         );
@@ -151,7 +154,7 @@ impl IrGenSettings {
                     span: func_span,
                 });
             }
-            compiler.constructor(interner, func_stmt.inherit.as_ref(), &func_stmt.body)?;
+            compiler.constructor(func_stmt.inherit.as_ref(), &func_stmt.body)?;
         } else {
             compiler.block(&func_stmt.body)?;
         }
@@ -185,8 +188,9 @@ enum MutableTarget<S> {
     Magic(S),
 }
 
-struct FunctionCompiler<'a, S> {
+struct FunctionCompiler<'a, S, I> {
     settings: IrGenSettings,
+    interner: &'a mut I,
     find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
 
     function: ir::Function<S>,
@@ -210,12 +214,14 @@ struct FunctionCompiler<'a, S> {
     variables: HashMap<ast::Ident<S>, Vec<VarDecl>>,
 }
 
-impl<'a, S> FunctionCompiler<'a, S>
+impl<'a, S, I> FunctionCompiler<'a, S, I>
 where
     S: Eq + Hash + Clone,
+    I: StringInterner<String = S>,
 {
     fn new(
         settings: IrGenSettings,
+        interner: &'a mut I,
         reference: FunctionRef,
         find_magic: &'a dyn Fn(&S) -> Option<MagicMode>,
     ) -> Self {
@@ -254,6 +260,7 @@ where
 
         Self {
             settings,
+            interner,
             find_magic,
             function,
             final_block: None,
@@ -306,7 +313,6 @@ where
 
     fn constructor(
         &mut self,
-        mut interner: impl StringInterner<String = S>,
         inherit: Option<&ast::Call<S>>,
         main_block: &ast::Block<S>,
     ) -> Result<(), IrGenError> {
@@ -319,15 +325,15 @@ where
             .variables
             .insert(ir::Variable::Static(Constant::Boolean(false)));
 
+        let get_constructor_super_name = self.interner.intern(BuiltIns::GET_CONSTRUCTOR_SUPER);
         let get_constructor_super = self.push_instruction(
             Span::null(),
-            ir::Instruction::GetMagic(interner.intern(BuiltIns::GET_CONSTRUCTOR_SUPER)),
+            ir::Instruction::GetMagic(get_constructor_super_name),
         );
 
-        let set_super = self.push_instruction(
-            Span::null(),
-            ir::Instruction::GetMagic(interner.intern(BuiltIns::SET_SUPER)),
-        );
+        let set_super_name = self.interner.intern(BuiltIns::SET_SUPER);
+        let set_super =
+            self.push_instruction(Span::null(), ir::Instruction::GetMagic(set_super_name));
 
         let init_block = self.new_block();
         let successor_block = self.new_block();
@@ -575,6 +581,7 @@ where
             ast::StatementKind::While(while_stmt) => self.while_statement(while_stmt),
             ast::StatementKind::Repeat(repeat_stmt) => self.repeat_statement(repeat_stmt),
             ast::StatementKind::Switch(switch_stmt) => self.switch_statement(switch_stmt),
+            ast::StatementKind::With(with_stmt) => self.with_statement(with_stmt),
             ast::StatementKind::Call(function_call) => {
                 let _ = self.call_expr(statement.span, function_call)?;
                 Ok(())
@@ -849,7 +856,7 @@ where
         Ok(())
     }
 
-    fn while_statement(&mut self, while_stmt: &ast::WhileStatement<S>) -> Result<(), IrGenError> {
+    fn while_statement(&mut self, while_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
         let cond_block = self.new_block();
         let body_block = self.new_block();
         let successor_block = self.new_block();
@@ -860,7 +867,7 @@ where
         self.end_current_block(ir::Exit::Jump(cond_block));
         self.start_new_block(cond_block);
 
-        let cond = self.expression(&while_stmt.condition)?;
+        let cond = self.expression(&while_stmt.target)?;
         self.end_current_block(ir::Exit::Branch {
             cond,
             if_true: body_block,
@@ -884,19 +891,16 @@ where
         Ok(())
     }
 
-    fn repeat_statement(
-        &mut self,
-        repeat_stmt: &ast::RepeatStatement<S>,
-    ) -> Result<(), IrGenError> {
-        let times = self.expression(&repeat_stmt.times)?;
+    fn repeat_statement(&mut self, repeat_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
+        let times = self.expression(&repeat_stmt.target)?;
 
         let dec_var = self.function.variables.insert(ir::Variable::Owned);
         self.push_instruction(
-            repeat_stmt.times.span,
+            repeat_stmt.target.span,
             ir::Instruction::OpenVariable(dec_var),
         );
         self.push_instruction(
-            repeat_stmt.times.span,
+            repeat_stmt.target.span,
             ir::Instruction::SetVariable(dec_var, times),
         );
 
@@ -911,7 +915,7 @@ where
         self.start_new_block(cond_block);
 
         let prev = self.push_instruction(
-            repeat_stmt.times.span,
+            repeat_stmt.target.span,
             ir::Instruction::GetVariable(dec_var),
         );
         self.end_current_block(ir::Exit::Branch {
@@ -923,14 +927,14 @@ where
         self.start_new_block(body_block);
 
         let dec = self.push_instruction(
-            repeat_stmt.times.span,
+            repeat_stmt.target.span,
             ir::Instruction::UnOp {
                 op: ir::UnOp::Decrement,
                 source: prev,
             },
         );
         self.push_instruction(
-            repeat_stmt.times.span,
+            repeat_stmt.target.span,
             ir::Instruction::SetVariable(dec_var, dec),
         );
 
@@ -997,6 +1001,140 @@ where
 
         self.start_new_block(successor_block);
         self.pop_break_target(successor_block);
+
+        Ok(())
+    }
+
+    fn with_statement(&mut self, with_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
+        let target = self.expression(&with_stmt.target)?;
+
+        let state_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::OpenVariable(state_var),
+        );
+
+        let with_loop_iter_name = self.interner.intern(BuiltIns::WITH_LOOP_ITER);
+        let with_loop_iter = self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::GetMagic(with_loop_iter_name),
+        );
+
+        let setup_call_scope = self.function.call_scopes.insert(());
+        self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::OpenCall {
+                scope: setup_call_scope,
+                func: with_loop_iter,
+                args: vec![target],
+            },
+        );
+        let iter_fn = self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::GetReturn(setup_call_scope, 0),
+        );
+        let init_state = self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::GetReturn(setup_call_scope, 1),
+        );
+        self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::CloseCall(setup_call_scope),
+        );
+
+        self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::SetVariable(state_var, init_state),
+        );
+
+        let this_scope = self.function.this_scopes.insert(());
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::OpenThisScope(this_scope),
+        );
+
+        let check_block = self.new_block();
+        let body_block = self.new_block();
+        let successor_block = self.new_block();
+
+        self.push_continue_target(check_block);
+        self.push_break_target(successor_block);
+
+        self.end_current_block(ir::Exit::Jump(check_block));
+        self.start_new_block(check_block);
+
+        let cur_state =
+            self.push_instruction(with_stmt.body.span, ir::Instruction::GetVariable(state_var));
+
+        let state_is_undef = self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::UnOp {
+                op: ir::UnOp::IsUndefined,
+                source: cur_state,
+            },
+        );
+
+        self.end_current_block(ir::Exit::Branch {
+            cond: state_is_undef,
+            if_true: successor_block,
+            if_false: body_block,
+        });
+        self.start_new_block(body_block);
+
+        let iter_call_scope = self.function.call_scopes.insert(());
+        self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::OpenCall {
+                scope: iter_call_scope,
+                func: iter_fn,
+                args: vec![cur_state],
+            },
+        );
+        let next_state = self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::GetReturn(iter_call_scope, 0),
+        );
+        let iter_val = self.push_instruction(
+            with_stmt.target.span,
+            ir::Instruction::GetReturn(iter_call_scope, 1),
+        );
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::CloseCall(iter_call_scope),
+        );
+
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::SetVariable(state_var, next_state),
+        );
+
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::SetThis(this_scope, iter_val),
+        );
+
+        self.push_scope();
+        self.statement(&with_stmt.body)?;
+        self.pop_scope();
+
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(successor_block));
+        }
+
+        self.start_new_block(successor_block);
+
+        self.pop_break_target(successor_block);
+        self.pop_continue_target(check_block);
+
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::CloseThisScope(this_scope),
+        );
+
+        self.push_instruction(
+            with_stmt.body.span,
+            ir::Instruction::CloseVariable(state_var),
+        );
 
         Ok(())
     }
@@ -1625,7 +1763,8 @@ where
         parameters: &[ast::Parameter<S>],
         body: &ast::Block<S>,
     ) -> Result<ir::FuncId, IrGenError> {
-        let mut compiler = FunctionCompiler::new(self.settings, reference, self.find_magic);
+        let mut compiler =
+            FunctionCompiler::new(self.settings, self.interner, reference, self.find_magic);
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
         if self.settings.allow_closures {

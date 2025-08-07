@@ -262,7 +262,10 @@ where
 
                 span = next_span.combine(body.span);
 
-                kind = ast::StatementKind::While(ast::WhileStatement { condition, body });
+                kind = ast::StatementKind::While(ast::LoopStatement {
+                    target: condition,
+                    body,
+                });
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Repeat => {
@@ -272,13 +275,26 @@ where
                 let body = self.parse_statement()?;
                 span = next_span.combine(body.span);
 
-                kind = ast::StatementKind::Repeat(ast::RepeatStatement { times, body });
+                kind = ast::StatementKind::Repeat(ast::LoopStatement {
+                    target: times,
+                    body,
+                });
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Switch => {
                 let (stmt, s) = self.parse_switch_statement()?;
                 span = s;
                 kind = ast::StatementKind::Switch(stmt);
+                trailer = StatementTrailer::NoSemiColon;
+            }
+            TokenKind::With => {
+                self.advance(1);
+
+                let target = self.parse_expression()?;
+                let body = self.parse_statement()?;
+                span = next_span.combine(body.span);
+
+                kind = ast::StatementKind::With(ast::LoopStatement { target, body });
                 trailer = StatementTrailer::NoSemiColon;
             }
             TokenKind::Break => {
