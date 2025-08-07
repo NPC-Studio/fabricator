@@ -183,7 +183,7 @@ impl<T, const N: usize> Vector<T, N> {
         &self.0
     }
 
-    pub fn iter(&self) -> slice::Iter<T> {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
         self.0.iter()
     }
 

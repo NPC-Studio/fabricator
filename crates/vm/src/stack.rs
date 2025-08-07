@@ -108,7 +108,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.capacity() - self.bottom
     }
 
-    pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<Value<'gc>> {
+    pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<'_, Value<'gc>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(r) => Bound::Included(self.bottom + r),
             Bound::Excluded(r) => Bound::Excluded(self.bottom + r),

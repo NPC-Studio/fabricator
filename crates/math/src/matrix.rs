@@ -102,7 +102,7 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
         &self.0
     }
 
-    pub fn iter_cols(&self) -> slice::Iter<Vector<T, R>> {
+    pub fn iter_cols(&self) -> slice::Iter<'_, Vector<T, R>> {
         self.0.iter()
     }
 
