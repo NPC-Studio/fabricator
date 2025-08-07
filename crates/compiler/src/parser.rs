@@ -70,16 +70,21 @@ impl ParseSettings {
 }
 
 enum StatementTrailer {
-    // Statement may have a trailing semicolon, depending on parser settings.
-    SemiColonAllowed,
+    // Statement either must have or may have a trailing semicolon, depending on parser settings.
+    SemiColon,
     // Statement must not have a trailing semicolon
     NoSemiColon,
+}
+
+struct BufferedToken<S> {
+    token: Token<S>,
+    follows_newline: bool,
 }
 
 struct Parser<I, S> {
     settings: ParseSettings,
     token_iter: I,
-    look_ahead_buffer: ArrayVec<Token<S>, 1>,
+    look_ahead_buffer: ArrayVec<BufferedToken<S>, 1>,
     end_of_stream_span: Span,
 }
 
@@ -133,7 +138,7 @@ where
         let (stmt, trailer) = self.parse_statement_body()?;
 
         match trailer {
-            StatementTrailer::SemiColonAllowed => {
+            StatementTrailer::SemiColon => {
                 if self.settings.strict_semicolons {
                     self.parse_token(TokenKind::SemiColon)?;
                 } else {
@@ -170,26 +175,31 @@ where
             ),
             TokenKind::Var => (
                 ast::Statement::Var(self.parse_var_declaration_list(TokenKind::Var)?),
-                StatementTrailer::SemiColonAllowed,
+                StatementTrailer::SemiColon,
             ),
             TokenKind::Static => (
                 ast::Statement::Static(self.parse_var_declaration_list(TokenKind::Static)?),
-                StatementTrailer::SemiColonAllowed,
+                StatementTrailer::SemiColon,
             ),
             TokenKind::Return => {
                 self.advance(1);
                 self.look_ahead(1);
                 let mut span = tok_span;
+
+                // A return statement is not allowed to have its argument on a subsequent line, this
+                // must be interpreted as two separate statements.
                 let value = if matches!(self.peek(0).kind, TokenKind::SemiColon) {
                     None
-                } else {
+                } else if !self.peek_newline(0) {
                     let expr = self.parse_expression()?;
                     span = span.combine(expr.span());
                     Some(expr)
+                } else {
+                    None
                 };
                 (
                     ast::Statement::Return(ast::ReturnStatement { value, span }),
-                    StatementTrailer::SemiColonAllowed,
+                    StatementTrailer::SemiColon,
                 )
             }
             TokenKind::Exit => {
@@ -199,7 +209,7 @@ where
                         value: None,
                         span: tok_span,
                     }),
-                    StatementTrailer::SemiColonAllowed,
+                    StatementTrailer::SemiColon,
                 )
             }
             TokenKind::If => {
@@ -305,16 +315,13 @@ where
             }
             TokenKind::Break => {
                 self.advance(1);
-                (
-                    ast::Statement::Break(tok_span),
-                    StatementTrailer::SemiColonAllowed,
-                )
+                (ast::Statement::Break(tok_span), StatementTrailer::SemiColon)
             }
             TokenKind::Continue => {
                 self.advance(1);
                 (
                     ast::Statement::Continue(tok_span),
-                    StatementTrailer::SemiColonAllowed,
+                    StatementTrailer::SemiColon,
                 )
             }
             TokenKind::LeftBrace => {
@@ -384,7 +391,7 @@ where
                     }
                 };
 
-                (stmt, StatementTrailer::SemiColonAllowed)
+                (stmt, StatementTrailer::SemiColon)
             }
         })
     }
@@ -682,6 +689,7 @@ where
                 kind: ref tok_kind,
                 span: tok_span,
             } = self.peek(0);
+            let tok_follows_newline = self.peek_newline(0);
             match tok_kind {
                 TokenKind::LeftParen => {
                     let mut arguments = Vec::new();
@@ -759,7 +767,10 @@ where
                     });
                 }
                 token => {
-                    if let Some(postfix_op) = get_mutation_operator(token) {
+                    // Postfix operators cannot be separated by a newline.
+                    if let Some(postfix_op) = get_mutation_operator(token)
+                        && !tok_follows_newline
+                    {
                         let span = expr.span().combine(tok_span);
                         let target = get_mutable_expr(expr)?;
                         self.advance(1);
@@ -1076,6 +1087,7 @@ where
 
     // Look ahead `n` tokens in the lexer, making them available to peek methods.
     fn look_ahead(&mut self, n: usize) {
+        let mut follows_newline = false;
         while self.look_ahead_buffer.len() < n {
             match self.token_iter.next() {
                 Some(token) => {
@@ -1085,18 +1097,27 @@ where
                         self.end_of_stream_span = token.span;
                     }
 
-                    // Newlines are not observed at all in the parser at the moment.
-                    if !matches!(token.kind, TokenKind::Newline) {
-                        self.look_ahead_buffer.push(token);
+                    if matches!(token.kind, TokenKind::Newline) {
+                        follows_newline = true;
+                    } else {
+                        self.look_ahead_buffer.push(BufferedToken {
+                            token,
+                            follows_newline,
+                        });
+                        follows_newline = false;
                     }
                 }
                 None => {
                     // If the token stream does not generate an `EndOfStream` token, the span here
                     // will be null.
-                    self.look_ahead_buffer.push(Token {
-                        kind: TokenKind::EndOfStream,
-                        span: self.end_of_stream_span,
+                    self.look_ahead_buffer.push(BufferedToken {
+                        token: Token {
+                            kind: TokenKind::EndOfStream,
+                            span: self.end_of_stream_span,
+                        },
+                        follows_newline,
                     });
+                    follows_newline = false;
                 }
             }
         }
@@ -1120,13 +1141,18 @@ where
     // Panics if the given `n` is less than the number of tokens we have previously buffered with
     // `Parser::look_ahead`.
     fn peek(&self, n: usize) -> &Token<S> {
-        &self.look_ahead_buffer[n]
+        &self.look_ahead_buffer[n].token
+    }
+
+    /// Return true if the `n`th token ahead in the look-ahead buffer follows a newline.
+    fn peek_newline(&self, n: usize) -> bool {
+        self.look_ahead_buffer[n].follows_newline
     }
 
     // Return the next token in the token stream if it exists and advance the stream.
     fn next(&mut self) -> Token<S> {
         self.look_ahead(1);
-        self.look_ahead_buffer.remove(0)
+        self.look_ahead_buffer.remove(0).token
     }
 }
 
