@@ -24,6 +24,15 @@ impl Span {
         Self { start, end }
     }
 
+    /// Returns a maximally full span with `start` set to `0` and `end` set to `usize::MAX`.
+    #[must_use]
+    pub fn everywhere() -> Self {
+        Self {
+            start: 0,
+            end: usize::MAX,
+        }
+    }
+
     /// Returns a maximally empty span with `start` set to `usize::MAX` and `end` set to `0`.
     ///
     /// Combining any span with a null span will result in the combined span.
@@ -243,4 +252,14 @@ pub enum FunctionRef {
     Named(RefName, Span),
     Expression(Span),
     Chunk,
+}
+
+impl FunctionRef {
+    pub fn span(&self) -> Span {
+        match *self {
+            FunctionRef::Named(_, span) => span,
+            FunctionRef::Expression(span) => span,
+            FunctionRef::Chunk => Span::everywhere(),
+        }
+    }
 }

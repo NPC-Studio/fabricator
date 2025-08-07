@@ -84,13 +84,13 @@ impl<S: Clone + Eq + Hash> ExportSet<S> {
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), DuplicateExportError> {
         let exports = block
             .statements
-            .extract_if(.., |s| matches!(*s.kind, ast::StatementKind::Function(_)));
+            .extract_if(.., |s| matches!(s, ast::Statement::Function(_)));
 
         for stmt in exports {
-            let export = match *stmt.kind {
-                ast::StatementKind::Function(func_stmt) => Export {
+            let export = match stmt {
+                ast::Statement::Function(func_stmt) => Export {
                     name: func_stmt.name.inner.clone(),
-                    span: stmt.span,
+                    span: func_stmt.span,
                     kind: ExportKind::Function(func_stmt),
                 },
                 _ => unreachable!(),

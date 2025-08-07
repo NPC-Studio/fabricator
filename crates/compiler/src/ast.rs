@@ -16,18 +16,12 @@ pub struct Block<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Statement<S> {
-    pub kind: Box<StatementKind<S>>,
-    pub span: Span,
-}
-
-#[derive(Debug, Clone)]
-pub enum StatementKind<S> {
-    Block(Block<S>),
+pub enum Statement<S> {
+    Block(BlockStatement<S>),
     Enum(EnumStatement<S>),
     Function(FunctionStatement<S>),
-    Var(Vec<Declaration<S>>),
-    Static(Vec<Declaration<S>>),
+    Var(VarDeclarationStatement<S>),
+    Static(VarDeclarationStatement<S>),
     Assignment(AssignmentStatement<S>),
     Return(ReturnStatement<S>),
     If(IfStatement<S>),
@@ -37,16 +31,23 @@ pub enum StatementKind<S> {
     Switch(SwitchStatement<S>),
     With(LoopStatement<S>),
     Call(Call<S>),
-    Prefix(MutationOp, MutableExpr<S>),
-    Postfix(MutableExpr<S>, MutationOp),
-    Break,
-    Continue,
+    Prefix(Mutation<S>),
+    Postfix(Mutation<S>),
+    Break(Span),
+    Continue(Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockStatement<S> {
+    pub block: Block<S>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumStatement<S> {
     pub name: Ident<S>,
     pub variants: Vec<(Ident<S>, Option<Expression<S>>)>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -56,19 +57,21 @@ pub struct FunctionStatement<S> {
     pub inherit: Option<Call<S>>,
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Declaration<S> {
-    pub name: Ident<S>,
-    pub value: Option<Expression<S>>,
+pub struct VarDeclarationStatement<S> {
+    pub vars: Vec<(Ident<S>, Option<Expression<S>>)>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct AssignmentStatement<S> {
     pub target: MutableExpr<S>,
     pub op: AssignmentOp,
-    pub value: Expression<S>,
+    pub value: Box<Expression<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -81,34 +84,39 @@ pub enum MutableExpr<S> {
 #[derive(Debug, Clone)]
 pub struct ReturnStatement<S> {
     pub value: Option<Expression<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct IfStatement<S> {
-    pub condition: Expression<S>,
-    pub then_stmt: Statement<S>,
-    pub else_stmt: Option<Statement<S>>,
+    pub condition: Box<Expression<S>>,
+    pub then_stmt: Box<Statement<S>>,
+    pub else_stmt: Option<Box<Statement<S>>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct ForStatement<S> {
-    pub initializer: Statement<S>,
-    pub condition: Expression<S>,
-    pub iterator: Statement<S>,
-    pub body: Statement<S>,
+    pub initializer: Box<Statement<S>>,
+    pub condition: Box<Expression<S>>,
+    pub iterator: Box<Statement<S>>,
+    pub body: Box<Statement<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct LoopStatement<S> {
-    pub target: Expression<S>,
-    pub body: Statement<S>,
+    pub target: Box<Expression<S>>,
+    pub body: Box<Statement<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct SwitchStatement<S> {
-    pub target: Expression<S>,
+    pub target: Box<Expression<S>>,
     pub cases: Vec<SwitchCase<S>>,
     pub default: Option<Block<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -119,19 +127,19 @@ pub struct SwitchCase<S> {
 }
 
 #[derive(Debug, Clone)]
-pub enum ExpressionKind<S> {
-    Global,
-    This,
-    Other,
-    Constant(Constant<S>),
+pub enum Expression<S> {
+    Global(Span),
+    This(Span),
+    Other(Span),
+    Constant(Constant<S>, Span),
     Ident(Ident<S>),
-    Group(Expression<S>),
-    Object(Vec<Field<S>>),
-    Array(Vec<Expression<S>>),
-    Unary(UnaryOp, Expression<S>),
-    Prefix(MutationOp, MutableExpr<S>),
-    Postfix(MutableExpr<S>, MutationOp),
-    Binary(Expression<S>, BinaryOp, Expression<S>),
+    Group(GroupExpr<S>),
+    Object(ObjectExpr<S>),
+    Array(ArrayExpr<S>),
+    Unary(UnaryExpr<S>),
+    Prefix(Mutation<S>),
+    Postfix(Mutation<S>),
+    Binary(BinaryExpr<S>),
     Ternary(TernaryExpr<S>),
     Function(FunctionExpr<S>),
     Call(Call<S>),
@@ -140,40 +148,78 @@ pub enum ExpressionKind<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Expression<S> {
-    pub kind: Box<ExpressionKind<S>>,
+pub struct GroupExpr<S> {
+    pub inner: Box<Expression<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectExpr<S> {
+    pub fields: Vec<Field<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrayExpr<S> {
+    pub entries: Vec<Expression<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnaryExpr<S> {
+    pub op: UnaryOp,
+    pub target: Box<Expression<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Mutation<S> {
+    pub op: MutationOp,
+    pub target: Box<MutableExpr<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct BinaryExpr<S> {
+    pub left: Box<Expression<S>>,
+    pub op: BinaryOp,
+    pub right: Box<Expression<S>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct TernaryExpr<S> {
-    pub cond: Expression<S>,
-    pub if_true: Expression<S>,
-    pub if_false: Expression<S>,
+    pub cond: Box<Expression<S>>,
+    pub if_true: Box<Expression<S>>,
+    pub if_false: Box<Expression<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpr<S> {
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct FieldExpr<S> {
-    pub base: Expression<S>,
+    pub base: Box<Expression<S>>,
     pub field: Ident<S>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexExpr<S> {
-    pub base: Expression<S>,
+    pub base: Box<Expression<S>>,
     pub accessor_type: Option<AccessorType>,
     pub indexes: Vec<Expression<S>>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Call<S> {
-    pub base: Expression<S>,
+    pub base: Box<Expression<S>>,
     pub arguments: Vec<Expression<S>>,
     pub has_new: bool,
     pub span: Span,
@@ -285,10 +331,6 @@ pub enum AccessorType {
 pub trait Visitor<S>: Sized {
     type Break;
 
-    fn visit_block(&mut self, block: &Block<S>) -> ControlFlow<Self::Break> {
-        block.walk(self)
-    }
-
     fn visit_stmt(&mut self, stmt: &Statement<S>) -> ControlFlow<Self::Break> {
         stmt.walk(self)
     }
@@ -300,10 +342,6 @@ pub trait Visitor<S>: Sized {
 
 pub trait VisitorMut<S>: Sized {
     type Break;
-
-    fn visit_block_mut(&mut self, block: &mut Block<S>) -> ControlFlow<Self::Break> {
-        block.walk_mut(self)
-    }
 
     fn visit_stmt_mut(&mut self, stmt: &mut Statement<S>) -> ControlFlow<Self::Break> {
         stmt.walk_mut(self)
@@ -332,258 +370,82 @@ impl<S> Block<S> {
 
 impl<S> Statement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        match self.kind.as_ref() {
-            StatementKind::Block(block) => visitor.visit_block(block)?,
-            StatementKind::Enum(enum_) => {
-                enum_.walk(visitor)?;
-            }
-            StatementKind::Function(func_stmt) => {
-                func_stmt.walk(visitor)?;
-            }
-            StatementKind::Var(decl_list) => {
-                for decl in decl_list {
-                    decl.walk(visitor)?;
-                }
-            }
-            StatementKind::Static(decl_list) => {
-                for decl in decl_list {
-                    decl.walk(visitor)?;
-                }
-            }
-            StatementKind::Assignment(assignment_stmt) => {
-                assignment_stmt.walk(visitor)?;
-            }
-            StatementKind::Return(ret_stmt) => {
-                ret_stmt.walk(visitor)?;
-            }
-            StatementKind::If(if_stmt) => {
-                if_stmt.walk(visitor)?;
-            }
-            StatementKind::For(for_stmt) => {
-                for_stmt.walk(visitor)?;
-            }
-            StatementKind::While(while_stmt) => {
-                while_stmt.walk(visitor)?;
-            }
-            StatementKind::Repeat(repeat_stmt) => {
-                repeat_stmt.walk(visitor)?;
-            }
-            StatementKind::Switch(switch_stmt) => {
-                switch_stmt.walk(visitor)?;
-            }
-            StatementKind::With(with_stmt) => {
-                with_stmt.walk(visitor)?;
-            }
-            StatementKind::Call(call_expr) => {
-                call_expr.walk(visitor)?;
-            }
-            StatementKind::Prefix(_, target) => {
-                target.walk(visitor)?;
-            }
-            StatementKind::Postfix(target, _) => {
-                target.walk(visitor)?;
-            }
-            StatementKind::Break | StatementKind::Continue => {}
+        match self {
+            Statement::Block(block) => block.walk(visitor),
+            Statement::Enum(enum_) => enum_.walk(visitor),
+            Statement::Function(func_stmt) => func_stmt.walk(visitor),
+            Statement::Var(decl_stmt) => decl_stmt.walk(visitor),
+            Statement::Static(decl_stmt) => decl_stmt.walk(visitor),
+            Statement::Assignment(assignment_stmt) => assignment_stmt.walk(visitor),
+            Statement::Return(ret_stmt) => ret_stmt.walk(visitor),
+            Statement::If(if_stmt) => if_stmt.walk(visitor),
+            Statement::For(for_stmt) => for_stmt.walk(visitor),
+            Statement::While(while_stmt) => while_stmt.walk(visitor),
+            Statement::Repeat(repeat_stmt) => repeat_stmt.walk(visitor),
+            Statement::Switch(switch_stmt) => switch_stmt.walk(visitor),
+            Statement::With(with_stmt) => with_stmt.walk(visitor),
+            Statement::Call(call_expr) => call_expr.walk(visitor),
+            Statement::Prefix(mutation) => mutation.walk(visitor),
+            Statement::Postfix(mutation) => mutation.walk(visitor),
+            Statement::Break(_) | Statement::Continue(_) => ControlFlow::Continue(()),
         }
-        ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        match self.kind.as_mut() {
-            StatementKind::Block(block) => visitor.visit_block_mut(block)?,
-            StatementKind::Enum(enum_) => {
-                enum_.walk_mut(visitor)?;
-            }
-            StatementKind::Function(func_stmt) => {
-                func_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::Var(decl_list) => {
-                for decl in decl_list {
-                    decl.walk_mut(visitor)?;
-                }
-            }
-            StatementKind::Static(decl_list) => {
-                for decl in decl_list {
-                    decl.walk_mut(visitor)?;
-                }
-            }
-            StatementKind::Assignment(assignment_stmt) => {
-                assignment_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::Return(ret_stmt) => {
-                ret_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::If(if_stmt) => {
-                if_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::For(for_stmt) => {
-                for_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::While(while_stmt) => {
-                while_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::Repeat(repeat_stmt) => {
-                repeat_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::Switch(switch_stmt) => {
-                switch_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::With(with_stmt) => {
-                with_stmt.walk_mut(visitor)?;
-            }
-            StatementKind::Call(call_expr) => {
-                call_expr.walk_mut(visitor)?;
-            }
-            StatementKind::Prefix(_, target) => {
-                target.walk_mut(visitor)?;
-            }
-            StatementKind::Postfix(target, _) => {
-                target.walk_mut(visitor)?;
-            }
-            StatementKind::Break | StatementKind::Continue => {}
+        match self {
+            Statement::Block(block) => block.walk_mut(visitor),
+            Statement::Enum(enum_) => enum_.walk_mut(visitor),
+            Statement::Function(func_stmt) => func_stmt.walk_mut(visitor),
+            Statement::Var(decl_stmt) => decl_stmt.walk_mut(visitor),
+            Statement::Static(decl_stmt) => decl_stmt.walk_mut(visitor),
+            Statement::Assignment(assignment_stmt) => assignment_stmt.walk_mut(visitor),
+            Statement::Return(ret_stmt) => ret_stmt.walk_mut(visitor),
+            Statement::If(if_stmt) => if_stmt.walk_mut(visitor),
+            Statement::For(for_stmt) => for_stmt.walk_mut(visitor),
+            Statement::While(while_stmt) => while_stmt.walk_mut(visitor),
+            Statement::Repeat(repeat_stmt) => repeat_stmt.walk_mut(visitor),
+            Statement::Switch(switch_stmt) => switch_stmt.walk_mut(visitor),
+            Statement::With(with_stmt) => with_stmt.walk_mut(visitor),
+            Statement::Call(call_expr) => call_expr.walk_mut(visitor),
+            Statement::Prefix(mutation) => mutation.walk_mut(visitor),
+            Statement::Postfix(mutation) => mutation.walk_mut(visitor),
+            Statement::Break(_) | Statement::Continue(_) => ControlFlow::Continue(()),
         }
-        ControlFlow::Continue(())
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Statement::Block(block) => block.span,
+            Statement::Enum(enum_stmt) => enum_stmt.span,
+            Statement::Function(function_stmt) => function_stmt.span,
+            Statement::Var(var_declaration_stmt) => var_declaration_stmt.span,
+            Statement::Static(var_declaration_stmt) => var_declaration_stmt.span,
+            Statement::Assignment(assignment_stmt) => assignment_stmt.span,
+            Statement::Return(return_stmt) => return_stmt.span,
+            Statement::If(if_stmt) => if_stmt.span,
+            Statement::For(for_stmt) => for_stmt.span,
+            Statement::While(loop_stmt) => loop_stmt.span,
+            Statement::Repeat(loop_stmt) => loop_stmt.span,
+            Statement::Switch(switch_stmt) => switch_stmt.span,
+            Statement::With(loop_stmt) => loop_stmt.span,
+            Statement::Call(call) => call.span,
+            Statement::Prefix(mutation) => mutation.span,
+            Statement::Postfix(mutation) => mutation.span,
+            Statement::Break(span) => *span,
+            Statement::Continue(span) => *span,
+        }
     }
 }
 
-impl<S> Expression<S> {
+impl<S> BlockStatement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        match self.kind.as_ref() {
-            ExpressionKind::Group(expr) => visitor.visit_expr(expr)?,
-            ExpressionKind::Object(fields) => {
-                for field in fields {
-                    field.walk(visitor)?;
-                }
-            }
-            ExpressionKind::Array(items) => {
-                for item in items {
-                    visitor.visit_expr(item)?;
-                }
-            }
-            ExpressionKind::Unary(_, expr) => visitor.visit_expr(expr)?,
-            ExpressionKind::Prefix(_, target) => target.walk(visitor)?,
-            ExpressionKind::Postfix(target, _) => target.walk(visitor)?,
-            ExpressionKind::Binary(left, _, right) => {
-                visitor.visit_expr(left)?;
-                visitor.visit_expr(right)?;
-            }
-            ExpressionKind::Ternary(ternary) => {
-                ternary.walk(visitor)?;
-            }
-            ExpressionKind::Function(func_expr) => {
-                func_expr.walk(visitor)?;
-            }
-            ExpressionKind::Call(call_expr) => {
-                call_expr.walk(visitor)?;
-            }
-            ExpressionKind::Field(field_expr) => {
-                field_expr.walk(visitor)?;
-            }
-            ExpressionKind::Index(index_expr) => {
-                index_expr.walk(visitor)?;
-            }
-            ExpressionKind::Ident(_)
-            | ExpressionKind::Global
-            | ExpressionKind::This
-            | ExpressionKind::Other
-            | ExpressionKind::Constant(_) => {}
-        }
+        self.block.walk(visitor)?;
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        match self.kind.as_mut() {
-            ExpressionKind::Group(expr) => visitor.visit_expr_mut(expr)?,
-            ExpressionKind::Object(fields) => {
-                for field in fields {
-                    field.walk_mut(visitor)?;
-                }
-            }
-            ExpressionKind::Array(items) => {
-                for item in items {
-                    visitor.visit_expr_mut(item)?;
-                }
-            }
-            ExpressionKind::Unary(_, expr) => visitor.visit_expr_mut(expr)?,
-            ExpressionKind::Prefix(_, target) => target.walk_mut(visitor)?,
-            ExpressionKind::Postfix(target, _) => target.walk_mut(visitor)?,
-            ExpressionKind::Binary(left, _, right) => {
-                visitor.visit_expr_mut(left)?;
-                visitor.visit_expr_mut(right)?;
-            }
-            ExpressionKind::Ternary(ternary) => {
-                ternary.walk_mut(visitor)?;
-            }
-            ExpressionKind::Function(func_expr) => {
-                func_expr.walk_mut(visitor)?;
-            }
-            ExpressionKind::Call(call_expr) => {
-                call_expr.walk_mut(visitor)?;
-            }
-            ExpressionKind::Field(field_expr) => {
-                field_expr.walk_mut(visitor)?;
-            }
-            ExpressionKind::Index(index_expr) => {
-                index_expr.walk_mut(visitor)?;
-            }
-            ExpressionKind::Ident(_)
-            | ExpressionKind::Global
-            | ExpressionKind::This
-            | ExpressionKind::Other
-            | ExpressionKind::Constant(_) => {}
-        }
+        self.block.walk_mut(visitor)?;
         ControlFlow::Continue(())
-    }
-}
-
-impl<S: Eq + Clone> Expression<S> {
-    pub fn fold_constant(&self) -> Option<Constant<S>> {
-        match &*self.kind {
-            ExpressionKind::Constant(c) => Some(c.clone()),
-            ExpressionKind::Group(expr) => expr.fold_constant(),
-            ExpressionKind::Unary(unary_op, expr) => match unary_op {
-                UnaryOp::Not => Some(Constant::Boolean(!expr.fold_constant()?.to_bool())),
-                UnaryOp::Minus => expr.fold_constant()?.negate(),
-            },
-            ExpressionKind::Binary(l, op, r) => {
-                let l = {
-                    match &*l.kind {
-                        ExpressionKind::Constant(c) => c,
-                        _ => &l.fold_constant()?,
-                    }
-                };
-
-                let r = {
-                    match &*r.kind {
-                        ExpressionKind::Constant(c) => c,
-                        _ => &r.fold_constant()?,
-                    }
-                };
-
-                match op {
-                    BinaryOp::Add => l.add(r),
-                    BinaryOp::Sub => l.sub(r),
-                    BinaryOp::Mult => l.mult(r),
-                    BinaryOp::Div => l.div(r),
-                    BinaryOp::Rem => l.rem(r),
-                    BinaryOp::IDiv => l.idiv(r).map(Constant::Integer),
-                    BinaryOp::Equal => Some(Constant::Boolean(l.equal(r))),
-                    BinaryOp::NotEqual => Some(Constant::Boolean(!l.equal(r))),
-                    BinaryOp::LessThan => l.less_than(r).map(Constant::Boolean),
-                    BinaryOp::LessEqual => l.less_equal(r).map(Constant::Boolean),
-                    BinaryOp::GreaterThan => r.less_than(l).map(Constant::Boolean),
-                    BinaryOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
-                    BinaryOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
-                    BinaryOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
-                    BinaryOp::NullCoalesce => Some(if l.is_undefined() {
-                        r.clone()
-                    } else {
-                        l.clone()
-                    }),
-                }
-            }
-            _ => None,
-        }
     }
 }
 
@@ -615,7 +477,7 @@ impl<S> FunctionStatement<S> {
         for parameter in &self.parameters {
             parameter.walk(visitor)?;
         }
-        visitor.visit_block(&self.body)?;
+        self.body.walk(visitor)?;
         ControlFlow::Continue(())
     }
 
@@ -626,22 +488,26 @@ impl<S> FunctionStatement<S> {
         for parameter in &mut self.parameters {
             parameter.walk_mut(visitor)?;
         }
-        visitor.visit_block_mut(&mut self.body)?;
+        self.body.walk_mut(visitor)?;
         ControlFlow::Continue(())
     }
 }
 
-impl<S> Declaration<S> {
+impl<S> VarDeclarationStatement<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        if let Some(value) = &self.value {
-            visitor.visit_expr(value)?;
+        for var in &self.vars {
+            if let Some(value) = &var.1 {
+                visitor.visit_expr(value)?;
+            }
         }
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        if let Some(value) = &mut self.value {
-            visitor.visit_expr_mut(value)?;
+        for var in &mut self.vars {
+            if let Some(value) = &mut var.1 {
+                visitor.visit_expr_mut(value)?;
+            }
         }
         ControlFlow::Continue(())
     }
@@ -686,6 +552,14 @@ impl<S> MutableExpr<S> {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            MutableExpr::Ident(ident) => ident.span,
+            MutableExpr::Field(field_expr) => field_expr.span,
+            MutableExpr::Index(index_expr) => index_expr.span,
+        }
     }
 }
 
@@ -764,7 +638,7 @@ impl<S> SwitchStatement<S> {
             case.walk(visitor)?;
         }
         if let Some(default_block) = &self.default {
-            visitor.visit_block(default_block)?;
+            default_block.walk(visitor)?;
         }
         ControlFlow::Continue(())
     }
@@ -775,7 +649,7 @@ impl<S> SwitchStatement<S> {
             case.walk_mut(visitor)?;
         }
         if let Some(default_block) = &mut self.default {
-            visitor.visit_block_mut(default_block)?;
+            default_block.walk_mut(visitor)?;
         }
         ControlFlow::Continue(())
     }
@@ -784,14 +658,226 @@ impl<S> SwitchStatement<S> {
 impl<S> SwitchCase<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.compare)?;
-        visitor.visit_block(&self.body)?;
+        self.body.walk(visitor)?;
         ControlFlow::Continue(())
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr_mut(&mut self.compare)?;
-        visitor.visit_block_mut(&mut self.body)?;
+        self.body.walk_mut(visitor)?;
         ControlFlow::Continue(())
+    }
+}
+
+impl<S> Expression<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            Expression::Group(group_expr) => group_expr.walk(visitor),
+            Expression::Object(object_expr) => object_expr.walk(visitor),
+            Expression::Array(array_expr) => array_expr.walk(visitor),
+            Expression::Unary(unary_expr) => unary_expr.walk(visitor),
+            Expression::Prefix(mutation) => mutation.walk(visitor),
+            Expression::Postfix(mutation) => mutation.walk(visitor),
+            Expression::Binary(bin_expr) => bin_expr.walk(visitor),
+            Expression::Ternary(tern_expr) => tern_expr.walk(visitor),
+            Expression::Function(func_expr) => func_expr.walk(visitor),
+            Expression::Call(call_expr) => call_expr.walk(visitor),
+            Expression::Field(field_expr) => field_expr.walk(visitor),
+            Expression::Index(index_expr) => index_expr.walk(visitor),
+            Expression::Ident(_)
+            | Expression::Global(_)
+            | Expression::This(_)
+            | Expression::Other(_)
+            | Expression::Constant(..) => ControlFlow::Continue(()),
+        }
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        match self {
+            Expression::Group(group_expr) => group_expr.walk_mut(visitor),
+            Expression::Object(object_expr) => object_expr.walk_mut(visitor),
+            Expression::Array(array_expr) => array_expr.walk_mut(visitor),
+            Expression::Unary(unary_expr) => unary_expr.walk_mut(visitor),
+            Expression::Prefix(mutation) => mutation.walk_mut(visitor),
+            Expression::Postfix(mutation) => mutation.walk_mut(visitor),
+            Expression::Binary(bin_expr) => bin_expr.walk_mut(visitor),
+            Expression::Ternary(tern_expr) => tern_expr.walk_mut(visitor),
+            Expression::Function(func_expr) => func_expr.walk_mut(visitor),
+            Expression::Call(call_expr) => call_expr.walk_mut(visitor),
+            Expression::Field(field_expr) => field_expr.walk_mut(visitor),
+            Expression::Index(index_expr) => index_expr.walk_mut(visitor),
+            Expression::Ident(_)
+            | Expression::Global(_)
+            | Expression::This(_)
+            | Expression::Other(_)
+            | Expression::Constant(..) => ControlFlow::Continue(()),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Expression::Global(span) => *span,
+            Expression::This(span) => *span,
+            Expression::Other(span) => *span,
+            Expression::Constant(_, span) => *span,
+            Expression::Ident(ident) => ident.span,
+            Expression::Group(group_expr) => group_expr.span,
+            Expression::Object(object_expr) => object_expr.span,
+            Expression::Array(array_expr) => array_expr.span,
+            Expression::Unary(unary_expr) => unary_expr.span,
+            Expression::Prefix(mutation) => mutation.span,
+            Expression::Postfix(mutation) => mutation.span,
+            Expression::Binary(binary_expr) => binary_expr.span,
+            Expression::Ternary(ternary_expr) => ternary_expr.span,
+            Expression::Function(function_expr) => function_expr.span,
+            Expression::Call(call) => call.span,
+            Expression::Field(field_expr) => field_expr.span,
+            Expression::Index(index_expr) => index_expr.span,
+        }
+    }
+}
+
+impl<S: Eq + Clone> Expression<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        match self {
+            Expression::Constant(c, _) => Some(c.clone()),
+            Expression::Group(expr) => expr.fold_constant(),
+            Expression::Unary(expr) => expr.fold_constant(),
+            Expression::Binary(expr) => expr.fold_constant(),
+            Expression::Ternary(expr) => expr.fold_constant(),
+            _ => None,
+        }
+    }
+}
+
+impl<S> GroupExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.inner)
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.inner)
+    }
+}
+
+impl<S: Eq + Clone> GroupExpr<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        self.inner.fold_constant()
+    }
+}
+
+impl<S> ObjectExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        for field in &self.fields {
+            field.walk(visitor)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        for field in &mut self.fields {
+            field.walk_mut(visitor)?;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> ArrayExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        for entry in &self.entries {
+            visitor.visit_expr(entry)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        for entry in &mut self.entries {
+            visitor.visit_expr_mut(entry)?;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> UnaryExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.target)
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.target)
+    }
+}
+
+impl<S: Eq + Clone> UnaryExpr<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        match self.op {
+            UnaryOp::Not => Some(Constant::Boolean(!self.target.fold_constant()?.to_bool())),
+            UnaryOp::Minus => self.target.fold_constant()?.negate(),
+        }
+    }
+}
+
+impl<S> Mutation<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        self.target.walk(visitor)
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        self.target.walk_mut(visitor)
+    }
+}
+
+impl<S> BinaryExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.left)?;
+        visitor.visit_expr(&self.right)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.left)?;
+        visitor.visit_expr_mut(&mut self.right)?;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S: Eq + Clone> BinaryExpr<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        let left = {
+            match &*self.left {
+                Expression::Constant(c, _) => c,
+                _ => &self.left.fold_constant()?,
+            }
+        };
+
+        let right = {
+            match &*self.right {
+                Expression::Constant(c, _) => c,
+                _ => &self.right.fold_constant()?,
+            }
+        };
+
+        match self.op {
+            BinaryOp::Add => left.add(right),
+            BinaryOp::Sub => left.sub(right),
+            BinaryOp::Mult => left.mult(right),
+            BinaryOp::Div => left.div(right),
+            BinaryOp::Rem => left.rem(right),
+            BinaryOp::IDiv => left.idiv(right).map(Constant::Integer),
+            BinaryOp::Equal => Some(Constant::Boolean(left.equal(right))),
+            BinaryOp::NotEqual => Some(Constant::Boolean(!left.equal(right))),
+            BinaryOp::LessThan => left.less_than(right).map(Constant::Boolean),
+            BinaryOp::LessEqual => left.less_equal(right).map(Constant::Boolean),
+            BinaryOp::GreaterThan => right.less_than(left).map(Constant::Boolean),
+            BinaryOp::GreaterEqual => right.less_equal(left).map(Constant::Boolean),
+            BinaryOp::And => Some(Constant::Boolean(left.to_bool() && right.to_bool())),
+            BinaryOp::Or => Some(Constant::Boolean(left.to_bool() || right.to_bool())),
+            BinaryOp::NullCoalesce => Some(if left.is_undefined() {
+                right.clone()
+            } else {
+                left.clone()
+            }),
+        }
     }
 }
 
@@ -811,12 +897,23 @@ impl<S> TernaryExpr<S> {
     }
 }
 
+impl<S: Eq + Clone> TernaryExpr<S> {
+    pub fn fold_constant(&self) -> Option<Constant<S>> {
+        let cond = self.cond.fold_constant()?;
+        if cond.to_bool() {
+            self.if_true.fold_constant()
+        } else {
+            self.if_false.fold_constant()
+        }
+    }
+}
+
 impl<S> FunctionExpr<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         for parameter in &self.parameters {
             parameter.walk(visitor)?;
         }
-        visitor.visit_block(&self.body)?;
+        self.body.walk(visitor)?;
         ControlFlow::Continue(())
     }
 
@@ -824,25 +921,7 @@ impl<S> FunctionExpr<S> {
         for parameter in &mut self.parameters {
             parameter.walk_mut(visitor)?;
         }
-        visitor.visit_block_mut(&mut self.body)?;
-        ControlFlow::Continue(())
-    }
-}
-
-impl<S> Call<S> {
-    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr(&self.base)?;
-        for arg in &self.arguments {
-            visitor.visit_expr(arg)?;
-        }
-        ControlFlow::Continue(())
-    }
-
-    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
-        visitor.visit_expr_mut(&mut self.base)?;
-        for arg in &mut self.arguments {
-            visitor.visit_expr_mut(arg)?;
-        }
+        self.body.walk_mut(visitor)?;
         ControlFlow::Continue(())
     }
 }
@@ -872,6 +951,24 @@ impl<S> IndexExpr<S> {
         visitor.visit_expr_mut(&mut self.base)?;
         for expr in &mut self.indexes {
             visitor.visit_expr_mut(expr)?;
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> Call<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.base)?;
+        for arg in &self.arguments {
+            visitor.visit_expr(arg)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.base)?;
+        for arg in &mut self.arguments {
+            visitor.visit_expr_mut(arg)?;
         }
         ControlFlow::Continue(())
     }
@@ -908,5 +1005,12 @@ impl<S> Field<S> {
             Field::Init(_) => {}
         }
         ControlFlow::Continue(())
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Field::Value(ident, expression) => ident.span.combine(expression.span()),
+            Field::Init(ident) => ident.span,
+        }
     }
 }

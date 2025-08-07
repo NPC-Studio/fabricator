@@ -106,24 +106,24 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
         let enums = block
             .statements
-            .extract_if(.., |s| matches!(*s.kind, ast::StatementKind::Enum(_)));
+            .extract_if(.., |s| matches!(s, ast::Statement::Enum(_)));
 
         for stmt in enums {
-            let enum_stmt = match *stmt.kind {
-                ast::StatementKind::Enum(enum_stmt) => enum_stmt,
+            let enum_stmt = match stmt {
+                ast::Statement::Enum(enum_stmt) => enum_stmt,
                 _ => unreachable!(),
             };
 
             let mut enum_ = Enum {
                 name: enum_stmt.name.inner,
-                span: stmt.span,
+                span: enum_stmt.span,
                 variants: HashMap::new(),
             };
 
             let mut implicit_index = 0;
             for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
-                    let span = expr.span;
+                    let span = expr.span();
                     let value = expr.fold_constant().ok_or(EnumError {
                         kind: EnumErrorKind::ValueNotConstant,
                         span,
@@ -152,13 +152,13 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             type Break = EnumEvaluationError;
 
             fn visit_stmt_mut(&mut self, stmt: &mut ast::Statement<S>) -> ControlFlow<Self::Break> {
-                let shadows = match stmt.kind.as_ref() {
-                    ast::StatementKind::Enum(enum_stmt) => self.0.dict.get(&enum_stmt.name),
-                    ast::StatementKind::Function(func_stmt) => self.0.dict.get(&func_stmt.name),
-                    ast::StatementKind::Var(decls) => {
+                let shadows = match &*stmt {
+                    ast::Statement::Enum(enum_stmt) => self.0.dict.get(&enum_stmt.name),
+                    ast::Statement::Function(func_stmt) => self.0.dict.get(&func_stmt.name),
+                    ast::Statement::Var(decl_stmt) => {
                         let mut shadow = None;
-                        for decl in decls {
-                            let res = self.0.dict.get(&decl.name);
+                        for decl in &decl_stmt.vars {
+                            let res = self.0.dict.get(&decl.0);
                             if res.is_some() {
                                 shadow = res;
                                 break;
@@ -173,7 +173,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 if let Some(index) = shadows {
                     ControlFlow::Break(EnumEvaluationError {
                         kind: EnumEvaluationErrorKind::ShadowsEnum(index),
-                        span: stmt.span,
+                        span: stmt.span(),
                     })
                 } else {
                     stmt.walk_mut(self)
@@ -184,26 +184,26 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 &mut self,
                 expr: &mut ast::Expression<S>,
             ) -> ControlFlow<Self::Break> {
-                match &mut *expr.kind {
-                    ast::ExpressionKind::Ident(ident) => {
+                match expr {
+                    ast::Expression::Ident(ident) => {
                         if let Some(&index) = self.0.dict.get(ident) {
                             return ControlFlow::Break(EnumEvaluationError {
                                 kind: EnumEvaluationErrorKind::BadVariant(index),
-                                span: expr.span,
+                                span: expr.span(),
                             });
                         }
                     }
-                    ast::ExpressionKind::Field(field_expr) => {
-                        if let ast::ExpressionKind::Ident(ident) = &*field_expr.base.kind {
+                    ast::Expression::Field(field_expr) => {
+                        if let ast::Expression::Ident(ident) = &*field_expr.base {
                             if let Some(&index) = self.0.dict.get(ident) {
                                 if let Some(var) =
                                     self.0.enums[index].variants.get(&field_expr.field)
                                 {
-                                    *expr.kind = ast::ExpressionKind::Constant(var.clone());
+                                    *expr = ast::Expression::Constant(var.clone(), field_expr.span);
                                 } else {
                                     return ControlFlow::Break(EnumEvaluationError {
                                         kind: EnumEvaluationErrorKind::BadVariant(index),
-                                        span: expr.span,
+                                        span: expr.span(),
                                     });
                                 }
                             }

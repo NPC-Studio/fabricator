@@ -6,7 +6,6 @@ use std::{
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
     self as vm,
-    debug::Span,
     instructions::{self, Instruction},
 };
 
@@ -38,6 +37,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
     magic_index: &impl Fn(&S) -> Option<usize>,
     parent_heap_indexes: &SecondaryMap<ir::VarId, instructions::HeapIdx>,
 ) -> Result<Prototype<S>, ProtoGenError> {
+    let func_span = ir.reference.span();
+
     let mut reg_alloc = RegisterAllocation::allocate(ir)?;
     let heap_alloc = HeapAllocation::allocate(ir, parent_heap_indexes)?;
 
@@ -98,7 +99,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
         Instruction::StackResizeConst {
             stack_top: get_const_index(&Constant::Integer(ir.num_parameters.try_into().unwrap()))?,
         },
-        Span::null(),
+        func_span,
     ));
 
     // Whenever entering a scope, if we know that something inside that scope will need to change
@@ -185,7 +186,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
             Instruction::Other {
                 dest: saved_other_registers[0],
             },
-            Span::null(),
+            func_span,
         ));
     }
 
@@ -194,7 +195,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
             Instruction::StackTop {
                 dest: saved_stack_top_registers[0],
             },
-            Span::null(),
+            func_span,
         ));
     }
 
@@ -203,7 +204,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
         block_vm_starts.insert(block_id, vm_instructions.len());
 
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-            let span = ir.spans.get(inst_id).copied().unwrap_or_else(Span::null);
+            let span = ir.spans.get(inst_id).copied().unwrap_or(func_span);
             match ir.instructions[inst_id] {
                 ir::Instruction::NoOp => {}
                 ir::Instruction::Copy(source) => {
@@ -774,17 +775,17 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         Instruction::StackPush {
                             source: reg_alloc.instruction_registers[value],
                         },
-                        Span::null(),
+                        func_span,
                     ));
                 }
 
-                vm_instructions.push((Instruction::Return { stack_bottom }, Span::null()));
+                vm_instructions.push((Instruction::Return { stack_bottom }, func_span));
             }
             ir::Exit::Jump(block_id) => {
                 // If we are the next block in output order, we don't need to add a jump
                 if block_order_indexes[&block_id] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), block_id));
-                    vm_instructions.push((Instruction::Jump { offset: 0 }, Span::null()));
+                    vm_instructions.push((Instruction::Jump { offset: 0 }, func_span));
                 }
             }
             ir::Exit::Branch {
@@ -801,7 +802,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             is_true: true,
                             offset: 0,
                         },
-                        Span::null(),
+                        func_span,
                     ));
                 }
 
@@ -813,7 +814,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             is_true: false,
                             offset: 0,
                         },
-                        Span::null(),
+                        func_span,
                     ));
                 }
             }
