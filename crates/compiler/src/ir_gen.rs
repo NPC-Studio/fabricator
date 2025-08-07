@@ -348,7 +348,6 @@ where
             ir::Instruction::OpenCall {
                 scope: call_scope,
                 func: get_constructor_super,
-                this: None,
                 args: vec![this_closure],
             },
         );
@@ -373,7 +372,6 @@ where
                 ir::Instruction::OpenCall {
                     scope: call_scope,
                     func: get_constructor_super,
-                    this: None,
                     args: vec![parent_func.unwrap()],
                 },
             );
@@ -387,7 +385,6 @@ where
                 ir::Instruction::OpenCall {
                     scope: call_scope,
                     func: set_super,
-                    this: None,
                     args: vec![our_super, parent_super],
                 },
             );
@@ -456,7 +453,6 @@ where
                 ir::Instruction::OpenCall {
                     scope: call_scope,
                     func: parent_func,
-                    this: None,
                     args,
                 },
             );
@@ -474,7 +470,6 @@ where
             ir::Instruction::OpenCall {
                 scope: call_scope,
                 func: set_super,
-                this: None,
                 args: vec![this, our_super],
             },
         );
@@ -1365,33 +1360,37 @@ where
             args.push(self.expression(arg)?);
         }
 
+        let (func, this) = match call {
+            Call::Function(func) => (func, None),
+            Call::Method { func, object } => (func, Some(object)),
+        };
+
         let call_scope = self.function.call_scopes.insert(());
-        match call {
-            Call::Function(func) => {
-                self.push_instruction(
-                    span,
-                    ir::Instruction::OpenCall {
-                        scope: call_scope,
-                        func,
-                        this: None,
-                        args,
-                    },
-                );
-            }
-            Call::Method { func, object } => {
-                self.push_instruction(
-                    span,
-                    ir::Instruction::OpenCall {
-                        scope: call_scope,
-                        func,
-                        this: Some(object),
-                        args,
-                    },
-                );
-            }
-        }
+
+        let this_scope = if let Some(this) = this {
+            let this_scope = self.function.this_scopes.insert(());
+            self.push_instruction(span, ir::Instruction::OpenThisScope(this_scope));
+            self.push_instruction(span, ir::Instruction::SetThis(this_scope, this));
+            Some(this_scope)
+        } else {
+            None
+        };
+
+        self.push_instruction(
+            span,
+            ir::Instruction::OpenCall {
+                scope: call_scope,
+                func,
+                args,
+            },
+        );
+
         let ret = self.push_instruction(span, ir::Instruction::GetReturn(call_scope, 0));
         self.push_instruction(span, ir::Instruction::CloseCall(call_scope));
+
+        if let Some(this_scope) = this_scope {
+            self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
+        }
 
         Ok(ret)
     }

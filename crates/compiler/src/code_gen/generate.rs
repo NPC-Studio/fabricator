@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, hash_map},
+    collections::{HashMap, HashSet, hash_map},
     hash::Hash,
 };
 
@@ -11,6 +11,7 @@ use fabricator_vm::{
 };
 
 use crate::{
+    analysis::nested_scope_liveness::{CallScopeLiveness, ThisScopeLiveness},
     code_gen::{
         ProtoGenError, heap_alloc::HeapAllocation, prototype::Prototype,
         register_alloc::RegisterAllocation,
@@ -37,8 +38,11 @@ fn codegen_function<S: Clone + Eq + Hash>(
     magic_index: &impl Fn(&S) -> Option<usize>,
     parent_heap_indexes: &SecondaryMap<ir::VarId, instructions::HeapIdx>,
 ) -> Result<Prototype<S>, ProtoGenError> {
-    let reg_alloc = RegisterAllocation::allocate(ir)?;
+    let mut reg_alloc = RegisterAllocation::allocate(ir)?;
     let heap_alloc = HeapAllocation::allocate(ir, parent_heap_indexes)?;
+
+    let this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
+    let call_scope_liveness = CallScopeLiveness::compute(ir).unwrap();
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, instructions::ProtoIdx> =
@@ -89,13 +93,110 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut block_vm_starts = SecondaryMap::<ir::BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
 
-    // First, resize the stack to the expected number of arguments.
+    // Resize the stack to the expected number of arguments.
     vm_instructions.push((
         Instruction::StackResizeConst {
             stack_top: get_const_index(&Constant::Integer(ir.num_parameters.try_into().unwrap()))?,
         },
         Span::null(),
     ));
+
+    // Whenever entering a scope, if we know that something inside that scope will need to change
+    // and then restore the previous state, we save the state to restore upon entering the *outer*
+    // scope.
+    //
+    // We do this because there are many more inner scopes than outer scopes, and this saves having
+    // to repeatedly save the same values which are not modified.
+
+    // For "this" scopes, any scope that has an inner scope will save the value to restore on open.
+    // The number of required registers is equal to the "this" scope nesting level.
+
+    let saved_other_registers = vec![reg_alloc.allocate_extra()?; this_scope_liveness.nesting()];
+
+    // For "call" scopes, the story is not as simple. We need to save when a "call" scope has an
+    // inner scope, but *also* for certain other instructions which temporarily modify the stack.
+    // Search for which scopes contain those instructions and mark the containing scope as needing
+    // to save state.
+
+    let mut call_scopes_which_save = call_scope_liveness
+        .scopes()
+        .filter(|&s| call_scope_liveness.has_inner_scope(s))
+        .collect::<HashSet<_>>();
+
+    let mut saved_stack_top_registers =
+        vec![reg_alloc.allocate_extra()?; call_scope_liveness.nesting()];
+
+    for &block_id in &block_order {
+        let mut needs_to_save = |inst_index: usize| -> Result<(), ProtoGenError> {
+            if let Some(call_scope) = call_scope_liveness.deepest_for(block_id, inst_index) {
+                call_scopes_which_save.insert(call_scope);
+                // If this is a most-inner scope, then we need to add another register to
+                // save to.
+                if call_scope_liveness.nesting_level(call_scope).unwrap()
+                    >= saved_stack_top_registers.len()
+                {
+                    saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
+                }
+            } else {
+                // If there is no enclosing scope for this instruction, we need to ensure
+                // that we at least save the bottom-level value.
+                if saved_stack_top_registers.is_empty() {
+                    saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
+                }
+            }
+            Ok(())
+        };
+
+        let block = &ir.blocks[block_id];
+        for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
+            match ir.instructions[inst_id] {
+                ir::Instruction::GetIndex { .. } => todo!(),
+                ir::Instruction::SetIndex { .. } => {
+                    needs_to_save(inst_index)?;
+                }
+                _ => {}
+            }
+
+            if let ir::Exit::Return { .. } = block.exit {
+                needs_to_save(ir.instructions.len())?;
+            }
+        }
+    }
+
+    let get_current_stack_top_register =
+        |block_id: ir::BlockId, inst_index: usize| -> instructions::RegIdx {
+            let idx = if let Some(enclosing_call_scope) =
+                call_scope_liveness.deepest_for(block_id, inst_index)
+            {
+                call_scope_liveness
+                    .nesting_level(enclosing_call_scope)
+                    .unwrap()
+                    + 1
+            } else {
+                0
+            };
+            saved_stack_top_registers[idx]
+        };
+
+    // If we need to save the bottom-level value for scopes, do so.
+
+    if !saved_other_registers.is_empty() {
+        vm_instructions.push((
+            Instruction::Other {
+                dest: saved_other_registers[0],
+            },
+            Span::null(),
+        ));
+    }
+
+    if !saved_stack_top_registers.is_empty() {
+        vm_instructions.push((
+            Instruction::StackTop {
+                dest: saved_stack_top_registers[0],
+            },
+            Span::null(),
+        ));
+    }
 
     for (order_index, &block_id) in block_order.iter().enumerate() {
         let block = &ir.blocks[block_id];
@@ -234,12 +335,15 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
                 ir::Instruction::OpenThisScope(scope) => {
                     vm_instructions.push((Instruction::SwapThisOther {}, span));
-                    vm_instructions.push((
-                        Instruction::Other {
-                            dest: reg_alloc.this_scope_registers[scope],
-                        },
-                        span,
-                    ));
+                    if this_scope_liveness.has_inner_scope(scope) {
+                        let nesting_level = this_scope_liveness.nesting_level(scope).unwrap();
+                        vm_instructions.push((
+                            Instruction::Other {
+                                dest: saved_other_registers[nesting_level + 1],
+                            },
+                            span,
+                        ));
+                    }
                 }
                 ir::Instruction::SetThis(_, this) => {
                     vm_instructions.push((
@@ -251,9 +355,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
                 ir::Instruction::CloseThisScope(scope) => {
                     vm_instructions.push((Instruction::SwapThisOther {}, span));
+                    let nesting_level = this_scope_liveness.nesting_level(scope).unwrap();
                     vm_instructions.push((
                         Instruction::SetOther {
-                            source: reg_alloc.this_scope_registers[scope],
+                            source: saved_other_registers[nesting_level],
                         },
                         span,
                     ));
@@ -340,8 +445,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             span,
                         ));
                     } else {
-                        let stack_bottom = reg_alloc.temp_registers[0];
-                        vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
+                        let stack_bottom = get_current_stack_top_register(block_id, inst_index);
 
                         for &index in indexes {
                             vm_instructions.push((
@@ -377,8 +481,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             span,
                         ));
                     } else {
-                        let stack_bottom = reg_alloc.temp_registers[0];
-                        vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
+                        let stack_bottom = get_current_stack_top_register(block_id, inst_index);
 
                         for &index in indexes {
                             vm_instructions.push((
@@ -551,24 +654,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 ir::Instruction::OpenCall {
                     scope,
                     func,
-                    this,
                     ref args,
                 } => {
-                    let stack_bottom = reg_alloc.call_scope_registers[scope];
-                    let prev_other = reg_alloc.temp_registers[0];
-
-                    vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, span));
-
-                    if let Some(this) = this {
-                        vm_instructions.push((Instruction::Other { dest: prev_other }, span));
-                        vm_instructions.push((Instruction::SwapThisOther {}, span));
-                        vm_instructions.push((
-                            Instruction::SetThis {
-                                source: reg_alloc.instruction_registers[this],
-                            },
-                            span,
-                        ));
-                    }
+                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
 
                     for &arg in args {
                         vm_instructions.push((
@@ -582,32 +670,36 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     vm_instructions.push((
                         Instruction::Call {
                             func: reg_alloc.instruction_registers[func],
-                            stack_bottom,
+                            stack_bottom: saved_stack_top_registers[nesting_level],
                         },
                         span,
                     ));
 
-                    if this.is_some() {
-                        vm_instructions.push((Instruction::SwapThisOther {}, span));
-                        vm_instructions.push((Instruction::SetOther { source: prev_other }, span));
+                    if call_scopes_which_save.contains(&scope) {
+                        vm_instructions.push((
+                            Instruction::StackTop {
+                                dest: saved_stack_top_registers[nesting_level + 1],
+                            },
+                            span,
+                        ));
                     }
                 }
                 ir::Instruction::GetReturn(scope, index) => {
-                    let stack_base = reg_alloc.call_scope_registers[scope];
+                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
                     vm_instructions.push((
                         Instruction::StackGetOffset {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            stack_base,
+                            stack_base: saved_stack_top_registers[nesting_level],
                             offset: get_const_index(&Constant::Integer(index.try_into().unwrap()))?,
                         },
                         span,
                     ));
                 }
                 ir::Instruction::CloseCall(scope) => {
-                    let stack_bottom = reg_alloc.call_scope_registers[scope];
+                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
                     vm_instructions.push((
                         Instruction::StackResize {
-                            stack_top: stack_bottom,
+                            stack_top: saved_stack_top_registers[nesting_level],
                         },
                         span,
                     ));
@@ -617,8 +709,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
         match block.exit {
             ir::Exit::Return { value } => {
-                let stack_bottom = reg_alloc.temp_registers[0];
-                vm_instructions.push((Instruction::StackTop { dest: stack_bottom }, Span::null()));
+                let stack_bottom =
+                    get_current_stack_top_register(block_id, block.instructions.len());
 
                 if let Some(value) = value {
                     vm_instructions.push((

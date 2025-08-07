@@ -24,6 +24,23 @@ where
 /// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
 /// each node.
 ///
+/// This is a version of `depth_first_search` that allows callbacks to break the search with an
+/// error.
+pub fn try_depth_first_search<N, E, I>(
+    start: N,
+    mut pre: impl FnMut(N) -> Result<I, E>,
+    mut post: impl FnMut(N) -> Result<(), E>,
+) -> Result<(), E>
+where
+    N: Node,
+    I: IntoIterator<Item = N>,
+{
+    try_depth_first_search_with(&mut (), start, move |_, n| pre(n), move |_, n| post(n))
+}
+
+/// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
+/// each node.
+///
 /// This is a version of `depth_first_search` that accepts a mutable state parameter and passes it
 /// to each callback.
 pub fn depth_first_search_with<S, N, I>(
@@ -35,21 +52,47 @@ pub fn depth_first_search_with<S, N, I>(
     N: Node,
     I: IntoIterator<Item = N>,
 {
+    try_depth_first_search_with(
+        state,
+        start,
+        move |s, n| Ok::<_, ()>(pre(s, n)),
+        move |s, n| Ok(post(s, n)),
+    )
+    .unwrap()
+}
+
+/// Search a directed graph in a depth-first manner and call the `pre` and `post` callbacks for
+/// each node.
+///
+/// This is a version of `depth_first_search` that accepts a mutable state parameter and passes it
+/// to each callback, and allows callbacks to break the search with an error.
+pub fn try_depth_first_search_with<N, S, E, I>(
+    state: &mut S,
+    start: N,
+    mut pre: impl FnMut(&mut S, N) -> Result<I, E>,
+    mut post: impl FnMut(&mut S, N) -> Result<(), E>,
+) -> Result<(), E>
+where
+    N: Node,
+    I: IntoIterator<Item = N>,
+{
     let mut stack = Vec::new();
     let mut visited = IndexSet::new();
     visited.insert(start.index());
-    stack.push((start, pre(state, start).into_iter()));
+    stack.push((start, pre(state, start)?.into_iter()));
 
     while let Some((node, iter)) = stack.last_mut() {
         if let Some(next) = iter.next() {
             if visited.insert(next.index()) {
-                stack.push((next, pre(state, next).into_iter()))
+                stack.push((next, pre(state, next)?.into_iter()))
             }
         } else {
-            post(state, *node);
+            post(state, *node)?;
             stack.pop();
         }
     }
+
+    Ok(())
 }
 
 /// Accumulate nodes in DFS pre-order

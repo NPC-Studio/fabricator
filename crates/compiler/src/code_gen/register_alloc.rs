@@ -6,7 +6,6 @@ use fabricator_vm::instructions::RegIdx;
 use crate::{
     analysis::{
         instruction_liveness::{InstructionLiveness, InstructionLivenessRange},
-        nested_scope_liveness::{CallScopeLiveness, ThisScopeLiveness},
         shadow_liveness::{
             ShadowIncomingRange, ShadowLiveness, ShadowLivenessRange, ShadowOutgoingRange,
         },
@@ -18,11 +17,8 @@ use crate::{
 
 #[derive(Debug)]
 pub struct RegisterAllocation {
-    pub temp_registers: [RegIdx; 2],
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
     pub shadow_registers: SecondaryMap<ir::ShadowVar, RegIdx>,
-    pub this_scope_registers: SecondaryMap<ir::ThisScope, RegIdx>,
-    pub call_scope_registers: SecondaryMap<ir::CallScope, RegIdx>,
     pub shadow_liveness: ShadowLiveness,
     pub used_registers: usize,
 }
@@ -38,8 +34,6 @@ impl RegisterAllocation {
     pub fn allocate<S>(ir: &ir::Function<S>) -> Result<Self, ProtoGenError> {
         let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
         let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
-        let this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
-        let call_scope_liveness = CallScopeLiveness::compute(ir).unwrap();
 
         let upsilon_reach_map = compute_upsilon_reachability(ir, &shadow_liveness);
 
@@ -270,22 +264,18 @@ impl RegisterAllocation {
         }
 
         // Now that we have a set of registers for our shadow variables and *some* instruction
-        // registers, we need to assign the rest of the instruction variables, as well as all hidden
-        // registers for scopes.
+        // registers, we need to assign the rest of the instruction variables.
         //
         // The graph coloring approach for shadow variables has high time complexity, but because of
-        // the properties of SSA and scopes, we can assign the rest of the registers linearly.
+        // the properties of SSA, we can assign the rest of the registers linearly.
         //
-        // For each block, we determine the set of SSA instructions and scopes which are live on
-        // entry to the block, and then scan the block and assign registers as we go. Because SSA
-        // instructions and scopes have no "holes" due to assignment like shadow variables do, once
-        // we encounter the end of their range, we know that no successive block can revive them,
-        // so we can add expired instruction registers back to the pool of available registers as
-        // we go.
+        // For each block, we determine the set of SSA instructions which are live on entry to the
+        // block, and then scan the block and assign registers as we go. Because SSA instructions
+        // have no "holes" due to assignment like shadow variables do, once we encounter the end
+        // of their range, we know that no successive block can revive them, so we can add expired
+        // instruction registers back to the pool of available registers as we go.
 
         let mut instruction_registers = coalesced_instruction_registers.clone();
-        let mut this_scope_registers = SecondaryMap::<ir::ThisScope, RegIdx>::new();
-        let mut call_scope_registers = SecondaryMap::<ir::CallScope, RegIdx>::new();
 
         let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
 
@@ -296,9 +286,9 @@ impl RegisterAllocation {
         //
         // This is not optimal allocation because all shadow registers (and their coalesced
         // instruction registers) are allocated by graph coloring, and we assume here that the
-        // entire set of these registers is simply *unavailable* to any other SSA instruction or
-        // scope. If we ever get close to running out of registers, we can be smarter here and do
-        // graph coloring for *all* register allocation, but this may have a high runtime cost.
+        // entire set of these registers is simply *unavailable* to any other SSA instruction. If we
+        // ever get close to running out of registers, we can be smarter here and do graph coloring
+        // for *all* register allocation, but this may have a high runtime cost.
         let globally_used_registers = {
             let mut regs = [0u8; 32];
             for &shadow_reg in shadow_registers.values() {
@@ -330,38 +320,6 @@ impl RegisterAllocation {
                 }
             }
 
-            let mut this_scope_life_starts = IndexMap::new();
-            let mut this_scope_life_ends = IndexMap::new();
-            for (this_scope, range) in this_scope_liveness.live_for_block(block_id) {
-                if let Some(start) = range.start {
-                    assert!(this_scope_life_starts.insert(start, this_scope).is_none());
-                } else {
-                    live_in_registers.set_bit(this_scope_registers[this_scope] as usize, true);
-                }
-
-                if let Some(end) = range.end {
-                    this_scope_life_ends
-                        .get_or_insert_with(end, Vec::new)
-                        .push(this_scope);
-                }
-            }
-
-            let mut call_scope_life_starts = IndexMap::new();
-            let mut call_scope_life_ends = IndexMap::new();
-            for (call_scope, range) in call_scope_liveness.live_for_block(block_id) {
-                if let Some(start) = range.start {
-                    assert!(call_scope_life_starts.insert(start, call_scope).is_none());
-                } else {
-                    live_in_registers.set_bit(call_scope_registers[call_scope] as usize, true);
-                }
-
-                if let Some(end) = range.end {
-                    call_scope_life_ends
-                        .get_or_insert_with(end, Vec::new)
-                        .push(call_scope);
-                }
-            }
-
             let mut available_registers = (0u8..=255u8)
                 .rev()
                 .flat_map(|index| {
@@ -374,42 +332,42 @@ impl RegisterAllocation {
                 .collect::<Vec<_>>();
 
             for inst_index in 0..=block.instructions.len() {
-                if let Some(&inst_id) = inst_life_starts.get(inst_index) {
-                    let reg = available_registers
-                        .pop()
-                        .ok_or(ProtoGenError::RegisterOverflow)?;
-                    assert!(instruction_registers.insert(inst_id, reg).is_none());
+                // We add any instructions that die here back to the availability pool *before*
+                // we assign a register to the result of this instruction. We do this because no
+                // instruction currently writes to a register that is not its output, and this way
+                // we can readily assign the result to a register that is used as an instruction
+                // parameter (if that parameter is not used again after this point).
+
+                let inst_life_start = inst_life_starts.get(inst_index).copied();
+
+                // Because we add the registers for dead instructions to the availability pool
+                // before acquiring registers for live instructions, we need to handle the case
+                // where an instruction dies at the same time that it is born (an instruction has an
+                // output that is not used by any subsequent instruction).
+                let mut stillborn = false;
+                for &inst_life_end in inst_life_ends.get(inst_index).into_iter().flatten() {
+                    if inst_life_start == Some(inst_life_end) {
+                        stillborn = true;
+                    } else {
+                        available_registers.push(instruction_registers[inst_life_end]);
+                    }
                 }
 
-                if let Some(&this_scope) = this_scope_life_starts.get(inst_index) {
-                    let reg = available_registers
-                        .pop()
-                        .ok_or(ProtoGenError::RegisterOverflow)?;
-                    assert!(this_scope_registers.insert(this_scope, reg).is_none());
-                }
-
-                if let Some(&call_scope) = call_scope_life_starts.get(inst_index) {
-                    let reg = available_registers
-                        .pop()
-                        .ok_or(ProtoGenError::RegisterOverflow)?;
-                    assert!(call_scope_registers.insert(call_scope, reg).is_none());
-                }
-
-                for &inst_id in inst_life_ends.get(inst_index).into_iter().flatten() {
-                    available_registers.push(instruction_registers[inst_id]);
-                }
-
-                for &this_scope in this_scope_life_ends.get(inst_index).into_iter().flatten() {
-                    available_registers.push(this_scope_registers[this_scope]);
-                }
-
-                for &call_scope in call_scope_life_ends.get(inst_index).into_iter().flatten() {
-                    available_registers.push(call_scope_registers[call_scope]);
+                if let Some(inst_life_start) = inst_life_start {
+                    let reg = if stillborn {
+                        // We just need any free register to put the output which won't be used in
+                        // the future.
+                        available_registers.last().copied()
+                    } else {
+                        available_registers.pop()
+                    }
+                    .ok_or(ProtoGenError::RegisterOverflow)?;
+                    assert!(instruction_registers.insert(inst_life_start, reg).is_none());
                 }
             }
         }
 
-        let mut register_top = if let Some(max) = shadow_registers
+        let register_top = if let Some(max) = shadow_registers
             .values()
             .copied()
             .chain(instruction_registers.values().copied())
@@ -420,27 +378,22 @@ impl RegisterAllocation {
             0
         };
 
-        let mut allocate_register = || match RegIdx::try_from(register_top) {
-            Ok(r) => {
-                register_top += 1;
-                Ok(r)
-            }
-            Err(_) => Err(ProtoGenError::RegisterOverflow),
-        };
-
-        // Now allocate all global internal registers used in codegen.
-
-        let temp_registers = [allocate_register()?; 2];
-
         Ok(Self {
-            temp_registers,
             instruction_registers,
             shadow_registers,
-            this_scope_registers,
-            call_scope_registers,
             shadow_liveness,
             used_registers: register_top,
         })
+    }
+
+    pub fn allocate_extra(&mut self) -> Result<RegIdx, ProtoGenError> {
+        match RegIdx::try_from(self.used_registers) {
+            Ok(r) => {
+                self.used_registers += 1;
+                Ok(r)
+            }
+            Err(_) => Err(ProtoGenError::RegisterOverflow),
+        }
     }
 }
 

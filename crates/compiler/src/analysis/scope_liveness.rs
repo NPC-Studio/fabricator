@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::{
-    graph::{dfs::depth_first_search, dominators::Dominators},
+    graph::{
+        dfs::{depth_first_search, try_depth_first_search},
+        dominators::Dominators,
+    },
     ir,
 };
 
@@ -79,8 +82,7 @@ impl ScopeLiveness {
         // this would be a block with indeterminate state). Every block that we reach this way has a
         // live range.
 
-        let mut indeterminate_block = false;
-        depth_first_search(
+        try_depth_first_search(
             open_block_id,
             |block_id| {
                 let mut range_start = None;
@@ -117,26 +119,19 @@ impl ScopeLiveness {
                 );
 
                 if range_end.is_some() {
-                    None
+                    Ok(None.into_iter().flatten())
                 } else if block.exit.successors().any(|b| {
                     b == open_block_id || !block_dominance.dominates(open_block_id, b).unwrap()
                 }) {
                     // We should not be able to reach a block that the open block does not
                     // strictly dominate without passing through close.
-                    indeterminate_block = true;
-                    None
+                    Err(ScopeLivenessError::IndeterminateState)
                 } else {
-                    Some(block.exit.successors())
+                    Ok(Some(block.exit.successors()).into_iter().flatten())
                 }
-                .into_iter()
-                .flatten()
             },
-            |_| {},
-        );
-
-        if indeterminate_block {
-            return Err(ScopeLivenessError::IndeterminateState);
-        }
+            |_| Ok(()),
+        )?;
 
         // If we have a close block, then find any indeterminate blocks by ensuring that all blocks
         // reachble from the close block that don't pass through the open block are not live.

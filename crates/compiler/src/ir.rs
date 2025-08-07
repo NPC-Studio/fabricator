@@ -246,7 +246,6 @@ pub enum Instruction<S> {
     OpenCall {
         scope: CallScope,
         func: InstId,
-        this: Option<InstId>,
         args: Vec<InstId>,
     },
     GetReturn(CallScope, usize),
@@ -299,14 +298,8 @@ impl<S> Instruction<S> {
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::OpenCall {
-                func, this, args, ..
-            } => {
-                if let Some(this) = this {
-                    make_iter!([*func, *this], args)
-                } else {
-                    make_iter!([*func], args)
-                }
+            Instruction::OpenCall { func, args, .. } => {
+                make_iter!([*func], args)
             }
             _ => make_iter!([]),
         }
@@ -345,14 +338,8 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::OpenCall {
-                func, this, args, ..
-            } => {
-                if let Some(this) = this {
-                    make_iter!([this, func], args)
-                } else {
-                    make_iter!([func], args)
-                }
+            Instruction::OpenCall { func, args, .. } => {
+                make_iter!([func], args)
             }
             _ => make_iter!([]),
         }
@@ -746,28 +733,13 @@ impl<S: AsRef<str>> Function<S> {
                             writeln!(f, "null_coalesce(I{}, I{})", left.index(), right.index())?;
                         }
                     },
-                    Instruction::OpenCall {
-                        scope,
-                        func,
-                        this,
-                        args,
-                    } => {
-                        if let Some(this) = this {
-                            write!(
-                                f,
-                                "open_call(CS{}, I{}, this = I{}, args = [",
-                                scope.index(),
-                                this.index(),
-                                func.index(),
-                            )?;
-                        } else {
-                            write!(
-                                f,
-                                "open_call(CS{}, I{}, args = [",
-                                scope.index(),
-                                func.index(),
-                            )?;
-                        }
+                    Instruction::OpenCall { scope, func, args } => {
+                        write!(
+                            f,
+                            "open_call(CS{}, I{}, args = [",
+                            scope.index(),
+                            func.index(),
+                        )?;
                         for (i, &arg) in args.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;
