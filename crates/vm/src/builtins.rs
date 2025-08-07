@@ -14,7 +14,7 @@ use crate::{
 ///
 /// Can be assumed to be present in any FML environment, and may be required for compilation.
 pub struct BuiltIns<'gc> {
-    /// Rebind the implicit `self` on a callback or closure.
+    /// Rebind the implicit `this` on a callback or closure.
     ///
     /// ```fml
     /// var f = function() {

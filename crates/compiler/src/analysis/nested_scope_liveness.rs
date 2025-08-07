@@ -11,27 +11,30 @@ use crate::{
 
 #[derive(Debug, Copy, Clone, Error)]
 pub enum NestedScopeVerificationErrorKind<I> {
-    #[error("scope is not opened exactly once")]
+    #[error("is not opened exactly once")]
     BadOpen,
-    #[error("scope is closed more than once")]
-    MultipleClose,
-    #[error("scope close is not dominated by its open")]
-    CloseNotDominated,
-    #[error("range exists where a scope is not definitely open or definitely closed")]
-    IndeterminateState,
-    #[error("scope use is not dominated by its open or may occur after a close")]
-    UseNotInRange,
-    #[error("scope is not strictly nested within another scope")]
+    #[error("has close at {0} is not dominated by its open")]
+    CloseNotDominated(ir::InstLocation),
+    #[error("has close instruction at {0} does not close an open variable")]
+    DeadClose(ir::InstLocation),
+    #[error("has incoming edges for block {0} that are not all open or all closed")]
+    IndeterminateState(ir::BlockId),
+    #[error("has use at {0} is not dominated by its open or may occur after a close")]
+    UseNotInRange(ir::InstLocation),
+    #[error("is not strictly nested within scope {other_scope}")]
     ScopeNotNested { other_scope: I },
-    #[error("scope use is within an inner scope")]
-    UseOverlapsInner,
+    #[error("has use is within an inner scope {inner_scope} at location {instruction}")]
+    UseOverlapsInner {
+        inner_scope: I,
+        instruction: ir::InstLocation,
+    },
 }
 
 #[derive(Debug, Copy, Clone, Error)]
-#[error("{kind}")]
+#[error("scope {scope} {kind}")]
 pub struct NestedScopeVerificationError<I> {
-    pub kind: NestedScopeVerificationErrorKind<I>,
     pub scope: I,
+    pub kind: NestedScopeVerificationErrorKind<I>,
 }
 
 #[derive(Debug)]
@@ -67,12 +70,13 @@ where
     /// A scope is live after it is opened and dead when it is closed.
     ///
     /// This also verifies all scopes within the IR and their use, namely that:
-    ///   1) Every scope has exactly one open instruction and at most one close instruction.
-    ///   2) Every instruction in the CFG has a definite opened or closed state for every scope,
-    ///      there are no ambiguous regions.
+    ///   1) Every scope has exactly one open instruction.
+    ///   2) Every instruction in the CFG has a statically defined opened or closed state for every
+    ///      scope, there are no regions which depend on the path through the CFG.
     ///   3) Every use of a scope is in its definitely-open region.
     ///   4) Scopes may be nested, but they must be strictly so.
     ///   5) Every use of a scope is not within an inner nested scope.
+    ///   6) Every scope close instruction closes an open scope.
     fn compute_with<S>(
         ir: &ir::Function<S>,
         scope_inst_type: impl Fn(&ir::Instruction<S>) -> Option<(I, ScopeInstType)>,
@@ -80,17 +84,19 @@ where
         let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
 
         let mut scopes: SecondaryMap<I, ()> = SecondaryMap::new();
-        let mut scope_open: SecondaryMap<I, (ir::BlockId, usize)> = SecondaryMap::new();
-        let mut scope_uses: SecondaryMap<I, Vec<(ir::BlockId, usize)>> = SecondaryMap::new();
-        let mut scope_close: SecondaryMap<I, (ir::BlockId, usize)> = SecondaryMap::new();
+        let mut scope_open: SecondaryMap<I, ir::InstLocation> = SecondaryMap::new();
+        let mut scope_uses: SecondaryMap<I, Vec<ir::InstLocation>> = SecondaryMap::new();
+        let mut scope_closes: SecondaryMap<I, Vec<ir::InstLocation>> = SecondaryMap::new();
 
         for block_id in dominators.topological_order() {
             let block = &ir.blocks[block_id];
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
+                let inst_loc = ir::InstLocation::new(block_id, inst_index);
+
                 match scope_inst_type(&ir.instructions[inst_id]) {
                     Some((scope, ScopeInstType::Open)) => {
                         scopes.insert(scope, ());
-                        if scope_open.insert(scope, (block_id, inst_index)).is_some() {
+                        if scope_open.insert(scope, inst_loc).is_some() {
                             return Err(NestedScopeVerificationError {
                                 kind: NestedScopeVerificationErrorKind::BadOpen,
                                 scope,
@@ -99,18 +105,13 @@ where
                     }
                     Some((scope, ScopeInstType::Use)) => {
                         scopes.insert(scope, ());
-                        scope_uses
-                            .get_or_insert_default(scope)
-                            .push((block_id, inst_index));
+                        scope_uses.get_or_insert_default(scope).push(inst_loc);
                     }
                     Some((scope, ScopeInstType::Close)) => {
                         scopes.insert(scope, ());
-                        if scope_close.insert(scope, (block_id, inst_index)).is_some() {
-                            return Err(NestedScopeVerificationError {
-                                kind: NestedScopeVerificationErrorKind::MultipleClose,
-                                scope,
-                            });
-                        }
+                        scope_closes
+                            .get_or_insert_default(scope)
+                            .push(ir::InstLocation::new(block_id, inst_index));
                     }
                     None => {}
                 }
@@ -128,39 +129,46 @@ where
                 kind: NestedScopeVerificationErrorKind::BadOpen,
                 scope,
             })?;
-            let scope_close = scope_close.get(scope).copied();
 
-            let scope_liveness = ScopeLiveness::compute(ir, &dominators, scope_open, scope_close)
-                .map_err(|e| NestedScopeVerificationError {
+            let scope_liveness = ScopeLiveness::compute(
+                ir,
+                &dominators,
+                scope_open,
+                scope_closes.get(scope).into_iter().flatten().copied(),
+            )
+            .map_err(|e| NestedScopeVerificationError {
                 kind: match e {
-                    ScopeLivenessError::CloseNotDominated => {
-                        NestedScopeVerificationErrorKind::CloseNotDominated
+                    ScopeLivenessError::CloseNotDominated(inst_loc) => {
+                        NestedScopeVerificationErrorKind::CloseNotDominated(inst_loc)
                     }
-                    ScopeLivenessError::IndeterminateState => {
-                        NestedScopeVerificationErrorKind::IndeterminateState
+                    ScopeLivenessError::IndeterminateState(block_id) => {
+                        NestedScopeVerificationErrorKind::IndeterminateState(block_id)
                     }
+                    ScopeLivenessError::DeadClose(..) => unreachable!(),
                 },
                 scope,
             })?;
 
-            for &(block_id, inst_index) in scope_uses.get(scope).into_iter().flatten() {
-                let live_range =
-                    scope_liveness
-                        .for_block(block_id)
-                        .ok_or(NestedScopeVerificationError {
-                            kind: NestedScopeVerificationErrorKind::UseNotInRange,
-                            scope,
-                        })?;
+            for &inst_loc in scope_uses.get(scope).into_iter().flatten() {
+                let live_range = scope_liveness.for_block(inst_loc.block_id).ok_or(
+                    NestedScopeVerificationError {
+                        kind: NestedScopeVerificationErrorKind::UseNotInRange(inst_loc),
+                        scope,
+                    },
+                )?;
 
-                if live_range.start.is_some_and(|start| inst_index <= start) {
+                if live_range
+                    .start
+                    .is_some_and(|start| inst_loc.index <= start)
+                {
                     return Err(NestedScopeVerificationError {
-                        kind: NestedScopeVerificationErrorKind::UseNotInRange,
+                        kind: NestedScopeVerificationErrorKind::UseNotInRange(inst_loc),
                         scope,
                     });
                 }
-                if live_range.end.is_some_and(|end| inst_index >= end) {
+                if live_range.end.is_some_and(|end| inst_loc.index >= end) {
                     return Err(NestedScopeVerificationError {
-                        kind: NestedScopeVerificationErrorKind::UseNotInRange,
+                        kind: NestedScopeVerificationErrorKind::UseNotInRange(inst_loc),
                         scope,
                     });
                 }
@@ -251,8 +259,14 @@ where
         for scope in scopes.ids() {
             let nesting_level = this.scope_meta[scope].nesting_level;
 
-            for &(use_block_id, use_inst_index) in scope_uses.get(scope).into_iter().flatten() {
-                for (live_scope, liveness_range) in this.live_for_block(use_block_id) {
+            for &use_inst_loc in scope_uses.get(scope).into_iter().flatten() {
+                for (inner_scope, inner_liveness_range) in
+                    this.live_for_block(use_inst_loc.block_id)
+                {
+                    if this.scope_meta[inner_scope].nesting_level <= nesting_level {
+                        continue;
+                    }
+
                     fn in_range(inst_index: usize, liveness_range: &ScopeBlockLiveness) -> bool {
                         if liveness_range.start.is_some_and(|start| inst_index < start) {
                             return false;
@@ -265,11 +279,12 @@ where
                         true
                     }
 
-                    if this.scope_meta[live_scope].nesting_level > nesting_level
-                        && in_range(use_inst_index, &liveness_range)
-                    {
+                    if in_range(use_inst_loc.index, &inner_liveness_range) {
                         return Err(NestedScopeVerificationError {
-                            kind: NestedScopeVerificationErrorKind::UseOverlapsInner,
+                            kind: NestedScopeVerificationErrorKind::UseOverlapsInner {
+                                inner_scope,
+                                instruction: use_inst_loc,
+                            },
                             scope,
                         });
                     }
@@ -321,11 +336,11 @@ where
     ///
     /// If the given instruction is itself a scope open or close, then this will return the *outer*
     /// scope for that instruction.
-    pub fn deepest_for(&self, block_id: ir::BlockId, inst_index: usize) -> Option<I> {
+    pub fn deepest_for(&self, inst_loc: ir::InstLocation) -> Option<I> {
         let mut deepest = None;
-        for (scope, liveness) in self.live_for_block(block_id) {
-            let within_bounds = liveness.start.is_none_or(|start| inst_index > start)
-                && liveness.end.is_none_or(|end| inst_index < end);
+        for (scope, liveness) in self.live_for_block(inst_loc.block_id) {
+            let within_bounds = liveness.start.is_none_or(|start| inst_loc.index > start)
+                && liveness.end.is_none_or(|end| inst_loc.index < end);
 
             if within_bounds
                 && deepest.is_none_or(|prev_scope| {
@@ -392,7 +407,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scopes_loop_closes() {
+    fn test_nested_scopes_loop_closes() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -436,14 +451,14 @@ mod tests {
         assert!(matches!(
             ThisScopeLiveness::compute(&ir),
             Err(NestedScopeVerificationError {
-                kind: NestedScopeVerificationErrorKind::IndeterminateState,
+                kind: NestedScopeVerificationErrorKind::IndeterminateState(..),
                 ..
             })
         ));
     }
 
     #[test]
-    fn test_scopes_loop_reopens() {
+    fn test_nested_scopes_loop_reopens() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -491,14 +506,14 @@ mod tests {
         assert!(matches!(
             ThisScopeLiveness::compute(&ir),
             Err(NestedScopeVerificationError {
-                kind: NestedScopeVerificationErrorKind::IndeterminateState,
+                kind: NestedScopeVerificationErrorKind::IndeterminateState(..),
                 ..
             })
         ));
     }
 
     #[test]
-    fn test_scope_not_nested() {
+    fn test_nested_scopes_not_nested() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -556,7 +571,76 @@ mod tests {
     }
 
     #[test]
-    fn test_scope_nesting_level() {
+    fn test_nested_scopes_accesses_inner() {
+        let mut instructions = ir::InstructionMap::<&'static str>::new();
+        let mut blocks = ir::BlockMap::new();
+        let mut this_scopes = ir::ThisScopeSet::new();
+
+        let outer_scope = this_scopes.insert(());
+        let inner_scope = this_scopes.insert(());
+
+        let block_a_id = blocks.insert(ir::Block::default());
+        let block_b_id = blocks.insert(ir::Block::default());
+
+        let block_a = &mut blocks[block_a_id];
+
+        block_a
+            .instructions
+            .push(instructions.insert(ir::Instruction::OpenThisScope(outer_scope)));
+
+        let this = instructions.insert(ir::Instruction::NewObject);
+        block_a.instructions.push(this);
+
+        block_a.exit = ir::Exit::Jump(block_b_id);
+
+        let block_b = &mut blocks[block_b_id];
+
+        block_b
+            .instructions
+            .push(instructions.insert(ir::Instruction::OpenThisScope(inner_scope)));
+
+        block_b
+            .instructions
+            .push(instructions.insert(ir::Instruction::SetThis(outer_scope, this)));
+
+        block_b
+            .instructions
+            .push(instructions.insert(ir::Instruction::CloseThisScope(inner_scope)));
+
+        block_b
+            .instructions
+            .push(instructions.insert(ir::Instruction::CloseThisScope(outer_scope)));
+
+        let ir = ir::Function {
+            num_parameters: 0,
+            is_constructor: false,
+            reference: FunctionRef::Chunk,
+            instructions,
+            spans: Default::default(),
+            blocks,
+            variables: Default::default(),
+            shadow_vars: Default::default(),
+            this_scopes,
+            call_scopes: Default::default(),
+            functions: Default::default(),
+            start_block: block_a_id,
+        };
+
+        assert!(matches!(
+            ThisScopeLiveness::compute(&ir),
+            Err(NestedScopeVerificationError {
+                kind:
+                    NestedScopeVerificationErrorKind::UseOverlapsInner {
+                    inner_scope: inner,
+                    ..
+                },
+                ..
+            }) if inner == inner_scope
+        ));
+    }
+
+    #[test]
+    fn test_nested_scopes_nesting_level() {
         let mut instructions = ir::InstructionMap::<&'static str>::new();
         let mut blocks = ir::BlockMap::new();
         let mut this_scopes = ir::ThisScopeSet::new();
@@ -611,7 +695,7 @@ mod tests {
         let liveness = ThisScopeLiveness::compute(&ir).unwrap();
 
         assert!(liveness.nesting() == 2);
-        assert!(liveness.deepest_for(block_b_id, 1) == Some(inner_scope));
+        assert!(liveness.deepest_for(ir::InstLocation::new(block_b_id, 1)) == Some(inner_scope));
         assert!(liveness.inner_scopes(outer_scope).eq([inner_scope]));
         assert!(liveness.nesting_level(outer_scope) == Some(0));
         assert!(liveness.nesting_level(inner_scope) == Some(1));

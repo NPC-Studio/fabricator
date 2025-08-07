@@ -184,9 +184,9 @@ impl RegisterAllocation {
 
                             // Return true if the source instruction for the given upsilon is any
                             // instruction other than the one we are trying to coalesce.
-                            let upsilon_source_conflict = |(block_id, index)| {
-                                let ir::Instruction::Upsilon(_, source_inst_id) =
-                                    ir.instructions[ir.blocks[block_id].instructions[index]]
+                            let upsilon_source_conflict = |inst_loc: ir::InstLocation| {
+                                let ir::Instruction::Upsilon(_, source_inst_id) = ir.instructions
+                                    [ir.blocks[inst_loc.block_id].instructions[inst_loc.index]]
                                 else {
                                     unreachable!();
                                 };

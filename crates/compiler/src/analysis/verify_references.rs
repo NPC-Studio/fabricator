@@ -4,40 +4,40 @@ use crate::ir;
 
 #[derive(Debug, Error)]
 pub enum ReferenceVerificationError {
-    #[error("instruction B{}:{} is invalid", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} is invalid", inst_location)]
     BadInstruction {
         bad: ir::InstId,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
-    #[error("B{} successor is invalid", block.index())]
+    #[error("{} successor is invalid", block)]
     BadSuccessor {
         bad: ir::BlockId,
         block: ir::BlockId,
     },
-    #[error("instruction B{}:{} references invalid source", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} references invalid source", inst_location)]
     BadSource {
         bad: ir::InstId,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
-    #[error("instruction B{}:{} references invalid variable", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} references invalid variable", inst_location)]
     BadVariable {
         bad: ir::VarId,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
-    #[error("instruction B{}:{} references invalid shadow variable", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} references invalid shadow variable", inst_location)]
     BadShadowVar {
         bad: ir::ShadowVar,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
-    #[error("instruction B{}:{} references invalid 'this' scope", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} references invalid 'this' scope", inst_location)]
     BadThisScope {
         bad: ir::ThisScope,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
-    #[error("instruction B{}:{} references invalid sub-function", inst_location.0.index(), inst_location.1)]
+    #[error("instruction {} references invalid sub-function", inst_location)]
     BadFunction {
         bad: ir::FuncId,
-        inst_location: (ir::BlockId, usize),
+        inst_location: ir::InstLocation,
     },
 }
 
@@ -56,19 +56,20 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
         }
 
         for (inst_index, inst_id) in block.instructions.iter().copied().enumerate() {
+            let inst_location = ir::InstLocation::new(block_id, inst_index);
             let inst =
                 ir.instructions
                     .get(inst_id)
                     .ok_or(ReferenceVerificationError::BadInstruction {
                         bad: inst_id,
-                        inst_location: (block_id, inst_index),
+                        inst_location,
                     })?;
 
             for source in inst.sources() {
                 if !ir.instructions.contains(source) {
                     return Err(ReferenceVerificationError::BadSource {
                         bad: source,
-                        inst_location: (block_id, inst_index),
+                        inst_location,
                     });
                 }
             }
@@ -81,7 +82,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     if !ir.variables.contains(var_id) {
                         return Err(ReferenceVerificationError::BadVariable {
                             bad: var_id,
-                            inst_location: (block_id, inst_index),
+                            inst_location,
                         });
                     }
                 }
@@ -90,7 +91,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     if !ir.shadow_vars.contains(shadow_var) {
                         return Err(ReferenceVerificationError::BadShadowVar {
                             bad: shadow_var,
-                            inst_location: (block_id, inst_index),
+                            inst_location: ir::InstLocation::new(block_id, inst_index),
                         });
                     }
                 }
@@ -101,7 +102,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     if !ir.this_scopes.contains(scope) {
                         return Err(ReferenceVerificationError::BadThisScope {
                             bad: scope,
-                            inst_location: (block_id, inst_index),
+                            inst_location,
                         });
                     }
                 }
@@ -110,7 +111,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     if !ir.functions.contains(func_id) {
                         return Err(ReferenceVerificationError::BadFunction {
                             bad: func_id,
-                            inst_location: (block_id, inst_index),
+                            inst_location,
                         });
                     }
                 }

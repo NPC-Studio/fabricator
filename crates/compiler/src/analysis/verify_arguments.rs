@@ -3,9 +3,9 @@ use thiserror::Error;
 use crate::ir;
 
 #[derive(Debug, Error)]
-#[error("instruction references argument that is out of range")]
+#[error("instruction at {location} references argument that is out of range")]
 pub struct ArgumentVerificationError {
-    pub location: (ir::BlockId, usize),
+    pub location: ir::InstLocation,
     pub argument: usize,
 }
 
@@ -18,7 +18,7 @@ pub fn verify_arguments<S>(ir: &ir::Function<S>) -> Result<(), ArgumentVerificat
             if let ir::Instruction::Argument(index) = ir.instructions[inst_id] {
                 if index >= ir.num_parameters {
                     return Err(ArgumentVerificationError {
-                        location: (block_id, inst_index),
+                        location: ir::InstLocation::new(block_id, inst_index),
                         argument: index,
                     });
                 }

@@ -67,7 +67,7 @@ pub struct IrGenSettings {
 
     /// Allow lambda expressions to reference variables from outer functions.
     ///
-    /// Without this, such variables will instead be interpreted as implicit `self` variables.
+    /// Without this, such variables will instead be interpreted as implicit `this` variables.
     ///
     /// # Lexical scoping and closures
     ///
@@ -1161,7 +1161,7 @@ where
                     match field {
                         ast::Field::Value(name, value) => {
                             let this_scope = if matches!(value, ast::Expression::Function(_)) {
-                                // Within a struct literal, closures always bind `self` to the
+                                // Within a struct literal, closures always bind `this` to the
                                 // struct currently being created.
                                 let this_scope = self.function.this_scopes.insert(());
                                 self.push_instruction(
@@ -1453,7 +1453,7 @@ where
         }
 
         // Function calls on fields are interpreted as "methods", and implicitly bind the containing
-        // object as `self` for the function call.
+        // object as `this` for the function call.
         let call_type = if let ast::Expression::Field(field_expr) = &*call.base {
             let object = self.expression(&field_expr.base)?;
             let key = self.push_instruction(

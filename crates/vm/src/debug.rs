@@ -24,18 +24,9 @@ impl Span {
         Self { start, end }
     }
 
-    /// Returns a maximally full span with `start` set to `0` and `end` set to `usize::MAX`.
-    #[must_use]
-    pub fn everywhere() -> Self {
-        Self {
-            start: 0,
-            end: usize::MAX,
-        }
-    }
-
     /// Returns a maximally empty span with `start` set to `usize::MAX` and `end` set to `0`.
     ///
-    /// Combining any span with a null span will result in the combined span.
+    /// Combining a null span with any other span will always result the other span.
     #[must_use]
     pub fn null() -> Self {
         Self {
@@ -48,6 +39,22 @@ impl Span {
     #[must_use]
     pub fn is_null(&self) -> bool {
         *self == Self::null()
+    }
+
+    /// Returns a maximally full span with `start` set to `0` and `end` set to `usize::MAX`.
+    ///
+    /// Combining an everywhere span with another span will always result in the everywhere span.
+    #[must_use]
+    pub fn everywhere() -> Self {
+        Self {
+            start: 0,
+            end: usize::MAX,
+        }
+    }
+
+    /// Returns true if this span is the special everywhere span.
+    pub fn is_everywhere(&self) -> bool {
+        *self == Self::everywhere()
     }
 
     /// Returns an empty span starting at the given position.
@@ -246,11 +253,15 @@ impl<'gc> Chunk<'gc> {
     }
 }
 
+/// The source origination of a prototype within some chunk.
 #[derive(Debug, Clone, Collect)]
 #[collect(require_static)]
 pub enum FunctionRef {
+    // The function has a name from a declaration statement and the span is of the statement.
     Named(RefName, Span),
+    // The function is an anonymous expression and the span is of the expression.
     Expression(Span),
+    // The function is top-level and represents execution of an entire chunk.
     Chunk,
 }
 

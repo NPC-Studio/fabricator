@@ -129,7 +129,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
     for &block_id in &block_order {
         let mut needs_to_save = |inst_index: usize| -> Result<(), ProtoGenError> {
-            if let Some(call_scope) = call_scope_liveness.deepest_for(block_id, inst_index) {
+            if let Some(call_scope) =
+                call_scope_liveness.deepest_for(ir::InstLocation::new(block_id, inst_index))
+            {
                 call_scopes_which_save.insert(call_scope);
                 // If this is a most-inner scope, then we need to add another register to
                 // save to.
@@ -167,7 +169,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let get_current_stack_top_register =
         |block_id: ir::BlockId, inst_index: usize| -> instructions::RegIdx {
             let idx = if let Some(enclosing_call_scope) =
-                call_scope_liveness.deepest_for(block_id, inst_index)
+                call_scope_liveness.deepest_for(ir::InstLocation::new(block_id, inst_index))
             {
                 call_scope_liveness
                     .nesting_level(enclosing_call_scope)

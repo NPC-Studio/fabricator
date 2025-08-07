@@ -16,6 +16,70 @@ new_id_type! {
     pub struct FuncId;
 }
 
+impl fmt::Display for BlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "B{}", self.index())
+    }
+}
+
+impl fmt::Display for InstId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "I{}", self.index())
+    }
+}
+
+impl fmt::Display for VarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "V{}", self.index())
+    }
+}
+
+impl fmt::Display for ShadowVar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SV{}", self.index())
+    }
+}
+
+impl fmt::Display for ThisScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Tscope{}", self.index())
+    }
+}
+
+impl fmt::Display for CallScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Cscope{}", self.index())
+    }
+}
+
+impl fmt::Display for FuncId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "F{}", self.index())
+    }
+}
+
+/// The location of an instruction in an IR.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct InstLocation {
+    pub block_id: BlockId,
+    pub index: usize,
+}
+
+impl fmt::Display for InstLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "B{}:{}", self.block_id.index(), self.index)
+    }
+}
+
+impl InstLocation {
+    pub fn new(block_id: BlockId, inst_index: usize) -> Self {
+        Self {
+            block_id,
+            index: inst_index,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
     IsDefined,
@@ -100,84 +164,90 @@ impl<S> Variable<S> {
 /// `start_block` that may reach a `Phi` instruction must have an `Upsilon` that assigns to that
 /// `Phi`'s shadow variable to ensure that it has a defined value.
 ///
+/// # Scopes
+///
+/// Several IR instructions operate on some resource that is shared between instructions. These
+/// resources require bounded regions of the CFG where the resource state can be statically
+/// determined, and these regions are called IR "scopes".
+///
+/// Specific scopes may have further restrictions, but all scopes share a number of rules:
+///
+/// * Scopes must have *exactly one* open instruction.
+/// * Scopes may have any number of close instructions, including zero. Any function exit implicitly
+///   closes all scopes.
+/// * All instructions which operate on a scope must fall within the live region of that scope. The
+///   CFG region between the single open instruction and any close is referred as the scope's "live
+///   region", or that the scope is "open" within this region.
+/// * All incoming edges to a block must be in the same state for every scope, either all open or
+///   all closed for that scope. In simpler terms, this means that every region in the CFG must be
+///   deterministically either open or closed for every scope. This rule also implies that it is not
+///   possible to re-open a scope without closing it first, because if the block is reachable, it
+///   has an incoming edge where it must be closed, so every incoming edge must be closed.
+/// * All explicit scope closures must occur when a scope is open. Since we know that nowhere in
+///   the CFG can be both open and closed depending on the path taken, this simply means that there
+///   cannot be a "dead" close instruction that always closes an already closed scope.
+///
+/// Primarily these rules enable correct and more efficient codegen where scopes represent a
+/// resource with strict rules about obtaining and releasing it, but they also serve a second
+/// important purpose. The rules may be sometimes more restrictive than strictly required for the
+/// resource in question, but the rules help to verify that generated IR is correct in complex
+/// situations. It is very easy to accidentally generate IR for loops that places a scope open
+/// close on the inside rather than the outside of a loop or vice versa. Since these rules can be
+/// statically verified, this helps to catch what would otherwise be very hard to track down IR
+/// generation bugs.
+///
 /// # Variables
 ///
 /// IR "variables" represent notionally heap allocated values that are an escape hatch for SSA form.
 /// Each `Variable` references a unique variable, and `GetVariable` and `SetVariable` instructions
 /// read from and write to these variables.
 ///
-/// The output of the compiler will use these IR variables to represent actual variables in code,
+/// The compiler will generate IR that uses these variables to represent actual variables in code,
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
 /// `Upsilon` instructions.
 ///
 /// Normally, *all* owned IR variables can be converted into SSA form in this way, but any variables
-/// that are prototype-level statics or shared across parent / child functions will not be converted
+/// that are prototype-level statics or shared across parent / child closures will not be converted
 /// to SSA form. These shared variables that remain after optimization will instead be represented
 /// by VM "heap" variables, allowing them to be shared across closures.
 ///
-/// In order for the IR to be well-formed, variables must follow the following rules:
+/// Variables have a "scope" as described above, their scope is opened with `OpenVariable` and
+/// closed with `CloseVariable`. There are very few additional rules:
 ///
-/// * All owned variables must have *exactly one* `OpenVariable` instruction and *at most one*
-///   `CloseVariable` instruction.
 /// * Static and upvalue variables can be used anywhere in their containing function and in
 ///   well-formed IR must have neither `OpenVariable` nor `CloseVariable` instructions. These
-///   variables are always open for the entire lifetime of the closure that contains them.
-/// * There should be nowhere in the CFG where a variable can potentially be either opened or
-///   closed, depending on the path taken. Every location must, for every variable, be either
-///   *definitely* open or *definitely* closed for that variable. This is meant to imply also that
-///   it should not be possible to re-open a variable without closing it first (you should not be
-///   able to enter a single block in both an open and closed state).
-/// * Every `GetVariable`, `SetVariable`, and `Closure` instruction that uses a variable must be in
-///   a definitely-open location in the CFG for that variable.
+///   variables are always considered open for the entire CFG of the function that contains
+///   them.
+/// * The `Closure` instruction is considered to use every variable that the child function
+///   references as an upvalue.
 ///
-/// These rules are more restrictive than strictly necessary to generate VM code, but they exist
-/// to verify that generated IR is correct in situations where a closure is crated and closes over
-/// variables that are opened / closed in some kind of loop. These errors can be hard to catch and
-/// would otherwise *only* appear when variables are actually captured by a closure, so verifying
-/// these rules in the generated IR for *all* variables helps ensure that generated IR is always
-/// correct.
+/// # Nested Scopes
 ///
-/// # Scopes
+/// "Nested Scopes" have similar rules to regular scopes but are more restrictive. The purpose of
+/// nested scopes is to guard access in the IR to some single shared resource, ensuring that only
+/// one logical "section" of the IR is operating on this resource at a time.
 ///
-/// "Scopes" have similar rules to variables but are even more restrictive. The purpose of scopes is
-/// to guard access in the IR to some shared resource, ensuring that only one logical "section" of
-/// the IR is operating on this resource at a time.
+/// There are two kinds of nested scopes: "this" scopes and "call" scopes; "this" scopes guard the
+/// `this` and `other` registers, and "call" scopes guard the stack.
 ///
-/// There are two kinds of "scopes" that work the same way: "this" scopes and "call" scopes; "this"
-/// scopes guard the `this` and `other` registers, and "call" scopes guard the stack.
+/// Nested scopes come with some additional rules:
 ///
-/// The rules for "open" and "close" instructions on scopes are similar to the ones for variables:
+/// * All instructions which operate on a scope must NOT be within the open region of some other,
+///   different scope.
+/// * As an exception to the above rule, nested scopes, like their name implies, may be *strictly*
+///   nested. "Strictly nested" means that the live range of an inner scope must lie *entirely*
+///   within the live range of the outer scope. In simpler terms, this means that  the inner open
+///   must always come after the outer open, and any inner close must always come before any outer
+///   close (or they can be closed at the same time due to a function exit). This exception to
+///   the above rule only applies to the *innermost* open scope, an outer scope may not have any
+///   instructions which fall in the live region of an inner scope.
 ///
-/// * All scopes must have *exactly one* open instruction and *at most one* close instruction.
-/// * All instructions which operate on a scope must fall strictly between the instruction that
-///   opens the scope and the instruction that closes it (if it exists).
-/// * There should be nowhere in the CFG where a scope can potentially be either opened or closed,
-///   depending on the path taken. Every location must, for every scope, be either *definitely* open
-///   or *definitely* closed for that scope. Similar to variables, this is meant to imply also that
-///   it should not be possible to re-open a scope without closing it first (you should not be able
-///   to enter a single block in both an open and closed state).
-///
-/// There is one additional restriction, due to the fact that all scopes operate on a single shared
-/// resource:
-///
-/// * All instructions which operate on an opened scope must NOT be within some *other* open / close
-///   pair for a different scope.
-///
-/// Scopes are allowed to be nested but must be strictly so: the inner scope must be closed before
-/// the outer scope is closed, and none of the operations on the outer scope may fall within the
-/// inner scope. This is implied by the above rule but subtly so: the *close* instruction counts as
-/// "operating on" for its own scope, so it cannot be within some other open / close pair.
-///
-/// The reasoning for this rule is that since the guarded resource is shared, any overlapping
-/// access of this resource would cause unrelated sections of IR to interfere. Nesting is explicitly
-/// allowed becuase open instructions are meant to set-up these shared resources in some way no
-/// matter their current state, and the close instructions are meant to *restore the previous
-/// state*. As long as scopes are strictly nested, then the state of the resource will be saved and
-/// restored in such a way that an outer scope should not be able to observe if an inner scope is
-/// opened and closed inside.
-///
-/// Similar to variables, these rules are not strictly necessary to generate working VM code, but
-/// they exist catch IR generation errors which would otherwise be very difficult to debug.
+/// The reasoning for this rule is that since the scopes guard a single shared resource, any
+/// overlapping access of this resource would cause unrelated sections of IR to interfere. Nesting
+/// is explicitly allowed becuase open instructions are meant to save the previous state of the
+/// resource and the close instructions are meant to restore it. As long as scopes are strictly
+/// nested, then the state of the resource will be saved and restored in such a way that an outer
+/// scope should not be able to observe if an inner scope was opened and closed inside.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction<S> {
     NoOp,
@@ -523,7 +593,7 @@ impl<S: AsRef<str>> Function<S> {
             let block = &self.blocks[block_id];
 
             write_indent(f, 0)?;
-            writeln!(f, "block B{}:", block_id.index())?;
+            writeln!(f, "block {}:", block_id)?;
 
             for &inst_id in &block.instructions {
                 let inst = &self.instructions[inst_id];
@@ -536,37 +606,37 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "no_op()")?;
                     }
                     Instruction::Copy(source) => {
-                        writeln!(f, "copy(I{})", source.index())?;
+                        writeln!(f, "copy({source})")?;
                     }
                     Instruction::Undefined => {
                         writeln!(f, "undefined()")?;
                     }
                     Instruction::Boolean(b) => {
-                        writeln!(f, "boolean({})", b)?;
+                        writeln!(f, "boolean({b})")?;
                     }
                     Instruction::Constant(constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;
                     }
                     Instruction::Closure(closure) => {
-                        writeln!(f, "closure(F{})", closure.index())?;
+                        writeln!(f, "closure({closure})")?;
                     }
                     Instruction::OpenVariable(var) => {
-                        writeln!(f, "open_var(V{})", var.index())?;
+                        writeln!(f, "open_var({var})")?;
                     }
                     Instruction::GetVariable(var) => {
-                        writeln!(f, "get_var(V{})", var.index())?;
+                        writeln!(f, "get_var({var})")?;
                     }
                     Instruction::SetVariable(var, source) => {
-                        writeln!(f, "set_var(V{}, I{})", var.index(), source.index())?;
+                        writeln!(f, "set_var({var}, {source})")?;
                     }
                     Instruction::CloseVariable(var) => {
-                        writeln!(f, "close_var(V{})", var.index())?;
+                        writeln!(f, "close_var({var})")?;
                     }
                     Instruction::GetMagic(magic) => {
                         writeln!(f, "get_magic({:?})", magic.as_ref())?;
                     }
                     Instruction::SetMagic(magic, source) => {
-                        writeln!(f, "set_magic({:?}, I{})", magic.as_ref(), source.index())?;
+                        writeln!(f, "set_magic({:?}, {source})", magic.as_ref())?;
                     }
                     Instruction::Globals => {
                         writeln!(f, "globals()")?;
@@ -581,13 +651,13 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "current_closure()")?;
                     }
                     Instruction::OpenThisScope(scope) => {
-                        writeln!(f, "open_this_scope(TS{})", scope.index())?;
+                        writeln!(f, "open_this_scope({scope})")?;
                     }
                     Instruction::SetThis(scope, this) => {
-                        writeln!(f, "set_this(TS{}, this = {})", scope.index(), this.index())?;
+                        writeln!(f, "set_this({scope}, this = {this})")?;
                     }
                     Instruction::CloseThisScope(scope) => {
-                        writeln!(f, "close_this_scope(TS{})", scope.index())?;
+                        writeln!(f, "close_this_scope({scope})")?;
                     }
                     Instruction::NewObject => {
                         writeln!(f, "new_object()")?;
@@ -596,49 +666,34 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "new_array()")?;
                     }
                     Instruction::Argument(ind) => {
-                        writeln!(f, "argument({})", ind)?;
+                        writeln!(f, "argument({ind})")?;
                     }
                     Instruction::GetField { object, key } => {
-                        writeln!(
-                            f,
-                            "get_field(object = I{}, key = I{})",
-                            object.index(),
-                            key.index(),
-                        )?;
+                        writeln!(f, "get_field(object = {object}, key = {key})",)?;
                     }
                     Instruction::SetField { object, key, value } => {
                         writeln!(
                             f,
-                            "set_field(object = I{}, key = I{}, value = I{})",
-                            object.index(),
-                            key.index(),
-                            value.index(),
+                            "set_field(object = {object}, key = {key}, value = {value})",
                         )?;
                     }
                     Instruction::GetFieldConst { object, key } => {
-                        writeln!(
-                            f,
-                            "get_field(object = I{}, key = {:?})",
-                            object.index(),
-                            key.as_str(),
-                        )?;
+                        writeln!(f, "get_field(object = {object}, key = {:?})", key.as_str(),)?;
                     }
                     Instruction::SetFieldConst { object, key, value } => {
                         writeln!(
                             f,
-                            "set_field(object = I{}, key = {:?}, value = I{})",
-                            object.index(),
+                            "set_field(object = {object}, key = {:?}, value = {value})",
                             key.as_str(),
-                            value.index()
                         )?;
                     }
                     Instruction::GetIndex { array, indexes } => {
-                        write!(f, "get_index(array = I{}, indexes = [", array.index(),)?;
+                        write!(f, "get_index(array = {array}, indexes = [")?;
                         for (i, &ind) in indexes.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;
                             }
-                            write!(f, "I{}", ind.index())?;
+                            write!(f, "{ind}")?;
                         }
                         writeln!(f, "])")?;
                     }
@@ -647,25 +702,19 @@ impl<S: AsRef<str>> Function<S> {
                         indexes,
                         value,
                     } => {
-                        write!(
-                            f,
-                            "set_index(array = I{}, value = I{}, indexes = [",
-                            array.index(),
-                            value.index()
-                        )?;
+                        write!(f, "set_index(array = {array}, value = {value}, indexes = [",)?;
                         for (i, &ind) in indexes.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;
                             }
-                            write!(f, "I{}", ind.index())?;
+                            write!(f, "{ind}")?;
                         }
                         writeln!(f, "])")?;
                     }
                     Instruction::GetIndexConst { array, index } => {
                         writeln!(
                             f,
-                            "get_index(array = I{}, indexes = [{:?}])",
-                            array.index(),
+                            "get_index(array = {array}, indexes = [{:?}])",
                             index.as_str(),
                         )?;
                     }
@@ -676,108 +725,101 @@ impl<S: AsRef<str>> Function<S> {
                     } => {
                         writeln!(
                             f,
-                            "set_index(array = I{}, value = I{}, indexes = [{:?}])",
-                            array.index(),
-                            value.index(),
+                            "set_index(array = {array}, value = {value}, indexes = [{:?}])",
                             index.as_str(),
                         )?;
                     }
                     Instruction::Phi(shadow) => {
-                        writeln!(f, "phi(S{})", shadow.index())?;
+                        writeln!(f, "phi({shadow})")?;
                     }
                     Instruction::Upsilon(shadow, source) => {
-                        writeln!(f, "upsilon(S{}, I{})", shadow.index(), source.index())?;
+                        writeln!(f, "upsilon({shadow}, {source})")?;
                     }
                     Instruction::UnOp { op, source } => match op {
                         UnOp::IsDefined => {
-                            writeln!(f, "is_defined(I{})", source.index())?;
+                            writeln!(f, "is_defined({source})")?;
                         }
                         UnOp::IsUndefined => {
-                            writeln!(f, "is_undefined(I{})", source.index())?;
+                            writeln!(f, "is_undefined({source})")?;
                         }
                         UnOp::Test => {
-                            writeln!(f, "into_bool(I{})", source.index())?;
+                            writeln!(f, "into_bool({source})")?;
                         }
                         UnOp::Not => {
-                            writeln!(f, "not(I{})", source.index())?;
+                            writeln!(f, "not({source})")?;
                         }
                         UnOp::Neg => {
-                            writeln!(f, "neg(I{})", source.index())?;
+                            writeln!(f, "neg({source})")?;
                         }
                         UnOp::Increment => {
-                            writeln!(f, "increment(I{})", source.index())?;
+                            writeln!(f, "increment({source})")?;
                         }
                         UnOp::Decrement => {
-                            writeln!(f, "decrement(I{})", source.index())?;
+                            writeln!(f, "decrement({source})")?;
                         }
                     },
                     Instruction::BinOp { left, op, right } => match op {
                         BinOp::Add => {
-                            writeln!(f, "add(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "add({left}, {right})")?;
                         }
                         BinOp::Sub => {
-                            writeln!(f, "sub(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "sub({left}, {right})")?;
                         }
                         BinOp::Mult => {
-                            writeln!(f, "mult(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "mult({left}, {right})")?;
                         }
                         BinOp::Div => {
-                            writeln!(f, "div(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "div({left}, {right})")?;
                         }
                         BinOp::Rem => {
-                            writeln!(f, "rem(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "rem({left}, {right})")?;
                         }
                         BinOp::IDiv => {
-                            writeln!(f, "idiv(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "idiv({left}, {right})")?;
                         }
                         BinOp::LessThan => {
-                            writeln!(f, "less_than(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "less_than({left}, {right})")?;
                         }
                         BinOp::LessEqual => {
-                            writeln!(f, "less_equal(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "less_equal({left}, {right})")?;
                         }
                         BinOp::Equal => {
-                            writeln!(f, "equal(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "equal({left}, {right})")?;
                         }
                         BinOp::NotEqual => {
-                            writeln!(f, "not_equal(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "not_equal({left}, {right})")?;
                         }
                         BinOp::GreaterThan => {
-                            writeln!(f, "greater_than(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "greater_than({left}, {right})")?;
                         }
                         BinOp::GreaterEqual => {
-                            writeln!(f, "greater_equal(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "greater_equal({left}, {right})")?;
                         }
                         BinOp::And => {
-                            writeln!(f, "and(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "and({left}, {right})")?;
                         }
                         BinOp::Or => {
-                            writeln!(f, "or(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "or({left}, {right})")?;
                         }
                         BinOp::NullCoalesce => {
-                            writeln!(f, "null_coalesce(I{}, I{})", left.index(), right.index())?;
+                            writeln!(f, "null_coalesce({left}, {right})")?;
                         }
                     },
                     Instruction::OpenCall { scope, func, args } => {
-                        write!(
-                            f,
-                            "open_call(CS{}, I{}, args = [",
-                            scope.index(),
-                            func.index(),
-                        )?;
+                        write!(f, "open_call({scope}, {func}, args = [",)?;
                         for (i, &arg) in args.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;
                             }
-                            write!(f, "I{}", arg.index())?;
+                            write!(f, "{arg}")?;
                         }
                         writeln!(f, "])")?;
                     }
                     Instruction::GetReturn(scope, index) => {
-                        writeln!(f, "get_return(CS{}, {})", scope.index(), index)?;
+                        writeln!(f, "get_return({scope}, {})", index)?;
                     }
                     Instruction::CloseCall(scope) => {
-                        writeln!(f, "close_call(CS{})", scope.index())?;
+                        writeln!(f, "close_call({scope})")?;
                     }
                 }
             }
@@ -786,27 +828,21 @@ impl<S: AsRef<str>> Function<S> {
             match block.exit {
                 Exit::Return { value } => match value {
                     Some(value) => {
-                        writeln!(f, "return(I{})", value.index())?;
+                        writeln!(f, "return({value})")?;
                     }
                     None => {
                         writeln!(f, "return()")?;
                     }
                 },
                 Exit::Jump(block_id) => {
-                    writeln!(f, "jump(B{})", block_id.index())?;
+                    writeln!(f, "jump({})", block_id)?;
                 }
                 Exit::Branch {
                     cond,
                     if_true,
                     if_false,
                 } => {
-                    writeln!(
-                        f,
-                        "branch(I{}, false => B{}, true => B{})",
-                        cond.index(),
-                        if_false.index(),
-                        if_true.index()
-                    )?;
+                    writeln!(f, "branch({cond}, false => {if_false}, true => {if_true})")?;
                 }
             }
 
@@ -814,7 +850,7 @@ impl<S: AsRef<str>> Function<S> {
         };
 
         write_indent(f, 0)?;
-        writeln!(f, "start_block(B{})", self.start_block.index())?;
+        writeln!(f, "start_block({})", self.start_block)?;
 
         for block_id in self.blocks.ids() {
             write_block(f, block_id)?;
@@ -824,7 +860,7 @@ impl<S: AsRef<str>> Function<S> {
             write_indent(f, 0)?;
             write!(f, "shadow_vars:")?;
             for shadow_var in self.shadow_vars.ids() {
-                write!(f, " S{}", shadow_var.index())?;
+                write!(f, " {shadow_var}")?;
             }
             writeln!(f)?;
         }
@@ -834,11 +870,11 @@ impl<S: AsRef<str>> Function<S> {
             write!(f, "variables:")?;
             for (id, var) in self.variables.iter() {
                 write_indent(f, 4)?;
-                write!(f, "V{}: ", id.index())?;
+                write!(f, "{}: ", id)?;
                 match var {
                     Variable::Owned => write!(f, "Owned")?,
                     Variable::Static(init) => write!(f, "Static({:?})", init.as_str())?,
-                    Variable::Upper(uid) => write!(f, "Upper(V{})", uid.index())?,
+                    Variable::Upper(uid) => write!(f, "Upper({uid})")?,
                 }
                 writeln!(f)?;
             }
@@ -846,7 +882,7 @@ impl<S: AsRef<str>> Function<S> {
 
         for (func_id, function) in self.functions.iter() {
             write_indent(f, 0)?;
-            writeln!(f, "function F{}:", func_id.index())?;
+            writeln!(f, "function {func_id}:")?;
             function.pretty_print(f, indent + 4)?;
         }
 

@@ -27,31 +27,28 @@ pub fn compute_upsilon_reachability<S>(
 
             if let Some(incoming) = liveness.incoming_range {
                 if let Some(upsilon) = incoming.start {
-                    live_upsilons.push((block_id, upsilon));
+                    live_upsilons.push(ir::InstLocation::new(block_id, upsilon));
                 }
                 phi_block = Some(block_id);
             }
 
             if let Some(outgoing) = liveness.outgoing_range {
                 if let Some(upsilon) = outgoing.start {
-                    live_upsilons.push((block_id, upsilon));
+                    live_upsilons.push(ir::InstLocation::new(block_id, upsilon));
                 }
             }
         }
 
         let phi_block = phi_block.unwrap();
 
-        let mut outgoing_reach: HashMap<ir::BlockId, Vec<(ir::BlockId, usize)>> =
+        let mut outgoing_reach: HashMap<ir::BlockId, Vec<ir::InstLocation>> =
             HashMap::from_iter(live_blocks.iter().map(|&block_id| (block_id, Vec::new())));
 
-        for &(upsilon_block_id, upsilon_index) in &live_upsilons {
+        for &upsilon_loc in &live_upsilons {
             depth_first_search(
-                upsilon_block_id,
+                upsilon_loc.block_id,
                 |block_id| {
-                    outgoing_reach
-                        .get_mut(&block_id)
-                        .unwrap()
-                        .push((upsilon_block_id, upsilon_index));
+                    outgoing_reach.get_mut(&block_id).unwrap().push(upsilon_loc);
 
                     // We only need to traverse down parts of the CFG that are live for this shadow
                     // variable.
@@ -89,12 +86,12 @@ pub struct UpsilonReach {
     ///
     /// The reach for the single incoming range for the shadow variable is always every live
     /// `Upsilon` instruction, by definition.
-    pub live_upsilons: Vec<(ir::BlockId, usize)>,
+    pub live_upsilons: Vec<ir::InstLocation>,
 
     /// If there is an outgoing range for the shadow variable in the block key, the `HashMap` will
     /// contain every `Upsilon` instruction that may have written to the variable in this region
     /// since the last execution of the `Phi` instruction.
-    pub outgoing_reach: HashMap<ir::BlockId, Vec<(ir::BlockId, usize)>>,
+    pub outgoing_reach: HashMap<ir::BlockId, Vec<ir::InstLocation>>,
 }
 
 #[cfg(test)]
@@ -167,11 +164,11 @@ mod tests {
         );
         assert_eq!(
             upsilon_reach[shadow_var].outgoing_reach[&block_a_id],
-            [(block_a_id, 1)]
+            [ir::InstLocation::new(block_a_id, 1)]
         );
         assert_eq!(
             upsilon_reach[shadow_var].outgoing_reach[&block_b_id],
-            [(block_b_id, 2)]
+            [ir::InstLocation::new(block_b_id, 2)]
         );
     }
 
@@ -231,7 +228,7 @@ mod tests {
         );
         assert_eq!(
             upsilon_reach[shadow_var].outgoing_reach[&block_a_id],
-            [(block_a_id, 1)]
+            [ir::InstLocation::new(block_a_id, 1)]
         );
         assert!(
             shadow_liveness
