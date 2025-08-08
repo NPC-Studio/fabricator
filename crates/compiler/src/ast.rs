@@ -17,6 +17,7 @@ pub struct Block<S> {
 
 #[derive(Debug, Clone)]
 pub enum Statement<S> {
+    Empty(Span),
     Block(BlockStatement<S>),
     Enum(EnumStatement<S>),
     Function(FunctionStatement<S>),
@@ -387,7 +388,9 @@ impl<S> Statement<S> {
             Statement::Call(call_expr) => call_expr.walk(visitor),
             Statement::Prefix(mutation) => mutation.walk(visitor),
             Statement::Postfix(mutation) => mutation.walk(visitor),
-            Statement::Break(_) | Statement::Continue(_) => ControlFlow::Continue(()),
+            Statement::Empty(_) | Statement::Break(_) | Statement::Continue(_) => {
+                ControlFlow::Continue(())
+            }
         }
     }
 
@@ -409,12 +412,15 @@ impl<S> Statement<S> {
             Statement::Call(call_expr) => call_expr.walk_mut(visitor),
             Statement::Prefix(mutation) => mutation.walk_mut(visitor),
             Statement::Postfix(mutation) => mutation.walk_mut(visitor),
-            Statement::Break(_) | Statement::Continue(_) => ControlFlow::Continue(()),
+            Statement::Empty(_) | Statement::Break(_) | Statement::Continue(_) => {
+                ControlFlow::Continue(())
+            }
         }
     }
 
     pub fn span(&self) -> Span {
         match self {
+            Statement::Empty(span) => *span,
             Statement::Block(block) => block.span,
             Statement::Enum(enum_stmt) => enum_stmt.span,
             Statement::Function(function_stmt) => function_stmt.span,

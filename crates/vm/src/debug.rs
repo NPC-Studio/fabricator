@@ -75,8 +75,18 @@ impl Span {
     }
 
     #[must_use]
+    pub fn start_span(&self) -> Span {
+        Span::empty(self.start)
+    }
+
+    #[must_use]
     pub fn end(&self) -> usize {
         self.end
+    }
+
+    #[must_use]
+    pub fn end_span(&self) -> Span {
+        Span::empty(self.end)
     }
 
     /// Return a span that encloses both this span and the given span.

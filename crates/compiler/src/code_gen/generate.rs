@@ -159,10 +159,10 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
                 _ => {}
             }
+        }
 
-            if let ir::Exit::Return { .. } = block.exit {
-                needs_to_save(ir.instructions.len())?;
-            }
+        if let ir::Exit::Return { .. } = block.exit {
+            needs_to_save(ir.instructions.len())?;
         }
     }
 

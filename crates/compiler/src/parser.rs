@@ -135,23 +135,32 @@ where
     /// Parse a statement including any trailing semicolon, if it is expected.
     fn parse_statement(&mut self) -> Result<ast::Statement<S>, ParseError> {
         self.look_ahead(1);
-        let (stmt, trailer) = self.parse_statement_body()?;
+        let &Token {
+            kind: ref tok_kind,
+            span: tok_span,
+        } = self.peek(0);
+        if matches!(tok_kind, TokenKind::SemiColon) {
+            self.advance(1);
+            Ok(ast::Statement::Empty(tok_span))
+        } else {
+            let (stmt, trailer) = self.parse_statement_body()?;
 
-        match trailer {
-            StatementTrailer::SemiColon => {
-                if self.settings.strict_semicolons {
-                    self.parse_token(TokenKind::SemiColon)?;
-                } else {
-                    self.look_ahead(1);
-                    if matches!(self.peek(0).kind, TokenKind::SemiColon) {
-                        self.advance(1);
+            match trailer {
+                StatementTrailer::SemiColon => {
+                    if self.settings.strict_semicolons {
+                        self.parse_token(TokenKind::SemiColon)?;
+                    } else {
+                        self.look_ahead(1);
+                        if matches!(self.peek(0).kind, TokenKind::SemiColon) {
+                            self.advance(1);
+                        }
                     }
                 }
+                StatementTrailer::NoSemiColon => {}
             }
-            StatementTrailer::NoSemiColon => {}
-        }
 
-        Ok(stmt)
+            Ok(stmt)
+        }
     }
 
     /// Parse a statement, not including any trailing semicolon.
@@ -243,12 +252,45 @@ where
             TokenKind::For => {
                 self.advance(1);
                 self.parse_token(TokenKind::LeftParen)?;
-                let initializer = self.parse_statement_body()?.0;
+
+                let check_terminator_tok = |this: &mut Self, tok: TokenKind<()>| -> Option<Span> {
+                    this.look_ahead(1);
+                    let &Token { ref kind, span } = this.peek(0);
+                    if kind.as_unit_string() == tok {
+                        Some(span.start_span())
+                    } else {
+                        None
+                    }
+                };
+
+                let initializer =
+                    if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
+                        ast::Statement::Empty(span)
+                    } else {
+                        self.parse_statement_body()?.0
+                    };
+
                 self.parse_token(TokenKind::SemiColon)?;
-                let condition = self.parse_expression()?;
+
+                let condition = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon)
+                {
+                    // As a special case, an empty condition is always true.
+                    ast::Expression::Constant(Constant::Boolean(true), span.start_span())
+                } else {
+                    self.parse_expression()?
+                };
+
                 self.parse_token(TokenKind::SemiColon)?;
-                let iterator = self.parse_statement_body()?.0;
+
+                let iterator = if let Some(span) = check_terminator_tok(self, TokenKind::RightParen)
+                {
+                    ast::Statement::Empty(span)
+                } else {
+                    self.parse_statement_body()?.0
+                };
+
                 self.parse_token(TokenKind::RightParen)?;
+
                 let body = self.parse_statement()?;
 
                 let span = tok_span.combine(body.span());

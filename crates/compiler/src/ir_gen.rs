@@ -59,24 +59,23 @@ pub struct IrGenError {
 
 #[derive(Debug, Copy, Clone)]
 pub struct IrGenSettings {
-    /// Use proper lexical scoping for variable declarations.
+    /// Use proper block scoping for variable declarations.
     ///
     /// if `false`, then all variable declarations will be visible until the end of the enclosing
     /// function even when the enclosing scope ends.
-    pub lexical_scoping: bool,
+    pub block_scoping: bool,
 
     /// Allow lambda expressions to reference variables from outer functions.
     ///
     /// Without this, such variables will instead be interpreted as implicit `this` variables.
     ///
-    /// # Lexical scoping and closures
+    /// # Block scoping and closures
     ///
     /// Closing over a variable which is declared in the body of a loop will act differently
-    /// depending on whether `lexical_scoping` is enabled or not. With `lexical_scoping`, each
-    /// variable in a loop iteration is independent, without it, every variable in the body of a
-    /// loop is always the same instance. The first behavior is similar to ECMAScript closures with
-    /// the `let` keyword, the second behavior is similar to ECMAScript closures with the `var`
-    /// keyword.
+    /// depending on whether `block_scoping` is enabled or not. With `block_scoping`, each variable
+    /// in a loop iteration is independent, without it, every variable in the body of a loop is
+    /// always the same instance. The first behavior is similar to ECMAScript closures with the
+    /// `let` keyword, the second behavior is similar to ECMAScript closures with the `var` keyword.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Closures#creating_closures_in_loops_a_common_mistake>
     pub allow_closures: bool,
@@ -101,7 +100,7 @@ pub struct IrGenSettings {
 impl IrGenSettings {
     pub fn modern() -> Self {
         IrGenSettings {
-            lexical_scoping: true,
+            block_scoping: true,
             allow_closures: true,
             allow_constructors: false,
         }
@@ -109,7 +108,7 @@ impl IrGenSettings {
 
     pub fn compat() -> Self {
         IrGenSettings {
-            lexical_scoping: false,
+            block_scoping: false,
             allow_closures: false,
             allow_constructors: true,
         }
@@ -162,6 +161,59 @@ impl IrGenSettings {
     }
 }
 
+struct FunctionCompiler<'a, S, I> {
+    settings: IrGenSettings,
+    interner: &'a mut I,
+    find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
+
+    function: ir::Function<S>,
+
+    // If we have a final block to jump to, jump here instead of returning. Setting this disallows
+    // return statements with values.
+    final_block: Option<ir::BlockId>,
+
+    // This will be `Some` if the current block is unfinished and can be appended to.
+    current_block: Option<ir::BlockId>,
+
+    break_target_stack: Vec<NonLocalJump>,
+    continue_target_stack: Vec<NonLocalJump>,
+
+    scopes: Vec<Scope<S>>,
+
+    // Maps in-scope variable names to a list of scope indexes for scopes which contain variables
+    // with this name.
+    //
+    // This list is always kept in scope stack order, so the top entry in the list is always the
+    // variable currently visible for this name.
+    var_lookup: HashMap<ast::Ident<S>, Vec<usize>>,
+}
+
+struct Scope<S> {
+    // Variables to close when this scope ends. May include shadowed variables.
+    to_close: Vec<ir::VarId>,
+
+    // All variable declarations for this scope which have not been shadowed. When a new declaration
+    // shadows another, the new declaration will replace the old in this map.
+    visible: HashMap<ast::Ident<S>, VarDecl>,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct NonLocalJump {
+    target: ir::BlockId,
+    // Stack index to which we are jumping. Non-local jumps need to close any variables between the
+    // top-level scope and this.
+    pop_vars_to: usize,
+}
+
+impl<S> Default for Scope<S> {
+    fn default() -> Self {
+        Self {
+            to_close: Vec::new(),
+            visible: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 enum VarDecl {
     // Variable declaration references a real IR variable.
@@ -188,32 +240,6 @@ enum MutableTarget<S> {
     Magic(S),
 }
 
-struct FunctionCompiler<'a, S, I> {
-    settings: IrGenSettings,
-    interner: &'a mut I,
-    find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
-
-    function: ir::Function<S>,
-
-    // If we have a final block to jump to, jump here instead of returning. Setting this disallows
-    // return statements with values.
-    final_block: Option<ir::BlockId>,
-
-    // This will be `Some` if the current block is unfinished and can be appended to.
-    current_block: Option<ir::BlockId>,
-
-    break_target_stack: Vec<ir::BlockId>,
-    continue_target_stack: Vec<ir::BlockId>,
-
-    // Variable names declared in the current scope.
-    scopes: Vec<HashSet<ast::Ident<S>>>,
-
-    // Stack of declared variables for each variable name.
-    //
-    // Each variable declared in a scope will push an entry for the corresponding variable here.
-    variables: HashMap<ast::Ident<S>, Vec<VarDecl>>,
-}
-
 impl<'a, S, I> FunctionCompiler<'a, S, I>
 where
     S: Eq + Hash + Clone,
@@ -236,9 +262,9 @@ where
 
         // We leave the start block completely empty except for a jump to the "real" start block.
         //
-        // This is so that we can use the start block as a place to put non-lexically scoped
-        // variable declaration instructions that need to be before any other generated IR, and
-        // avoid being O(n^2) in the number of variable declarations.
+        // This is so that we can use the start block as a place to put non-block-scoped variable
+        // declaration instructions that need to be before any other generated IR, and avoid being
+        // O(n^2) in the number of variable declarations.
         let start_block = blocks.insert(ir::Block::default());
         let first_block = blocks.insert(ir::Block::default());
         blocks[start_block].exit = ir::Exit::Jump(first_block);
@@ -267,9 +293,9 @@ where
             current_block: Some(first_block),
             continue_target_stack: Vec::new(),
             break_target_stack: Vec::new(),
-            // Even with no lexical scoping, all functions must have one top-level scope.
-            scopes: vec![HashSet::new()],
-            variables: Default::default(),
+            // Even with no block scoping, all functions must have one top-level scope.
+            scopes: vec![Scope::default()],
+            var_lookup: HashMap::new(),
         }
     }
 
@@ -546,6 +572,7 @@ where
         }
 
         match statement {
+            ast::Statement::Empty(_) => Ok(()),
             ast::Statement::Block(block_stmt) => self.block(&block_stmt.block),
             ast::Statement::Enum(enum_stmt) => Err(IrGenError {
                 kind: IrGenErrorKind::MisplacedEnum,
@@ -1113,16 +1140,14 @@ where
         self.pop_continue_target(check_block);
 
         self.push_instruction(with_stmt.span, ir::Instruction::CloseThisScope(this_scope));
-
         self.push_instruction(with_stmt.span, ir::Instruction::CloseVariable(state_var));
 
         Ok(())
     }
 
     fn break_statement(&mut self, span: Span) -> Result<(), IrGenError> {
-        if let Some(&break_target) = self.break_target_stack.last() {
-            self.end_current_block(ir::Exit::Jump(break_target));
-            Ok(())
+        if let Some(&jump) = self.break_target_stack.last() {
+            self.non_local_jump(jump)
         } else {
             Err(IrGenError {
                 kind: IrGenErrorKind::BreakWithNoTarget,
@@ -1132,15 +1157,41 @@ where
     }
 
     fn continue_statement(&mut self, span: Span) -> Result<(), IrGenError> {
-        if let Some(&continue_target) = self.continue_target_stack.last() {
-            self.end_current_block(ir::Exit::Jump(continue_target));
-            Ok(())
+        if let Some(&jump) = self.continue_target_stack.last() {
+            self.non_local_jump(jump)
         } else {
             Err(IrGenError {
                 kind: IrGenErrorKind::ContinueWithNoTarget,
                 span,
             })
         }
+    }
+
+    fn non_local_jump(&mut self, jump: NonLocalJump) -> Result<(), IrGenError> {
+        let top_scope_index = self.scopes.len() - 1;
+        if jump.pop_vars_to + 1 < top_scope_index {
+            // If we are jumping to a higher scope, then generate a cleanup block to close all of
+            // the variables between this scope and the target scope.
+
+            let cleanup_block = self.new_block();
+            self.end_current_block(ir::Exit::Jump(cleanup_block));
+            self.start_new_block(cleanup_block);
+
+            for i in (jump.pop_vars_to + 1..=top_scope_index).rev() {
+                for &var_id in &self.scopes[i].to_close {
+                    let inst_id = self
+                        .function
+                        .instructions
+                        .insert(ir::Instruction::CloseVariable(var_id));
+                    self.function.blocks[cleanup_block]
+                        .instructions
+                        .push(inst_id);
+                }
+            }
+        }
+
+        self.end_current_block(ir::Exit::Jump(jump.target));
+        Ok(())
     }
 
     fn expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
@@ -1748,11 +1799,11 @@ where
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
         if self.settings.allow_closures {
-            for (n, l) in &self.variables {
-                let &v = l.last().unwrap();
+            for (name, scope_list) in &self.var_lookup {
+                let &scope_index = scope_list.last().unwrap();
                 compiler.declare_var(
-                    n.clone(),
-                    match v {
+                    name.clone(),
+                    match self.scopes[scope_index].visible[name] {
                         VarDecl::Real(var_id) => Some(ir::Variable::Upper(var_id)),
                         VarDecl::Pseudo => None,
                     },
@@ -1767,32 +1818,37 @@ where
     }
 
     fn push_scope(&mut self) {
-        if self.settings.lexical_scoping {
-            self.scopes.push(HashSet::new());
+        if self.settings.block_scoping {
+            self.scopes.push(Scope::default());
         }
     }
 
     fn pop_scope(&mut self) {
-        if self.settings.lexical_scoping {
-            if let Some(out_of_scope) = self.scopes.pop() {
-                for vname in out_of_scope {
-                    let vname_span = vname.span;
-                    let hash_map::Entry::Occupied(mut entry) = self.variables.entry(vname) else {
+        if self.settings.block_scoping {
+            if let Some(popped_scope) = self.scopes.pop() {
+                // Close every variable in the popped scope. If the current block doesn't exist,
+                // then we assume that either this block has exited, which is an implicit close, or
+                // that a `break` or `continue` statement has separately closed them.
+                if self.current_block.is_some() {
+                    for var_id in popped_scope.to_close {
+                        self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
+                    }
+                }
+
+                // Remove visible variables in the popped scope from the var lookup map.
+                for (vname, _) in popped_scope.visible {
+                    let hash_map::Entry::Occupied(mut entry) = self.var_lookup.entry(vname) else {
                         unreachable!();
                     };
-                    let var_id = entry.get_mut().pop().unwrap();
+
+                    let scope_index = entry.get_mut().pop().unwrap();
+                    // The var lookup map should contain every visible variable in this scope.
+                    assert!(scope_index == self.scopes.len());
+
+                    // Just remove the variable entry entirely if there are no variables with this
+                    // name visible.
                     if entry.get().is_empty() {
                         entry.remove();
-                    }
-                    if let VarDecl::Real(var_id) = var_id {
-                        if self.function.variables[var_id].is_owned()
-                            && self.current_block.is_some()
-                        {
-                            self.push_instruction(
-                                vname_span,
-                                ir::Instruction::CloseVariable(var_id),
-                            );
-                        }
                     }
                 }
             }
@@ -1806,31 +1862,42 @@ where
         vname: ast::Ident<S>,
         var: Option<ir::Variable<S>>,
     ) -> Option<ir::VarId> {
-        let span = vname.span;
-        let in_scope = !self.scopes.last_mut().unwrap().insert(vname.clone());
-        let variable_stack = self.variables.entry(vname).or_default();
+        let top_scope_index = self.scopes.len() - 1;
+        let top_scope = self.scopes.last_mut().unwrap();
 
-        if in_scope {
-            // This variable was already in-scope, remove it so we can replace it.
-            variable_stack.pop().unwrap();
-        }
-
-        let Some(var) = var else {
-            variable_stack.push(VarDecl::Pseudo);
-            return None;
+        let (var_decl, var_id, var_is_owned) = if let Some(var) = var {
+            let is_owned = var.is_owned();
+            let var_id = self.function.variables.insert(var);
+            let decl = VarDecl::Real(var_id);
+            (decl, Some(var_id), is_owned)
+        } else {
+            (VarDecl::Pseudo, None, false)
         };
 
-        let is_owned = var.is_owned();
+        let shadowing = top_scope.visible.insert(vname.clone(), var_decl).is_some();
 
-        let var_id = self.function.variables.insert(var);
-        variable_stack.push(VarDecl::Real(var_id));
+        let scope_list = self.var_lookup.entry(vname).or_default();
+        if shadowing {
+            // The new variable shadows a previous one, so there should already be an existing entry
+            // at the top of the scope list for the top-level scope.
+            assert_eq!(*scope_list.last().unwrap(), top_scope_index);
+        } else {
+            // If we are not shadowing, we expect the current active entry to be of a lower scope.
+            assert!(scope_list.last().is_none_or(|&ind| ind < top_scope_index));
+            scope_list.push(top_scope_index);
+        }
 
-        if is_owned {
-            if self.settings.lexical_scoping {
-                self.push_instruction(span, ir::Instruction::OpenVariable(var_id));
+        if var_is_owned {
+            let var_id = var_id.unwrap();
+            // We own this variable, so we need to open it when it is declared.
+            if self.settings.block_scoping {
+                // Since we're using block scoping, we need to close this variable when the scope
+                // ends.
+                top_scope.to_close.push(var_id);
+                self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var_id));
             } else {
-                // If we're not using lexical scoping, just open every variable at the very start of
-                // the function. This keeps the IR well-formed even with no lexical scoping and no
+                // If we're not using block scoping, just open every variable at the very start of
+                // the function. This keeps the IR well-formed even with no block scoping and no
                 // explicit `CloseVariable` instructions.
                 //
                 // We push this instruction to `start_block`, which is kept otherwise empty for
@@ -1845,12 +1912,12 @@ where
             }
         }
 
-        Some(var_id)
+        var_id
     }
 
     fn get_var(&mut self, span: Span, vname: &S) -> Result<Option<ir::VarId>, IrGenError> {
-        if let Some(var) = self.variables.get(vname).and_then(|s| s.last().copied()) {
-            match var {
+        if let Some(scope_index) = self.var_lookup.get(vname).and_then(|l| l.last().copied()) {
+            match self.scopes[scope_index].visible[vname] {
                 VarDecl::Real(var_id) => Ok(Some(var_id)),
                 VarDecl::Pseudo => Err(IrGenError {
                     kind: IrGenErrorKind::PseudoVarAccessed,
@@ -1880,26 +1947,34 @@ where
         self.current_block = Some(block_id);
     }
 
-    fn push_break_target(&mut self, block_id: ir::BlockId) {
-        self.break_target_stack.push(block_id);
+    fn push_break_target(&mut self, target_block: ir::BlockId) {
+        self.break_target_stack.push(NonLocalJump {
+            target: target_block,
+            pop_vars_to: self.scopes.len() - 1,
+        });
     }
 
     fn pop_break_target(&mut self, block_id: ir::BlockId) {
-        assert_eq!(
-            self.break_target_stack.pop(),
-            Some(block_id),
+        assert!(
+            self.break_target_stack
+                .pop()
+                .is_some_and(|j| j.target == block_id),
             "mismatched break target pop"
         );
     }
 
-    fn push_continue_target(&mut self, block_id: ir::BlockId) {
-        self.continue_target_stack.push(block_id);
+    fn push_continue_target(&mut self, target_block: ir::BlockId) {
+        self.continue_target_stack.push(NonLocalJump {
+            target: target_block,
+            pop_vars_to: self.scopes.len() - 1,
+        });
     }
 
     fn pop_continue_target(&mut self, block_id: ir::BlockId) {
-        assert_eq!(
-            self.continue_target_stack.pop(),
-            Some(block_id),
+        assert!(
+            self.continue_target_stack
+                .pop()
+                .is_some_and(|j| j.target == block_id),
             "mismatched continue target pop"
         );
     }

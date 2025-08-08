@@ -44,4 +44,27 @@
     assert(i == 5);
 }
 
+// Ensure that breaks and continues in loops handle variable scoping correctly.
+{
+    while true {
+        var i = 1;
+        if black_box(true) {
+            break;
+        }
+        black_box(i);
+    }
+
+    for (var go = true; go;) {
+        var i = 1;
+
+        go = false;
+        if black_box(true) {
+            continue;
+        }
+        go = true;
+
+        black_box(i);
+    }
+}
+
 return true;

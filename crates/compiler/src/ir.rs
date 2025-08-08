@@ -36,19 +36,19 @@ impl fmt::Display for VarId {
 
 impl fmt::Display for ShadowVar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SV{}", self.index())
+        write!(f, "S{}", self.index())
     }
 }
 
 impl fmt::Display for ThisScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Tscope{}", self.index())
+        write!(f, "Ts{}", self.index())
     }
 }
 
 impl fmt::Display for CallScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Cscope{}", self.index())
+        write!(f, "Cs{}", self.index())
     }
 }
 
@@ -867,7 +867,7 @@ impl<S: AsRef<str>> Function<S> {
 
         if !self.variables.is_empty() {
             write_indent(f, 0)?;
-            write!(f, "variables:")?;
+            writeln!(f, "variables:")?;
             for (id, var) in self.variables.iter() {
                 write_indent(f, 4)?;
                 write!(f, "{}: ", id)?;
