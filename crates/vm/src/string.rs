@@ -1,10 +1,16 @@
-use std::{borrow::Borrow, ops::Deref, string::String as StdString};
+use std::{borrow::Borrow, fmt, ops::Deref, string::String as StdString};
 
 use gc_arena::{Collect, Gc, Mutation};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, StdString>);
+
+impl<'gc> fmt::Display for String<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<'gc> String<'gc> {
     pub fn new(mc: &Mutation<'gc>, s: &str) -> String<'gc> {

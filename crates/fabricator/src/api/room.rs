@@ -31,7 +31,7 @@ pub fn room_api<'gc>(
                 let room = match value {
                     vm::Value::UserData(user_data) => *user_data.downcast_static::<RoomId>()?,
                     _ => {
-                        return Err(vm::Error::msg("cannot set room to non-room value"));
+                        return Err("cannot set room to non-room value".into());
                     }
                 };
                 state.next_room = Some(room);

@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     fs::{File, read_dir},
     io::{self, Write, stdout},
 };
@@ -7,7 +8,7 @@ use fabricator_compiler as compiler;
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
 
-fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, vm::Error> {
+fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, Box<dyn Error>> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {

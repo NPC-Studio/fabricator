@@ -3,12 +3,11 @@ use core::fmt;
 use gc_arena::{DynamicRoot, DynamicRootSet, Gc, Mutation, Rootable};
 
 use crate::{
-    UserDataMethods,
     closure::{Closure, ClosureInner, Prototype},
     magic::MagicSet,
     object::{Object, ObjectInner},
     thread::{Thread, ThreadInner},
-    userdata::{UserData, UserDataInner},
+    userdata::{UserData, UserDataInner, UserDataMethods},
 };
 
 /// A trait for types that can be stashed into a [`DynamicRootSet`].

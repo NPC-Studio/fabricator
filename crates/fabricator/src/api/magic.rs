@@ -16,7 +16,7 @@ pub fn create_magic_ro<'gc>(
     where
         R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error>,
     {
-        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error> {
+        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
             (self.read)(ctx)
         }
     }
@@ -27,7 +27,7 @@ pub fn create_magic_ro<'gc>(
 pub fn create_magic_rw<'gc>(
     mc: &Mutation<'gc>,
     read: impl Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error> + 'static,
-    write: impl Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error> + 'static,
+    write: impl Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error<'gc>> + 'static,
 ) -> Gc<'gc, dyn vm::Magic<'gc>> {
     #[derive(Collect)]
     #[collect(require_static)]
@@ -39,13 +39,13 @@ pub fn create_magic_rw<'gc>(
     impl<'gc, R, W> vm::Magic<'gc> for Magic<R, W>
     where
         R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error>,
-        W: Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error>,
+        W: Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error<'gc>>,
     {
-        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error> {
+        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
             (self.read)(ctx)
         }
 
-        fn set(&self, ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<(), vm::Error> {
+        fn set(&self, ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<(), vm::Error<'gc>> {
             (self.write)(ctx, value)
         }
 

@@ -25,9 +25,9 @@ pub struct MagicReadOnly;
 /// Magic variables can optionally be writeable. This does not *replace* the magic value like would
 /// occur normally in FML, instead it triggers a write callback for that particular magic value.
 pub trait Magic<'gc> {
-    fn get(&self, ctx: Context<'gc>) -> Result<Value<'gc>, Error>;
+    fn get(&self, ctx: Context<'gc>) -> Result<Value<'gc>, Error<'gc>>;
 
-    fn set(&self, _ctx: Context<'gc>, _value: Value<'gc>) -> Result<(), Error> {
+    fn set(&self, _ctx: Context<'gc>, _value: Value<'gc>) -> Result<(), Error<'gc>> {
         Err(MagicReadOnly.into())
     }
 
@@ -53,7 +53,7 @@ impl<'gc> MagicConstant<'gc> {
 }
 
 impl<'gc> Magic<'gc> for MagicConstant<'gc> {
-    fn get(&self, _ctx: Context<'gc>) -> Result<Value<'gc>, Error> {
+    fn get(&self, _ctx: Context<'gc>) -> Result<Value<'gc>, Error<'gc>> {
         Ok(self.0)
     }
 }

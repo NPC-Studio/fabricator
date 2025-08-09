@@ -138,7 +138,7 @@ impl ops::Deref for RefName {
     }
 }
 
-/// A trait for representing a single unit of GML source code, generally a single source file, for
+/// A trait for representing a single unit of FML source code, generally a single source file, for
 /// the purposes of displaying debug information.
 pub trait ChunkData {
     /// The name of this chunk, usually the name of the source code file.
@@ -188,7 +188,7 @@ pub struct ChunkMeta {
 
 pub type ChunkInner = AnyInner<ChunkMeta>;
 
-/// A handle to metadata for a single unit of GML source code, for the purposes of displaying debug
+/// A handle to metadata for a single unit of FML source code, for the purposes of displaying debug
 /// information.
 ///
 /// Internally holds an implementation of `ChunkData` and allows for downcasting.

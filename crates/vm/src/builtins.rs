@@ -3,7 +3,6 @@ use gc_arena::Mutation;
 use crate::{
     callback::Callback,
     closure::Closure,
-    error::Error,
     interpreter::Context,
     magic::{MagicConstant, MagicSet},
     object::Object,
@@ -71,53 +70,35 @@ impl<'gc> BuiltIns<'gc> {
 
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
-            method: Callback::from_fn_with_err_ctx(
-                mc,
-                format!("in `{}` builtin", Self::METHOD),
-                |ctx, _, mut stack| {
-                    let (obj, func): (Value, Function) = stack.consume(ctx)?;
+            method: Callback::from_fn(mc, |ctx, _, mut stack| {
+                let (obj, func): (Value, Function) = stack.consume(ctx)?;
 
-                    match obj {
-                        obj @ (Value::Undefined | Value::Object(_) | Value::UserData(_)) => {
-                            stack.replace(ctx, func.rebind(&ctx, obj));
-                            Ok(())
-                        }
-                        _ => Err(Error::msg(
-                            "self value must be an object, userdata, or undefined",
-                        )),
+                match obj {
+                    obj @ (Value::Undefined | Value::Object(_) | Value::UserData(_)) => {
+                        stack.replace(ctx, func.rebind(&ctx, obj));
+                        Ok(())
                     }
-                },
-            ),
+                    _ => Err("self value must be an object, userdata, or undefined".into()),
+                }
+            }),
 
-            get_super: Callback::from_fn_with_err_ctx(
-                mc,
-                format!("in `{}` builtin", Self::GET_SUPER),
-                |ctx, _, mut stack| {
-                    let obj: Object = stack.consume(ctx)?;
-                    stack.replace(ctx, obj.parent());
-                    Ok(())
-                },
-            ),
+            get_super: Callback::from_fn(mc, |ctx, _, mut stack| {
+                let obj: Object = stack.consume(ctx)?;
+                stack.replace(ctx, obj.parent());
+                Ok(())
+            }),
 
-            set_super: Callback::from_fn_with_err_ctx(
-                mc,
-                format!("in `{}` builtin", Self::SET_SUPER),
-                |ctx, _, mut stack| {
-                    let (obj, parent): (Object, Option<Object>) = stack.consume(ctx)?;
-                    obj.set_parent(&ctx, parent)?;
-                    Ok(())
-                },
-            ),
+            set_super: Callback::from_fn(mc, |ctx, _, mut stack| {
+                let (obj, parent): (Object, Option<Object>) = stack.consume(ctx)?;
+                obj.set_parent(&ctx, parent)?;
+                Ok(())
+            }),
 
-            get_constructor_super: Callback::from_fn_with_err_ctx(
-                mc,
-                format!("in `{}` builtin", Self::GET_CONSTRUCTOR_SUPER),
-                |ctx, _, mut stack| {
-                    let closure: Closure = stack.consume(ctx)?;
-                    stack.replace(ctx, closure.prototype().constructor_parent());
-                    Ok(())
-                },
-            ),
+            get_constructor_super: Callback::from_fn(mc, |ctx, _, mut stack| {
+                let closure: Closure = stack.consume(ctx)?;
+                stack.replace(ctx, closure.prototype().constructor_parent());
+                Ok(())
+            }),
 
             with_loop_iter: {
                 // An iterator function whose state is the single value for iteration.
@@ -126,10 +107,9 @@ impl<'gc> BuiltIns<'gc> {
                     Ok(())
                 });
 
-                Callback::from_fn_with_root_and_err_ctx(
+                Callback::from_fn_with_root(
                     mc,
                     singleton_iter,
-                    format!("in `{}` builtin", Self::WITH_LOOP_ITER),
                     |&singleton_iter, ctx, _, mut stack| {
                         let target: Value = stack.consume(ctx)?;
                         match target {
@@ -143,10 +123,10 @@ impl<'gc> BuiltIns<'gc> {
                                 if let Some(methods) = user_data.methods() {
                                     methods.iter(ctx, user_data)
                                 } else {
-                                    Err(Error::msg("userdata not iterable"))
+                                    Err("userdata not iterable".into())
                                 }
                             }
-                            _ => Err(Error::msg("with loop target must be object or userdata")),
+                            _ => Err("with loop target must be object or userdata".into()),
                         }
                     },
                 )

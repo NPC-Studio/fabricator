@@ -24,7 +24,7 @@ pub trait UserDataMethods<'gc> {
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         key: String<'gc>,
-    ) -> Result<Value<'gc>, Error>;
+    ) -> Result<Value<'gc>, Error<'gc>>;
 
     fn set_field(
         &self,
@@ -32,14 +32,14 @@ pub trait UserDataMethods<'gc> {
         ud: UserData<'gc>,
         key: String<'gc>,
         value: Value<'gc>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error<'gc>>;
 
     fn get_index(
         &self,
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         indexes: &[Value<'gc>],
-    ) -> Result<Value<'gc>, Error>;
+    ) -> Result<Value<'gc>, Error<'gc>>;
 
     fn set_index(
         &self,
@@ -47,9 +47,9 @@ pub trait UserDataMethods<'gc> {
         ud: UserData<'gc>,
         indexes: &[Value<'gc>],
         value: Value<'gc>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error<'gc>>;
 
-    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), Error>;
+    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), Error<'gc>>;
 }
 
 /// Meta-data for a `UserData` type.

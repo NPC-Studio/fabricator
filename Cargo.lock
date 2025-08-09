@@ -732,7 +732,6 @@ dependencies = [
 name = "fabricator-vm"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "fabricator-util",
  "gc-arena",
  "thiserror 2.0.12",

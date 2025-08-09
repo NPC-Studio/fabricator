@@ -7,7 +7,7 @@ use crate::{
     array::Array,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
-    error::Error,
+    error::{Error, ExternError},
     instructions::{self, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
@@ -39,7 +39,7 @@ pub enum OpError {
 #[derive(Debug, Error)]
 pub struct VmError {
     #[source]
-    pub error: Error,
+    pub error: ExternError,
     pub chunk_name: RefName,
     pub instruction_index: usize,
     pub instruction: Instruction,
@@ -92,7 +92,11 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<Vec<Value<'gc>>, Error> {
+    pub fn exec(
+        self,
+        ctx: Context<'gc>,
+        closure: Closure<'gc>,
+    ) -> Result<Vec<Value<'gc>>, VmError> {
         let globals = ctx.globals().into();
         self.exec_with(ctx, closure, globals, globals)
     }
@@ -103,7 +107,7 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         this: Value<'gc>,
         other: Value<'gc>,
-    ) -> Result<Vec<Value<'gc>>, Error> {
+    ) -> Result<Vec<Value<'gc>>, VmError> {
         let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
         thread.registers.clear();
         thread.stack.clear();
@@ -122,7 +126,7 @@ impl<'gc> ThreadState<'gc> {
         mut this: Value<'gc>,
         mut other: Value<'gc>,
         stack_bottom: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<(), VmError> {
         let proto = closure.prototype();
         let used_registers = proto.used_registers();
         assert!(used_registers <= 256);
@@ -206,7 +210,7 @@ impl<'gc> ThreadState<'gc> {
                         prototype.bytecode().instruction_for_pc(frame.pc).unwrap();
                     let chunk = prototype.chunk();
                     return Err(VmError {
-                        error,
+                        error: error.into(),
                         chunk_name: chunk.name().clone(),
                         instruction_index: ind,
                         instruction: inst,
@@ -294,7 +298,7 @@ struct Dispatch<'gc, 'a> {
 
 impl<'gc, 'a> Dispatch<'gc, 'a> {
     #[inline]
-    fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error> {
+    fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error<'gc>> {
         match obj {
             Value::Object(object) => object.get(key).ok_or(OpError::NoSuchField.into()),
             Value::UserData(user_data) => {
@@ -314,7 +318,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         obj: Value<'gc>,
         key: String<'gc>,
         value: Value<'gc>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error<'gc>> {
         match obj {
             Value::Object(object) => {
                 object.set(&self.ctx, key, value);
@@ -333,7 +337,11 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
     }
 
     #[inline]
-    fn do_get_index(&self, array: Value<'gc>, indexes: &[Value<'gc>]) -> Result<Value<'gc>, Error> {
+    fn do_get_index(
+        &self,
+        array: Value<'gc>,
+        indexes: &[Value<'gc>],
+    ) -> Result<Value<'gc>, Error<'gc>> {
         match array {
             Value::Array(array) => {
                 if indexes.len() != 1 {
@@ -362,7 +370,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         array: Value<'gc>,
         indexes: &[Value<'gc>],
         value: Value<'gc>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Error<'gc>> {
         match array {
             Value::Array(array) => {
                 if indexes.len() != 1 {
@@ -390,7 +398,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
 
 impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     type Break = Next<'gc>;
-    type Error = Error;
+    type Error = Error<'gc>;
 
     #[inline]
     fn undefined(&mut self, dest: RegIdx) -> Result<(), Self::Error> {

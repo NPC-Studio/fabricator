@@ -1,4 +1,6 @@
-use gc_arena::{Collect, Mutation};
+use std::fmt;
+
+use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
     array::Array, callback::Callback, closure::Closure, object::Object, string::String,
@@ -21,7 +23,7 @@ impl<'gc> Function<'gc> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Default, Collect)]
+#[derive(Copy, Clone, PartialEq, Default, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
     #[default]
@@ -35,6 +37,62 @@ pub enum Value<'gc> {
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
     UserData(UserData<'gc>),
+}
+
+impl<'gc> fmt::Debug for Value<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Undefined => write!(f, "Value::Undefined"),
+            Value::Boolean(b) => write!(f, "Value::Boolean({b})"),
+            Value::Integer(i) => write!(f, "Value::Integer({i})"),
+            Value::Float(n) => write!(f, "Value::Float({n})"),
+            Value::String(s) => write!(f, "Value::String({s})"),
+            Value::Object(object) => {
+                write!(f, "Value::Object{:p})", Gc::as_ptr(object.into_inner()))
+            }
+            Value::Array(array) => write!(f, "Value::Array({:p})", Gc::as_ptr(array.into_inner())),
+            Value::Closure(closure) => {
+                write!(f, "Value::Closure({:p})", Gc::as_ptr(closure.into_inner()))
+            }
+            Value::Callback(callback) => {
+                write!(
+                    f,
+                    "Value::Callback({:p})",
+                    Gc::as_ptr(callback.into_inner())
+                )
+            }
+            Value::UserData(user_data) => {
+                write!(
+                    f,
+                    "Value::UserData({:p})",
+                    Gc::as_ptr(user_data.into_inner())
+                )
+            }
+        }
+    }
+}
+
+impl<'gc> fmt::Display for Value<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Undefined => write!(f, "undefined"),
+            Value::Boolean(b) => write!(f, "{b}"),
+            Value::Integer(i) => write!(f, "{i}"),
+            Value::Float(n) => write!(f, "{n}"),
+            Value::String(s) => write!(f, "{s}"),
+            Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
+            Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
+            Value::Closure(closure) => {
+                write!(f, "<closure {:p}>", Gc::as_ptr(closure.into_inner()))
+            }
+            Value::Callback(callback) => {
+                write!(f, "<callback {:p}>", Gc::as_ptr(callback.into_inner()))
+            }
+            Value::UserData(user_data) => {
+                write!(f, "<user_data {:p}>", Gc::as_ptr(user_data.into_inner()))
+            }
+        }
+    }
 }
 
 impl<'gc> From<bool> for Value<'gc> {

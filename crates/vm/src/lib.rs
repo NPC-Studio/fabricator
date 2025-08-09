@@ -25,7 +25,7 @@ pub use self::{
     closure::{Closure, Constant, Prototype},
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Variadic},
     debug::{Chunk, FunctionRef, LineNumber, RefName, Span},
-    error::Error,
+    error::{Error, ExternError, ExternScriptError, RuntimeError, ScriptError},
     instructions::ByteCode,
     interpreter::{Context, Interpreter},
     magic::{Magic, MagicSet},
@@ -37,7 +37,7 @@ pub use self::{
         StashedThread, StashedUserData, StashedUserDataMethods,
     },
     string::String,
-    thread::Thread,
+    thread::{OpError, Thread, VmError},
     userdata::{UserData, UserDataMeta, UserDataMethods},
     value::{Function, Value},
 };

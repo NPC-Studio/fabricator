@@ -65,7 +65,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 let assert = vm::Callback::from_fn(&ctx, |_, _, stack| {
                     for i in 0..stack.len() {
                         if !stack.get(i).to_bool() {
-                            return Err(vm::Error::msg("assert failed"));
+                            return Err("assert failed".into());
                         }
                     }
                     Ok(())
