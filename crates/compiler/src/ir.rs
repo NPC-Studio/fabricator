@@ -199,8 +199,8 @@ impl<S> Variable<S> {
 /// # Variables
 ///
 /// IR "variables" represent notionally heap allocated values that are an escape hatch for SSA form.
-/// Each `Variable` references a unique variable, and `GetVariable` and `SetVariable` instructions
-/// read from and write to these variables.
+/// Each registered `Variable` references a unique variable, and `GetVariable` and `SetVariable`
+/// instructions read from and write to these variables.
 ///
 /// The compiler will generate IR that uses these variables to represent actual variables in code,
 /// and will rely on IR optimization to convert them to SSA form, potentially by inserting `Phi` and
@@ -236,13 +236,13 @@ impl<S> Variable<S> {
 ///   different scope.
 /// * As an exception to the above rule, nested scopes, like their name implies, may be *strictly*
 ///   nested. "Strictly nested" means that the live range of an inner scope must lie *entirely*
-///   within the live range of the outer scope. In simpler terms, this means that  the inner open
+///   within the live range of the outer scope. In simpler terms, this means that the inner open
 ///   must always come after the outer open, and any inner close must always come before any outer
 ///   close (or they can be closed at the same time due to a function exit). This exception to
 ///   the above rule only applies to the *innermost* open scope, an outer scope may not have any
 ///   instructions which fall in the live region of an inner scope.
 ///
-/// The reasoning for this rule is that since the scopes guard a single shared resource, any
+/// The reasoning for this rule is that since these scopes guard a single shared resource, any
 /// overlapping access of this resource would cause unrelated sections of IR to interfere. Nesting
 /// is explicitly allowed becuase open instructions are meant to save the previous state of the
 /// resource and the close instructions are meant to restore it. As long as scopes are strictly

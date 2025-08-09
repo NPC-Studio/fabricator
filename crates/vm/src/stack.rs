@@ -6,8 +6,7 @@ use std::{
 };
 
 use crate::{
-    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue},
-    error::TypeError,
+    conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError},
     interpreter::Context,
     value::Value,
 };

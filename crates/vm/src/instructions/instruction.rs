@@ -201,9 +201,6 @@ impl Instruction {
             (ConstIdx) => {
                 "C"
             };
-            (ParamIdx) => {
-                "A"
-            };
             (HeapIdx) => {
                 "H"
             };

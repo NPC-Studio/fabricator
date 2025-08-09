@@ -1,9 +1,18 @@
 use std::{array, iter, ops, string::String as StdString};
 
+use thiserror::Error;
+
 use crate::{
-    array::Array, callback::Callback, closure::Closure, error::TypeError, interpreter::Context,
-    object::Object, string::String, userdata::UserData, value::Function, value::Value,
+    array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
+    string::String, userdata::UserData, value::Function, value::Value,
 };
+
+#[derive(Debug, Clone, Copy, Error)]
+#[error("type error, expected {expected}, found {found}")]
+pub struct TypeError {
+    pub expected: &'static str,
+    pub found: &'static str,
+}
 
 pub trait IntoValue<'gc> {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc>;

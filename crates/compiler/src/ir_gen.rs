@@ -1168,25 +1168,22 @@ where
     }
 
     fn non_local_jump(&mut self, jump: NonLocalJump) -> Result<(), IrGenError> {
-        let top_scope_index = self.scopes.len() - 1;
-        if jump.pop_vars_to + 1 < top_scope_index {
-            // If we are jumping to a higher scope, then generate a cleanup block to close all of
-            // the variables between this scope and the target scope.
+        // We may be jumping to an outer scope which should cause variables declared in inner scopes
+        // to close. Generate a cleanup block to close all of the variables between this scope and
+        // the target scope.
+        let cleanup_block = self.new_block();
+        self.end_current_block(ir::Exit::Jump(cleanup_block));
+        self.start_new_block(cleanup_block);
 
-            let cleanup_block = self.new_block();
-            self.end_current_block(ir::Exit::Jump(cleanup_block));
-            self.start_new_block(cleanup_block);
-
-            for i in (jump.pop_vars_to + 1..=top_scope_index).rev() {
-                for &var_id in &self.scopes[i].to_close {
-                    let inst_id = self
-                        .function
-                        .instructions
-                        .insert(ir::Instruction::CloseVariable(var_id));
-                    self.function.blocks[cleanup_block]
-                        .instructions
-                        .push(inst_id);
-                }
+        for i in (jump.pop_vars_to + 1..self.scopes.len()).rev() {
+            for &var_id in &self.scopes[i].to_close {
+                let inst_id = self
+                    .function
+                    .instructions
+                    .insert(ir::Instruction::CloseVariable(var_id));
+                self.function.blocks[cleanup_block]
+                    .instructions
+                    .push(inst_id);
             }
         }
 
@@ -1882,7 +1879,7 @@ where
             // at the top of the scope list for the top-level scope.
             assert_eq!(*scope_list.last().unwrap(), top_scope_index);
         } else {
-            // If we are not shadowing, we expect the current active entry to be of a lower scope.
+            // If we are not shadowing, we expect any current active entry to be of an outer scope.
             assert!(scope_list.last().is_none_or(|&ind| ind < top_scope_index));
             scope_list.push(top_scope_index);
         }
