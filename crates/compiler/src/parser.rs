@@ -355,6 +355,18 @@ where
                     StatementTrailer::NoSemiColon,
                 )
             }
+            TokenKind::Throw => {
+                self.advance(1);
+                let target = self.parse_expression()?;
+                let span = tok_span.combine(target.span());
+                (
+                    ast::Statement::Throw(ast::ThrowStatement {
+                        target: Box::new(target),
+                        span,
+                    }),
+                    StatementTrailer::SemiColon,
+                )
+            }
             TokenKind::Break => {
                 self.advance(1);
                 (ast::Statement::Break(tok_span), StatementTrailer::SemiColon)

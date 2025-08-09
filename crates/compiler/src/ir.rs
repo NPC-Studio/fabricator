@@ -319,6 +319,7 @@ pub enum Instruction<S> {
         op: BinOp,
         right: InstId,
     },
+    Throw(InstId),
     OpenCall {
         scope: CallScope,
         func: InstId,
@@ -374,6 +375,7 @@ impl<S> Instruction<S> {
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
+            &Instruction::Throw(source) => make_iter!([source]),
             Instruction::OpenCall { func, args, .. } => {
                 make_iter!([*func], args)
             }
@@ -414,6 +416,7 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
+            Instruction::Throw(source) => make_iter!([source]),
             Instruction::OpenCall { func, args, .. } => {
                 make_iter!([func], args)
             }
@@ -444,6 +447,7 @@ impl<S> Instruction<S> {
             Instruction::Phi(..) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
+            Instruction::Throw { .. } => false,
             Instruction::GetReturn(..) => true,
             _ => false,
         }
@@ -470,6 +474,7 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(..) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
+            Instruction::Throw { .. } => true,
             Instruction::OpenCall { .. } => true,
             Instruction::CloseCall(..) => true,
             _ => false,
@@ -601,7 +606,7 @@ impl<S: AsRef<str>> Function<S> {
                 write_indent(f, 4)?;
                 write!(f, "I{}: ", inst_id.index())?;
 
-                match inst {
+                match *inst {
                     Instruction::NoOp => {
                         writeln!(f, "no_op()")?;
                     }
@@ -614,7 +619,7 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::Boolean(b) => {
                         writeln!(f, "boolean({b})")?;
                     }
-                    Instruction::Constant(constant) => {
+                    Instruction::Constant(ref constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;
                     }
                     Instruction::Closure(closure) => {
@@ -632,10 +637,10 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::CloseVariable(var) => {
                         writeln!(f, "close_var({var})")?;
                     }
-                    Instruction::GetMagic(magic) => {
+                    Instruction::GetMagic(ref magic) => {
                         writeln!(f, "get_magic({:?})", magic.as_ref())?;
                     }
-                    Instruction::SetMagic(magic, source) => {
+                    Instruction::SetMagic(ref magic, source) => {
                         writeln!(f, "set_magic({:?}, {source})", magic.as_ref())?;
                     }
                     Instruction::Globals => {
@@ -677,17 +682,21 @@ impl<S: AsRef<str>> Function<S> {
                             "set_field(object = {object}, key = {key}, value = {value})",
                         )?;
                     }
-                    Instruction::GetFieldConst { object, key } => {
+                    Instruction::GetFieldConst { object, ref key } => {
                         writeln!(f, "get_field(object = {object}, key = {:?})", key.as_str(),)?;
                     }
-                    Instruction::SetFieldConst { object, key, value } => {
+                    Instruction::SetFieldConst {
+                        object,
+                        ref key,
+                        value,
+                    } => {
                         writeln!(
                             f,
                             "set_field(object = {object}, key = {:?}, value = {value})",
                             key.as_str(),
                         )?;
                     }
-                    Instruction::GetIndex { array, indexes } => {
+                    Instruction::GetIndex { array, ref indexes } => {
                         write!(f, "get_index(array = {array}, indexes = [")?;
                         for (i, &ind) in indexes.iter().enumerate() {
                             if i != 0 {
@@ -699,7 +708,7 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetIndex {
                         array,
-                        indexes,
+                        ref indexes,
                         value,
                     } => {
                         write!(f, "set_index(array = {array}, value = {value}, indexes = [",)?;
@@ -711,7 +720,7 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         writeln!(f, "])")?;
                     }
-                    Instruction::GetIndexConst { array, index } => {
+                    Instruction::GetIndexConst { array, ref index } => {
                         writeln!(
                             f,
                             "get_index(array = {array}, indexes = [{:?}])",
@@ -720,7 +729,7 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     Instruction::SetIndexConst {
                         array,
-                        index,
+                        ref index,
                         value,
                     } => {
                         writeln!(
@@ -805,7 +814,14 @@ impl<S: AsRef<str>> Function<S> {
                             writeln!(f, "null_coalesce({left}, {right})")?;
                         }
                     },
-                    Instruction::OpenCall { scope, func, args } => {
+                    Instruction::Throw(source) => {
+                        writeln!(f, "throw({source})")?;
+                    }
+                    Instruction::OpenCall {
+                        scope,
+                        func,
+                        ref args,
+                    } => {
                         write!(f, "open_call({scope}, {func}, args = [",)?;
                         for (i, &arg) in args.iter().enumerate() {
                             if i != 0 {

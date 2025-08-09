@@ -611,6 +611,11 @@ where
             ast::Statement::Repeat(repeat_stmt) => self.repeat_statement(repeat_stmt),
             ast::Statement::Switch(switch_stmt) => self.switch_statement(switch_stmt),
             ast::Statement::With(with_stmt) => self.with_statement(with_stmt),
+            ast::Statement::Throw(throw_stmt) => {
+                let target = self.expression(&throw_stmt.target)?;
+                self.push_instruction(throw_stmt.span, ir::Instruction::Throw(target));
+                Ok(())
+            }
             ast::Statement::Call(function_call) => {
                 let _ = self.call_expr(function_call)?;
                 Ok(())

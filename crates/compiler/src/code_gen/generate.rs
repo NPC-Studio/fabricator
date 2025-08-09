@@ -711,6 +711,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
+                ir::Instruction::Throw(source) => {
+                    vm_instructions.push((
+                        Instruction::Throw {
+                            source: reg_alloc.instruction_registers[source],
+                        },
+                        span,
+                    ));
+                }
                 ir::Instruction::OpenCall {
                     scope,
                     func,

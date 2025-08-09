@@ -4,6 +4,7 @@ use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
+    ScriptError,
     array::Array,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
@@ -1005,6 +1006,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .expect("magic idx is not valid");
         magic.set(self.ctx, self.registers[source as usize])?;
         Ok(())
+    }
+
+    #[inline]
+    fn throw(&mut self, source: RegIdx) -> Result<(), Self::Error> {
+        Err(ScriptError::new(self.registers[source as usize]).into())
     }
 
     #[inline]

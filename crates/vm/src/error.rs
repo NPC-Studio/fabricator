@@ -25,6 +25,10 @@ impl<'gc> From<Value<'gc>> for ScriptError<'gc> {
 }
 
 impl<'gc> ScriptError<'gc> {
+    pub fn new(value: Value<'gc>) -> Self {
+        Self(value)
+    }
+
     pub fn to_extern(self) -> ExternScriptError {
         self.into()
     }
@@ -45,7 +49,7 @@ pub enum ExternScriptError {
     Integer(i64),
     #[error("{0}")]
     Float(f64),
-    #[error("{0}")]
+    #[error("{0:?}")]
     String(StdString),
     #[error("<object {0:p}>")]
     Object(*const ()),
@@ -141,7 +145,7 @@ pub enum Error<'gc> {
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Script(err) => write!(f, "script error: {err}"),
+            Error::Script(err) => write!(f, "script error: {err:#}"),
             Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }
@@ -215,7 +219,7 @@ pub enum ExternError {
 impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExternError::Script(err) => write!(f, "script error: {err}"),
+            ExternError::Script(err) => write!(f, "script error: {err:#}"),
             ExternError::Runtime(err) => write!(f, "runtime error: {err:#}"),
         }
     }

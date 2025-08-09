@@ -47,7 +47,14 @@ fn main() {
             let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
             let thread = vm::Thread::new(&ctx);
-            println!("returns: {:?}", thread.exec(ctx, closure).unwrap());
+            match thread.exec(ctx, closure) {
+                Ok(ret) => {
+                    println!("returns: {:?}", ret);
+                }
+                Err(err) => {
+                    println!("error: {}", err);
+                }
+            }
         }
         Command::Dump { path } => {
             let mut code = String::new();

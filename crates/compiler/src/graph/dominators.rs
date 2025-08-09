@@ -321,7 +321,7 @@ mod tests {
         //  |
         // [G] # Not reachable
 
-        // Make the node indexes are of a different range from the post-order indexes
+        // Make sure the node indexes are of a different range from the post-order indexes
         graph.create_node("T");
         graph.create_node("T");
 

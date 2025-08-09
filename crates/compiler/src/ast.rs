@@ -31,6 +31,7 @@ pub enum Statement<S> {
     Repeat(LoopStatement<S>),
     Switch(SwitchStatement<S>),
     With(LoopStatement<S>),
+    Throw(ThrowStatement<S>),
     Call(Call<S>),
     Prefix(Mutation<S>),
     Postfix(Mutation<S>),
@@ -109,6 +110,12 @@ pub struct ForStatement<S> {
 pub struct LoopStatement<S> {
     pub target: Box<Expression<S>>,
     pub body: Box<Statement<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThrowStatement<S> {
+    pub target: Box<Expression<S>>,
     pub span: Span,
 }
 
@@ -385,6 +392,7 @@ impl<S> Statement<S> {
             Statement::Repeat(repeat_stmt) => repeat_stmt.walk(visitor),
             Statement::Switch(switch_stmt) => switch_stmt.walk(visitor),
             Statement::With(with_stmt) => with_stmt.walk(visitor),
+            Statement::Throw(throw_stmt) => throw_stmt.walk(visitor),
             Statement::Call(call_expr) => call_expr.walk(visitor),
             Statement::Prefix(mutation) => mutation.walk(visitor),
             Statement::Postfix(mutation) => mutation.walk(visitor),
@@ -409,6 +417,7 @@ impl<S> Statement<S> {
             Statement::Repeat(repeat_stmt) => repeat_stmt.walk_mut(visitor),
             Statement::Switch(switch_stmt) => switch_stmt.walk_mut(visitor),
             Statement::With(with_stmt) => with_stmt.walk_mut(visitor),
+            Statement::Throw(throw_stmt) => throw_stmt.walk_mut(visitor),
             Statement::Call(call_expr) => call_expr.walk_mut(visitor),
             Statement::Prefix(mutation) => mutation.walk_mut(visitor),
             Statement::Postfix(mutation) => mutation.walk_mut(visitor),
@@ -434,6 +443,7 @@ impl<S> Statement<S> {
             Statement::Repeat(loop_stmt) => loop_stmt.span,
             Statement::Switch(switch_stmt) => switch_stmt.span,
             Statement::With(loop_stmt) => loop_stmt.span,
+            Statement::Throw(throw) => throw.span,
             Statement::Call(call) => call.span,
             Statement::Prefix(mutation) => mutation.span,
             Statement::Postfix(mutation) => mutation.span,
@@ -633,6 +643,18 @@ impl<S> LoopStatement<S> {
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr_mut(&mut self.target)?;
         visitor.visit_stmt_mut(&mut self.body)?;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> ThrowStatement<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.target)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.target)?;
         ControlFlow::Continue(())
     }
 }

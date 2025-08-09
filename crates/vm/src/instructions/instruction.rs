@@ -161,6 +161,10 @@ macro_rules! for_each_instruction {
             [simple] get_magic = GetMagic { dest: RegIdx, magic: MagicIdx };
             [simple] set_magic = SetMagic { magic: MagicIdx, source: RegIdx };
 
+            [simple]
+            /// Throw an error located at the given register.
+            throw = Throw { source: RegIdx };
+
             [jump] jump = Jump { offset: i16 };
             [jump] jump_if = JumpIf { offset: i16, arg: RegIdx, is_true: bool };
 

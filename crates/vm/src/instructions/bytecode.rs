@@ -216,7 +216,7 @@ impl ByteCode {
                             let target_index = self.inst_index_for_pc(
                                 (ptr.offset_from(self.bytes.as_ptr()) + offset as isize) as usize
                             ).unwrap();
-                            offset = (target_index as isize - inst_index as isize) as $jump_offset_ty;
+                            offset = (target_index as isize - inst_index as isize).try_into().unwrap();
                             Instruction::$jump_name { offset $(, $jump_field)* }
                         })*
                         $(OpCode::$call_name => {

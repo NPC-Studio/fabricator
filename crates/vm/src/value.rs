@@ -79,7 +79,7 @@ impl<'gc> fmt::Display for Value<'gc> {
             Value::Boolean(b) => write!(f, "{b}"),
             Value::Integer(i) => write!(f, "{i}"),
             Value::Float(n) => write!(f, "{n}"),
-            Value::String(s) => write!(f, "{s}"),
+            Value::String(s) => write!(f, "{s:?}"),
             Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
             Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
             Value::Closure(closure) => {
