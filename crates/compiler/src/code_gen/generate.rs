@@ -608,7 +608,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                                 span,
                             ));
                         }
-                        ir::UnOp::Neg => {
+                        ir::UnOp::Negate => {
                             vm_instructions.push((
                                 Instruction::Negate {
                                     dest: output_reg,

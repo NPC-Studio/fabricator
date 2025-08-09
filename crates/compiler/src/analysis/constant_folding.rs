@@ -29,7 +29,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                             ir::UnOp::IsUndefined => Some(Constant::Boolean(c.is_undefined())),
                             ir::UnOp::Test => Some(Constant::Boolean(!c.to_bool())),
                             ir::UnOp::Not => Some(Constant::Boolean(!c.to_bool())),
-                            ir::UnOp::Neg => c.negate(),
+                            ir::UnOp::Negate => c.negate(),
                             ir::UnOp::Increment => c.add(&Constant::Integer(1)),
                             ir::UnOp::Decrement => c.sub(&Constant::Integer(1)),
                         }

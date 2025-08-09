@@ -86,7 +86,7 @@ pub enum UnOp {
     IsUndefined,
     Test,
     Not,
-    Neg,
+    Negate,
     Increment,
     Decrement,
 }
@@ -757,7 +757,7 @@ impl<S: AsRef<str>> Function<S> {
                         UnOp::Not => {
                             writeln!(f, "not({source})")?;
                         }
-                        UnOp::Neg => {
+                        UnOp::Negate => {
                             writeln!(f, "neg({source})")?;
                         }
                         UnOp::Increment => {

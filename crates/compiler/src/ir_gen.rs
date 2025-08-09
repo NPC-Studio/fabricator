@@ -1282,7 +1282,7 @@ where
                 let inst = ir::Instruction::UnOp {
                     op: match unary_expr.op {
                         ast::UnaryOp::Not => ir::UnOp::Not,
-                        ast::UnaryOp::Minus => ir::UnOp::Neg,
+                        ast::UnaryOp::Minus => ir::UnOp::Negate,
                     },
                     source: self.expression(&unary_expr.target)?,
                 };

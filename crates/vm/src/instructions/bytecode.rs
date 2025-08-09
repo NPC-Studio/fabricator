@@ -437,20 +437,22 @@ for_each_instruction!(define_opcode);
 
 #[inline]
 fn bytecode_write<T: Copy>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
+    const { assert!(mem::align_of::<T>() == 1) }
     unsafe {
         let len = buf.len();
         buf.reserve(mem::size_of::<T>());
         let p = buf.as_mut_ptr().add(len) as *mut T;
-        p.write_unaligned(val);
+        p.write(val);
         buf.set_len(len + mem::size_of::<T>());
     }
 }
 
 #[inline]
 unsafe fn bytecode_read<T: Copy>(ptr: &mut *const MaybeUninit<u8>) -> T {
+    const { assert!(mem::align_of::<T>() == 1) }
     unsafe {
         let p = *ptr as *const T;
-        let v = p.read_unaligned();
+        let v = p.read();
         *ptr = ptr.add(mem::size_of::<T>());
         v
     }
