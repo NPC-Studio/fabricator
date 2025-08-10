@@ -31,8 +31,8 @@ pub struct ByteCode {
     // Encoded bytecode, each instruction is serialized directly into the byte array and jump
     // offsets are stored in byte offets.
     bytes: Box<[MaybeUninit<u8>]>,
-    // Ordered list of each instruction bytecode start position and the original instruction index.
-    inst_boundaries: Box<[(usize, usize)]>,
+    // Ordered list of each instruction bytecode start position.
+    inst_byte_positions: Box<[usize]>,
     // Span data for each instruction.
     inst_spans: Box<[Span]>,
 }
@@ -112,13 +112,12 @@ impl ByteCode {
             inst_positions.push(pos);
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
-        inst_positions.push(pos);
 
         let mut bytes = Vec::new();
-        let mut inst_boundaries = Vec::with_capacity(size_hint);
+        let mut inst_byte_positions = Vec::with_capacity(size_hint);
         for (i, mut inst) in insts.iter().copied().enumerate() {
             assert_eq!(inst_positions[i], bytes.len());
-            inst_boundaries.push((bytes.len(), i));
+            inst_byte_positions.push(bytes.len());
 
             // Rewrite jump instruction targets to be in bytes
 
@@ -156,7 +155,7 @@ impl ByteCode {
 
         Ok(Self {
             bytes: bytes.into_boxed_slice(),
-            inst_boundaries: inst_boundaries.into_boxed_slice(),
+            inst_byte_positions: inst_byte_positions.into_boxed_slice(),
             inst_spans: inst_spans.into_boxed_slice(),
         })
     }
@@ -173,10 +172,13 @@ impl ByteCode {
 
     /// Decode instructions from bytecode.
     pub fn decode(&self) -> impl Iterator<Item = (Instruction, Span)> + '_ {
-        self.inst_boundaries.iter().map(|&(pc, inst_index)| {
-            let inst = unsafe { self.decode_instruction(pc) };
-            (inst, self.inst_spans[inst_index])
-        })
+        self.inst_byte_positions
+            .iter()
+            .enumerate()
+            .map(|(inst_index, &pc)| {
+                let inst = unsafe { self.decode_instruction(pc) };
+                (inst, self.inst_spans[inst_index])
+            })
     }
 
     pub fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
@@ -190,11 +192,9 @@ impl ByteCode {
     }
 
     fn inst_index_for_pc(&self, pc: usize) -> Option<usize> {
-        let i = self
-            .inst_boundaries
-            .binary_search_by_key(&pc, |&(offset, _)| offset)
-            .ok()?;
-        Some(self.inst_boundaries[i].1)
+        self.inst_byte_positions
+            .binary_search_by_key(&pc, |&offset| offset)
+            .ok()
     }
 
     unsafe fn decode_instruction(&self, pc: usize) -> Instruction {
