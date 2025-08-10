@@ -833,7 +833,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
-    fn check(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
+    fn jump_if(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
         Ok(self.registers[test as usize].to_bool() == is_true)
     }
 

@@ -9,15 +9,15 @@ use thiserror::Error;
 
 use crate::{
     debug::Span,
-    instructions::instruction::{ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
+    instructions::instruction::{
+        ConstIdx, HeapIdx, InstIdx, Instruction, MagicIdx, ProtoIdx, RegIdx,
+    },
 };
 
 #[derive(Debug, Error)]
 pub enum ByteCodeEncodingError {
-    #[error("decoded jump is to a non-existent instruction")]
-    InvalidJump(usize),
-    #[error("encoded jump out of range at instruction {0}")]
-    JumpOutOfRange(usize),
+    #[error("jump target {0} out of range")]
+    InvalidJump(InstIdx),
     #[error("no return or jump as last instruction")]
     BadLastInstruction,
 }
@@ -45,7 +45,7 @@ impl ByteCode {
         fn opcode_for_inst(inst: Instruction) -> OpCode {
             macro_rules! match_inst {
                 ($(
-                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* };
                 )*) => {
                     match inst {
                         $(Instruction::$name { .. } => OpCode::$name),*
@@ -58,7 +58,7 @@ impl ByteCode {
         fn op_param_len(opcode: OpCode) -> usize {
             macro_rules! match_opcode {
                 ($(
-                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* };
                 )*) => {
                     match opcode {
                         $(OpCode::$name { .. } => mem::size_of::<params::$name>()),*
@@ -79,21 +79,24 @@ impl ByteCode {
             inst_spans.push(span);
         }
 
-        let check_jump = |i: usize, offset: i16| match i.checked_add_signed(offset as isize) {
-            Some(i) if i < insts.len() => Ok(()),
-            _ => Err(ByteCodeEncodingError::InvalidJump(i)),
-        };
-
-        for (i, &inst) in insts.iter().enumerate() {
-            match inst {
-                Instruction::Jump { offset } => {
-                    check_jump(i, offset)?;
+        for &inst in &insts {
+            macro_rules! check_targets {
+                (
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
+                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+                ) => {
+                    match inst {
+                        $(Instruction::$jump_name { target, .. })|* => {
+                            if target as usize >= insts.len() {
+                                return Err(ByteCodeEncodingError::InvalidJump(target));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
-                Instruction::JumpIf { offset, .. } => {
-                    check_jump(i, offset)?;
-                }
-                _ => {}
             }
+            for_each_instruction!(check_targets);
         }
 
         if !matches!(
@@ -111,30 +114,29 @@ impl ByteCode {
         }
         inst_positions.push(pos);
 
-        let calc_jump = |cur: usize, offset: i16| {
-            // Encode jumps from the end of the current instruction
-            let cur_pos = inst_positions.get(cur + 1).copied().unwrap() as isize;
-            let jump_pos = inst_positions[(cur as isize + offset as isize) as usize] as isize;
-            i16::try_from(jump_pos - cur_pos)
-                .map_err(|_| ByteCodeEncodingError::JumpOutOfRange(cur))
-        };
-
         let mut bytes = Vec::new();
         let mut inst_boundaries = Vec::with_capacity(size_hint);
         for (i, mut inst) in insts.iter().copied().enumerate() {
             assert_eq!(inst_positions[i], bytes.len());
             inst_boundaries.push((bytes.len(), i));
 
-            // Rewrite jump instruction offsets to be *bytecode* relative
-            match &mut inst {
-                Instruction::Jump { offset } => {
-                    *offset = calc_jump(i, *offset)?;
+            // Rewrite jump instruction targets to be in bytes
+
+            macro_rules! fixup_targets {
+                (
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
+                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+                ) => {
+                    match &mut inst {
+                        $(Instruction::$jump_name { target, .. })|* => {
+                            *target = inst_positions[*target as usize].try_into().unwrap();
+                        }
+                        _ => {}
+                    };
                 }
-                Instruction::JumpIf { offset, .. } => {
-                    *offset = calc_jump(i, *offset)?;
-                }
-                _ => {}
-            };
+            }
+            for_each_instruction!(fixup_targets);
 
             bytecode_write(&mut bytes, opcode_for_inst(inst));
 
@@ -164,7 +166,7 @@ impl ByteCode {
     /// Returns the instruction index, instruction, and the debug span for that instruction.
     pub fn instruction_for_pc(&self, pc: usize) -> Option<(usize, Instruction, Span)> {
         let inst_index = self.inst_index_for_pc(pc)?;
-        let inst = unsafe { self.decode_instruction(pc, inst_index) };
+        let inst = unsafe { self.decode_instruction(pc) };
         let span = self.inst_spans[inst_index];
         Some((inst_index, inst, span))
     }
@@ -172,7 +174,7 @@ impl ByteCode {
     /// Decode instructions from bytecode.
     pub fn decode(&self) -> impl Iterator<Item = (Instruction, Span)> + '_ {
         self.inst_boundaries.iter().map(|&(pc, inst_index)| {
-            let inst = unsafe { self.decode_instruction(pc, inst_index) };
+            let inst = unsafe { self.decode_instruction(pc) };
             (inst, self.inst_spans[inst_index])
         })
     }
@@ -195,33 +197,30 @@ impl ByteCode {
         Some(self.inst_boundaries[i].1)
     }
 
-    unsafe fn decode_instruction(&self, pc: usize, inst_index: usize) -> Instruction {
+    unsafe fn decode_instruction(&self, pc: usize) -> Instruction {
         unsafe {
             let mut ptr = self.bytes.as_ptr().add(pc);
             let opcode: OpCode = bytecode_read(&mut ptr);
 
             macro_rules! decode {
                 (
-                    $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { offset: $jump_offset_ty:ty $(, $jump_field:ident : $jump_field_ty:ty )* };)*
-                    $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
+                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
                 ) => {
                     match opcode {
-                        $(OpCode::$simple_name => {
-                            let params::$simple_name { $($simple_field),* } = bytecode_read(&mut ptr);
-                            Instruction::$simple_name { $($simple_field),* }
+                        $(OpCode::$basic_name => {
+                            let params::$basic_name { $($basic_field),* } = bytecode_read(&mut ptr);
+                            Instruction::$basic_name { $($basic_field),* }
                         })*
                         $(OpCode::$jump_name => {
-                            let params::$jump_name { mut offset $(, $jump_field)* } = bytecode_read(&mut ptr);
-                            let target_index = self.inst_index_for_pc(
-                                (ptr.offset_from(self.bytes.as_ptr()) + offset as isize) as usize
-                            ).unwrap();
-                            offset = (target_index as isize - inst_index as isize).try_into().unwrap();
-                            Instruction::$jump_name { offset $(, $jump_field)* }
+                            let params::$jump_name { mut target $(, $jump_field)* } = bytecode_read(&mut ptr);
+                            target = self.inst_index_for_pc(target as usize).unwrap() as InstIdx;
+                            Instruction::$jump_name { target $(, $jump_field)* }
                         })*
-                        $(OpCode::$call_name => {
-                            let params::$call_name { $($call_field),* } = bytecode_read(&mut ptr);
-                            Instruction::$call_name { $($call_field),* }
+                        $(OpCode::$special_name => {
+                            let params::$special_name { $($special_field),* } = bytecode_read(&mut ptr);
+                            Instruction::$special_name { $($special_field),* }
                         })*
                     }
                 };
@@ -327,32 +326,33 @@ impl<'a> Dispatcher<'a> {
 
             macro_rules! dispatch {
                 (
-                    $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
-                    $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
+                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $($jump_field:ident : $jump_field_ty:ty),* };)*
+                    $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
                 ) => {
                     match opcode {
                         $(
-                            OpCode::$simple_name => {
-                                let params::$simple_name { $($simple_field),* } = bytecode_read(&mut self.ptr);
-                                dispatch.$simple_snake_name($($simple_field),*)?;
+                            OpCode::$basic_name => {
+                                let params::$basic_name { $($basic_field),* } = bytecode_read(&mut self.ptr);
+                                dispatch.$basic_snake_name($($basic_field),*)?;
                             }
                         )*
 
                         OpCode::Jump => {
-                            let params::Jump { offset } = bytecode_read(&mut self.ptr);
-                            self.ptr = self.ptr.offset(offset as isize);
+                            let params::Jump { target } = bytecode_read(&mut self.ptr);
+                            self.ptr = self.bytecode.bytes.as_ptr().add(target as usize);
                         }
-                        OpCode::JumpIf => {
-                            let params::JumpIf {
-                                arg,
-                                is_true,
-                                offset,
-                            } = bytecode_read(&mut self.ptr);
-                            if dispatch.check(arg, is_true)? {
-                                self.ptr = self.ptr.offset(offset as isize);
+
+                        $(
+                            OpCode::$jump_if_name => {
+                                let params::$jump_if_name { target  $(, $jump_if_field)* } = bytecode_read(&mut self.ptr);
+                                if dispatch.$jump_if_snake_name($($jump_if_field),*)? {
+                                    self.ptr = self.bytecode.bytes.as_ptr().add(target as usize);
+                                }
                             }
-                        }
+                        )*
+
                         OpCode::Call => {
                             let params::Call {
                                 func,
@@ -379,17 +379,17 @@ impl<'a> Dispatcher<'a> {
 
 macro_rules! define_dispatch {
     (
-        $([simple] $(#[$_simple_attr:meta])* $simple_snake_name:ident = $simple_name:ident { $( $simple_field:ident : $simple_field_ty:ty ),* };)*
-        $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $( $jump_field:ident : $jump_field_ty:ty ),* };)*
-        $([call] $(#[$_call_attr:meta])* $call_snake_name:ident = $call_name:ident { $( $call_field:ident : $call_field_ty:ty ),* };)*
+        $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
+        $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
+        $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* };)*
+        $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
     ) => {
         pub trait Dispatch {
             type Break;
             type Error;
 
-            $(fn $simple_snake_name(&mut self, $($simple_field: $simple_field_ty),*) -> Result<(), Self::Error>;)*
-
-            fn check(&mut self, arg: RegIdx, is_true: bool) -> Result<bool, Self::Error>;
+            $(fn $basic_snake_name(&mut self, $($basic_field: $basic_field_ty),*) -> Result<(), Self::Error>;)*
+            $(fn $jump_if_snake_name(&mut self, $($jump_if_field: $jump_if_field_ty),*) -> Result<bool, Self::Error>;)*
 
             fn call(
                 &mut self,
@@ -469,14 +469,14 @@ mod tests {
                 constant: 1,
                 dest: 2,
             },
-            Instruction::Jump { offset: 1 },
+            Instruction::Jump { target: 2 },
             Instruction::IsEqual {
                 left: 3,
                 right: 4,
                 dest: 5,
             },
             Instruction::JumpIf {
-                offset: -2,
+                target: 1,
                 arg: 6,
                 is_true: true,
             },

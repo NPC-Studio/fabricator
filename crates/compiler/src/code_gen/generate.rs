@@ -795,7 +795,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 // If we are the next block in output order, we don't need to add a jump
                 if block_order_indexes[&block_id] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), block_id));
-                    vm_instructions.push((Instruction::Jump { offset: 0 }, func_span));
+                    vm_instructions.push((Instruction::Jump { target: 0 }, func_span));
                 }
             }
             ir::Exit::Branch {
@@ -808,9 +808,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     block_vm_jumps.push((vm_instructions.len(), if_true));
                     vm_instructions.push((
                         Instruction::JumpIf {
+                            target: 0,
                             arg: reg_alloc.instruction_registers[cond],
                             is_true: true,
-                            offset: 0,
                         },
                         func_span,
                     ));
@@ -820,9 +820,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     block_vm_jumps.push((vm_instructions.len(), if_false));
                     vm_instructions.push((
                         Instruction::JumpIf {
+                            target: 0,
                             arg: reg_alloc.instruction_registers[cond],
                             is_true: false,
-                            offset: 0,
                         },
                         func_span,
                     ));
@@ -832,15 +832,13 @@ fn codegen_function<S: Clone + Eq + Hash>(
     }
 
     for (index, block_id) in block_vm_jumps {
-        let jump_offset = (block_vm_starts[block_id] as isize - index as isize)
-            .try_into()
-            .map_err(|_| ProtoGenError::JumpOutOfRange)?;
+        let jump_offset = block_vm_starts[block_id].try_into().unwrap();
         match &mut vm_instructions[index].0 {
-            Instruction::Jump { offset } => {
-                *offset = jump_offset;
+            Instruction::Jump { target } => {
+                *target = jump_offset;
             }
-            Instruction::JumpIf { offset, .. } => {
-                *offset = jump_offset;
+            Instruction::JumpIf { target, .. } => {
+                *target = jump_offset;
             }
             _ => panic!("instruction not a jump"),
         }
