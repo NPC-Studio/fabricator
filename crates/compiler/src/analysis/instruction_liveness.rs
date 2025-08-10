@@ -82,6 +82,10 @@ impl InstructionLiveness {
                     block_uses.insert(source_inst_id);
                 }
             }
+
+            for source_inst_id in block.exit.sources() {
+                block_uses.insert(source_inst_id);
+            }
         }
 
         for (block_id, block) in ir.blocks.iter() {
