@@ -37,8 +37,39 @@ pub enum OpError {
     BadStackIdx,
 }
 
+#[derive(Debug)]
+pub struct VmError<'gc> {
+    pub error: Error<'gc>,
+    pub chunk_name: RefName,
+    pub instruction_index: usize,
+    pub instruction: Instruction,
+    pub line_number: LineNumber,
+}
+
+impl<'gc> fmt::Display for VmError<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "VM error in {} at line {} instruction {}: {}",
+            self.chunk_name, self.line_number, self.instruction_index, self.error,
+        )
+    }
+}
+
+impl<'gc> VmError<'gc> {
+    pub fn into_extern(self) -> ExternVmError {
+        ExternVmError {
+            error: self.error.into_extern(),
+            chunk_name: self.chunk_name,
+            instruction_index: self.instruction_index,
+            instruction: self.instruction,
+            line_number: self.line_number,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
-pub struct VmError {
+pub struct ExternVmError {
     #[source]
     pub error: ExternError,
     pub chunk_name: RefName,
@@ -47,7 +78,7 @@ pub struct VmError {
     pub line_number: LineNumber,
 }
 
-impl fmt::Display for VmError {
+impl fmt::Display for ExternVmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -93,29 +124,116 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
+    /// Calls `Thread::exec_with` with both `this` and `other` set to `ctx.globals()`.
     pub fn exec(
         self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-    ) -> Result<Vec<Value<'gc>>, VmError> {
+    ) -> Result<Vec<Value<'gc>>, ExternVmError> {
         let globals = ctx.globals().into();
         self.exec_with(ctx, closure, globals, globals)
     }
 
+    /// Execute a closure on this `Thread`.
+    ///
+    /// if `this` or `other` are `Value::Undefined`, then they will be automatically set to
+    /// `ctx.globals()`.
     pub fn exec_with(
         self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: Value<'gc>,
-        other: Value<'gc>,
-    ) -> Result<Vec<Value<'gc>>, VmError> {
+        mut this: Value<'gc>,
+        mut other: Value<'gc>,
+    ) -> Result<Vec<Value<'gc>>, ExternVmError> {
         let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
-        thread.registers.clear();
-        thread.stack.clear();
+        assert!(thread.registers.is_empty() && thread.stack.is_empty() && thread.heap.is_empty());
 
-        thread.call(ctx, closure, this, other, 0)?;
+        struct DropGuard<'gc, 'a>(&'a mut ThreadState<'gc>);
 
-        Ok(thread.stack.drain(..).collect())
+        impl<'gc, 'a> Drop for DropGuard<'gc, 'a> {
+            fn drop(&mut self) {
+                self.0.registers.clear();
+                self.0.stack.clear();
+                self.0.heap.clear();
+            }
+        }
+
+        this = this.null_coalesce(ctx.globals().into());
+        other = other.null_coalesce(ctx.globals().into());
+
+        let guard = DropGuard(&mut *thread);
+
+        guard
+            .0
+            .call(ctx, closure, this, other, 0)
+            .map_err(VmError::into_extern)?;
+
+        Ok(guard.0.stack.drain(..).collect())
+    }
+}
+
+/// An execution context for some `Thread`.
+///
+/// This type is passed to all callbacks to allow them to manipulate the call stack and call FML
+/// code using the calling `Thread`.
+pub struct Execution<'gc, 'a> {
+    thread: &'a mut ThreadState<'gc>,
+    stack_bottom: usize,
+    this: Value<'gc>,
+    other: Value<'gc>,
+}
+
+impl<'gc, 'a> Execution<'gc, 'a> {
+    /// Return a slice of the current call stack containing callback arguments and returns.
+    pub fn stack(&mut self) -> Stack<'gc, '_> {
+        Stack::new(&mut self.thread.stack, self.stack_bottom)
+    }
+
+    /// Return the current `this` value.
+    pub fn this(&self) -> Value<'gc> {
+        self.this
+    }
+
+    /// Return the current `other` value.
+    pub fn other(&self) -> Value<'gc> {
+        self.other
+    }
+
+    /// Return a new execution context with potentially changed stack bottom and  `this` / `other`
+    /// values.
+    ///
+    /// If the provided `stack_bottom` is not 0, then the returned `Execution` will have a stack
+    /// starting at this new provided bottom value.
+    ///
+    /// If the provided `this` value is not `Value::Undefined`, then returns an `Execution` with the
+    /// `this` set as the provided value and the `other` set as the previous value of `this`.
+    pub fn with(&mut self, stack_bottom: usize, this: Value<'gc>) -> Execution<'gc, '_> {
+        assert!(self.thread.stack.len() >= self.stack_bottom + stack_bottom);
+
+        if this.is_undefined() {
+            Execution {
+                thread: self.thread,
+                stack_bottom: self.stack_bottom + stack_bottom,
+                this: self.this,
+                other: self.other,
+            }
+        } else {
+            Execution {
+                thread: self.thread,
+                stack_bottom: self.stack_bottom + stack_bottom,
+                this: this,
+                other: self.this,
+            }
+        }
+    }
+
+    /// Within a callback, call the given closure using the parent `Thread`.
+    ///
+    /// Arguments to the closure will be taken from the stack and returns placed back into the
+    /// stack.
+    pub fn call(&mut self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<(), VmError<'gc>> {
+        self.thread
+            .call(ctx, closure, self.this, self.other, self.stack_bottom)
     }
 }
 
@@ -127,7 +245,7 @@ impl<'gc> ThreadState<'gc> {
         mut this: Value<'gc>,
         mut other: Value<'gc>,
         stack_bottom: usize,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), VmError<'gc>> {
         let proto = closure.prototype();
         let used_registers = proto.used_registers();
         assert!(used_registers <= 256);
@@ -174,26 +292,42 @@ impl<'gc> ThreadState<'gc> {
             });
             frame.pc = dispatcher.pc();
 
+            let mut error = None;
             match ret {
                 Ok(next) => match next {
                     Next::Call {
-                        closure,
+                        function,
                         args_bottom,
                     } => {
-                        // We only preserve the registers that the prototype claims to use,
-                        self.registers.truncate(register_bottom + used_registers);
+                        match function {
+                            Function::Closure(closure) => {
+                                // We only preserve the registers that the prototype claims to use,
+                                self.registers.truncate(register_bottom + used_registers);
 
-                        self.call(
-                            ctx,
-                            closure,
-                            frame.this,
-                            frame.other,
-                            stack_bottom + args_bottom,
-                        )?;
+                                self.call(
+                                    ctx,
+                                    closure,
+                                    frame.this,
+                                    frame.other,
+                                    stack_bottom + args_bottom,
+                                )?;
 
-                        // Resize the register slice to be 256 wide.
-                        self.registers
-                            .resize(register_bottom + 256, Value::Undefined);
+                                // Resize the register slice to be 256 wide.
+                                self.registers
+                                    .resize(register_bottom + 256, Value::Undefined);
+                            }
+                            Function::Callback(callback) => {
+                                let execution = Execution {
+                                    thread: self,
+                                    stack_bottom: stack_bottom + args_bottom,
+                                    this: frame.this,
+                                    other: frame.other,
+                                };
+                                if let Err(err) = callback.call(ctx, execution) {
+                                    error = Some(err);
+                                }
+                            }
+                        }
                     }
                     Next::Return { returns_bottom } => {
                         // Clear the registers for this frame.
@@ -205,22 +339,26 @@ impl<'gc> ThreadState<'gc> {
                         return Ok(());
                     }
                 },
-                Err(error) => {
-                    let prototype = frame.closure.prototype();
-                    let bytecode = prototype.bytecode();
-                    let inst_index = bytecode.instruction_index_for_pc(frame.pc).unwrap();
-                    let inst = bytecode.instruction(inst_index);
-                    let span = bytecode.span(inst_index);
-                    let chunk = prototype.chunk();
-                    return Err(VmError {
-                        error: error.into(),
-                        chunk_name: chunk.name().clone(),
-                        instruction_index: inst_index,
-                        instruction: inst,
-                        line_number: chunk.line_number(span.start()),
-                    }
-                    .into());
+                Err(err) => {
+                    error = Some(err);
                 }
+            }
+
+            if let Some(err) = error {
+                let prototype = frame.closure.prototype();
+                let bytecode = prototype.bytecode();
+                let inst_index = bytecode.instruction_index_for_pc(frame.pc).unwrap();
+                let inst = bytecode.instruction(inst_index);
+                let span = bytecode.span(inst_index);
+                let chunk = prototype.chunk();
+                return Err(VmError {
+                    error: err,
+                    chunk_name: chunk.name().clone(),
+                    instruction_index: inst_index,
+                    instruction: inst,
+                    line_number: chunk.line_number(span.start()),
+                }
+                .into());
             }
         }
     }
@@ -282,7 +420,7 @@ struct Frame<'gc> {
 
 enum Next<'gc> {
     Call {
-        closure: Closure<'gc>,
+        function: Function<'gc>,
         args_bottom: usize,
     },
     Return {
@@ -830,7 +968,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = if left.is_undefined() { right } else { left };
+        *dest = left.null_coalesce(right);
         Ok(())
     }
 
@@ -1034,20 +1172,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             self.stack.resize(stack_bottom);
         }
 
-        Ok(match func {
-            Function::Closure(closure) => ControlFlow::Break(Next::Call {
-                closure,
-                args_bottom: stack_bottom,
-            }),
-            Function::Callback(callback) => {
-                callback.call_with(
-                    self.ctx,
-                    self.frame.this,
-                    self.stack.sub_stack(stack_bottom),
-                )?;
-                ControlFlow::Continue(())
-            }
-        })
+        Ok(ControlFlow::Break(Next::Call {
+            function: func,
+            args_bottom: stack_bottom,
+        }))
     }
 
     #[inline]

@@ -37,7 +37,7 @@ pub use self::{
         StashedThread, StashedUserData, StashedUserDataMethods,
     },
     string::String,
-    thread::{OpError, Thread, VmError},
+    thread::{Execution, ExternVmError, OpError, Thread, VmError},
     userdata::{UserData, UserDataMeta, UserDataMethods},
     value::{Function, Value},
 };

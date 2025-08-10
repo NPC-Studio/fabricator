@@ -24,23 +24,23 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     MagicConstant::new_ptr(&ctx, f64::consts::PI.into()),
                 );
 
-                let cos = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                    let arg: f64 = stack.consume(ctx)?;
-                    stack.replace(ctx, arg.cos());
+                let cos = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+                    let arg: f64 = exec.stack().consume(ctx)?;
+                    exec.stack().replace(ctx, arg.cos());
                     Ok(())
                 });
                 stdlib.insert(ctx.intern("cos"), MagicConstant::new_ptr(&ctx, cos.into()));
 
-                let sin = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                    let arg: f64 = stack.consume(ctx)?;
-                    stack.replace(ctx, arg.sin());
+                let sin = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+                    let arg: f64 = exec.stack().consume(ctx)?;
+                    exec.stack().replace(ctx, arg.sin());
                     Ok(())
                 });
                 stdlib.insert(ctx.intern("sin"), MagicConstant::new_ptr(&ctx, sin.into()));
 
-                let abs = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-                    let arg: f64 = stack.consume(ctx)?;
-                    stack.replace(ctx, arg.abs());
+                let abs = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+                    let arg: f64 = exec.stack().consume(ctx)?;
+                    exec.stack().replace(ctx, arg.abs());
                     Ok(())
                 });
                 stdlib.insert(ctx.intern("abs"), MagicConstant::new_ptr(&ctx, abs.into()));
@@ -62,7 +62,8 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
         impl<'gc> vm::Singleton<'gc> for TestingStdlibSingleton<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut testing_stdlib = vm::MagicSet::new();
-                let assert = vm::Callback::from_fn(&ctx, |_, _, stack| {
+                let assert = vm::Callback::from_fn(&ctx, |_, mut exec| {
+                    let stack = exec.stack();
                     for i in 0..stack.len() {
                         if !stack.get(i).to_bool() {
                             return Err("assert failed".into());
@@ -75,7 +76,8 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     MagicConstant::new_ptr(&ctx, assert.into()),
                 );
 
-                let print = vm::Callback::from_fn(&ctx, |_, _, stack| {
+                let print = vm::Callback::from_fn(&ctx, |_, mut exec| {
+                    let stack = exec.stack();
                     for i in 0..stack.len() {
                         print!("{:?}", stack.get(i));
                         if i != stack.len() - 1 {
@@ -90,7 +92,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                     MagicConstant::new_ptr(&ctx, print.into()),
                 );
 
-                let black_box = vm::Callback::from_fn(&ctx, |_, _, _| Ok(()));
+                let black_box = vm::Callback::from_fn(&ctx, |_, _| Ok(()));
                 testing_stdlib.insert(
                     ctx.intern("black_box"),
                     MagicConstant::new_ptr(&ctx, black_box.into()),

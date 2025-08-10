@@ -57,9 +57,9 @@ pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         .add_constant(&ctx, ctx.intern("all"), all(ctx).into())
         .unwrap();
 
-    let collision_line = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
+    let collision_line = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (x1, y1, x2, y2, _obj, _prec, notme): (f64, f64, f64, f64, vm::UserData, bool, bool) =
-            stack.consume(ctx)?;
+            exec.stack().consume(ctx)?;
 
         let line_collision = support_maps::Line([Vec2::new(x1, y1), Vec2::new(x2, y2)]);
         let bounds = line_collision.bound_box();
@@ -94,13 +94,13 @@ pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                     );
 
                     if matches!(res, gjk::Result::Touching) {
-                        stack.replace(ctx, ctx.fetch(&instance.this));
+                        exec.stack().replace(ctx, ctx.fetch(&instance.this));
                         return Ok(());
                     }
                 }
             }
 
-            stack.replace(ctx, no_one(ctx));
+            exec.stack().replace(ctx, no_one(ctx));
             Ok(())
         })?
     });

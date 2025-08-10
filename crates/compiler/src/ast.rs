@@ -900,11 +900,7 @@ impl<S: Eq + Clone> BinaryExpr<S> {
             BinaryOp::GreaterEqual => right.less_equal(left).map(Constant::Boolean),
             BinaryOp::And => Some(Constant::Boolean(left.to_bool() && right.to_bool())),
             BinaryOp::Or => Some(Constant::Boolean(left.to_bool() || right.to_bool())),
-            BinaryOp::NullCoalesce => Some(if left.is_undefined() {
-                right.clone()
-            } else {
-                left.clone()
-            }),
+            BinaryOp::NullCoalesce => Some(left.null_coalesce(right).clone()),
         }
     }
 }

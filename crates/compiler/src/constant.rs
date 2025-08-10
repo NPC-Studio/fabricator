@@ -233,6 +233,11 @@ impl<S> Constant<S> {
         }
     }
 
+    #[inline]
+    pub fn null_coalesce<'a>(&'a self, other: &'a Constant<S>) -> &'a Constant<S> {
+        if self.is_undefined() { other } else { self }
+    }
+
     pub fn as_string_ref(&self) -> Constant<&S> {
         match self {
             Constant::Undefined => Constant::Undefined,

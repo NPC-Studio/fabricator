@@ -207,6 +207,13 @@ impl<'gc> Error<'gc> {
             Error::Runtime(err) => UserData::new_static(&ctx, err.clone()).into(),
         }
     }
+
+    pub fn into_extern(self) -> ExternError {
+        match self {
+            Error::Script(script_error) => ExternError::Script(script_error.to_extern()),
+            Error::Runtime(runtime_error) => ExternError::Runtime(runtime_error),
+        }
+    }
 }
 
 /// An [`enum@Error`] that is not bound to the GC context.

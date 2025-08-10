@@ -33,11 +33,12 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
             .unwrap();
     }
 
-    let mouse_check_button = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let button: vm::UserData = stack.consume(ctx)?;
+    let mouse_check_button = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let button: vm::UserData = exec.stack().consume(ctx)?;
         let button = *button.downcast_static::<MouseButtons>()?;
         InputState::ctx_with(ctx, |input| {
-            stack.replace(ctx, !(input.mouse_pressed & button).is_empty());
+            exec.stack()
+                .replace(ctx, !(input.mouse_pressed & button).is_empty());
             Ok(())
         })?
     });

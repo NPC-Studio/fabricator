@@ -28,6 +28,26 @@ pub struct BuiltIns<'gc> {
     /// ```
     pub method: Callback<'gc>,
 
+    /// Call the given function and catch any errors.
+    ///
+    /// The first parameter is the function to call, the rest are parameters to pass to the provided
+    /// function.
+    ///
+    /// If the given function completes without error, returns `true` followed by the return values
+    /// of the inner function.
+    ///
+    /// If there is an error executing the given function, returns `false` followed by the error.
+    ///
+    /// ```fml
+    /// var success, err = pcall(function() {
+    ///     throw "my_error";
+    /// });
+    ///
+    /// assert(success == false);
+    /// assert(err == "my_error");
+    /// ```
+    pub pcall: Callback<'gc>,
+
     /// Get the parent (super) of an object if it exists.
     pub get_super: Callback<'gc>,
 
@@ -63,6 +83,7 @@ pub struct BuiltIns<'gc> {
 
 impl<'gc> BuiltIns<'gc> {
     pub const METHOD: &'static str = "method";
+    pub const PCALL: &'static str = "pcall";
     pub const GET_SUPER: &'static str = "get_super";
     pub const SET_SUPER: &'static str = "set_super";
     pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_prototype_super";
@@ -70,66 +91,82 @@ impl<'gc> BuiltIns<'gc> {
 
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
-            method: Callback::from_fn(mc, |ctx, _, mut stack| {
-                let (obj, func): (Value, Function) = stack.consume(ctx)?;
+            method: Callback::from_fn(mc, |ctx, mut exec| {
+                let (obj, func): (Value, Function) = exec.stack().consume(ctx)?;
 
                 match obj {
                     obj @ (Value::Undefined | Value::Object(_) | Value::UserData(_)) => {
-                        stack.replace(ctx, func.rebind(&ctx, obj));
+                        exec.stack().replace(ctx, func.rebind(&ctx, obj));
                         Ok(())
                     }
                     _ => Err("self value must be an object, userdata, or undefined".into()),
                 }
             }),
 
-            get_super: Callback::from_fn(mc, |ctx, _, mut stack| {
-                let obj: Object = stack.consume(ctx)?;
-                stack.replace(ctx, obj.parent());
+            get_super: Callback::from_fn(mc, |ctx, mut exec| {
+                let obj: Object = exec.stack().consume(ctx)?;
+                exec.stack().replace(ctx, obj.parent());
                 Ok(())
             }),
 
-            set_super: Callback::from_fn(mc, |ctx, _, mut stack| {
-                let (obj, parent): (Object, Option<Object>) = stack.consume(ctx)?;
+            set_super: Callback::from_fn(mc, |ctx, mut exec| {
+                let (obj, parent): (Object, Option<Object>) = exec.stack().consume(ctx)?;
                 obj.set_parent(&ctx, parent)?;
                 Ok(())
             }),
 
-            get_constructor_super: Callback::from_fn(mc, |ctx, _, mut stack| {
-                let closure: Closure = stack.consume(ctx)?;
-                stack.replace(ctx, closure.prototype().constructor_parent());
+            pcall: Callback::from_fn(mc, |ctx, mut exec| {
+                let function: Function = exec.stack().from_front(ctx)?;
+                let res = match function {
+                    Function::Closure(closure) => exec.call(ctx, closure).map_err(|e| e.error),
+                    Function::Callback(callback) => {
+                        callback.call(ctx, exec.with(0, Value::Undefined))
+                    }
+                };
+                match res {
+                    Ok(_) => {
+                        exec.stack().into_front(ctx, true);
+                    }
+                    Err(err) => {
+                        exec.stack().replace(ctx, (false, err.to_value(ctx)));
+                    }
+                }
+                Ok(())
+            }),
+
+            get_constructor_super: Callback::from_fn(mc, |ctx, mut exec| {
+                let closure: Closure = exec.stack().consume(ctx)?;
+                exec.stack()
+                    .replace(ctx, closure.prototype().constructor_parent());
                 Ok(())
             }),
 
             with_loop_iter: {
                 // An iterator function whose state is the single value for iteration.
-                let singleton_iter = Callback::from_fn(mc, |_, _, mut stack| {
-                    stack.push_front(Value::Undefined);
+                let singleton_iter = Callback::from_fn(mc, |_, mut exec| {
+                    exec.stack().push_front(Value::Undefined);
                     Ok(())
                 });
 
-                Callback::from_fn_with_root(
-                    mc,
-                    singleton_iter,
-                    |&singleton_iter, ctx, _, mut stack| {
-                        let target: Value = stack.consume(ctx)?;
-                        match target {
-                            Value::Object(object) => {
-                                // Objects are a loop with one iteration of the object.
-                                stack.push_back(singleton_iter.into());
-                                stack.push_back(object.into());
-                                Ok(())
-                            }
-                            Value::UserData(user_data) => {
-                                if let Some(methods) = user_data.methods() {
-                                    methods.iter(ctx, user_data)
-                                } else {
-                                    Err("userdata not iterable".into())
-                                }
-                            }
-                            _ => Err("with loop target must be object or userdata".into()),
+                Callback::from_fn_with_root(mc, singleton_iter, |&singleton_iter, ctx, mut exec| {
+                    let target: Value = exec.stack().consume(ctx)?;
+                    match target {
+                        Value::Object(object) => {
+                            // Objects are a loop with one iteration of the object.
+                            exec.stack().push_back(singleton_iter.into());
+                            exec.stack().push_back(object.into());
+                            Ok(())
                         }
-                    },
-                )
+                        Value::UserData(user_data) => {
+                            if let Some(methods) = user_data.methods() {
+                                methods.iter(ctx, user_data)
+                            } else {
+                                Err("userdata not iterable".into())
+                            }
+                        }
+                        _ => Err("with loop target must be object or userdata".into()),
+                    }
+                })
             },
         }
     }
@@ -143,6 +180,11 @@ impl<'gc> BuiltIns<'gc> {
         magic.insert(
             ctx.intern(Self::METHOD),
             MagicConstant::new_ptr(&ctx, self.method.into()),
+        );
+
+        magic.insert(
+            ctx.intern(Self::PCALL),
+            MagicConstant::new_ptr(&ctx, self.pcall.into()),
         );
 
         magic.insert(

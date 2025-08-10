@@ -23,6 +23,18 @@ impl<'gc> Function<'gc> {
     }
 }
 
+impl<'gc> From<Closure<'gc>> for Function<'gc> {
+    fn from(closure: Closure<'gc>) -> Self {
+        Self::Closure(closure)
+    }
+}
+
+impl<'gc> From<Callback<'gc>> for Function<'gc> {
+    fn from(callback: Callback<'gc>) -> Self {
+        Self::Callback(callback)
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Default, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
@@ -347,5 +359,10 @@ impl<'gc> Value<'gc> {
         } else {
             None
         }
+    }
+
+    #[inline]
+    pub fn null_coalesce(self, other: Value<'gc>) -> Value<'gc> {
+        if self.is_undefined() { other } else { self }
     }
 }

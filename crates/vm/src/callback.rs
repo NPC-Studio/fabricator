@@ -2,15 +2,10 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{error::Error, interpreter::Context, stack::Stack, value::Value};
+use crate::{error::Error, interpreter::Context, thread::Execution, value::Value};
 
 pub trait CallbackFn<'gc> {
-    fn call(
-        &self,
-        ctx: Context<'gc>,
-        this: Value<'gc>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<(), Error<'gc>>;
+    fn call(&self, ctx: Context<'gc>, exec: Execution<'gc, '_>) -> Result<(), Error<'gc>>;
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -36,30 +31,10 @@ impl<'gc> Callback<'gc> {
 
     /// Call the contained callback.
     ///
-    /// The provided `this` object will be used if no `this` object is bound to the callback.
-    pub fn call_with(
-        self,
-        ctx: Context<'gc>,
-        this: Value<'gc>,
-        stack: Stack<'gc, '_>,
-    ) -> Result<(), Error<'gc>> {
-        self.0.callback_fn.call(
-            ctx,
-            if self.0.this.is_undefined() {
-                this
-            } else {
-                self.0.this
-            },
-            stack,
-        )
-    }
-
-    /// Call the contained callback.
-    ///
-    /// If no `this` object is bound to the callback, then the `this` object will be set as
-    /// `ctx.globals()`.
-    pub fn call(self, ctx: Context<'gc>, stack: Stack<'gc, '_>) -> Result<(), Error<'gc>> {
-        self.call_with(ctx, ctx.globals().into(), stack)
+    /// If there is a `this` object bound to the callback, then the provided `exec` will be rebound
+    /// with it.
+    pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), Error<'gc>> {
+        self.0.callback_fn.call(ctx, exec.with(0, self.0.this))
     }
 
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.
@@ -86,9 +61,9 @@ impl<'gc> Callback<'gc> {
     /// to associate GC data with this function, use [`Callback::from_fn_with`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
-        F: 'static + Fn(Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error<'gc>>,
+        F: 'static + Fn(Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
     {
-        Self::from_fn_with_root(mc, (), move |_, ctx, this, stack| call(ctx, this, stack))
+        Self::from_fn_with_root(mc, (), move |_, ctx, exec| call(ctx, exec))
     }
 
     /// Create a callback from a Rust function together with an error context.
@@ -96,7 +71,7 @@ impl<'gc> Callback<'gc> {
     pub fn from_fn_with_root<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect<'gc>,
-        F: 'static + Fn(&R, Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error<'gc>>,
+        F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
@@ -109,15 +84,10 @@ impl<'gc> Callback<'gc> {
         impl<'gc, R, F> CallbackFn<'gc> for RootCallback<R, F>
         where
             R: 'gc + Collect<'gc>,
-            F: 'static + Fn(&R, Context<'gc>, Value<'gc>, Stack<'gc, '_>) -> Result<(), Error<'gc>>,
+            F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
         {
-            fn call(
-                &self,
-                ctx: Context<'gc>,
-                this: Value<'gc>,
-                stack: Stack<'gc, '_>,
-            ) -> Result<(), Error<'gc>> {
-                (self.call)(&self.root, ctx, this, stack)
+            fn call(&self, ctx: Context<'gc>, exec: Execution<'gc, '_>) -> Result<(), Error<'gc>> {
+                (self.call)(&self.root, ctx, exec)
             }
         }
 

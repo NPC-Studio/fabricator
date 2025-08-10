@@ -20,8 +20,8 @@ pub fn drawing_api<'gc>(
         )?;
     }
 
-    let draw_sprite = vm::Callback::from_fn(&ctx, |ctx, _, mut stack| {
-        let (sprite, sub_img, x, y): (vm::UserData, i64, f64, f64) = stack.consume(ctx)?;
+    let draw_sprite = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (sprite, sub_img, x, y): (vm::UserData, i64, f64, f64) = exec.stack().consume(ctx)?;
         let sprite = *sprite.downcast_static::<SpriteId>()?;
 
         let instance = InstanceState::ctx_with(ctx, |i| i.instance_id)?;

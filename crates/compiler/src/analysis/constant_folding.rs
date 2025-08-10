@@ -55,11 +55,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                             ir::BinOp::GreaterEqual => r.less_equal(l).map(Constant::Boolean),
                             ir::BinOp::And => Some(Constant::Boolean(l.to_bool() && r.to_bool())),
                             ir::BinOp::Or => Some(Constant::Boolean(l.to_bool() || r.to_bool())),
-                            ir::BinOp::NullCoalesce => Some(if l.is_undefined() {
-                                r.clone()
-                            } else {
-                                l.clone()
-                            }),
+                            ir::BinOp::NullCoalesce => Some(l.null_coalesce(r).clone()),
                         }
                         .map(ir::Instruction::Constant);
                     } else if let Some((un_op, source)) = match op {

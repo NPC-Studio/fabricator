@@ -152,28 +152,25 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             type Break = EnumEvaluationError;
 
             fn visit_stmt_mut(&mut self, stmt: &mut ast::Statement<S>) -> ControlFlow<Self::Break> {
-                let shadows = match &*stmt {
-                    ast::Statement::Enum(enum_stmt) => self.0.dict.get(&enum_stmt.name),
-                    ast::Statement::Function(func_stmt) => self.0.dict.get(&func_stmt.name),
-                    ast::Statement::Var(decl_stmt) => {
-                        let mut shadow = None;
-                        for decl in &decl_stmt.vars {
-                            let res = self.0.dict.get(&decl.0);
-                            if res.is_some() {
-                                shadow = res;
-                                break;
-                            }
+                let mut shadows = None;
+                match &*stmt {
+                    ast::Statement::Enum(enum_stmt) => {
+                        if let Some(idx) = self.0.dict.get(&enum_stmt.name).copied() {
+                            shadows = Some((idx, enum_stmt.name.span));
                         }
-                        shadow
                     }
-                    _ => None,
+                    ast::Statement::Function(func_stmt) => {
+                        if let Some(&idx) = self.0.dict.get(&func_stmt.name) {
+                            shadows = Some((idx, func_stmt.name.span));
+                        }
+                    }
+                    _ => {}
                 }
-                .copied();
 
-                if let Some(index) = shadows {
+                if let Some((index, span)) = shadows {
                     ControlFlow::Break(EnumEvaluationError {
                         kind: EnumEvaluationErrorKind::ShadowsEnum(index),
-                        span: stmt.span(),
+                        span,
                     })
                 } else {
                     stmt.walk_mut(self)

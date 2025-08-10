@@ -526,19 +526,6 @@ impl Exit {
         }
         .into_iter()
     }
-
-    pub fn successors_mut(&mut self) -> impl Iterator<Item = &mut BlockId> + '_ {
-        type Array<'a> = ArrayVec<&'a mut BlockId, 2>;
-
-        match self {
-            Exit::Return { .. } => Array::from_iter([]),
-            Exit::Jump(block_id) => Array::from_iter([block_id]),
-            Exit::Branch {
-                if_true, if_false, ..
-            } => Array::from_iter([if_true, if_false]),
-        }
-        .into_iter()
-    }
 }
 
 #[derive(Debug, Clone)]
