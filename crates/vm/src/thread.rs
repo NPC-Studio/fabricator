@@ -207,13 +207,15 @@ impl<'gc> ThreadState<'gc> {
                 },
                 Err(error) => {
                     let prototype = frame.closure.prototype();
-                    let (ind, inst, span) =
-                        prototype.bytecode().instruction_for_pc(frame.pc).unwrap();
+                    let bytecode = prototype.bytecode();
+                    let inst_index = bytecode.instruction_index_for_pc(frame.pc).unwrap();
+                    let inst = bytecode.instruction(inst_index);
+                    let span = bytecode.span(inst_index);
                     let chunk = prototype.chunk();
                     return Err(VmError {
                         error: error.into(),
                         chunk_name: chunk.name().clone(),
-                        instruction_index: ind,
+                        instruction_index: inst_index,
                         instruction: inst,
                         line_number: chunk.line_number(span.start()),
                     }

@@ -79,26 +79,6 @@ impl ByteCode {
             inst_spans.push(span);
         }
 
-        for &inst in &insts {
-            macro_rules! check_targets {
-                (
-                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
-                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
-                ) => {
-                    match inst {
-                        $(Instruction::$jump_name { target, .. })|* => {
-                            if target as usize >= insts.len() {
-                                return Err(ByteCodeEncodingError::InvalidJump(target));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            for_each_instruction!(check_targets);
-        }
-
         if !matches!(
             insts.last(),
             Some(Instruction::Jump { .. } | Instruction::Return { .. })
@@ -129,7 +109,9 @@ impl ByteCode {
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
-                            *target = inst_positions[*target as usize].try_into().unwrap();
+                            *target = inst_positions[*target as usize].try_into().map_err(|_| {
+                                ByteCodeEncodingError::InvalidJump(*target)
+                            })?;
                         }
                         _ => {}
                     };
@@ -160,25 +142,35 @@ impl ByteCode {
         })
     }
 
-    /// Fetch a single instruction by its program counter value.
-    ///
-    /// Returns the instruction index, instruction, and the debug span for that instruction.
-    pub fn instruction_for_pc(&self, pc: usize) -> Option<(usize, Instruction, Span)> {
-        let inst_index = self.inst_index_for_pc(pc)?;
-        let inst = unsafe { self.decode_instruction(pc) };
-        let span = self.inst_spans[inst_index];
-        Some((inst_index, inst, span))
+    /// Return the count of encoded instructions.
+    pub fn instruction_len(&self) -> usize {
+        self.inst_byte_positions.len()
     }
 
-    /// Decode instructions from bytecode.
-    pub fn decode(&self) -> impl Iterator<Item = (Instruction, Span)> + '_ {
+    pub fn instruction(&self, inst_index: usize) -> Instruction {
+        let pc = self.inst_byte_positions[inst_index];
+        unsafe { self.decode_instruction_at(pc) }
+    }
+
+    pub fn span(&self, inst_index: usize) -> Span {
+        self.inst_spans[inst_index]
+    }
+
+    pub fn pc_for_instruction_index(&self, inst_index: usize) -> usize {
+        self.inst_byte_positions[inst_index]
+    }
+
+    /// Find the instruction index for the given program counter value.
+    ///
+    /// If the given `pc` is not the start of an instruction, will return `None`.
+    pub fn instruction_index_for_pc(&self, pc: usize) -> Option<usize> {
         self.inst_byte_positions
-            .iter()
-            .enumerate()
-            .map(|(inst_index, &pc)| {
-                let inst = unsafe { self.decode_instruction(pc) };
-                (inst, self.inst_spans[inst_index])
-            })
+            .binary_search_by_key(&pc, |&offset| offset)
+            .ok()
+    }
+
+    pub fn decode(&self) -> impl Iterator<Item = (Instruction, Span)> {
+        (0..self.instruction_len()).map(|i| (self.instruction(i), self.span(i)))
     }
 
     pub fn pretty_print(&self, f: &mut dyn fmt::Write, indent: u8) -> fmt::Result {
@@ -191,13 +183,7 @@ impl ByteCode {
         Ok(())
     }
 
-    fn inst_index_for_pc(&self, pc: usize) -> Option<usize> {
-        self.inst_byte_positions
-            .binary_search_by_key(&pc, |&offset| offset)
-            .ok()
-    }
-
-    unsafe fn decode_instruction(&self, pc: usize) -> Instruction {
+    unsafe fn decode_instruction_at(&self, pc: usize) -> Instruction {
         unsafe {
             let mut ptr = self.bytes.as_ptr().add(pc);
             let opcode: OpCode = bytecode_read(&mut ptr);
@@ -215,7 +201,7 @@ impl ByteCode {
                         })*
                         $(OpCode::$jump_name => {
                             let params::$jump_name { mut target $(, $jump_field)* } = bytecode_read(&mut ptr);
-                            target = self.inst_index_for_pc(target as usize).unwrap() as InstIdx;
+                            target = self.instruction_index_for_pc(target as usize).unwrap() as InstIdx;
                             Instruction::$jump_name { target $(, $jump_field)* }
                         })*
                         $(OpCode::$special_name => {
@@ -260,7 +246,7 @@ impl<'a> Dispatcher<'a> {
     /// always a valid program counter for the starting instruction.
     #[inline]
     pub fn new(bytecode: &'a ByteCode, pc: usize) -> Self {
-        assert!(pc == bytecode.bytes.len() || bytecode.inst_index_for_pc(pc).is_some());
+        assert!(pc == bytecode.bytes.len() || bytecode.instruction_index_for_pc(pc).is_some());
         Self {
             bytecode,
             ptr: unsafe { bytecode.bytes.as_ptr().add(pc) },
