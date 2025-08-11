@@ -152,6 +152,10 @@ pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationErr
     ShadowLiveness::compute(ir)?;
     VariableLiveness::compute(ir)?;
     ThisScopeLiveness::compute(ir)?;
+
+    for func in ir.functions.values() {
+        verify_ir(func)?;
+    }
     Ok(())
 }
 
