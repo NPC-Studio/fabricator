@@ -323,6 +323,12 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    Xor,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitShiftLeft,
+    BitShiftRight,
     NullCoalesce,
 }
 
@@ -333,6 +339,9 @@ pub enum AssignmentOp {
     MinusEqual,
     MultEqual,
     DivEqual,
+    BitAndEqual,
+    BitOrEqual,
+    BitXorEqual,
     NullCoalesce,
 }
 
@@ -924,8 +933,14 @@ impl<S: Eq + Clone> BinaryExpr<S> {
             BinaryOp::LessEqual => left.less_equal(right).map(Constant::Boolean),
             BinaryOp::GreaterThan => right.less_than(left).map(Constant::Boolean),
             BinaryOp::GreaterEqual => right.less_equal(left).map(Constant::Boolean),
-            BinaryOp::And => Some(Constant::Boolean(left.to_bool() && right.to_bool())),
-            BinaryOp::Or => Some(Constant::Boolean(left.to_bool() || right.to_bool())),
+            BinaryOp::And => Some(Constant::Boolean(left.and(right))),
+            BinaryOp::Or => Some(Constant::Boolean(left.or(right))),
+            BinaryOp::Xor => Some(Constant::Boolean(left.xor(right))),
+            BinaryOp::BitAnd => left.bit_and(right).map(Constant::Integer),
+            BinaryOp::BitOr => left.bit_or(right).map(Constant::Integer),
+            BinaryOp::BitXor => left.bit_xor(right).map(Constant::Integer),
+            BinaryOp::BitShiftLeft => left.bit_shift_left(right).map(Constant::Integer),
+            BinaryOp::BitShiftRight => left.bit_shift_right(right).map(Constant::Integer),
             BinaryOp::NullCoalesce => Some(left.null_coalesce(right).clone()),
         }
     }

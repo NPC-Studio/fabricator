@@ -234,6 +234,46 @@ impl<S> Constant<S> {
     }
 
     #[inline]
+    pub fn and(&self, other: &Constant<S>) -> bool {
+        self.to_bool() && other.to_bool()
+    }
+
+    #[inline]
+    pub fn or(&self, other: &Constant<S>) -> bool {
+        self.to_bool() || other.to_bool()
+    }
+
+    #[inline]
+    pub fn xor(&self, other: &Constant<S>) -> bool {
+        self.to_bool() ^ other.to_bool()
+    }
+
+    #[inline]
+    pub fn bit_and(&self, other: &Constant<S>) -> Option<i64> {
+        Some(self.to_integer()? & other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_or(&self, other: &Constant<S>) -> Option<i64> {
+        Some(self.to_integer()? | other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_xor(&self, other: &Constant<S>) -> Option<i64> {
+        Some(self.to_integer()? ^ other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_shift_left(&self, other: &Constant<S>) -> Option<i64> {
+        Some(self.to_integer()? << other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_shift_right(&self, other: &Constant<S>) -> Option<i64> {
+        Some(self.to_integer()? >> other.to_integer()?)
+    }
+
+    #[inline]
     pub fn null_coalesce<'a>(&'a self, other: &'a Constant<S>) -> &'a Constant<S> {
         if self.is_undefined() { other } else { self }
     }

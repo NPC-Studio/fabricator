@@ -362,6 +362,46 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    pub fn and(&self, other: Value<'gc>) -> bool {
+        self.to_bool() && other.to_bool()
+    }
+
+    #[inline]
+    pub fn or(&self, other: Value<'gc>) -> bool {
+        self.to_bool() || other.to_bool()
+    }
+
+    #[inline]
+    pub fn xor(&self, other: Value<'gc>) -> bool {
+        self.to_bool() ^ other.to_bool()
+    }
+
+    #[inline]
+    pub fn bit_and(&self, other: Value<'gc>) -> Option<i64> {
+        Some(self.to_integer()? & other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_or(&self, other: Value<'gc>) -> Option<i64> {
+        Some(self.to_integer()? | other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_xor(&self, other: Value<'gc>) -> Option<i64> {
+        Some(self.to_integer()? ^ other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_shift_left(&self, other: Value<'gc>) -> Option<i64> {
+        Some(self.to_integer()? << other.to_integer()?)
+    }
+
+    #[inline]
+    pub fn bit_shift_right(&self, other: Value<'gc>) -> Option<i64> {
+        Some(self.to_integer()? >> other.to_integer()?)
+    }
+
+    #[inline]
     pub fn null_coalesce(self, other: Value<'gc>) -> Value<'gc> {
         if self.is_undefined() { other } else { self }
     }

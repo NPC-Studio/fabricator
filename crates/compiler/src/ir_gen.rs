@@ -807,6 +807,39 @@ where
                     },
                 )
             }
+            ast::AssignmentOp::BitAndEqual => {
+                let prev = self.read_mutable_target(assign_stmt.span, target.clone());
+                self.push_instruction(
+                    assign_stmt.span,
+                    ir::Instruction::BinOp {
+                        left: prev,
+                        op: ir::BinOp::BitAnd,
+                        right: val,
+                    },
+                )
+            }
+            ast::AssignmentOp::BitOrEqual => {
+                let prev = self.read_mutable_target(assign_stmt.span, target.clone());
+                self.push_instruction(
+                    assign_stmt.span,
+                    ir::Instruction::BinOp {
+                        left: prev,
+                        op: ir::BinOp::BitOr,
+                        right: val,
+                    },
+                )
+            }
+            ast::AssignmentOp::BitXorEqual => {
+                let prev = self.read_mutable_target(assign_stmt.span, target.clone());
+                self.push_instruction(
+                    assign_stmt.span,
+                    ir::Instruction::BinOp {
+                        left: prev,
+                        op: ir::BinOp::BitXor,
+                        right: val,
+                    },
+                )
+            }
             ast::AssignmentOp::NullCoalesce => {
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
@@ -1695,6 +1728,78 @@ where
                 }
                 ast::BinaryOp::Or => {
                     self.short_circuit_or(bin_expr.span, &bin_expr.left, &bin_expr.right)?
+                }
+                ast::BinaryOp::Xor => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::Xor,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::BitAnd => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::BitAnd,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::BitOr => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::BitOr,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::BitXor => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::BitXor,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::BitShiftLeft => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::BitShiftLeft,
+                            right,
+                        },
+                    )
+                }
+                ast::BinaryOp::BitShiftRight => {
+                    let left = self.expression(&bin_expr.left)?;
+                    let right = self.expression(&bin_expr.right)?;
+                    self.push_instruction(
+                        bin_expr.span,
+                        ir::Instruction::BinOp {
+                            left,
+                            op: ir::BinOp::BitShiftRight,
+                            right,
+                        },
+                    )
                 }
                 ast::BinaryOp::NullCoalesce => self.short_circuit_null_coalesce(
                     bin_expr.span,

@@ -1277,6 +1277,12 @@ fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<ast::BinaryOp> {
         TokenKind::GreaterEqual => Some(ast::BinaryOp::GreaterEqual),
         TokenKind::DoubleAmpersand => Some(ast::BinaryOp::And),
         TokenKind::DoublePipe => Some(ast::BinaryOp::Or),
+        TokenKind::DoubleCaret => Some(ast::BinaryOp::Xor),
+        TokenKind::Ampersand => Some(ast::BinaryOp::BitAnd),
+        TokenKind::Pipe => Some(ast::BinaryOp::BitOr),
+        TokenKind::Caret => Some(ast::BinaryOp::BitXor),
+        TokenKind::DoubleLess => Some(ast::BinaryOp::BitShiftLeft),
+        TokenKind::DoubleGreater => Some(ast::BinaryOp::BitShiftRight),
         TokenKind::DoubleQuestionMark => Some(ast::BinaryOp::NullCoalesce),
         _ => None,
     }
@@ -1289,6 +1295,9 @@ fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<ast::AssignmentOp>
         TokenKind::MinusEqual => Some(ast::AssignmentOp::MinusEqual),
         TokenKind::StarEqual => Some(ast::AssignmentOp::MultEqual),
         TokenKind::SlashEqual => Some(ast::AssignmentOp::DivEqual),
+        TokenKind::AmpersandEqual => Some(ast::AssignmentOp::BitAndEqual),
+        TokenKind::PipeEqual => Some(ast::AssignmentOp::BitOrEqual),
+        TokenKind::CaretEqual => Some(ast::AssignmentOp::BitXorEqual),
         TokenKind::DoubleQuestionMarkEqual => Some(ast::AssignmentOp::NullCoalesce),
         _ => None,
     }
@@ -1329,6 +1338,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Ampersand => "&",
         TokenKind::Pipe => "|",
         TokenKind::Tilde => "~",
+        TokenKind::Caret => "^",
         TokenKind::Div => "div",
         TokenKind::Mod => "mod",
         TokenKind::QuestionMark => "?",
@@ -1341,6 +1351,9 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::StarEqual => "*=",
         TokenKind::SlashEqual => "/=",
         TokenKind::PercentEqual => "%=",
+        TokenKind::AmpersandEqual => "&=",
+        TokenKind::PipeEqual => "|=",
+        TokenKind::CaretEqual => "^=",
         TokenKind::DoubleQuestionMarkEqual => "??=",
         TokenKind::DoubleEqual => "==",
         TokenKind::BangEqual => "!=",
@@ -1353,6 +1366,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::DoubleMinus => "--",
         TokenKind::DoubleAmpersand => "&&",
         TokenKind::DoublePipe => "||",
+        TokenKind::DoubleCaret => "^^",
         TokenKind::DoubleLess => "<<",
         TokenKind::DoubleGreater => ">>",
         TokenKind::Enum => "enum",
@@ -1398,7 +1412,7 @@ type OperatorPriority = u8;
 const MIN_PRIORITY: OperatorPriority = 0;
 
 // Priority of all unary operators.
-const UNARY_PRIORITY: OperatorPriority = 6;
+const UNARY_PRIORITY: OperatorPriority = 12;
 
 // Returns the left and right priority of the given binary operator.
 //
@@ -1407,19 +1421,25 @@ const UNARY_PRIORITY: OperatorPriority = 6;
 // leftwards.
 fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriority) {
     match operator {
-        ast::BinaryOp::Mult => (5, 5),
-        ast::BinaryOp::Div => (5, 5),
-        ast::BinaryOp::Rem => (5, 5),
-        ast::BinaryOp::IDiv => (5, 5),
-        ast::BinaryOp::Add => (4, 4),
-        ast::BinaryOp::Sub => (4, 4),
-        ast::BinaryOp::NotEqual => (3, 3),
-        ast::BinaryOp::Equal => (3, 3),
-        ast::BinaryOp::LessThan => (3, 3),
-        ast::BinaryOp::LessEqual => (3, 3),
-        ast::BinaryOp::GreaterThan => (3, 3),
-        ast::BinaryOp::GreaterEqual => (3, 3),
-        ast::BinaryOp::And => (2, 2),
+        ast::BinaryOp::Mult => (11, 11),
+        ast::BinaryOp::Div => (11, 11),
+        ast::BinaryOp::Rem => (11, 11),
+        ast::BinaryOp::IDiv => (11, 11),
+        ast::BinaryOp::Add => (10, 10),
+        ast::BinaryOp::Sub => (10, 10),
+        ast::BinaryOp::BitShiftLeft => (9, 9),
+        ast::BinaryOp::BitShiftRight => (9, 9),
+        ast::BinaryOp::LessThan => (8, 8),
+        ast::BinaryOp::LessEqual => (8, 8),
+        ast::BinaryOp::GreaterThan => (8, 8),
+        ast::BinaryOp::GreaterEqual => (8, 8),
+        ast::BinaryOp::Equal => (7, 7),
+        ast::BinaryOp::NotEqual => (7, 7),
+        ast::BinaryOp::BitAnd => (6, 6),
+        ast::BinaryOp::BitXor => (5, 5),
+        ast::BinaryOp::BitOr => (4, 4),
+        ast::BinaryOp::And => (3, 3),
+        ast::BinaryOp::Xor => (2, 2),
         ast::BinaryOp::Or => (1, 1),
         ast::BinaryOp::NullCoalesce => (1, 1),
     }

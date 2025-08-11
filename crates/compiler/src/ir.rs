@@ -107,6 +107,12 @@ pub enum BinOp {
     GreaterEqual,
     And,
     Or,
+    Xor,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitShiftLeft,
+    BitShiftRight,
     NullCoalesce,
 }
 
@@ -730,81 +736,41 @@ impl<S: AsRef<str>> Function<S> {
                             index.as_str(),
                         )?;
                     }
-                    Instruction::Phi(shadow) => {
-                        writeln!(f, "phi({shadow})")?;
-                    }
+                    Instruction::Phi(shadow) => writeln!(f, "phi({shadow})")?,
                     Instruction::Upsilon(shadow, source) => {
-                        writeln!(f, "upsilon({shadow}, {source})")?;
+                        writeln!(f, "upsilon({shadow}, {source})")?
                     }
                     Instruction::UnOp { op, source } => match op {
-                        UnOp::IsDefined => {
-                            writeln!(f, "is_defined({source})")?;
-                        }
-                        UnOp::IsUndefined => {
-                            writeln!(f, "is_undefined({source})")?;
-                        }
-                        UnOp::Test => {
-                            writeln!(f, "into_bool({source})")?;
-                        }
-                        UnOp::Not => {
-                            writeln!(f, "not({source})")?;
-                        }
-                        UnOp::Negate => {
-                            writeln!(f, "neg({source})")?;
-                        }
-                        UnOp::Increment => {
-                            writeln!(f, "increment({source})")?;
-                        }
-                        UnOp::Decrement => {
-                            writeln!(f, "decrement({source})")?;
-                        }
+                        UnOp::IsDefined => writeln!(f, "is_defined({source})")?,
+                        UnOp::IsUndefined => writeln!(f, "is_undefined({source})")?,
+                        UnOp::Test => writeln!(f, "into_bool({source})")?,
+                        UnOp::Not => writeln!(f, "not({source})")?,
+                        UnOp::Negate => writeln!(f, "neg({source})")?,
+                        UnOp::Increment => writeln!(f, "increment({source})")?,
+                        UnOp::Decrement => writeln!(f, "decrement({source})")?,
                     },
                     Instruction::BinOp { left, op, right } => match op {
-                        BinOp::Add => {
-                            writeln!(f, "add({left}, {right})")?;
-                        }
-                        BinOp::Sub => {
-                            writeln!(f, "sub({left}, {right})")?;
-                        }
-                        BinOp::Mult => {
-                            writeln!(f, "mult({left}, {right})")?;
-                        }
-                        BinOp::Div => {
-                            writeln!(f, "div({left}, {right})")?;
-                        }
-                        BinOp::Rem => {
-                            writeln!(f, "rem({left}, {right})")?;
-                        }
-                        BinOp::IDiv => {
-                            writeln!(f, "idiv({left}, {right})")?;
-                        }
-                        BinOp::LessThan => {
-                            writeln!(f, "less_than({left}, {right})")?;
-                        }
-                        BinOp::LessEqual => {
-                            writeln!(f, "less_equal({left}, {right})")?;
-                        }
-                        BinOp::Equal => {
-                            writeln!(f, "equal({left}, {right})")?;
-                        }
-                        BinOp::NotEqual => {
-                            writeln!(f, "not_equal({left}, {right})")?;
-                        }
-                        BinOp::GreaterThan => {
-                            writeln!(f, "greater_than({left}, {right})")?;
-                        }
-                        BinOp::GreaterEqual => {
-                            writeln!(f, "greater_equal({left}, {right})")?;
-                        }
-                        BinOp::And => {
-                            writeln!(f, "and({left}, {right})")?;
-                        }
-                        BinOp::Or => {
-                            writeln!(f, "or({left}, {right})")?;
-                        }
-                        BinOp::NullCoalesce => {
-                            writeln!(f, "null_coalesce({left}, {right})")?;
-                        }
+                        BinOp::Add => writeln!(f, "add({left}, {right})")?,
+                        BinOp::Sub => writeln!(f, "sub({left}, {right})")?,
+                        BinOp::Mult => writeln!(f, "mult({left}, {right})")?,
+                        BinOp::Div => writeln!(f, "div({left}, {right})")?,
+                        BinOp::Rem => writeln!(f, "rem({left}, {right})")?,
+                        BinOp::IDiv => writeln!(f, "idiv({left}, {right})")?,
+                        BinOp::LessThan => writeln!(f, "less_than({left}, {right})")?,
+                        BinOp::LessEqual => writeln!(f, "less_equal({left}, {right})")?,
+                        BinOp::Equal => writeln!(f, "equal({left}, {right})")?,
+                        BinOp::NotEqual => writeln!(f, "not_equal({left}, {right})")?,
+                        BinOp::GreaterThan => writeln!(f, "greater_than({left}, {right})")?,
+                        BinOp::GreaterEqual => writeln!(f, "greater_equal({left}, {right})")?,
+                        BinOp::And => writeln!(f, "and({left}, {right})")?,
+                        BinOp::Or => writeln!(f, "or({left}, {right})")?,
+                        BinOp::Xor => writeln!(f, "xor({left}, {right})")?,
+                        BinOp::BitAnd => writeln!(f, "bit_and({left}, {right})")?,
+                        BinOp::BitOr => writeln!(f, "bit_or({left}, {right})")?,
+                        BinOp::BitXor => writeln!(f, "bit_xor({left}, {right})")?,
+                        BinOp::BitShiftLeft => writeln!(f, "bit_shift_left({left}, {right})")?,
+                        BinOp::BitShiftRight => writeln!(f, "bit_shift_right({left}, {right})")?,
+                        BinOp::NullCoalesce => writeln!(f, "null_coalesce({left}, {right})")?,
                     },
                     Instruction::OpenCall {
                         scope,

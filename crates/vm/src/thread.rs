@@ -945,7 +945,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = (left.to_bool() && right.to_bool()).into();
+        *dest = left.and(right).into();
         Ok(())
     }
 
@@ -954,7 +954,71 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = (left.to_bool() || right.to_bool()).into();
+        *dest = left.or(right).into();
+        Ok(())
+    }
+
+    #[inline]
+    fn xor(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.xor(right).into();
+        Ok(())
+    }
+
+    #[inline]
+    fn bit_and(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.bit_and(right).ok_or(OpError::BadOp)?.into();
+        Ok(())
+    }
+
+    #[inline]
+    fn bit_or(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.bit_or(right).ok_or(OpError::BadOp)?.into();
+        Ok(())
+    }
+
+    #[inline]
+    fn bit_xor(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.bit_xor(right).ok_or(OpError::BadOp)?.into();
+        Ok(())
+    }
+
+    #[inline]
+    fn bit_shift_left(
+        &mut self,
+        dest: RegIdx,
+        left: RegIdx,
+        right: RegIdx,
+    ) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.bit_shift_left(right).ok_or(OpError::BadOp)?.into();
+        Ok(())
+    }
+
+    #[inline]
+    fn bit_shift_right(
+        &mut self,
+        dest: RegIdx,
+        left: RegIdx,
+        right: RegIdx,
+    ) -> Result<(), Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        let dest = &mut self.registers[dest as usize];
+        *dest = left.bit_shift_right(right).ok_or(OpError::BadOp)?.into();
         Ok(())
     }
 

@@ -41,6 +41,22 @@ assert(4.9 div 3.1 == 1);
 assert(undefined ?? 3 == 3);
 assert(4 ?? 3 == 4);
 
+assert((1 | 2) == 3);
+assert((1 & 2) == 0);
+assert((3 ^ 2) == 1);
+assert((2 << 2) == 8);
+assert((8 >> 2) == 2);
+
+{
+	var i = 0;
+	i |= 3;
+	assert(i == 3);
+	i ^= 5;
+	assert(i == 6);
+	i &= 4;
+	assert(i == 4);
+}
+
 assert(black_box(true) && true);
 assert(!(black_box(true) && false));
 assert(black_box(true) || false);
@@ -83,5 +99,21 @@ assert(black_box(4.9) div 3.1 == 1);
 
 assert(undefined ?? black_box(3) == 3);
 assert(4 ?? black_box(3) == 4);
+
+assert((black_box(1) | 2) == 3);
+assert((black_box(1) & 2) == 0);
+assert((black_box(3) ^ 2) == 1);
+assert((black_box(2) << 2) == 8);
+assert((black_box(8) >> 2) == 2);
+
+{
+	var i = black_box(0);
+	i |= 3;
+	assert(i == 3);
+	i ^= 5;
+	assert(i == 6);
+	i &= 4;
+	assert(i == 4);
+}
 
 return true;

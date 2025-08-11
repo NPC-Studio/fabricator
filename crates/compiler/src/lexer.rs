@@ -183,6 +183,18 @@ where
                 self.advance(2);
                 TokenKind::PercentEqual
             }
+            (Some('&'), Some('='), _) => {
+                self.advance(2);
+                TokenKind::AmpersandEqual
+            }
+            (Some('|'), Some('='), _) => {
+                self.advance(2);
+                TokenKind::PipeEqual
+            }
+            (Some('^'), Some('='), _) => {
+                self.advance(2);
+                TokenKind::CaretEqual
+            }
             (Some('<'), Some('='), _) => {
                 self.advance(2);
                 TokenKind::LessEqual
@@ -210,6 +222,10 @@ where
             (Some('|'), Some('|'), _) => {
                 self.advance(2);
                 TokenKind::DoublePipe
+            }
+            (Some('^'), Some('^'), _) => {
+                self.advance(2);
+                TokenKind::DoubleCaret
             }
             (Some('<'), Some('<'), _) => {
                 self.advance(2);
@@ -294,6 +310,10 @@ where
             (Some('~'), _, _) => {
                 self.advance(1);
                 TokenKind::Tilde
+            }
+            (Some('^'), _, _) => {
+                self.advance(1);
+                TokenKind::Caret
             }
             (Some('?'), _, _) => {
                 self.advance(1);

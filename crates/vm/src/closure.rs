@@ -324,6 +324,12 @@ impl<'gc> Prototype<'gc> {
                 | Instruction::IsLessEqual { dest, left, right }
                 | Instruction::And { dest, left, right }
                 | Instruction::Or { dest, left, right }
+                | Instruction::Xor { dest, left, right }
+                | Instruction::BitAnd { dest, left, right }
+                | Instruction::BitOr { dest, left, right }
+                | Instruction::BitXor { dest, left, right }
+                | Instruction::BitShiftLeft { dest, left, right }
+                | Instruction::BitShiftRight { dest, left, right }
                 | Instruction::NullCoalesce { dest, left, right } => {
                     verify_reg_idx(dest)?;
                     verify_reg_idx(left)?;

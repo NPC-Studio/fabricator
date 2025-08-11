@@ -705,6 +705,26 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ir::BinOp::Or => {
                             vm_instructions.push((Instruction::Or { dest, left, right }, span));
                         }
+                        ir::BinOp::Xor => {
+                            vm_instructions.push((Instruction::Xor { dest, left, right }, span));
+                        }
+                        ir::BinOp::BitAnd => {
+                            vm_instructions.push((Instruction::BitAnd { dest, left, right }, span));
+                        }
+                        ir::BinOp::BitOr => {
+                            vm_instructions.push((Instruction::BitOr { dest, left, right }, span));
+                        }
+                        ir::BinOp::BitXor => {
+                            vm_instructions.push((Instruction::BitXor { dest, left, right }, span));
+                        }
+                        ir::BinOp::BitShiftLeft => {
+                            vm_instructions
+                                .push((Instruction::BitShiftLeft { dest, left, right }, span));
+                        }
+                        ir::BinOp::BitShiftRight => {
+                            vm_instructions
+                                .push((Instruction::BitShiftRight { dest, left, right }, span));
+                        }
                         ir::BinOp::NullCoalesce => {
                             vm_instructions
                                 .push((Instruction::NullCoalesce { dest, left, right }, span));

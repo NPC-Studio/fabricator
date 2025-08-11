@@ -103,6 +103,12 @@ macro_rules! for_each_instruction {
 
             [basic] and = And { dest: RegIdx, left: RegIdx, right: RegIdx };
             [basic] or = Or { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] xor = Xor { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] bit_and = BitAnd { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] bit_or = BitOr { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] bit_xor = BitXor { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] bit_shift_left = BitShiftLeft { dest: RegIdx, left: RegIdx, right: RegIdx };
+            [basic] bit_shift_right = BitShiftRight { dest: RegIdx, left: RegIdx, right: RegIdx };
             [basic] null_coalesce = NullCoalesce { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [basic]
