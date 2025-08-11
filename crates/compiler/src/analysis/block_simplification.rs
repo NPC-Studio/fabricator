@@ -31,7 +31,7 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
                     merge(if_false);
                 }
             }
-            ir::Exit::Return { .. } => {}
+            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
         }
     }
 
@@ -135,7 +135,7 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
                     *if_true = target;
                 }
             }
-            ir::Exit::Return { .. } => {}
+            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
         }
     }
 }

@@ -711,14 +711,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::Instruction::Throw(source) => {
-                    vm_instructions.push((
-                        Instruction::Throw {
-                            source: reg_alloc.instruction_registers[source],
-                        },
-                        span,
-                    ));
-                }
                 ir::Instruction::OpenCall {
                     scope,
                     func,
@@ -790,6 +782,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
 
                 vm_instructions.push((Instruction::Return { stack_bottom }, func_span));
+            }
+            ir::Exit::Throw(value) => {
+                vm_instructions.push((
+                    Instruction::Throw {
+                        source: reg_alloc.instruction_registers[value],
+                    },
+                    func_span,
+                ));
             }
             ir::Exit::Jump(block_id) => {
                 // If we are the next block in output order, we don't need to add a jump

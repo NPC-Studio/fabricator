@@ -115,7 +115,7 @@ impl ScopeLiveness {
                 }
 
                 if range_end.is_none() {
-                    if let ir::Exit::Return { .. } = block.exit {
+                    if block.exit.exits_function() {
                         range_end = Some(block.instructions.len());
                     }
                 }

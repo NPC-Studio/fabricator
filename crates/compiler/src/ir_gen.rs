@@ -660,7 +660,7 @@ where
             ast::Statement::TryCatch(try_catch_stmt) => self.try_catch_stmt(try_catch_stmt),
             ast::Statement::Throw(throw_stmt) => {
                 let target = self.expression(&throw_stmt.target)?;
-                self.push_instruction(throw_stmt.span, ir::Instruction::Throw(target));
+                self.end_current_block(ir::Exit::Throw(target));
                 Ok(())
             }
             ast::Statement::Call(function_call) => {

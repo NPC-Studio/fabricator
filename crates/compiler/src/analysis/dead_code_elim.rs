@@ -18,7 +18,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         .blocks
         .iter()
         .filter_map(|(block_id, block)| {
-            if matches!(&block.exit, ir::Exit::Return { .. }) {
+            if block.exit.exits_function() {
                 Some(block_id)
             } else {
                 None
@@ -93,11 +93,14 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    // Any parameter of `Exit::Return` is always live.
+    // Any parameter of `Exit::Return` or `Exit::Throw` is always live.
     for &block_id in &reachable_blocks {
-        if let ir::Exit::Return { value: Some(ret) } = ir.blocks[block_id].exit {
-            live_instructions.insert(ret.index() as usize);
-            worklist.push(Work::Instruction(ret));
+        match ir.blocks[block_id].exit {
+            ir::Exit::Return { value: Some(value) } | ir::Exit::Throw(value) => {
+                live_instructions.insert(value.index() as usize);
+                worklist.push(Work::Instruction(value));
+            }
+            _ => {}
         }
     }
 
@@ -158,7 +161,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
 
         match block.exit {
-            ir::Exit::Return { .. } => {}
+            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
             ir::Exit::Jump(_) => {}
             ir::Exit::Branch { if_false, .. } => {
                 if !live_branches.contains(block_id.index() as usize) {

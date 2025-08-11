@@ -319,7 +319,6 @@ pub enum Instruction<S> {
         op: BinOp,
         right: InstId,
     },
-    Throw(InstId),
     OpenCall {
         scope: CallScope,
         func: InstId,
@@ -375,7 +374,6 @@ impl<S> Instruction<S> {
             &Instruction::Upsilon(_, source) => make_iter!([source]),
             &Instruction::UnOp { source, .. } => make_iter!([source]),
             &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            &Instruction::Throw(source) => make_iter!([source]),
             Instruction::OpenCall { func, args, .. } => {
                 make_iter!([*func], args)
             }
@@ -416,7 +414,6 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(_, source) => make_iter!([source]),
             Instruction::UnOp { source, .. } => make_iter!([source]),
             Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::Throw(source) => make_iter!([source]),
             Instruction::OpenCall { func, args, .. } => {
                 make_iter!([func], args)
             }
@@ -447,7 +444,6 @@ impl<S> Instruction<S> {
             Instruction::Phi(..) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
-            Instruction::Throw { .. } => false,
             Instruction::GetReturn(..) => true,
             _ => false,
         }
@@ -474,7 +470,6 @@ impl<S> Instruction<S> {
             Instruction::Upsilon(..) => true,
             Instruction::UnOp { .. } => true,
             Instruction::BinOp { .. } => true,
-            Instruction::Throw { .. } => true,
             Instruction::OpenCall { .. } => true,
             Instruction::CloseCall(..) => true,
             _ => false,
@@ -487,6 +482,7 @@ pub enum Exit {
     Return {
         value: Option<InstId>,
     },
+    Throw(InstId),
     Jump(BlockId),
     Branch {
         cond: InstId,
@@ -498,6 +494,7 @@ pub enum Exit {
 impl Exit {
     pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
         match self {
+            Exit::Throw(value) => Some(*value),
             Exit::Return { value } => *value,
             Exit::Branch { cond, .. } => Some(*cond),
             _ => None,
@@ -507,6 +504,7 @@ impl Exit {
 
     pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
         match self {
+            Exit::Throw(value) => Some(value),
             Exit::Return { value } => value.as_mut(),
             Exit::Branch { cond, .. } => Some(cond),
             _ => None,
@@ -518,13 +516,21 @@ impl Exit {
         type Array = ArrayVec<BlockId, 2>;
 
         match self {
-            Exit::Return { .. } => Array::from_iter([]),
+            Exit::Return { .. } | Exit::Throw(_) => Array::from_iter([]),
             &Exit::Jump(block_id) => Array::from_iter([block_id]),
             &Exit::Branch {
                 if_true, if_false, ..
             } => Array::from_iter([if_true, if_false]),
         }
         .into_iter()
+    }
+
+    /// Returns true if this exit has no successors because it exits the function.
+    pub fn exits_function(&self) -> bool {
+        match self {
+            Exit::Return { .. } | Exit::Throw(_) => true,
+            Exit::Jump(_) | Exit::Branch { .. } => false,
+        }
     }
 }
 
@@ -800,9 +806,6 @@ impl<S: AsRef<str>> Function<S> {
                             writeln!(f, "null_coalesce({left}, {right})")?;
                         }
                     },
-                    Instruction::Throw(source) => {
-                        writeln!(f, "throw({source})")?;
-                    }
                     Instruction::OpenCall {
                         scope,
                         func,
@@ -836,6 +839,9 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "return()")?;
                     }
                 },
+                Exit::Throw(value) => {
+                    writeln!(f, "throw({value})")?;
+                }
                 Exit::Jump(block_id) => {
                     writeln!(f, "jump({})", block_id)?;
                 }

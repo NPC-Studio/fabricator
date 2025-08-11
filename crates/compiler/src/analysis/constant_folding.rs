@@ -167,7 +167,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
         }
 
         match block.exit {
-            ir::Exit::Return { .. } => {}
+            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
             ir::Exit::Jump(_) => {}
             ir::Exit::Branch {
                 cond,
