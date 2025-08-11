@@ -96,12 +96,13 @@ pub struct Prototype<'gc> {
     prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
     static_vars: Box<[SharedValue<'gc>]>,
     heap_vars: Box<[HeapVarDescriptor]>,
-    constructor_parent: Option<Object<'gc>>,
     used_registers: usize,
+    constructor_super: Gc<'gc, Lock<Option<Object<'gc>>>>,
 }
 
 impl<'gc> Prototype<'gc> {
     pub fn new(
+        mc: &Mutation<'gc>,
         chunk: Chunk<'gc>,
         reference: FunctionRef,
         magic: Gc<'gc, MagicSet<'gc>>,
@@ -110,7 +111,6 @@ impl<'gc> Prototype<'gc> {
         prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
         static_vars: Box<[SharedValue<'gc>]>,
         heap_vars: Box<[HeapVarDescriptor]>,
-        constructor_parent: Option<Object<'gc>>,
         used_registers: usize,
     ) -> Result<Self, PrototypeVerificationError> {
         for (inner_proto_idx, inner) in prototypes.iter().enumerate() {
@@ -411,6 +411,8 @@ impl<'gc> Prototype<'gc> {
             }
         }
 
+        let constructor_super = Gc::new(mc, Lock::new(None));
+
         Ok(Self {
             chunk,
             reference,
@@ -420,8 +422,8 @@ impl<'gc> Prototype<'gc> {
             prototypes,
             static_vars,
             heap_vars,
-            constructor_parent,
             used_registers,
+            constructor_super,
         })
     }
 
@@ -465,9 +467,20 @@ impl<'gc> Prototype<'gc> {
         &self.heap_vars
     }
 
+    /// If it is not already created, associate a new `Object` with this prototype that defines the
+    /// super-object of all constructed objects and return it.
+    ///
+    /// If it is already created, then return the existing super object.
     #[inline]
-    pub fn constructor_parent(&self) -> Option<Object<'gc>> {
-        self.constructor_parent
+    pub fn init_constructor_super(&self, mc: &Mutation<'gc>) -> Object<'gc> {
+        match self.constructor_super.get() {
+            Some(obj) => obj,
+            None => {
+                let obj = Object::new(mc);
+                self.constructor_super.set(mc, Some(obj));
+                obj
+            }
+        }
     }
 
     #[inline]

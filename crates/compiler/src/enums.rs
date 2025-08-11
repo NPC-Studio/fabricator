@@ -25,8 +25,8 @@ pub struct EnumError {
 pub enum EnumEvaluationErrorKind {
     #[error("reference to enum #{0} with an invalid variant")]
     BadVariant(usize),
-    #[error("declaration would shadow enum #{0}")]
-    ShadowsEnum(usize),
+    #[error("reference to enum {0} with no variant")]
+    NoVariant(usize),
 }
 
 #[derive(Debug, Error)]
@@ -104,6 +104,17 @@ impl<S: Eq + Hash> EnumSet<S> {
 impl<S: Clone + Eq + Hash> EnumSet<S> {
     /// Extract all top-level enum statements from a block.
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
+        for stmt in &block.statements {
+            if let ast::Statement::Enum(enum_stmt) = stmt {
+                if let Some(&index) = self.dict.get(&enum_stmt.name.inner) {
+                    return Err(EnumError {
+                        kind: EnumErrorKind::Duplicate(index),
+                        span: enum_stmt.span,
+                    });
+                }
+            }
+        }
+
         let enums = block
             .statements
             .extract_if(.., |s| matches!(s, ast::Statement::Enum(_)));
@@ -137,7 +148,11 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 };
             }
 
-            self.dict.insert(enum_.name.clone(), self.enums.len());
+            assert!(
+                self.dict
+                    .insert(enum_.name.clone(), self.enums.len())
+                    .is_none()
+            );
             self.enums.push(enum_);
         }
 
@@ -151,32 +166,6 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
         impl<'a, S: Clone + Eq + Hash> ast::VisitorMut<S> for EnumExpander<'a, S> {
             type Break = EnumEvaluationError;
 
-            fn visit_stmt_mut(&mut self, stmt: &mut ast::Statement<S>) -> ControlFlow<Self::Break> {
-                let mut shadows = None;
-                match &*stmt {
-                    ast::Statement::Enum(enum_stmt) => {
-                        if let Some(idx) = self.0.dict.get(&enum_stmt.name).copied() {
-                            shadows = Some((idx, enum_stmt.name.span));
-                        }
-                    }
-                    ast::Statement::Function(func_stmt) => {
-                        if let Some(&idx) = self.0.dict.get(&func_stmt.name) {
-                            shadows = Some((idx, func_stmt.name.span));
-                        }
-                    }
-                    _ => {}
-                }
-
-                if let Some((index, span)) = shadows {
-                    ControlFlow::Break(EnumEvaluationError {
-                        kind: EnumEvaluationErrorKind::ShadowsEnum(index),
-                        span,
-                    })
-                } else {
-                    stmt.walk_mut(self)
-                }
-            }
-
             fn visit_expr_mut(
                 &mut self,
                 expr: &mut ast::Expression<S>,
@@ -185,7 +174,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                     ast::Expression::Ident(ident) => {
                         if let Some(&index) = self.0.dict.get(ident) {
                             return ControlFlow::Break(EnumEvaluationError {
-                                kind: EnumEvaluationErrorKind::BadVariant(index),
+                                kind: EnumEvaluationErrorKind::NoVariant(index),
                                 span: expr.span(),
                             });
                         }

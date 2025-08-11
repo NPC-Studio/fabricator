@@ -137,7 +137,7 @@ impl<'gc> BuiltIns<'gc> {
             get_constructor_super: Callback::from_fn(mc, |ctx, mut exec| {
                 let closure: Closure = exec.stack().consume(ctx)?;
                 exec.stack()
-                    .replace(ctx, closure.prototype().constructor_parent());
+                    .replace(ctx, closure.prototype().init_constructor_super(&ctx));
                 Ok(())
             }),
 

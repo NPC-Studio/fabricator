@@ -847,7 +847,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let bytecode = vm::ByteCode::encode(vm_instructions.into_iter())?;
 
     Ok(Prototype {
-        is_constructor: ir.is_constructor,
         reference: ir.reference.clone(),
         bytecode,
         constants: constants.into_boxed_slice(),

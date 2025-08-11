@@ -18,20 +18,21 @@ pub struct Block<S> {
 #[derive(Debug, Clone)]
 pub enum Statement<S> {
     Empty(Span),
-    Block(BlockStatement<S>),
-    Enum(EnumStatement<S>),
-    Function(FunctionStatement<S>),
-    Var(VarDeclarationStatement<S>),
-    Static(VarDeclarationStatement<S>),
-    Assignment(AssignmentStatement<S>),
-    Return(ReturnStatement<S>),
-    If(IfStatement<S>),
-    For(ForStatement<S>),
-    While(LoopStatement<S>),
-    Repeat(LoopStatement<S>),
-    Switch(SwitchStatement<S>),
-    With(LoopStatement<S>),
-    Throw(ThrowStatement<S>),
+    Block(BlockStmt<S>),
+    Enum(EnumStmt<S>),
+    Function(FunctionStmt<S>),
+    Var(VarDeclarationStmt<S>),
+    Static(VarDeclarationStmt<S>),
+    Assignment(AssignmentStmt<S>),
+    Return(ReturnStmt<S>),
+    If(IfStmt<S>),
+    For(ForStmt<S>),
+    While(LoopStmt<S>),
+    Repeat(LoopStmt<S>),
+    Switch(SwitchStmt<S>),
+    With(LoopStmt<S>),
+    TryCatch(TryCatchStmt<S>),
+    Throw(ThrowStmt<S>),
     Call(Call<S>),
     Prefix(Mutation<S>),
     Postfix(Mutation<S>),
@@ -40,20 +41,20 @@ pub enum Statement<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockStatement<S> {
+pub struct BlockStmt<S> {
     pub block: Block<S>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct EnumStatement<S> {
+pub struct EnumStmt<S> {
     pub name: Ident<S>,
     pub variants: Vec<(Ident<S>, Option<Expression<S>>)>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionStatement<S> {
+pub struct FunctionStmt<S> {
     pub name: Ident<S>,
     pub is_constructor: bool,
     pub inherit: Option<Call<S>>,
@@ -63,13 +64,13 @@ pub struct FunctionStatement<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct VarDeclarationStatement<S> {
+pub struct VarDeclarationStmt<S> {
     pub vars: Vec<(Ident<S>, Option<Expression<S>>)>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AssignmentStatement<S> {
+pub struct AssignmentStmt<S> {
     pub target: MutableExpr<S>,
     pub op: AssignmentOp,
     pub value: Box<Expression<S>>,
@@ -84,13 +85,13 @@ pub enum MutableExpr<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReturnStatement<S> {
+pub struct ReturnStmt<S> {
     pub value: Option<Expression<S>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct IfStatement<S> {
+pub struct IfStmt<S> {
     pub condition: Box<Expression<S>>,
     pub then_stmt: Box<Statement<S>>,
     pub else_stmt: Option<Box<Statement<S>>>,
@@ -98,7 +99,7 @@ pub struct IfStatement<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ForStatement<S> {
+pub struct ForStmt<S> {
     pub initializer: Box<Statement<S>>,
     pub condition: Box<Expression<S>>,
     pub iterator: Box<Statement<S>>,
@@ -107,20 +108,28 @@ pub struct ForStatement<S> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoopStatement<S> {
+pub struct LoopStmt<S> {
     pub target: Box<Expression<S>>,
     pub body: Box<Statement<S>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct ThrowStatement<S> {
+pub struct ThrowStmt<S> {
     pub target: Box<Expression<S>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct SwitchStatement<S> {
+pub struct TryCatchStmt<S> {
+    pub try_block: Box<Statement<S>>,
+    pub err_ident: Ident<S>,
+    pub catch_block: Box<Statement<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchStmt<S> {
     pub target: Box<Expression<S>>,
     pub cases: Vec<SwitchCase<S>>,
     pub default: Option<Block<S>>,
@@ -392,6 +401,7 @@ impl<S> Statement<S> {
             Statement::Repeat(repeat_stmt) => repeat_stmt.walk(visitor),
             Statement::Switch(switch_stmt) => switch_stmt.walk(visitor),
             Statement::With(with_stmt) => with_stmt.walk(visitor),
+            Statement::TryCatch(try_catch_stmt) => try_catch_stmt.walk(visitor),
             Statement::Throw(throw_stmt) => throw_stmt.walk(visitor),
             Statement::Call(call_expr) => call_expr.walk(visitor),
             Statement::Prefix(mutation) => mutation.walk(visitor),
@@ -417,6 +427,7 @@ impl<S> Statement<S> {
             Statement::Repeat(repeat_stmt) => repeat_stmt.walk_mut(visitor),
             Statement::Switch(switch_stmt) => switch_stmt.walk_mut(visitor),
             Statement::With(with_stmt) => with_stmt.walk_mut(visitor),
+            Statement::TryCatch(try_catch_stmt) => try_catch_stmt.walk_mut(visitor),
             Statement::Throw(throw_stmt) => throw_stmt.walk_mut(visitor),
             Statement::Call(call_expr) => call_expr.walk_mut(visitor),
             Statement::Prefix(mutation) => mutation.walk_mut(visitor),
@@ -443,6 +454,7 @@ impl<S> Statement<S> {
             Statement::Repeat(loop_stmt) => loop_stmt.span,
             Statement::Switch(switch_stmt) => switch_stmt.span,
             Statement::With(loop_stmt) => loop_stmt.span,
+            Statement::TryCatch(try_catch_stmt) => try_catch_stmt.span,
             Statement::Throw(throw) => throw.span,
             Statement::Call(call) => call.span,
             Statement::Prefix(mutation) => mutation.span,
@@ -453,7 +465,7 @@ impl<S> Statement<S> {
     }
 }
 
-impl<S> BlockStatement<S> {
+impl<S> BlockStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         self.block.walk(visitor)?;
         ControlFlow::Continue(())
@@ -465,7 +477,7 @@ impl<S> BlockStatement<S> {
     }
 }
 
-impl<S> EnumStatement<S> {
+impl<S> EnumStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         for (_, expr) in &self.variants {
             if let Some(expr) = expr {
@@ -485,7 +497,7 @@ impl<S> EnumStatement<S> {
     }
 }
 
-impl<S> FunctionStatement<S> {
+impl<S> FunctionStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         if let Some(call) = &self.inherit {
             call.walk(visitor)?;
@@ -509,7 +521,7 @@ impl<S> FunctionStatement<S> {
     }
 }
 
-impl<S> VarDeclarationStatement<S> {
+impl<S> VarDeclarationStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         for var in &self.vars {
             if let Some(value) = &var.1 {
@@ -529,7 +541,7 @@ impl<S> VarDeclarationStatement<S> {
     }
 }
 
-impl<S> AssignmentStatement<S> {
+impl<S> AssignmentStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         self.target.walk(visitor)?;
         visitor.visit_expr(&self.value)?;
@@ -579,7 +591,7 @@ impl<S> MutableExpr<S> {
     }
 }
 
-impl<S> ReturnStatement<S> {
+impl<S> ReturnStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         if let Some(val) = &self.value {
             visitor.visit_expr(val)?;
@@ -595,7 +607,7 @@ impl<S> ReturnStatement<S> {
     }
 }
 
-impl<S> IfStatement<S> {
+impl<S> IfStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.condition)?;
         visitor.visit_stmt(&self.then_stmt)?;
@@ -615,7 +627,7 @@ impl<S> IfStatement<S> {
     }
 }
 
-impl<S> ForStatement<S> {
+impl<S> ForStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_stmt(&self.initializer)?;
         visitor.visit_expr(&self.condition)?;
@@ -633,7 +645,7 @@ impl<S> ForStatement<S> {
     }
 }
 
-impl<S> LoopStatement<S> {
+impl<S> LoopStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.target)?;
         visitor.visit_stmt(&self.body)?;
@@ -647,7 +659,21 @@ impl<S> LoopStatement<S> {
     }
 }
 
-impl<S> ThrowStatement<S> {
+impl<S> TryCatchStmt<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_stmt(&self.try_block)?;
+        visitor.visit_stmt(&self.catch_block)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_stmt_mut(&mut self.try_block)?;
+        visitor.visit_stmt_mut(&mut self.catch_block)?;
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> ThrowStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.target)?;
         ControlFlow::Continue(())
@@ -659,7 +685,7 @@ impl<S> ThrowStatement<S> {
     }
 }
 
-impl<S> SwitchStatement<S> {
+impl<S> SwitchStmt<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
         visitor.visit_expr(&self.target)?;
         for case in &self.cases {

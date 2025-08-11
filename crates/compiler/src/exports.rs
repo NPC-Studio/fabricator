@@ -13,7 +13,7 @@ pub struct DuplicateExportError {
 }
 
 pub enum ExportKind<S> {
-    Function(ast::FunctionStatement<S>),
+    Function(ast::FunctionStmt<S>),
 }
 
 pub struct Export<S> {

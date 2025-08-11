@@ -53,6 +53,8 @@ pub enum CompileErrorKind {
     EnumEvaluation(#[source] EnumEvaluationError),
     #[error("duplicate export error: {0}")]
     DuplicateExport(#[source] DuplicateExportError),
+    #[error("export `{name}` shares a name with an existing enum")]
+    ExportShadowsEnum { name: String, span: vm::Span },
     #[error("item `{name}` shares a name with an existing magic variable")]
     ItemShadowsMagic { name: String, span: vm::Span },
     #[error("IR gen error: {0}")]
@@ -407,7 +409,7 @@ impl<'gc> Compiler<'gc> {
         }
 
         // Extract all enum definitions from every parsed AST, and make sure none of the enum names
-        // conflict with a magic variable name.
+        // conflict with any pre-existing magic variable name.
 
         for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
             let prev_enum_len = enums.len();
@@ -452,7 +454,7 @@ impl<'gc> Compiler<'gc> {
 
         // Gather all exported items from every AST, then produce a new read-only *stub* magic
         // variable for each export, making sure that the exported name does not conflict with any
-        // pre-existing magic variable.
+        // pre-existing magic variable or enum.
 
         let mut exports = ExportSet::new();
 
@@ -480,6 +482,19 @@ impl<'gc> Compiler<'gc> {
 
             for i in prev_exports_len..exports.len() {
                 let export = exports.get(i).unwrap();
+
+                if enums.find(&export.name).is_some() {
+                    let line_number = chunk.line_number(export.span.start());
+                    return Err(CompileError {
+                        kind: CompileErrorKind::ExportShadowsEnum {
+                            name: export.name.as_str().to_owned(),
+                            span: export.span,
+                        },
+                        chunk_name: chunk.name().clone(),
+                        line_number,
+                    });
+                }
+
                 let (index, inserted) = magic.insert(export.name, stub_magic);
 
                 if !inserted {

@@ -435,7 +435,6 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -490,7 +489,6 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -548,7 +546,6 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -613,7 +610,6 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),
@@ -679,7 +675,6 @@ mod tests {
 
         let ir = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference: FunctionRef::Chunk,
             instructions,
             spans: Default::default(),

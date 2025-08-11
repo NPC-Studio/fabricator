@@ -175,11 +175,11 @@ where
 
         Ok(match tok_kind {
             TokenKind::Enum => (
-                ast::Statement::Enum(self.parse_enum_statement()?),
+                ast::Statement::Enum(self.parse_enum_stmt()?),
                 StatementTrailer::NoSemiColon,
             ),
             TokenKind::Function => (
-                ast::Statement::Function(self.parse_function_statement()?),
+                ast::Statement::Function(self.parse_function_stmt()?),
                 StatementTrailer::NoSemiColon,
             ),
             TokenKind::Var => (
@@ -207,14 +207,14 @@ where
                     None
                 };
                 (
-                    ast::Statement::Return(ast::ReturnStatement { value, span }),
+                    ast::Statement::Return(ast::ReturnStmt { value, span }),
                     StatementTrailer::SemiColon,
                 )
             }
             TokenKind::Exit => {
                 self.advance(1);
                 (
-                    ast::Statement::Return(ast::ReturnStatement {
+                    ast::Statement::Return(ast::ReturnStmt {
                         value: None,
                         span: tok_span,
                     }),
@@ -240,7 +240,7 @@ where
                 }
 
                 (
-                    ast::Statement::If(ast::IfStatement {
+                    ast::Statement::If(ast::IfStmt {
                         condition: Box::new(condition),
                         then_stmt: Box::new(then_stmt),
                         else_stmt: else_stmt.map(Box::new),
@@ -249,63 +249,10 @@ where
                     StatementTrailer::NoSemiColon,
                 )
             }
-            TokenKind::For => {
-                self.advance(1);
-                self.parse_token(TokenKind::LeftParen)?;
-
-                let check_terminator_tok = |this: &mut Self, tok: TokenKind<()>| -> Option<Span> {
-                    this.look_ahead(1);
-                    let &Token { ref kind, span } = this.peek(0);
-                    if kind.as_unit_string() == tok {
-                        Some(span.start_span())
-                    } else {
-                        None
-                    }
-                };
-
-                let initializer =
-                    if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
-                        ast::Statement::Empty(span)
-                    } else {
-                        self.parse_statement_body()?.0
-                    };
-
-                self.parse_token(TokenKind::SemiColon)?;
-
-                let condition = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon)
-                {
-                    // As a special case, an empty condition is always true.
-                    ast::Expression::Constant(Constant::Boolean(true), span.start_span())
-                } else {
-                    self.parse_expression()?
-                };
-
-                self.parse_token(TokenKind::SemiColon)?;
-
-                let iterator = if let Some(span) = check_terminator_tok(self, TokenKind::RightParen)
-                {
-                    ast::Statement::Empty(span)
-                } else {
-                    self.parse_statement_body()?.0
-                };
-
-                self.parse_token(TokenKind::RightParen)?;
-
-                let body = self.parse_statement()?;
-
-                let span = tok_span.combine(body.span());
-
-                (
-                    ast::Statement::For(ast::ForStatement {
-                        initializer: Box::new(initializer),
-                        condition: Box::new(condition),
-                        iterator: Box::new(iterator),
-                        body: Box::new(body),
-                        span,
-                    }),
-                    StatementTrailer::NoSemiColon,
-                )
-            }
+            TokenKind::For => (
+                ast::Statement::For(self.parse_for_stmt()?),
+                StatementTrailer::NoSemiColon,
+            ),
             TokenKind::While => {
                 self.advance(1);
 
@@ -315,7 +262,7 @@ where
                 let span = tok_span.combine(body.span());
 
                 (
-                    ast::Statement::While(ast::LoopStatement {
+                    ast::Statement::While(ast::LoopStmt {
                         target: condition,
                         body,
                         span,
@@ -331,7 +278,7 @@ where
                 let span = tok_span.combine(body.span());
 
                 (
-                    ast::Statement::Repeat(ast::LoopStatement {
+                    ast::Statement::Repeat(ast::LoopStmt {
                         target: times,
                         body,
                         span,
@@ -340,7 +287,7 @@ where
                 )
             }
             TokenKind::Switch => (
-                ast::Statement::Switch(self.parse_switch_statement()?),
+                ast::Statement::Switch(self.parse_switch_stmt()?),
                 StatementTrailer::NoSemiColon,
             ),
             TokenKind::With => {
@@ -351,7 +298,26 @@ where
                 let span = tok_span.combine(body.span());
 
                 (
-                    ast::Statement::With(ast::LoopStatement { target, body, span }),
+                    ast::Statement::With(ast::LoopStmt { target, body, span }),
+                    StatementTrailer::NoSemiColon,
+                )
+            }
+            TokenKind::Try => {
+                self.advance(1);
+                let try_block = self.parse_statement()?;
+                self.parse_token(TokenKind::Catch)?;
+                self.parse_token(TokenKind::LeftParen)?;
+                let err_ident = self.parse_identifier()?;
+                self.parse_token(TokenKind::RightParen)?;
+                let catch_block = self.parse_statement()?;
+                let span = tok_span.combine(catch_block.span());
+                (
+                    ast::Statement::TryCatch(ast::TryCatchStmt {
+                        try_block: Box::new(try_block),
+                        err_ident,
+                        catch_block: Box::new(catch_block),
+                        span,
+                    }),
                     StatementTrailer::NoSemiColon,
                 )
             }
@@ -360,7 +326,7 @@ where
                 let target = self.parse_expression()?;
                 let span = tok_span.combine(target.span());
                 (
-                    ast::Statement::Throw(ast::ThrowStatement {
+                    ast::Statement::Throw(ast::ThrowStmt {
                         target: Box::new(target),
                         span,
                     }),
@@ -383,7 +349,7 @@ where
                 let block = self.parse_block(|t| matches!(t, TokenKind::RightBrace))?;
                 let span = tok_span.combine(self.parse_token(TokenKind::RightBrace).unwrap());
                 (
-                    ast::Statement::Block(ast::BlockStatement { block, span }),
+                    ast::Statement::Block(ast::BlockStmt { block, span }),
                     StatementTrailer::NoSemiColon,
                 )
             }
@@ -436,7 +402,7 @@ where
                         let value = Box::new(self.parse_expression()?);
                         span = span.combine(value.span());
 
-                        ast::Statement::Assignment(ast::AssignmentStatement {
+                        ast::Statement::Assignment(ast::AssignmentStmt {
                             target,
                             op: assignment_op,
                             value,
@@ -453,7 +419,7 @@ where
     fn parse_var_declaration_list(
         &mut self,
         decl_token: TokenKind<()>,
-    ) -> Result<ast::VarDeclarationStatement<S>, ParseError> {
+    ) -> Result<ast::VarDeclarationStmt<S>, ParseError> {
         let mut span = self.parse_token(decl_token)?;
         let mut vars = Vec::new();
         loop {
@@ -481,10 +447,10 @@ where
             }
         }
 
-        Ok(ast::VarDeclarationStatement { vars, span })
+        Ok(ast::VarDeclarationStmt { vars, span })
     }
 
-    fn parse_function_statement(&mut self) -> Result<ast::FunctionStatement<S>, ParseError> {
+    fn parse_function_stmt(&mut self) -> Result<ast::FunctionStmt<S>, ParseError> {
         let mut span = self.parse_token(TokenKind::Function)?;
         let name = self.parse_identifier()?;
         let parameters = self.parse_parameter_list()?.0;
@@ -528,7 +494,7 @@ where
             });
         }
 
-        Ok(ast::FunctionStatement {
+        Ok(ast::FunctionStmt {
             name,
             is_constructor,
             inherit,
@@ -538,7 +504,7 @@ where
         })
     }
 
-    fn parse_enum_statement(&mut self) -> Result<ast::EnumStatement<S>, ParseError> {
+    fn parse_enum_stmt(&mut self) -> Result<ast::EnumStmt<S>, ParseError> {
         let mut span = self.parse_token(TokenKind::Enum)?;
         let name = self.parse_identifier()?;
 
@@ -564,14 +530,66 @@ where
             },
         )?);
 
-        Ok(ast::EnumStatement {
+        Ok(ast::EnumStmt {
             name,
             variants,
             span,
         })
     }
 
-    fn parse_switch_statement(&mut self) -> Result<ast::SwitchStatement<S>, ParseError> {
+    fn parse_for_stmt(&mut self) -> Result<ast::ForStmt<S>, ParseError> {
+        let for_span = self.parse_token(TokenKind::For)?;
+        self.parse_token(TokenKind::LeftParen)?;
+
+        let check_terminator_tok = |this: &mut Self, tok: TokenKind<()>| -> Option<Span> {
+            this.look_ahead(1);
+            let &Token { ref kind, span } = this.peek(0);
+            if kind.as_unit_string() == tok {
+                Some(span.start_span())
+            } else {
+                None
+            }
+        };
+
+        let initializer = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
+            ast::Statement::Empty(span)
+        } else {
+            self.parse_statement_body()?.0
+        };
+
+        self.parse_token(TokenKind::SemiColon)?;
+
+        let condition = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
+            // As a special case, an empty condition is always true.
+            ast::Expression::Constant(Constant::Boolean(true), span.start_span())
+        } else {
+            self.parse_expression()?
+        };
+
+        self.parse_token(TokenKind::SemiColon)?;
+
+        let iterator = if let Some(span) = check_terminator_tok(self, TokenKind::RightParen) {
+            ast::Statement::Empty(span)
+        } else {
+            self.parse_statement_body()?.0
+        };
+
+        self.parse_token(TokenKind::RightParen)?;
+
+        let body = self.parse_statement()?;
+
+        let span = for_span.combine(body.span());
+
+        Ok(ast::ForStmt {
+            initializer: Box::new(initializer),
+            condition: Box::new(condition),
+            iterator: Box::new(iterator),
+            body: Box::new(body),
+            span,
+        })
+    }
+
+    fn parse_switch_stmt(&mut self) -> Result<ast::SwitchStmt<S>, ParseError> {
         let mut span = self.parse_token(TokenKind::Switch)?;
         let target = self.parse_expression()?;
         self.parse_token(TokenKind::LeftBrace)?;
@@ -639,7 +657,7 @@ where
             }
         }
 
-        Ok(ast::SwitchStatement {
+        Ok(ast::SwitchStmt {
             target: Box::new(target),
             cases,
             default,

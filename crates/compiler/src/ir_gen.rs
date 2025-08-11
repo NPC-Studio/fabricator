@@ -25,14 +25,16 @@ pub enum IrGenErrorKind {
     MisplacedEnum,
     #[error("function statements are only allowed at the top-level")]
     MisplacedFunctionStmt,
+    #[error("constructor functions are not permitted")]
+    ConstructorsNotAllowed,
+    #[error("try / catch blocks are not permitted")]
+    TryCatchNotAllowed,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("parameter default value is not a constant")]
     ParameterDefaultNotConstant,
     #[error("cannot reference a pseudo-variable as a normal variable")]
     PseudoVarAccessed,
-    #[error("constructor functions are not permitted")]
-    ConstructorsNotAllowed,
     #[error("static variables in constructors must be at the top-level of the function block")]
     ConstructorStaticNotTopLevel,
     #[error("static variable in constructor does not have a unique name")]
@@ -78,7 +80,7 @@ pub struct IrGenSettings {
     /// `let` keyword, the second behavior is similar to ECMAScript closures with the `var` keyword.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Closures#creating_closures_in_loops_a_common_mistake>
-    pub allow_closures: bool,
+    pub closures: bool,
 
     /// Allow `constructor` annotated function statements with optional inheritance.
     ///
@@ -95,22 +97,33 @@ pub struct IrGenSettings {
     /// handle constructors and inheritance manually, and doing so does not disable normal static
     /// variables.
     pub allow_constructors: bool,
+
+    /// Allow `try {} catch(e) {}` blocks.
+    ///
+    /// These desugar to the equivalent of creating an inner closure and calling it with `pcall`.
+    /// Inside the `try` block, the difference between a normal exit, a thrown error, and `break` /
+    /// `continue` / `return` are handled by setting a flag which is checked at `pcall` exit.
+    ///
+    ///
+    pub allow_try_catch_blocks: bool,
 }
 
 impl IrGenSettings {
     pub fn modern() -> Self {
         IrGenSettings {
             block_scoping: true,
-            allow_closures: true,
+            closures: true,
             allow_constructors: false,
+            allow_try_catch_blocks: false,
         }
     }
 
     pub fn compat() -> Self {
         IrGenSettings {
             block_scoping: false,
-            allow_closures: false,
+            closures: false,
             allow_constructors: true,
+            allow_try_catch_blocks: true,
         }
     }
 
@@ -133,7 +146,7 @@ impl IrGenSettings {
         self,
         mut interner: impl StringInterner<String = S>,
         func_span: Span,
-        func_stmt: &ast::FunctionStatement<S>,
+        func_stmt: &ast::FunctionStmt<S>,
         find_magic: impl Fn(&S) -> Option<MagicMode>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
@@ -153,11 +166,11 @@ impl IrGenSettings {
                     span: func_span,
                 });
             }
-            compiler.constructor(func_stmt.inherit.as_ref(), &func_stmt.body)?;
+            compiler.constructor(func_stmt.inherit.as_ref(), &func_stmt.body)
         } else {
             compiler.block(&func_stmt.body)?;
+            Ok(compiler.finish())
         }
-        Ok(compiler.finish())
     }
 }
 
@@ -168,9 +181,7 @@ struct FunctionCompiler<'a, S, I> {
 
     function: ir::Function<S>,
 
-    // If we have a final block to jump to, jump here instead of returning. Setting this disallows
-    // return statements with values.
-    final_block: Option<ir::BlockId>,
+    func_type: FunctionType,
 
     // This will be `Some` if the current block is unfinished and can be appended to.
     current_block: Option<ir::BlockId>,
@@ -186,6 +197,40 @@ struct FunctionCompiler<'a, S, I> {
     // This list is always kept in scope stack order, so the top entry in the list is always the
     // variable currently visible for this name.
     var_lookup: HashMap<ast::Ident<S>, Vec<usize>>,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum TryCatchExitCode {
+    /// Return a value from the outer function.
+    Return = 0,
+    /// Break an outer loop.
+    Break = 1,
+    /// Continue an outer loop.
+    Continue = 2,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum FunctionType {
+    /// The function is a normal function.
+    Normal,
+    /// The function must not explicitly return, and there is an implicit `return self;` at the end
+    /// of the function.
+    Constructor,
+    /// The function is a desugared `try {} catch(e) {}` block.
+    ///
+    /// The function must set a special variable to a value of `TryCatchReturnCode` before
+    /// returning.
+    TryCatch {
+        /// Allow top-level `break` within the function and desugar this into setting the `Break`
+        /// return code followed by a return.
+        allow_break: bool,
+        /// Allow top-level `continue` within the function and desugar this into setting the
+        /// `Continue` return code followed by a return.
+        allow_continue: bool,
+        /// The variable which must hold the `TryCatchReturnCode`. If the variable is not set, then
+        /// the outer function will always proceed with normal execution.
+        exit_code: ir::VarId,
+    },
 }
 
 struct Scope<S> {
@@ -271,7 +316,6 @@ where
 
         let function = ir::Function {
             num_parameters: 0,
-            is_constructor: false,
             reference,
             instructions,
             spans,
@@ -289,7 +333,7 @@ where
             interner,
             find_magic,
             function,
-            final_block: None,
+            func_type: FunctionType::Normal,
             current_block: Some(first_block),
             continue_target_stack: Vec::new(),
             break_target_stack: Vec::new(),
@@ -338,11 +382,11 @@ where
     }
 
     fn constructor(
-        &mut self,
+        mut self,
         inherit: Option<&ast::Call<S>>,
         main_block: &ast::Block<S>,
-    ) -> Result<(), IrGenError> {
-        self.function.is_constructor = true;
+    ) -> Result<ir::Function<S>, IrGenError> {
+        self.func_type = FunctionType::Constructor;
 
         // Create a hidden static variable to hold whether the constructor static object is
         // initialized.
@@ -363,8 +407,6 @@ where
 
         let init_block = self.new_block();
         let successor_block = self.new_block();
-        let final_block = self.new_block();
-        self.final_block = Some(final_block);
 
         let parent_func = if let Some(inherit) = inherit {
             Some(self.expression(&inherit.base)?)
@@ -529,16 +571,13 @@ where
             }
         }
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(final_block));
-        }
-
         self.pop_scope();
 
-        self.start_new_block(final_block);
-        self.end_current_block(ir::Exit::Return { value: Some(this) });
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Return { value: Some(this) });
+        }
 
-        Ok(())
+        Ok(self.finish())
     }
 
     fn finish(mut self) -> ir::Function<S> {
@@ -584,12 +623,12 @@ where
             }),
             ast::Statement::Var(var_decls) => {
                 for (name, value) in &var_decls.vars {
-                    self.var_declaration(var_decls.span, name, value.as_ref())?;
+                    self.var_decl(var_decls.span, name, value.as_ref())?;
                 }
                 Ok(())
             }
             ast::Statement::Static(static_decls) => {
-                if self.function.is_constructor {
+                if matches!(self.func_type, FunctionType::Constructor) {
                     return Err(IrGenError {
                         kind: IrGenErrorKind::ConstructorStaticNotTopLevel,
                         span: static_decls.span,
@@ -597,20 +636,28 @@ where
                 }
 
                 for (name, value) in &static_decls.vars {
-                    self.static_declaration(static_decls.span, name, value.as_ref())?;
+                    self.static_decl(static_decls.span, name, value.as_ref())?;
                 }
                 Ok(())
             }
             ast::Statement::Assignment(assignment_statement) => {
-                self.assignment_statement(assignment_statement)
+                self.assignment_stmt(assignment_statement)
             }
-            ast::Statement::Return(return_) => self.return_statement(return_),
-            ast::Statement::If(if_stmt) => self.if_statement(if_stmt),
-            ast::Statement::For(for_stmt) => self.for_statement(for_stmt),
-            ast::Statement::While(while_stmt) => self.while_statement(while_stmt),
-            ast::Statement::Repeat(repeat_stmt) => self.repeat_statement(repeat_stmt),
-            ast::Statement::Switch(switch_stmt) => self.switch_statement(switch_stmt),
-            ast::Statement::With(with_stmt) => self.with_statement(with_stmt),
+            ast::Statement::Return(return_stmt) => {
+                let value = if let Some(value) = &return_stmt.value {
+                    Some(self.expression(value)?)
+                } else {
+                    None
+                };
+                self.do_return(return_stmt.span, value)
+            }
+            ast::Statement::If(if_stmt) => self.if_stmt(if_stmt),
+            ast::Statement::For(for_stmt) => self.for_stmt(for_stmt),
+            ast::Statement::While(while_stmt) => self.while_stmt(while_stmt),
+            ast::Statement::Repeat(repeat_stmt) => self.repeat_stmt(repeat_stmt),
+            ast::Statement::Switch(switch_stmt) => self.switch_stmt(switch_stmt),
+            ast::Statement::With(with_stmt) => self.with_stmt(with_stmt),
+            ast::Statement::TryCatch(try_catch_stmt) => self.try_catch_stmt(try_catch_stmt),
             ast::Statement::Throw(throw_stmt) => {
                 let target = self.expression(&throw_stmt.target)?;
                 self.push_instruction(throw_stmt.span, ir::Instruction::Throw(target));
@@ -628,12 +675,12 @@ where
                 self.mutation_op(mutation)?;
                 Ok(())
             }
-            ast::Statement::Break(span) => self.break_statement(*span),
-            ast::Statement::Continue(span) => self.continue_statement(*span),
+            ast::Statement::Break(span) => self.do_break(*span),
+            ast::Statement::Continue(span) => self.do_continue(*span),
         }
     }
 
-    fn var_declaration(
+    fn var_decl(
         &mut self,
         span: Span,
         name: &ast::Ident<S>,
@@ -649,7 +696,7 @@ where
         Ok(())
     }
 
-    fn static_declaration(
+    fn static_decl(
         &mut self,
         span: Span,
         name: &ast::Ident<S>,
@@ -710,10 +757,7 @@ where
         Ok(())
     }
 
-    fn assignment_statement(
-        &mut self,
-        assign_stmt: &ast::AssignmentStatement<S>,
-    ) -> Result<(), IrGenError> {
+    fn assignment_stmt(&mut self, assign_stmt: &ast::AssignmentStmt<S>) -> Result<(), IrGenError> {
         let target = self.mutable_target(&assign_stmt.target)?;
         let val = self.expression(&assign_stmt.value)?;
 
@@ -781,25 +825,7 @@ where
         Ok(())
     }
 
-    fn return_statement(&mut self, ret_stmt: &ast::ReturnStatement<S>) -> Result<(), IrGenError> {
-        if self.final_block.is_some() && ret_stmt.value.is_some() {
-            return Err(IrGenError {
-                kind: IrGenErrorKind::CannotReturnValue,
-                span: ret_stmt.span,
-            });
-        }
-
-        let exit = if let Some(value) = &ret_stmt.value {
-            let val = self.expression(value)?;
-            ir::Exit::Return { value: Some(val) }
-        } else {
-            ir::Exit::Return { value: None }
-        };
-        self.end_current_block(exit);
-        Ok(())
-    }
-
-    fn if_statement(&mut self, if_statement: &ast::IfStatement<S>) -> Result<(), IrGenError> {
+    fn if_stmt(&mut self, if_statement: &ast::IfStmt<S>) -> Result<(), IrGenError> {
         let cond = self.expression(&if_statement.condition)?;
         let then_block = self.new_block();
         let else_block = self.new_block();
@@ -833,7 +859,7 @@ where
         Ok(())
     }
 
-    fn for_statement(&mut self, for_statement: &ast::ForStatement<S>) -> Result<(), IrGenError> {
+    fn for_stmt(&mut self, for_statement: &ast::ForStmt<S>) -> Result<(), IrGenError> {
         self.push_scope();
         self.statement(&for_statement.initializer)?;
 
@@ -884,7 +910,7 @@ where
         Ok(())
     }
 
-    fn while_statement(&mut self, while_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
+    fn while_stmt(&mut self, while_stmt: &ast::LoopStmt<S>) -> Result<(), IrGenError> {
         let cond_block = self.new_block();
         let body_block = self.new_block();
         let successor_block = self.new_block();
@@ -919,7 +945,7 @@ where
         Ok(())
     }
 
-    fn repeat_statement(&mut self, repeat_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
+    fn repeat_stmt(&mut self, repeat_stmt: &ast::LoopStmt<S>) -> Result<(), IrGenError> {
         let times = self.expression(&repeat_stmt.target)?;
 
         let dec_var = self.function.variables.insert(ir::Variable::Owned);
@@ -973,10 +999,7 @@ where
         Ok(())
     }
 
-    fn switch_statement(
-        &mut self,
-        switch_stmt: &ast::SwitchStatement<S>,
-    ) -> Result<(), IrGenError> {
+    fn switch_stmt(&mut self, switch_stmt: &ast::SwitchStmt<S>) -> Result<(), IrGenError> {
         let target = self.expression(&switch_stmt.target)?;
 
         let successor_block = self.new_block();
@@ -1024,7 +1047,7 @@ where
         Ok(())
     }
 
-    fn with_statement(&mut self, with_stmt: &ast::LoopStatement<S>) -> Result<(), IrGenError> {
+    fn with_stmt(&mut self, with_stmt: &ast::LoopStmt<S>) -> Result<(), IrGenError> {
         let target = self.expression(&with_stmt.target)?;
 
         let state_var = self.function.variables.insert(ir::Variable::Owned);
@@ -1150,9 +1173,227 @@ where
         Ok(())
     }
 
-    fn break_statement(&mut self, span: Span) -> Result<(), IrGenError> {
+    fn try_catch_stmt(&mut self, try_catch_stmt: &ast::TryCatchStmt<S>) -> Result<(), IrGenError> {
+        if !self.settings.allow_try_catch_blocks {
+            return Err(IrGenError {
+                kind: IrGenErrorKind::TryCatchNotAllowed,
+                span: try_catch_stmt.span,
+            });
+        }
+
+        let allow_break = !self.break_target_stack.is_empty();
+        let allow_continue = !self.continue_target_stack.is_empty();
+
+        let closure_span = try_catch_stmt.try_block.span();
+
+        let pcall_name = self.interner.intern(BuiltIns::PCALL);
+        let pcall = self.push_instruction(closure_span, ir::Instruction::GetMagic(pcall_name));
+
+        let exit_code_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(closure_span, ir::Instruction::OpenVariable(exit_code_var));
+
+        let mut compiler = self.start_inner_function(FunctionRef::Expression(closure_span));
+        let inner_exit_code_var = compiler
+            .function
+            .variables
+            .insert(ir::Variable::Upper(exit_code_var));
+        compiler.func_type = FunctionType::TryCatch {
+            allow_break,
+            allow_continue,
+            exit_code: inner_exit_code_var,
+        };
+        compiler.statement(&try_catch_stmt.try_block)?;
+
+        let function = compiler.finish();
+        let func_id = self.function.functions.insert(function);
+
+        let inner_closure = self.push_instruction(closure_span, ir::Instruction::Closure(func_id));
+
+        let call_scope = self.function.call_scopes.insert(());
+        self.push_instruction(
+            closure_span,
+            ir::Instruction::OpenCall {
+                scope: call_scope,
+                func: pcall,
+                args: vec![inner_closure],
+            },
+        );
+        let success =
+            self.push_instruction(closure_span, ir::Instruction::GetReturn(call_scope, 0));
+        let ret_or_err =
+            self.push_instruction(closure_span, ir::Instruction::GetReturn(call_scope, 1));
+        self.push_instruction(closure_span, ir::Instruction::CloseCall(call_scope));
+
+        let success_block = self.new_block();
+        let err_block = self.new_block();
+
+        self.end_current_block(ir::Exit::Branch {
+            cond: success,
+            if_true: success_block,
+            if_false: err_block,
+        });
+
+        self.start_new_block(success_block);
+
+        let exit_code =
+            self.push_instruction(closure_span, ir::Instruction::GetVariable(exit_code_var));
+
+        let return_code = self.push_instruction(
+            closure_span,
+            ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
+        );
+        let exit_code_is_return = self.push_instruction(
+            closure_span,
+            ir::Instruction::BinOp {
+                left: exit_code,
+                op: ir::BinOp::Equal,
+                right: return_code,
+            },
+        );
+
+        let do_return = self.new_block();
+        let no_return = self.new_block();
+        self.end_current_block(ir::Exit::Branch {
+            cond: exit_code_is_return,
+            if_true: do_return,
+            if_false: no_return,
+        });
+
+        self.start_new_block(do_return);
+        self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+        self.do_return(closure_span, Some(ret_or_err))?;
+
+        self.start_new_block(no_return);
+
+        if allow_break {
+            let break_code = self.push_instruction(
+                closure_span,
+                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
+            );
+            let exit_code_is_break = self.push_instruction(
+                closure_span,
+                ir::Instruction::BinOp {
+                    left: exit_code,
+                    op: ir::BinOp::Equal,
+                    right: break_code,
+                },
+            );
+
+            let do_break = self.new_block();
+            let no_break = self.new_block();
+            self.end_current_block(ir::Exit::Branch {
+                cond: exit_code_is_break,
+                if_true: do_break,
+                if_false: no_break,
+            });
+
+            self.start_new_block(do_break);
+            self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+            self.do_break(closure_span)?;
+
+            self.start_new_block(no_break);
+        }
+
+        if allow_continue {
+            let continue_code = self.push_instruction(
+                closure_span,
+                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
+            );
+            let exit_code_is_continue = self.push_instruction(
+                closure_span,
+                ir::Instruction::BinOp {
+                    left: exit_code,
+                    op: ir::BinOp::Equal,
+                    right: continue_code,
+                },
+            );
+
+            let do_continue = self.new_block();
+            let no_continue = self.new_block();
+            self.end_current_block(ir::Exit::Branch {
+                cond: exit_code_is_continue,
+                if_true: do_continue,
+                if_false: no_continue,
+            });
+
+            self.start_new_block(do_continue);
+            self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+            self.do_continue(closure_span)?;
+
+            self.start_new_block(no_continue);
+        }
+
+        let successor_block = self.new_block();
+        self.end_current_block(ir::Exit::Jump(successor_block));
+
+        self.start_new_block(err_block);
+        self.push_scope();
+        let err_var_id = self
+            .declare_var(try_catch_stmt.err_ident.clone(), Some(ir::Variable::Owned))
+            .unwrap();
+        self.push_instruction(
+            try_catch_stmt.err_ident.span,
+            ir::Instruction::SetVariable(err_var_id, ret_or_err),
+        );
+        self.statement(&try_catch_stmt.catch_block)?;
+        self.pop_scope();
+
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(successor_block));
+        }
+
+        self.start_new_block(successor_block);
+        self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+
+        Ok(())
+    }
+
+    fn do_return(&mut self, span: Span, value: Option<ir::InstId>) -> Result<(), IrGenError> {
+        let exit = if let Some(value) = value {
+            ir::Exit::Return { value: Some(value) }
+        } else {
+            ir::Exit::Return { value: None }
+        };
+
+        match self.func_type {
+            FunctionType::Normal => {
+                self.end_current_block(exit);
+            }
+            FunctionType::Constructor => {
+                return Err(IrGenError {
+                    kind: IrGenErrorKind::CannotReturnValue,
+                    span,
+                });
+            }
+            FunctionType::TryCatch { exit_code, .. } => {
+                let return_code = self.push_instruction(
+                    span,
+                    ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
+                );
+                self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
+                self.end_current_block(exit);
+            }
+        }
+        Ok(())
+    }
+
+    fn do_break(&mut self, span: Span) -> Result<(), IrGenError> {
         if let Some(&jump) = self.break_target_stack.last() {
             self.non_local_jump(jump)
+        } else if let FunctionType::TryCatch {
+            allow_break,
+            exit_code,
+            ..
+        } = self.func_type
+            && allow_break
+        {
+            let return_code = self.push_instruction(
+                span,
+                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
+            );
+            self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
+            self.end_current_block(ir::Exit::Return { value: None });
+            Ok(())
         } else {
             Err(IrGenError {
                 kind: IrGenErrorKind::BreakWithNoTarget,
@@ -1161,9 +1402,23 @@ where
         }
     }
 
-    fn continue_statement(&mut self, span: Span) -> Result<(), IrGenError> {
+    fn do_continue(&mut self, span: Span) -> Result<(), IrGenError> {
         if let Some(&jump) = self.continue_target_stack.last() {
             self.non_local_jump(jump)
+        } else if let FunctionType::TryCatch {
+            allow_continue,
+            exit_code,
+            ..
+        } = self.func_type
+            && allow_continue
+        {
+            let return_code = self.push_instruction(
+                span,
+                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
+            );
+            self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
+            self.end_current_block(ir::Exit::Return { value: None });
+            Ok(())
         } else {
             Err(IrGenError {
                 kind: IrGenErrorKind::ContinueWithNoTarget,
@@ -1449,7 +1704,7 @@ where
             },
             ast::Expression::Ternary(tern_expr) => {
                 let cond = self.expression(&tern_expr.cond)?;
-                self.if_expression(
+                self.if_expr(
                     tern_expr.span,
                     cond,
                     |this| this.expression(&tern_expr.if_true),
@@ -1457,11 +1712,14 @@ where
                 )?
             }
             ast::Expression::Function(func_expr) => {
-                let func_id = self.inner_function(
-                    FunctionRef::Expression(func_expr.span),
-                    &func_expr.parameters,
-                    &func_expr.body,
-                )?;
+                let mut compiler =
+                    self.start_inner_function(FunctionRef::Expression(func_expr.span));
+
+                compiler.declare_parameters(&func_expr.parameters)?;
+                compiler.block(&func_expr.body)?;
+                let function = compiler.finish();
+
+                let func_id = self.function.functions.insert(function);
                 self.push_instruction(func_expr.span, ir::Instruction::Closure(func_id))
             }
             ast::Expression::Call(call) => self.call_expr(call)?,
@@ -1560,7 +1818,7 @@ where
         Ok(ret)
     }
 
-    fn if_expression(
+    fn if_expr(
         &mut self,
         span: Span,
         cond: ir::InstId,
@@ -1619,7 +1877,7 @@ where
         right: &ast::Expression<S>,
     ) -> Result<ir::InstId, IrGenError> {
         let left = self.expression(left)?;
-        self.if_expression(
+        self.if_expr(
             span,
             left,
             |this| {
@@ -1644,7 +1902,7 @@ where
         right: &ast::Expression<S>,
     ) -> Result<ir::InstId, IrGenError> {
         let left = self.expression(left)?;
-        self.if_expression(
+        self.if_expr(
             span,
             left,
             |this| Ok(this.push_instruction(span, ir::Instruction::Boolean(true))),
@@ -1676,7 +1934,7 @@ where
                 source: left,
             },
         );
-        self.if_expression(span, cond, |this| this.expression(right), |_| Ok(left))
+        self.if_expr(span, cond, |this| this.expression(right), |_| Ok(left))
     }
 
     /// Evaluate a `MutationOp` on a `MutableExpr`.
@@ -1790,17 +2048,12 @@ where
         }
     }
 
-    fn inner_function(
-        &mut self,
-        reference: FunctionRef,
-        parameters: &[ast::Parameter<S>],
-        body: &ast::Block<S>,
-    ) -> Result<ir::FuncId, IrGenError> {
+    fn start_inner_function(&mut self, reference: FunctionRef) -> FunctionCompiler<'_, S, I> {
         let mut compiler =
             FunctionCompiler::new(self.settings, self.interner, reference, self.find_magic);
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
-        if self.settings.allow_closures {
+        if self.settings.closures {
             for (name, scope_list) in &self.var_lookup {
                 let &scope_index = scope_list.last().unwrap();
                 compiler.declare_var(
@@ -1813,10 +2066,7 @@ where
             }
         }
 
-        compiler.declare_parameters(parameters)?;
-        compiler.block(body)?;
-
-        Ok(self.function.functions.insert(compiler.function))
+        compiler
     }
 
     fn push_scope(&mut self) {
