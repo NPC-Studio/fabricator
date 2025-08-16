@@ -471,7 +471,11 @@ impl<S: Clone + Eq + Hash> ResolvedMacroSet<S> {
             };
 
             if let Some(macro_index) = macro_index {
-                expanded_tokens.extend_from_slice(&self.macros[macro_index].tokens);
+                // Set the span of every expanded token to be the span of the invoking token.
+                expanded_tokens.extend(self.macros[macro_index].tokens.iter().map(|t| Token {
+                    kind: t.kind.clone(),
+                    span: token.span,
+                }));
             } else {
                 expanded_tokens.push(token);
             }
