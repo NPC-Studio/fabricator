@@ -807,6 +807,17 @@ where
                     },
                 )
             }
+            ast::AssignmentOp::RemEqual => {
+                let prev = self.read_mutable_target(assign_stmt.span, target.clone());
+                self.push_instruction(
+                    assign_stmt.span,
+                    ir::Instruction::BinOp {
+                        left: prev,
+                        op: ir::BinOp::Rem,
+                        right: val,
+                    },
+                )
+            }
             ast::AssignmentOp::BitAndEqual => {
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(

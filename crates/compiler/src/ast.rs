@@ -340,6 +340,7 @@ pub enum AssignmentOp {
     MinusEqual,
     MultEqual,
     DivEqual,
+    RemEqual,
     BitAndEqual,
     BitOrEqual,
     BitXorEqual,

@@ -56,6 +56,8 @@ assert(~-1 == 0);
 	assert(i == 6);
 	i &= 4;
 	assert(i == 4);
+	i %= 3;
+	assert(i == 1);
 }
 
 assert(black_box(true) && true);
@@ -116,6 +118,8 @@ assert(~black_box(-1) == 0);
 	assert(i == 6);
 	i &= 4;
 	assert(i == 4);
+	i %= 3;
+	assert(i == 1);
 }
 
 return true;

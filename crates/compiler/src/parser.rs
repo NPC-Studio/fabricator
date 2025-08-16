@@ -1296,6 +1296,7 @@ fn get_assignment_operator<S>(token: &TokenKind<S>) -> Option<ast::AssignmentOp>
         TokenKind::MinusEqual => Some(ast::AssignmentOp::MinusEqual),
         TokenKind::StarEqual => Some(ast::AssignmentOp::MultEqual),
         TokenKind::SlashEqual => Some(ast::AssignmentOp::DivEqual),
+        TokenKind::PercentEqual => Some(ast::AssignmentOp::RemEqual),
         TokenKind::AmpersandEqual => Some(ast::AssignmentOp::BitAndEqual),
         TokenKind::PipeEqual => Some(ast::AssignmentOp::BitOrEqual),
         TokenKind::CaretEqual => Some(ast::AssignmentOp::BitXorEqual),
