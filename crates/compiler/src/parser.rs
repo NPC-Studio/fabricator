@@ -190,6 +190,14 @@ where
                 ast::Statement::Static(self.parse_var_declaration_list(TokenKind::Static)?),
                 StatementTrailer::SemiColon,
             ),
+            TokenKind::GlobalVar => {
+                self.advance(1);
+                let ident = self.parse_identifier()?;
+                (
+                    ast::Statement::GlobalVar(ident),
+                    StatementTrailer::SemiColon,
+                )
+            }
             TokenKind::Return => {
                 self.advance(1);
                 self.look_ahead(1);
@@ -1376,6 +1384,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::Constructor => "constructor",
         TokenKind::Var => "var",
         TokenKind::Static => "static",
+        TokenKind::GlobalVar => "globalvar",
         TokenKind::Switch => "switch",
         TokenKind::Case => "case",
         TokenKind::Default => "default",

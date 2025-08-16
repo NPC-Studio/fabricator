@@ -8,27 +8,41 @@ use thiserror::Error;
 
 use crate::{ast, constant::Constant, ir, string_interner::StringInterner};
 
-/// Descriptor for magic values available to the IR generator.
-///
-/// Reading and writing to magic values compiles as separate kinds of IR instructions. If the
-/// magic variable is `MagicMode::ReadOnly`, then assigning to such a variable is a compiler
-/// error.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum MagicMode {
-    ReadOnly,
-    ReadWrite,
+pub enum FreeVarMode {
+    /// Free variable name is interpreted as an accessor to the implicit `self`.
+    ///
+    /// This should be the default.
+    This,
+    /// Free variable name is always interpreted as a global variable.
+    GlobalVar,
+    /// Free variable name is a magic variable.
+    Magic {
+        /// If true, then it is only permitted to read from this magic variable.
+        is_read_only: bool,
+    },
+}
+
+pub trait VarDict<S> {
+    /// Should return true if ir-gen should permit this name for a variable or parameter
+    /// declaration.
+    ///
+    /// Return false for names which have other meanings which should not be allowed to be shadowed.
+    fn permit_declaration(&self, name: &S) -> bool;
+
+    /// Return the type of free variable for the given identifier.
+    fn free_var_mode(&self, ident: &S) -> FreeVarMode;
 }
 
 #[derive(Debug, Error)]
 pub enum IrGenErrorKind {
-    #[error("enum statements are only allowed at the top-level")]
-    MisplacedEnum,
-    #[error("function statements are only allowed at the top-level")]
-    MisplacedFunctionStmt,
+    #[error("export statements are only allowed at the top-level")]
+    MisplacedExport,
     #[error("constructor functions are not permitted")]
     ConstructorsNotAllowed,
     #[error("try / catch blocks are not permitted")]
     TryCatchNotAllowed,
+    #[error("declaration with the given name is not permitted")]
+    DeclarationNotPermitted,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
     #[error("parameter default value is not a constant")]
@@ -131,13 +145,13 @@ impl IrGenSettings {
         self,
         mut interner: impl StringInterner<String = S>,
         block: &ast::Block<S>,
-        find_magic: impl Fn(&S) -> Option<MagicMode>,
+        var_dict: impl VarDict<S>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone,
     {
         let mut compiler =
-            FunctionCompiler::new(self, &mut interner, FunctionRef::Chunk, &find_magic);
+            FunctionCompiler::new(self, &mut interner, FunctionRef::Chunk, &var_dict);
         compiler.block(block)?;
         Ok(compiler.finish())
     }
@@ -147,7 +161,7 @@ impl IrGenSettings {
         mut interner: impl StringInterner<String = S>,
         func_span: Span,
         func_stmt: &ast::FunctionStmt<S>,
-        find_magic: impl Fn(&S) -> Option<MagicMode>,
+        var_dict: impl VarDict<S>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone + AsRef<str>,
@@ -156,7 +170,7 @@ impl IrGenSettings {
             self,
             &mut interner,
             FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_span),
-            &find_magic,
+            &var_dict,
         );
         compiler.declare_parameters(&func_stmt.parameters)?;
         if func_stmt.is_constructor {
@@ -174,10 +188,10 @@ impl IrGenSettings {
     }
 }
 
-struct FunctionCompiler<'a, S, I> {
+struct FunctionCompiler<'a, S> {
     settings: IrGenSettings,
-    interner: &'a mut I,
-    find_magic: &'a dyn (Fn(&S) -> Option<MagicMode>),
+    interner: &'a mut dyn StringInterner<String = S>,
+    var_dict: &'a dyn VarDict<S>,
 
     function: ir::Function<S>,
 
@@ -274,6 +288,9 @@ enum MutableTarget<S> {
     This {
         key: ir::InstId,
     },
+    Globals {
+        key: ir::InstId,
+    },
     Field {
         object: ir::InstId,
         key: ir::InstId,
@@ -285,16 +302,15 @@ enum MutableTarget<S> {
     Magic(S),
 }
 
-impl<'a, S, I> FunctionCompiler<'a, S, I>
+impl<'a, S> FunctionCompiler<'a, S>
 where
     S: Eq + Hash + Clone,
-    I: StringInterner<String = S>,
 {
     fn new(
         settings: IrGenSettings,
-        interner: &'a mut I,
+        interner: &'a mut dyn StringInterner<String = S>,
         reference: FunctionRef,
-        find_magic: &'a dyn Fn(&S) -> Option<MagicMode>,
+        var_dict: &'a dyn VarDict<S>,
     ) -> Self {
         let instructions = ir::InstructionMap::new();
         let spans = ir::SpanMap::new();
@@ -331,7 +347,7 @@ where
         Self {
             settings,
             interner,
-            find_magic,
+            var_dict,
             function,
             func_type: FunctionType::Normal,
             current_block: Some(first_block),
@@ -348,7 +364,7 @@ where
 
         for (param_index, param) in parameters.iter().enumerate() {
             let arg_var = self
-                .declare_var(param.name.clone(), Some(ir::Variable::Owned))
+                .declare_var(param.name.clone(), Some(ir::Variable::Owned))?
                 .unwrap();
 
             let mut value =
@@ -562,7 +578,7 @@ where
                         // This variable's sole purpose is to prevent accessing a constructor
                         // `static`, which *looks* like a variable but is not usable as a variable
                         // in expressions.
-                        self.declare_var(decl_name.clone(), None);
+                        self.declare_var(decl_name.clone(), None)?;
                     }
                 }
                 _ => {
@@ -614,11 +630,11 @@ where
             ast::Statement::Empty(_) => Ok(()),
             ast::Statement::Block(block_stmt) => self.block(&block_stmt.block),
             ast::Statement::Enum(enum_stmt) => Err(IrGenError {
-                kind: IrGenErrorKind::MisplacedEnum,
+                kind: IrGenErrorKind::MisplacedExport,
                 span: enum_stmt.span,
             }),
             ast::Statement::Function(func_stmt) => Err(IrGenError {
-                kind: IrGenErrorKind::MisplacedFunctionStmt,
+                kind: IrGenErrorKind::MisplacedExport,
                 span: func_stmt.span,
             }),
             ast::Statement::Var(var_decls) => {
@@ -640,6 +656,10 @@ where
                 }
                 Ok(())
             }
+            ast::Statement::GlobalVar(ident) => Err(IrGenError {
+                kind: IrGenErrorKind::MisplacedExport,
+                span: ident.span,
+            }),
             ast::Statement::Assignment(assignment_statement) => {
                 self.assignment_stmt(assignment_statement)
             }
@@ -687,7 +707,7 @@ where
         value: Option<&ast::Expression<S>>,
     ) -> Result<(), IrGenError> {
         let var_id = self
-            .declare_var(name.clone(), Some(ir::Variable::Owned))
+            .declare_var(name.clone(), Some(ir::Variable::Owned))?
             .unwrap();
         if let Some(value) = value {
             let inst_id = self.expression(value)?;
@@ -706,7 +726,7 @@ where
             if let Some(constant) = value.clone().fold_constant() {
                 // If our static is a constant, then we can just initialize it when the prototype is
                 // created.
-                self.declare_var(name.clone(), Some(ir::Variable::Static(constant)));
+                self.declare_var(name.clone(), Some(ir::Variable::Static(constant)))?;
             } else {
                 // Otherwise, we need to initialize two static variables, a hidden one for the
                 // initialization state and a visible one to hold the initialized value.
@@ -721,7 +741,7 @@ where
                     .declare_var(
                         name.clone(),
                         Some(ir::Variable::Static(Constant::Undefined)),
-                    )
+                    )?
                     .unwrap();
 
                 let init_block = self.new_block();
@@ -751,7 +771,7 @@ where
             self.declare_var(
                 name.clone(),
                 Some(ir::Variable::Static(Constant::Undefined)),
-            );
+            )?;
         }
 
         Ok(())
@@ -1225,6 +1245,8 @@ where
             });
         }
 
+        // Desugar try / catch statements as `pcall` around an inner closure.
+
         let allow_break = !self.break_target_stack.is_empty();
         let allow_continue = !self.continue_target_stack.is_empty();
 
@@ -1373,7 +1395,7 @@ where
         self.start_new_block(err_block);
         self.push_scope();
         let err_var_id = self
-            .declare_var(try_catch_stmt.err_ident.clone(), Some(ir::Variable::Owned))
+            .declare_var(try_catch_stmt.err_ident.clone(), Some(ir::Variable::Owned))?
             .unwrap();
         self.push_instruction(
             try_catch_stmt.err_ident.span,
@@ -1975,15 +1997,36 @@ where
     fn ident_expr(&mut self, ident: &ast::Ident<S>) -> Result<ir::InstId, IrGenError> {
         Ok(if let Some(var_id) = self.get_var(ident.span, ident)? {
             self.push_instruction(ident.span, ir::Instruction::GetVariable(var_id))
-        } else if (self.find_magic)(ident).is_some() {
-            self.push_instruction(ident.span, ir::Instruction::GetMagic(ident.inner.clone()))
         } else {
-            let this = self.push_instruction(ident.span, ir::Instruction::This);
-            let key = self.push_instruction(
-                ident.span,
-                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
-            );
-            self.push_instruction(ident.span, ir::Instruction::GetField { object: this, key })
+            match self.var_dict.free_var_mode(ident) {
+                FreeVarMode::This => {
+                    let this = self.push_instruction(ident.span, ir::Instruction::This);
+                    let key = self.push_instruction(
+                        ident.span,
+                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                    );
+                    self.push_instruction(
+                        ident.span,
+                        ir::Instruction::GetField { object: this, key },
+                    )
+                }
+                FreeVarMode::GlobalVar => {
+                    let globals = self.push_instruction(ident.span, ir::Instruction::Globals);
+                    let key = self.push_instruction(
+                        ident.span,
+                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                    );
+                    self.push_instruction(
+                        ident.span,
+                        ir::Instruction::GetField {
+                            object: globals,
+                            key,
+                        },
+                    )
+                }
+                FreeVarMode::Magic { .. } => self
+                    .push_instruction(ident.span, ir::Instruction::GetMagic(ident.inner.clone())),
+            }
         })
     }
 
@@ -2080,21 +2123,33 @@ where
             ast::MutableExpr::Ident(ident) => {
                 if let Some(var_id) = self.get_var(ident.span, ident)? {
                     MutableTarget::Var(var_id)
-                } else if let Some(mode) = (self.find_magic)(ident) {
-                    if mode == MagicMode::ReadOnly {
-                        return Err(IrGenError {
-                            kind: IrGenErrorKind::ReadOnlyMagic,
-                            span: target.span(),
-                        });
-                    }
-
-                    MutableTarget::Magic(ident.inner.clone())
                 } else {
-                    let key = self.push_instruction(
-                        target.span(),
-                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
-                    );
-                    MutableTarget::This { key }
+                    match self.var_dict.free_var_mode(ident) {
+                        FreeVarMode::This => {
+                            let key = self.push_instruction(
+                                target.span(),
+                                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                            );
+                            MutableTarget::This { key }
+                        }
+                        FreeVarMode::GlobalVar => {
+                            let key = self.push_instruction(
+                                target.span(),
+                                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                            );
+                            MutableTarget::Globals { key }
+                        }
+                        FreeVarMode::Magic { is_read_only } => {
+                            if is_read_only {
+                                return Err(IrGenError {
+                                    kind: IrGenErrorKind::ReadOnlyMagic,
+                                    span: target.span(),
+                                });
+                            }
+
+                            MutableTarget::Magic(ident.inner.clone())
+                        }
+                    }
                 }
             }
             ast::MutableExpr::Field(field_expr) => {
@@ -2123,6 +2178,13 @@ where
                 let this = self.push_instruction(span, ir::Instruction::This);
                 ir::Instruction::GetField { object: this, key }
             }
+            MutableTarget::Globals { key } => {
+                let globals = self.push_instruction(span, ir::Instruction::Globals);
+                ir::Instruction::GetField {
+                    object: globals,
+                    key,
+                }
+            }
             MutableTarget::Field { object, key } => ir::Instruction::GetField { object, key },
             MutableTarget::Index { array, indexes } => ir::Instruction::GetIndex { array, indexes },
             MutableTarget::Magic(name) => ir::Instruction::GetMagic(name),
@@ -2141,6 +2203,17 @@ where
                     span,
                     ir::Instruction::SetField {
                         object: this,
+                        key,
+                        value,
+                    },
+                );
+            }
+            MutableTarget::Globals { key } => {
+                let globals = self.push_instruction(span, ir::Instruction::Globals);
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetField {
+                        object: globals,
                         key,
                         value,
                     },
@@ -2165,21 +2238,23 @@ where
         }
     }
 
-    fn start_inner_function(&mut self, reference: FunctionRef) -> FunctionCompiler<'_, S, I> {
+    fn start_inner_function(&mut self, reference: FunctionRef) -> FunctionCompiler<'_, S> {
         let mut compiler =
-            FunctionCompiler::new(self.settings, self.interner, reference, self.find_magic);
+            FunctionCompiler::new(self.settings, self.interner, reference, self.var_dict);
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
         if self.settings.closures {
             for (name, scope_list) in &self.var_lookup {
                 let &scope_index = scope_list.last().unwrap();
-                compiler.declare_var(
-                    name.clone(),
-                    match self.scopes[scope_index].visible[name] {
-                        VarDecl::Real(var_id) => Some(ir::Variable::Upper(var_id)),
-                        VarDecl::Pseudo => None,
-                    },
-                );
+                compiler
+                    .declare_var(
+                        name.clone(),
+                        match self.scopes[scope_index].visible[name] {
+                            VarDecl::Real(var_id) => Some(ir::Variable::Upper(var_id)),
+                            VarDecl::Pseudo => None,
+                        },
+                    )
+                    .unwrap();
             }
         }
 
@@ -2230,7 +2305,14 @@ where
         &mut self,
         vname: ast::Ident<S>,
         var: Option<ir::Variable<S>>,
-    ) -> Option<ir::VarId> {
+    ) -> Result<Option<ir::VarId>, IrGenError> {
+        if !self.var_dict.permit_declaration(&vname) {
+            return Err(IrGenError {
+                kind: IrGenErrorKind::DeclarationNotPermitted,
+                span: vname.span,
+            });
+        }
+
         let top_scope_index = self.scopes.len() - 1;
         let top_scope = self.scopes.last_mut().unwrap();
 
@@ -2281,7 +2363,7 @@ where
             }
         }
 
-        var_id
+        Ok(var_id)
     }
 
     fn get_var(&mut self, span: Span, vname: &S) -> Result<Option<ir::VarId>, IrGenError> {

@@ -12,20 +12,31 @@ pub struct DuplicateExportError {
     pub span: Span,
 }
 
-pub enum ExportKind<S> {
+pub enum Export<S> {
     Function(ast::FunctionStmt<S>),
+    GlobalVar(ast::Ident<S>),
 }
 
-pub struct Export<S> {
-    pub name: S,
-    pub span: Span,
-    pub kind: ExportKind<S>,
+impl<S> Export<S> {
+    pub fn name(&self) -> &S {
+        match self {
+            Export::Function(function_stmt) => &function_stmt.name,
+            Export::GlobalVar(ident) => ident,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Export::Function(function_stmt) => function_stmt.span,
+            Export::GlobalVar(ident) => ident.span,
+        }
+    }
 }
 
 /// Extract and collect exported items from multiple sources.
 ///
-/// "Exported items" are a way for source code to declare its own magic variables available anywhere
-/// in the source.
+/// "Exported items" are a way for source code to declare its own special free variables available
+/// anywhere in the source.
 pub struct ExportSet<S> {
     exports: Vec<Export<S>>,
     dict: HashMap<S, usize>,
@@ -82,21 +93,28 @@ impl<S: Eq + Hash> ExportSet<S> {
 impl<S: Clone + Eq + Hash> ExportSet<S> {
     /// Extract all top-level exports from a block.
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), DuplicateExportError> {
-        let exports = block
-            .statements
-            .extract_if(.., |s| matches!(s, ast::Statement::Function(_)));
+        let exports = block.statements.extract_if(.., |s| {
+            matches!(
+                s,
+                ast::Statement::Function(_) | ast::Statement::GlobalVar(_)
+            )
+        });
 
         for stmt in exports {
             let export = match stmt {
-                ast::Statement::Function(func_stmt) => Export {
-                    name: func_stmt.name.inner.clone(),
-                    span: func_stmt.span,
-                    kind: ExportKind::Function(func_stmt),
-                },
+                ast::Statement::Function(func_stmt) => Export::Function(func_stmt),
+                ast::Statement::GlobalVar(ident) => Export::GlobalVar(ident),
                 _ => unreachable!(),
             };
 
-            self.dict.insert(export.name.clone(), self.exports.len());
+            if let Some(&index) = self.dict.get(export.name()) {
+                return Err(DuplicateExportError {
+                    index,
+                    span: export.span(),
+                });
+            }
+
+            self.dict.insert(export.name().clone(), self.exports.len());
             self.exports.push(export);
         }
 

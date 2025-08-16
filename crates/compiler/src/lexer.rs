@@ -366,6 +366,7 @@ where
                     "constructor" => TokenKind::Constructor,
                     "var" => TokenKind::Var,
                     "static" => TokenKind::Static,
+                    "globalvar" => TokenKind::GlobalVar,
                     "switch" => TokenKind::Switch,
                     "case" => TokenKind::Case,
                     "default" => TokenKind::Default,

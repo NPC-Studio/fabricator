@@ -23,6 +23,7 @@ pub enum Statement<S> {
     Function(FunctionStmt<S>),
     Var(VarDeclarationStmt<S>),
     Static(VarDeclarationStmt<S>),
+    GlobalVar(Ident<S>),
     Assignment(AssignmentStmt<S>),
     Return(ReturnStmt<S>),
     If(IfStmt<S>),
@@ -417,9 +418,10 @@ impl<S> Statement<S> {
             Statement::Call(call_expr) => call_expr.walk(visitor),
             Statement::Prefix(mutation) => mutation.walk(visitor),
             Statement::Postfix(mutation) => mutation.walk(visitor),
-            Statement::Empty(_) | Statement::Break(_) | Statement::Continue(_) => {
-                ControlFlow::Continue(())
-            }
+            Statement::GlobalVar(_)
+            | Statement::Empty(_)
+            | Statement::Break(_)
+            | Statement::Continue(_) => ControlFlow::Continue(()),
         }
     }
 
@@ -443,9 +445,10 @@ impl<S> Statement<S> {
             Statement::Call(call_expr) => call_expr.walk_mut(visitor),
             Statement::Prefix(mutation) => mutation.walk_mut(visitor),
             Statement::Postfix(mutation) => mutation.walk_mut(visitor),
-            Statement::Empty(_) | Statement::Break(_) | Statement::Continue(_) => {
-                ControlFlow::Continue(())
-            }
+            Statement::GlobalVar(_)
+            | Statement::Empty(_)
+            | Statement::Break(_)
+            | Statement::Continue(_) => ControlFlow::Continue(()),
         }
     }
 
@@ -457,6 +460,7 @@ impl<S> Statement<S> {
             Statement::Function(function_stmt) => function_stmt.span,
             Statement::Var(var_declaration_stmt) => var_declaration_stmt.span,
             Statement::Static(var_declaration_stmt) => var_declaration_stmt.span,
+            Statement::GlobalVar(ident) => ident.span,
             Statement::Assignment(assignment_stmt) => assignment_stmt.span,
             Statement::Return(return_stmt) => return_stmt.span,
             Statement::If(if_stmt) => if_stmt.span,

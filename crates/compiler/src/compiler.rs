@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
+use fabricator_util::index_containers::IndexMap;
 use fabricator_vm::{self as vm, magic::MagicConstant};
 use gc_arena::{Collect, Gc};
 use thiserror::Error;
@@ -26,9 +27,9 @@ use crate::{
     },
     code_gen::gen_prototype,
     enums::{EnumError, EnumEvaluationError, EnumSet},
-    exports::{DuplicateExportError, ExportKind, ExportSet},
+    exports::{DuplicateExportError, Export, ExportSet},
     ir,
-    ir_gen::{IrGenError, IrGenSettings, MagicMode},
+    ir_gen::{FreeVarMode, IrGenError, IrGenSettings, VarDict},
     lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
     macros::{MacroError, MacroSet, RecursiveMacro},
@@ -53,10 +54,8 @@ pub enum CompileErrorKind {
     EnumEvaluation(#[source] EnumEvaluationError),
     #[error("duplicate export error: {0}")]
     DuplicateExport(#[source] DuplicateExportError),
-    #[error("export `{name}` shares a name with an existing enum")]
-    ExportShadowsEnum { name: String, span: vm::Span },
-    #[error("item `{name}` shares a name with an existing magic variable")]
-    ItemShadowsMagic { name: String, span: vm::Span },
+    #[error("enum or export `{name}` shares a name with an existing enum or export")]
+    ShadowsSpecial { name: String, span: vm::Span },
     #[error("IR gen error: {0}")]
     IrGen(#[source] IrGenError),
 }
@@ -212,6 +211,7 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 pub struct ImportItems<'gc> {
     macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
     enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
+    global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
     magic: Gc<'gc, vm::MagicSet<'gc>>,
 }
 
@@ -220,6 +220,7 @@ impl<'gc> ImportItems<'gc> {
         Self {
             macros: None,
             enums: None,
+            global_vars: None,
             magic,
         }
     }
@@ -233,6 +234,7 @@ pub struct Compiler<'gc> {
     config: String,
     macros: MacroSet<vm::String<'gc>>,
     enums: EnumSet<vm::String<'gc>>,
+    global_vars: HashSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
     chunks: Vec<Chunk<'gc>>,
 }
@@ -279,6 +281,7 @@ impl<'gc> Compiler<'gc> {
     ) -> Self {
         let macros = imports.macros.as_deref().cloned().unwrap_or_default();
         let enums = imports.enums.as_deref().cloned().unwrap_or_default();
+        let global_vars = imports.global_vars.as_deref().cloned().unwrap_or_default();
         let magic = imports.magic.as_ref().clone();
 
         Self {
@@ -286,6 +289,7 @@ impl<'gc> Compiler<'gc> {
             config: config.into(),
             macros,
             enums,
+            global_vars,
             magic,
             chunks: Vec::new(),
         }
@@ -334,6 +338,7 @@ impl<'gc> Compiler<'gc> {
             config,
             mut macros,
             mut enums,
+            mut global_vars,
             mut magic,
             mut chunks,
         } = self;
@@ -429,10 +434,11 @@ impl<'gc> Compiler<'gc> {
 
             for i in prev_enum_len..enums.len() {
                 let enum_ = enums.get(i).unwrap();
-                if magic.find(&enum_.name).is_some() {
+                // Enums are not allowed to share names with exports or magic variables.
+                if magic.find(&enum_.name).is_some() || global_vars.contains(&enum_.name) {
                     let line_number = chunk.line_number(enum_.span.start());
                     return Err(CompileError {
-                        kind: CompileErrorKind::ItemShadowsMagic {
+                        kind: CompileErrorKind::ShadowsSpecial {
                             name: enum_.name.as_str().to_owned(),
                             span: enum_.span,
                         },
@@ -466,8 +472,8 @@ impl<'gc> Compiler<'gc> {
         // chunk.
         let mut export_chunk_indexes = Vec::new();
 
-        // The magic index for each exported item.
-        let mut export_magic_indexes = Vec::new();
+        // The magic index for each exported item, if one exists.
+        let mut export_magic_indexes = IndexMap::new();
 
         let stub_magic = MagicConstant::new_ptr(&ctx, vm::Value::Undefined);
 
@@ -486,34 +492,46 @@ impl<'gc> Compiler<'gc> {
 
             for i in prev_exports_len..exports.len() {
                 let export = exports.get(i).unwrap();
+                let export_name = export.name();
+                let export_span = export.span();
 
-                if enums.find(&export.name).is_some() {
-                    let line_number = chunk.line_number(export.span.start());
+                // Exports are not allowed to share names with enums.
+                if enums.find(export_name).is_some() {
+                    let line_number = chunk.line_number(export_span.start());
                     return Err(CompileError {
-                        kind: CompileErrorKind::ExportShadowsEnum {
-                            name: export.name.as_str().to_owned(),
-                            span: export.span,
+                        kind: CompileErrorKind::ShadowsSpecial {
+                            name: export_name.as_str().to_owned(),
+                            span: export_span,
                         },
                         chunk_name: chunk.name().clone(),
                         line_number,
                     });
                 }
 
-                let (index, inserted) = magic.insert(export.name, stub_magic);
-
-                if !inserted {
-                    let line_number = chunk.line_number(export.span.start());
+                // Exports are not allowed to share names with any other export or pre-existing
+                // magic variable.
+                if magic.find(export_name).is_some() || global_vars.contains(export_name) {
+                    let line_number = chunk.line_number(export_span.start());
                     return Err(CompileError {
-                        kind: CompileErrorKind::ItemShadowsMagic {
-                            name: export.name.as_str().to_owned(),
-                            span: export.span,
+                        kind: CompileErrorKind::ShadowsSpecial {
+                            name: export_name.as_str().to_owned(),
+                            span: export_span,
                         },
                         chunk_name: chunk.name().clone(),
                         line_number,
                     });
                 }
 
-                export_magic_indexes.push(index);
+                match export {
+                    Export::Function(_) => {
+                        let (index, inserted) = magic.insert(export_name.clone(), stub_magic);
+                        assert!(inserted);
+                        export_magic_indexes.insert(i, index);
+                    }
+                    Export::GlobalVar(ident) => {
+                        global_vars.insert(ident.inner);
+                    }
+                }
             }
         }
 
@@ -532,22 +550,22 @@ impl<'gc> Compiler<'gc> {
             };
             let (chunk, _, compile_settings) = parsed_chunks[chunk_index];
 
-            let magic_index = export_magic_indexes[i];
-
-            match &export.kind {
-                ExportKind::Function(func_stmt) => {
-                    let get_magic = |m: &vm::String| {
-                        let i = magic.find(m)?;
-                        Some(if magic.get(i).unwrap().read_only() {
-                            MagicMode::ReadOnly
-                        } else {
-                            MagicMode::ReadWrite
-                        })
-                    };
+            match export {
+                Export::Function(func_stmt) => {
+                    let magic_index = export_magic_indexes[i];
 
                     let mut ir = compile_settings
                         .ir_gen
-                        .gen_func_stmt_ir(VmInterner::new(ctx), export.span, func_stmt, get_magic)
+                        .gen_func_stmt_ir(
+                            VmInterner::new(ctx),
+                            export.span(),
+                            func_stmt,
+                            CompilerVarDict {
+                                enums: &enums,
+                                global_vars: &global_vars,
+                                magic: &magic,
+                            },
+                        )
                         .map_err(|e| {
                             let line_number = chunk.line_number(e.span.start());
                             CompileError {
@@ -577,6 +595,7 @@ impl<'gc> Compiler<'gc> {
                     )
                     .unwrap();
                 }
+                Export::GlobalVar(_) => {}
             }
         }
 
@@ -585,14 +604,15 @@ impl<'gc> Compiler<'gc> {
         for (chunk, block, compile_settings) in parsed_chunks {
             let mut ir = compile_settings
                 .ir_gen
-                .gen_chunk_ir(VmInterner::new(self.ctx), &block, |m| {
-                    let i = magic.find(m)?;
-                    Some(if magic.get(i).unwrap().read_only() {
-                        MagicMode::ReadOnly
-                    } else {
-                        MagicMode::ReadWrite
-                    })
-                })
+                .gen_chunk_ir(
+                    VmInterner::new(self.ctx),
+                    &block,
+                    CompilerVarDict {
+                        enums: &enums,
+                        global_vars: &global_vars,
+                        magic: &magic,
+                    },
+                )
                 .map_err(|e| {
                     let line_number = chunk.line_number(e.span.start());
                     CompileError {
@@ -625,9 +645,38 @@ impl<'gc> Compiler<'gc> {
             } else {
                 Some(Gc::new(&ctx, enums))
             },
+            global_vars: if global_vars.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, global_vars))
+            },
             magic,
         };
 
         Ok((outputs, imports, debug_output))
+    }
+}
+
+struct CompilerVarDict<'gc, 'a> {
+    enums: &'a EnumSet<vm::String<'gc>>,
+    global_vars: &'a HashSet<vm::String<'gc>>,
+    magic: &'a vm::MagicSet<'gc>,
+}
+
+impl<'gc, 'a> VarDict<vm::String<'gc>> for CompilerVarDict<'gc, 'a> {
+    fn permit_declaration(&self, name: &vm::String<'gc>) -> bool {
+        !self.enums.find(name).is_some()
+    }
+
+    fn free_var_mode(&self, ident: &vm::String<'gc>) -> FreeVarMode {
+        if let Some(index) = self.magic.find(ident) {
+            FreeVarMode::Magic {
+                is_read_only: self.magic.get(index).unwrap().read_only(),
+            }
+        } else if self.global_vars.contains(ident) {
+            FreeVarMode::GlobalVar
+        } else {
+            FreeVarMode::This
+        }
     }
 }
