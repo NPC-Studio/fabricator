@@ -271,10 +271,6 @@ where
                 self.advance(1);
                 TokenKind::Comma
             }
-            (Some('.'), _, _) => {
-                self.advance(1);
-                TokenKind::Dot
-            }
             (Some('+'), _, _) => {
                 self.advance(1);
                 TokenKind::Plus
@@ -327,10 +323,6 @@ where
                 self.advance(1);
                 TokenKind::AtSign
             }
-            (Some('$'), _, _) => {
-                self.advance(1);
-                TokenKind::Dollar
-            }
             (Some('='), _, _) => {
                 self.advance(1);
                 TokenKind::Equal
@@ -347,6 +339,23 @@ where
                 self.read_string()?;
                 TokenKind::String(self.interner.intern(self.string_buffer.as_str()))
             }
+            (Some('$'), n, _) => {
+                if n.is_some_and(|c| c.is_ascii_hexdigit()) {
+                    self.read_number()
+                } else {
+                    self.advance(1);
+                    TokenKind::Dollar
+                }
+            }
+            (Some('.'), n, _) => {
+                if n.is_some_and(|c| c.is_ascii_digit()) {
+                    self.read_number()
+                } else {
+                    self.advance(1);
+                    TokenKind::Dot
+                }
+            }
+            (Some(c), _, _) if c.is_ascii_digit() => self.read_number(),
             (Some(c), _, _) if is_identifier_start_char(c) => {
                 self.read_identifier();
                 match self.string_buffer.as_str() {
@@ -383,7 +392,6 @@ where
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }
-            (Some(c), _, _) if c.is_ascii_digit() => self.read_numeral(),
             (Some(c), _, _) => {
                 return Err(LexError {
                     kind: LexErrorKind::UnexpectedCharacter(c),
@@ -490,23 +498,25 @@ where
         Ok(())
     }
 
-    // Reads a hex or decimal integer or floating point number. Allows decimal integers (123),
-    // hex integers (0xdeadbeef), decimal floating point with optional exponent and exponent sign
-    // (3.21e+1), and hex floats with optional exponent and exponent sign (0xe.2fp-1c).
-    fn read_numeral(&mut self) -> TokenKind<S::String> {
-        let p1 = self.peek(0).unwrap();
-        assert!(p1.is_ascii_digit());
-
+    // Reads a hex or decimal integer or floating point number. Allows decimal integers (123), hex
+    // integers (0xdeadbeef), hex integers prefixed with a '$' ($deadbeef), and decimal floating
+    // point with optional exponent and exponent sign (3.21e+1).
+    fn read_number(&mut self) -> TokenKind<S::String> {
         self.string_buffer.clear();
-        self.string_buffer.push(p1);
-        self.advance(1);
 
         let mut is_hex = false;
-        match (p1, self.peek(0)) {
-            ('0', Some(p2)) if p2.eq_ignore_ascii_case(&'x') => {
+        let mut has_dollar_prefix = false;
+        match (self.peek(0), self.peek(1)) {
+            (Some('$'), _) => {
                 is_hex = true;
-                self.string_buffer.push(p2);
+                has_dollar_prefix = true;
+                self.string_buffer.push('$');
                 self.advance(1);
+            }
+            (Some('0'), Some(x)) if x.eq_ignore_ascii_case(&'x') => {
+                is_hex = true;
+                self.string_buffer.extend(['0', x]);
+                self.advance(2);
             }
             _ => {}
         }
@@ -560,12 +570,17 @@ where
         let s = self.interner.intern(&self.string_buffer);
         if !has_exp && !has_radix {
             if is_hex {
-                TokenKind::HexInteger(s)
+                if has_dollar_prefix {
+                    TokenKind::DollarHexInteger(s)
+                } else {
+                    TokenKind::HexInteger(s)
+                }
             } else {
+                assert!(!has_dollar_prefix);
                 TokenKind::Integer(s)
             }
         } else {
-            assert!(!is_hex);
+            assert!(!is_hex && !has_dollar_prefix);
             TokenKind::Float(s)
         }
     }

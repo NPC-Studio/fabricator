@@ -104,8 +104,12 @@ pub enum TokenKind<S> {
     New,
 
     Integer(S),
+    /// Hex integer starting with `0x`.
     HexInteger(S),
+    /// Hex integer starting with `$`.
+    DollarHexInteger(S),
     Float(S),
+
     Identifier(S),
     String(S),
 }
@@ -197,6 +201,7 @@ impl<S> TokenKind<S> {
             TokenKind::New => TokenKind::New,
             TokenKind::Integer(i) => TokenKind::Integer(i),
             TokenKind::HexInteger(i) => TokenKind::HexInteger(i),
+            TokenKind::DollarHexInteger(i) => TokenKind::DollarHexInteger(i),
             TokenKind::Float(f) => TokenKind::Float(f),
             TokenKind::Identifier(i) => TokenKind::Identifier(i),
             TokenKind::String(s) => TokenKind::String(s),
@@ -289,6 +294,7 @@ impl<S> TokenKind<S> {
             TokenKind::New => TokenKind::New,
             TokenKind::Integer(i) => TokenKind::Integer(map(i)),
             TokenKind::HexInteger(i) => TokenKind::HexInteger(map(i)),
+            TokenKind::DollarHexInteger(i) => TokenKind::DollarHexInteger(map(i)),
             TokenKind::Float(f) => TokenKind::Float(map(f)),
             TokenKind::Identifier(i) => TokenKind::Identifier(map(i)),
             TokenKind::String(s) => TokenKind::String(map(s)),
@@ -471,6 +477,8 @@ impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
             (TokenKind::Integer(_), _) => false,
             (TokenKind::HexInteger(a), TokenKind::HexInteger(b)) => a == b,
             (TokenKind::HexInteger(_), _) => false,
+            (TokenKind::DollarHexInteger(a), TokenKind::DollarHexInteger(b)) => a == b,
+            (TokenKind::DollarHexInteger(_), _) => false,
             (TokenKind::Float(a), TokenKind::Float(b)) => a == b,
             (TokenKind::Float(_), _) => false,
             (TokenKind::Identifier(a), TokenKind::Identifier(b)) => a == b,

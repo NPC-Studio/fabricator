@@ -910,49 +910,49 @@ where
                     tok_span,
                 ))
             }
-            TokenKind::Integer(_) => {
-                let Token {
-                    kind: TokenKind::Integer(i),
-                    ..
-                } = self.next()
-                else {
-                    unreachable!()
-                };
-                match read_dec_integer(i.as_ref()) {
-                    Some(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
-                    None => Err(ParseError {
+            TokenKind::Integer(i) => {
+                let s = i.as_ref().replace('_', "");
+                self.next();
+                match i64::from_str_radix(&s, 10) {
+                    Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
+                    Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,
                         span: tok_span,
                     }),
                 }
             }
-            TokenKind::HexInteger(_) => {
-                let Token {
-                    kind: TokenKind::HexInteger(i),
-                    ..
-                } = self.next()
-                else {
-                    unreachable!()
-                };
-                match read_hex_integer(i.as_ref()) {
-                    Some(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
-                    None => Err(ParseError {
+            TokenKind::HexInteger(i) => {
+                let s = i.as_ref();
+                assert!(s[0..2].eq_ignore_ascii_case("0x"));
+                let s = &s[2..].replace('_', "");
+                self.next();
+                match i64::from_str_radix(&s, 16) {
+                    Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
+                    Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,
                         span: tok_span,
                     }),
                 }
             }
-            TokenKind::Float(_) => {
-                let Token {
-                    kind: TokenKind::Float(f),
-                    ..
-                } = self.next()
-                else {
-                    unreachable!()
-                };
-                match read_dec_float(f.as_ref()) {
-                    Some(f) => Ok(ast::Expression::Constant(Constant::Float(f), tok_span)),
-                    None => Err(ParseError {
+            TokenKind::DollarHexInteger(i) => {
+                let s = i.as_ref();
+                assert!(s[0..1].eq_ignore_ascii_case("$"));
+                let s = &s[1..].replace('_', "");
+                self.next();
+                match i64::from_str_radix(&s, 16) {
+                    Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
+                    Err(_) => Err(ParseError {
+                        kind: ParseErrorKind::BadNumber,
+                        span: tok_span,
+                    }),
+                }
+            }
+            TokenKind::Float(f) => {
+                let s = f.as_ref().replace('_', "");
+                self.next();
+                match s.parse::<f64>() {
+                    Ok(f) => Ok(ast::Expression::Constant(Constant::Float(f), tok_span)),
+                    Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,
                         span: tok_span,
                     }),
@@ -1400,6 +1400,7 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::New => "new",
         TokenKind::Integer(_) => "<integer>",
         TokenKind::HexInteger(_) => "<hex_integer>",
+        TokenKind::DollarHexInteger(_) => "<dollar_hex_integer>",
         TokenKind::Float(_) => "<float>",
         TokenKind::Identifier(_) => "<identifier>",
         TokenKind::String(_) => "<string>",
@@ -1443,30 +1444,6 @@ fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriori
         ast::BinaryOp::Or => (1, 1),
         ast::BinaryOp::NullCoalesce => (1, 1),
     }
-}
-
-fn read_dec_integer(s: &str) -> Option<i64> {
-    let s = s.replace('_', "");
-    i64::from_str_radix(&s, 10).ok()
-}
-
-fn read_hex_integer(s: &str) -> Option<i64> {
-    let s = s.replace('_', "");
-
-    let mut chars = s.chars();
-    let c0 = chars.next()?;
-    let c1 = chars.next()?;
-
-    if c0 != '0' || (c1 != 'x' && c1 != 'X') || chars.as_str().is_empty() {
-        return None;
-    }
-
-    i64::from_str_radix(chars.as_str(), 16).ok()
-}
-
-pub fn read_dec_float(s: &str) -> Option<f64> {
-    let s = s.replace('_', "");
-    str::parse(&s).ok()
 }
 
 #[cfg(test)]
