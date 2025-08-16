@@ -76,7 +76,7 @@ impl<S: Eq + Hash> ConfigurationSet<S> {
     }
 }
 
-/// Gather a set of macro definitions from multiple sources and then later expand them as a
+/// Gather a set of macro definitions from multiple sources and then later resolve them as a
 /// potentially recursively dependent set.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]

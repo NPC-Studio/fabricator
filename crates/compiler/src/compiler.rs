@@ -26,7 +26,7 @@ use crate::{
         verify_references::{ReferenceVerificationError, verify_references},
     },
     code_gen::gen_prototype,
-    enums::{EnumError, EnumEvaluationError, EnumSet},
+    enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
     exports::{DuplicateExportError, Export, ExportSet},
     ir,
     ir_gen::{FreeVarMode, IrGenError, IrGenSettings, VarDict},
@@ -50,6 +50,8 @@ pub enum CompileErrorKind {
     Parsing(#[source] ParseError),
     #[error("enum error: {0}")]
     Enum(#[source] EnumError),
+    #[error("enum error: {0}")]
+    EnumResolution(#[source] EnumResolutionError),
     #[error("enum error: {0}")]
     EnumEvaluation(#[source] EnumEvaluationError),
     #[error("duplicate export error: {0}")]
@@ -233,7 +235,7 @@ pub struct Compiler<'gc> {
     ctx: vm::Context<'gc>,
     config: String,
     macros: MacroSet<vm::String<'gc>>,
-    enums: EnumSet<vm::String<'gc>>,
+    enums: EnumSetBuilder<vm::String<'gc>>,
     global_vars: HashSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
     chunks: Vec<Chunk<'gc>>,
@@ -288,7 +290,7 @@ impl<'gc> Compiler<'gc> {
             ctx,
             config: config.into(),
             macros,
-            enums,
+            enums: enums.into_builder(),
             global_vars,
             magic,
             chunks: Vec::new(),
@@ -420,8 +422,12 @@ impl<'gc> Compiler<'gc> {
         // Extract all enum definitions from every parsed AST, and make sure none of the enum names
         // conflict with any pre-existing magic variable name.
 
+        // List of starting enum indexes per chunk, to identify which enums come from which chunk.
+        let mut enum_chunk_indexes = Vec::new();
+
         for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
             let prev_enum_len = enums.len();
+            enum_chunk_indexes.push(prev_enum_len);
 
             if let Err(err) = enums.extract(block) {
                 let line_number = chunk.line_number(err.span.start());
@@ -435,7 +441,7 @@ impl<'gc> Compiler<'gc> {
             for i in prev_enum_len..enums.len() {
                 let enum_ = enums.get(i).unwrap();
                 // Enums are not allowed to share names with exports or magic variables.
-                if magic.find(&enum_.name).is_some() || global_vars.contains(&enum_.name) {
+                if magic.find(&enum_.name).is_some() || global_vars.contains(&enum_.name.inner) {
                     let line_number = chunk.line_number(enum_.span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ShadowsSpecial {
@@ -448,6 +454,26 @@ impl<'gc> Compiler<'gc> {
                 }
             }
         }
+
+        // Resolve all enum interdependencies.
+
+        let enums = enums.clone().resolve().map_err(|err| {
+            let enum_ = enums.get(err.enum_index).unwrap();
+            let chunk_index = match enum_chunk_indexes.binary_search_by(|i| i.cmp(&err.enum_index))
+            {
+                Ok(i) => i,
+                Err(i) => i
+                    .checked_sub(1)
+                    .expect("pre-existing enums should not have recursion errors"),
+            };
+            let chunk = &parsed_chunks[chunk_index].0;
+            let line_number = chunk.line_number(enum_.span.start());
+            CompileError {
+                kind: CompileErrorKind::EnumResolution(err),
+                chunk_name: chunk.name().clone(),
+                line_number,
+            }
+        })?;
 
         // Check and expand any references to enums in every AST.
 
@@ -635,7 +661,7 @@ impl<'gc> Compiler<'gc> {
         }
 
         let imports = ImportItems {
-            macros: if resolved_macros.is_empty() {
+            macros: if macros.is_empty() {
                 None
             } else {
                 Some(Gc::new(&ctx, macros))
