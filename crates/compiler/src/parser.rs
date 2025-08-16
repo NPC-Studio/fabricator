@@ -537,7 +537,7 @@ where
         let for_span = self.parse_token(TokenKind::For)?;
         self.parse_token(TokenKind::LeftParen)?;
 
-        let check_terminator_tok = |this: &mut Self, tok: TokenKind<()>| -> Option<Span> {
+        let check_tok = |this: &mut Self, tok: TokenKind<()>| -> Option<Span> {
             this.look_ahead(1);
             let &Token { ref kind, span } = this.peek(0);
             if kind.as_unit_string() == tok {
@@ -547,7 +547,7 @@ where
             }
         };
 
-        let initializer = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
+        let initializer = if let Some(span) = check_tok(self, TokenKind::SemiColon) {
             ast::Statement::Empty(span)
         } else {
             self.parse_statement_body()?.0
@@ -555,7 +555,7 @@ where
 
         self.parse_token(TokenKind::SemiColon)?;
 
-        let condition = if let Some(span) = check_terminator_tok(self, TokenKind::SemiColon) {
+        let condition = if let Some(span) = check_tok(self, TokenKind::SemiColon) {
             // As a special case, an empty condition is always true.
             ast::Expression::Constant(Constant::Boolean(true), span.start_span())
         } else {
@@ -564,11 +564,15 @@ where
 
         self.parse_token(TokenKind::SemiColon)?;
 
-        let iterator = if let Some(span) = check_terminator_tok(self, TokenKind::RightParen) {
+        let iterator = if let Some(span) = check_tok(self, TokenKind::RightParen) {
             ast::Statement::Empty(span)
         } else {
             self.parse_statement_body()?.0
         };
+
+        if check_tok(self, TokenKind::SemiColon).is_some() {
+            self.advance(1);
+        }
 
         self.parse_token(TokenKind::RightParen)?;
 
