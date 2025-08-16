@@ -1571,6 +1571,7 @@ where
                     op: match unary_expr.op {
                         ast::UnaryOp::Not => ir::UnOp::Not,
                         ast::UnaryOp::Minus => ir::UnOp::Negate,
+                        ast::UnaryOp::BitNegate => ir::UnOp::BitNegate,
                     },
                     source: self.expression(&unary_expr.target)?,
                 };

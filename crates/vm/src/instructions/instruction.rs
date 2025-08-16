@@ -86,6 +86,7 @@ macro_rules! for_each_instruction {
             [basic] not = Not { dest: RegIdx, arg: RegIdx };
 
             [basic] negate = Negate { dest: RegIdx, arg: RegIdx };
+            [basic] bit_negate = BitNegate { dest: RegIdx, arg: RegIdx };
             [basic] increment = Increment { dest: RegIdx, arg: RegIdx };
             [basic] decrement = Decrement { dest: RegIdx, arg: RegIdx };
 

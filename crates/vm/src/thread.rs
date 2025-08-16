@@ -825,6 +825,15 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
+    fn bit_negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
+        self.registers[dest as usize] = self.registers[arg as usize]
+            .bit_negate()
+            .ok_or(OpError::BadOp)?
+            .into();
+        Ok(())
+    }
+
+    #[inline]
     fn increment(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
         self.registers[dest as usize] = self.registers[arg as usize]
             .add(Value::Integer(1))

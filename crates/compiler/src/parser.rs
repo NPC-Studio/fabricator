@@ -1248,6 +1248,7 @@ fn get_unary_operator<S>(token: &TokenKind<S>) -> Option<ast::UnaryOp> {
     match *token {
         TokenKind::Minus => Some(ast::UnaryOp::Minus),
         TokenKind::Bang => Some(ast::UnaryOp::Not),
+        TokenKind::Tilde => Some(ast::UnaryOp::BitNegate),
         _ => None,
     }
 }

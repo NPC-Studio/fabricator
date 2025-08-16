@@ -617,6 +617,15 @@ fn codegen_function<S: Clone + Eq + Hash>(
                                 span,
                             ));
                         }
+                        ir::UnOp::BitNegate => {
+                            vm_instructions.push((
+                                Instruction::BitNegate {
+                                    dest: output_reg,
+                                    arg: reg_alloc.instruction_registers[source],
+                                },
+                                span,
+                            ));
+                        }
                         ir::UnOp::Increment => {
                             vm_instructions.push((
                                 Instruction::Increment {

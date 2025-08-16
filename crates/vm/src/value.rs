@@ -377,6 +377,11 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    pub fn bit_negate(&self) -> Option<i64> {
+        Some(!self.to_integer()?)
+    }
+
+    #[inline]
     pub fn bit_and(&self, other: Value<'gc>) -> Option<i64> {
         Some(self.to_integer()? & other.to_integer()?)
     }

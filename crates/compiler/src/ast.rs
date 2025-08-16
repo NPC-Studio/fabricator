@@ -299,6 +299,7 @@ impl<S> borrow::Borrow<S> for Ident<S> {
 pub enum UnaryOp {
     Not,
     Minus,
+    BitNegate,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -876,6 +877,9 @@ impl<S: Eq + Clone> UnaryExpr<S> {
         match self.op {
             UnaryOp::Not => Some(Constant::Boolean(!self.target.fold_constant()?.to_bool())),
             UnaryOp::Minus => self.target.fold_constant()?.negate(),
+            UnaryOp::BitNegate => Some(Constant::Integer(
+                self.target.fold_constant()?.bit_negate()?,
+            )),
         }
     }
 }

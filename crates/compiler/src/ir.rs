@@ -87,6 +87,7 @@ pub enum UnOp {
     Test,
     Not,
     Negate,
+    BitNegate,
     Increment,
     Decrement,
 }
@@ -746,6 +747,7 @@ impl<S: AsRef<str>> Function<S> {
                         UnOp::Test => writeln!(f, "into_bool({source})")?,
                         UnOp::Not => writeln!(f, "not({source})")?,
                         UnOp::Negate => writeln!(f, "neg({source})")?,
+                        UnOp::BitNegate => writeln!(f, "bitneg({source})")?,
                         UnOp::Increment => writeln!(f, "increment({source})")?,
                         UnOp::Decrement => writeln!(f, "decrement({source})")?,
                     },

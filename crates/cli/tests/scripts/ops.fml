@@ -46,6 +46,7 @@ assert((1 & 2) == 0);
 assert((3 ^ 2) == 1);
 assert((2 << 2) == 8);
 assert((8 >> 2) == 2);
+assert(~-1 == 0);
 
 {
 	var i = 0;
@@ -105,6 +106,7 @@ assert((black_box(1) & 2) == 0);
 assert((black_box(3) ^ 2) == 1);
 assert((black_box(2) << 2) == 8);
 assert((black_box(8) >> 2) == 2);
+assert(~black_box(-1) == 0);
 
 {
 	var i = black_box(0);

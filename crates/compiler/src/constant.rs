@@ -249,6 +249,11 @@ impl<S> Constant<S> {
     }
 
     #[inline]
+    pub fn bit_negate(&self) -> Option<i64> {
+        Some(!self.to_integer()?)
+    }
+
+    #[inline]
     pub fn bit_and(&self, other: &Constant<S>) -> Option<i64> {
         Some(self.to_integer()? & other.to_integer()?)
     }

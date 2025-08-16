@@ -307,6 +307,7 @@ impl<'gc> Prototype<'gc> {
                 | Instruction::Test { dest, arg }
                 | Instruction::Not { dest, arg }
                 | Instruction::Negate { dest, arg }
+                | Instruction::BitNegate { dest, arg }
                 | Instruction::Increment { dest, arg }
                 | Instruction::Decrement { dest, arg } => {
                     verify_reg_idx(dest)?;
