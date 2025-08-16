@@ -195,16 +195,12 @@ where
                 self.look_ahead(1);
                 let mut span = tok_span;
 
-                // A return statement is not allowed to have its argument on a subsequent line, this
-                // must be interpreted as two separate statements.
                 let value = if matches!(self.peek(0).kind, TokenKind::SemiColon) {
                     None
-                } else if !self.peek_newline(0) {
+                } else {
                     let expr = self.parse_expression()?;
                     span = span.combine(expr.span());
                     Some(expr)
-                } else {
-                    None
                 };
                 (
                     ast::Statement::Return(ast::ReturnStmt { value, span }),
