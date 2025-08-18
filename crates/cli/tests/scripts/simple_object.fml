@@ -5,5 +5,6 @@ var obj = {
 
 assert(obj.a == 1);
 assert(obj.b == 2);
+assert(obj["c"] == undefined);
 
 return true;

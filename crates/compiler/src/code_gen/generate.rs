@@ -153,8 +153,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
         let block = &ir.blocks[block_id];
         for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
             match ir.instructions[inst_id] {
-                ir::Instruction::GetIndex { .. } => todo!(),
-                ir::Instruction::SetIndex { .. } => {
+                ir::Instruction::GetIndex { .. } | ir::Instruction::SetIndex { .. } => {
                     needs_to_save(inst_index)?;
                 }
                 _ => {}

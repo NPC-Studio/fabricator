@@ -25,8 +25,8 @@ pub enum OpError {
     BadObject,
     #[error("bad key")]
     BadKey,
-    #[error("bad array")]
-    BadArray,
+    #[error("bad index target")]
+    BadIndexTarget,
     #[error("bad index")]
     BadIndex,
     #[error("no such field")]
@@ -484,6 +484,15 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         indexes: &[Value<'gc>],
     ) -> Result<Value<'gc>, Error<'gc>> {
         match array {
+            Value::Object(object) => {
+                if indexes.len() != 1 {
+                    return Err(OpError::BadIndex.into());
+                }
+                let Value::String(index) = indexes[0] else {
+                    return Err(OpError::BadIndex.into());
+                };
+                Ok(object.get(index).unwrap_or_default())
+            }
             Value::Array(array) => {
                 if indexes.len() != 1 {
                     return Err(OpError::BadIndex.into());
@@ -498,10 +507,10 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 if let Some(methods) = user_data.methods() {
                     methods.get_index(self.ctx, user_data, indexes)
                 } else {
-                    Err(OpError::BadArray.into())
+                    Err(OpError::BadIndexTarget.into())
                 }
             }
-            _ => Err(OpError::BadArray.into()),
+            _ => Err(OpError::BadIndexTarget.into()),
         }
     }
 
@@ -532,7 +541,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     Err(OpError::BadObject.into())
                 }
             }
-            _ => Err(OpError::BadArray.into()),
+            _ => Err(OpError::BadIndexTarget.into()),
         }
     }
 }
