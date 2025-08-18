@@ -45,8 +45,6 @@ pub enum IrGenErrorKind {
     DeclarationNotPermitted,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
-    #[error("parameter default value is not a constant")]
-    ParameterDefaultNotConstant,
     #[error("cannot reference a pseudo-variable as a normal variable")]
     PseudoVarAccessed,
     #[error("static variables in constructors must be at the top-level of the function block")]
@@ -375,21 +373,20 @@ where
                 self.push_instruction(param.span, ir::Instruction::Argument(param_index));
 
             if let Some(default) = &param.default {
-                let def_value = default.clone().fold_constant().ok_or(IrGenError {
-                    kind: IrGenErrorKind::ParameterDefaultNotConstant,
-                    span: default.span(),
-                })?;
-                let def_value =
-                    self.push_instruction(param.span, ir::Instruction::Constant(def_value));
-
-                value = self.push_instruction(
+                let cond = self.push_instruction(
                     param.span,
-                    ir::Instruction::BinOp {
-                        left: value,
-                        op: ir::BinOp::NullCoalesce,
-                        right: def_value,
+                    ir::Instruction::UnOp {
+                        op: ir::UnOp::IsUndefined,
+                        source: value,
                     },
                 );
+
+                value = self.if_expr(
+                    param.span,
+                    cond,
+                    |this| this.expression(default),
+                    |_| Ok(value),
+                )?;
             };
 
             self.push_instruction(

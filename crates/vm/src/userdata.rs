@@ -49,6 +49,18 @@ pub trait UserDataMethods<'gc> {
         value: Value<'gc>,
     ) -> Result<(), Error<'gc>>;
 
+    /// Return an iterator function and state value for iteration in a `with` loop.
+    ///
+    /// Should return two values according to the normal iterator protocol: the iterator function,
+    /// and the initial iteration state.
+    ///
+    /// Every time through the loop, the iterator function will be called with the state as its
+    /// parameter. The iterator function should return the new state value followed by all iter
+    /// results for that iteration (for a `with` loop, there should only be one iteration result,
+    /// which is a `self` value for that iteration). As soon as the state value becomes `undefined`,
+    /// the iterator function will no longer be called and no additional results will be yielded. If
+    /// the initial call of this method returns an `undefined` state value on the first call, then
+    /// this implies an empty result and no iteration will be performed.
     fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), Error<'gc>>;
 }
 
