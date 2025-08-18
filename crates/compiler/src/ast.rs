@@ -215,6 +215,8 @@ pub struct TernaryExpr<S> {
 
 #[derive(Debug, Clone)]
 pub struct FunctionExpr<S> {
+    pub is_constructor: bool,
+    pub inherit: Option<Call<S>>,
     pub parameters: Vec<Parameter<S>>,
     pub body: Block<S>,
     pub span: Span,
@@ -984,6 +986,9 @@ impl<S: Eq + Clone> TernaryExpr<S> {
 
 impl<S> FunctionExpr<S> {
     pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        if let Some(call) = &self.inherit {
+            call.walk(visitor)?;
+        }
         for parameter in &self.parameters {
             parameter.walk(visitor)?;
         }
@@ -992,6 +997,9 @@ impl<S> FunctionExpr<S> {
     }
 
     pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        if let Some(call) = &mut self.inherit {
+            call.walk_mut(visitor)?;
+        }
         for parameter in &mut self.parameters {
             parameter.walk_mut(visitor)?;
         }

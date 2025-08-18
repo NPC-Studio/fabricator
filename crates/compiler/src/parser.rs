@@ -981,11 +981,48 @@ where
 
                 let parameters = self.parse_parameter_list()?.0;
 
+                self.look_ahead(1);
+                let inherit = if matches!(self.peek(0).kind, TokenKind::Colon) {
+                    self.advance(1);
+                    let expr = self.parse_expression()?;
+
+                    let ast::Expression::Call(call_expr) = expr else {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                unexpected: "<expression>",
+                                expected: "<call expression>",
+                            },
+                            span: expr.span(),
+                        });
+                    };
+
+                    Some(call_expr)
+                } else {
+                    None
+                };
+
+                self.look_ahead(1);
+                let is_constructor = if matches!(self.peek(0).kind, TokenKind::Constructor) {
+                    self.advance(1);
+                    true
+                } else {
+                    false
+                };
+
                 self.parse_token(TokenKind::LeftBrace)?;
                 let body = self.parse_block(|t| matches!(t, TokenKind::RightBrace))?;
                 let span = tok_span.combine(self.parse_token(TokenKind::RightBrace).unwrap());
 
+                if !is_constructor && inherit.is_some() {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::InheritWithoutConstructor,
+                        span,
+                    });
+                }
+
                 Ok(ast::Expression::Function(ast::FunctionExpr {
+                    is_constructor,
+                    inherit,
                     parameters,
                     body,
                     span,

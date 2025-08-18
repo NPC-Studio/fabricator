@@ -1899,12 +1899,23 @@ where
                 )?
             }
             ast::Expression::Function(func_expr) => {
+                let allow_constructors = self.settings.allow_constructors;
                 let mut compiler =
                     self.start_inner_function(FunctionRef::Expression(func_expr.span));
 
                 compiler.declare_parameters(&func_expr.parameters)?;
-                compiler.block(&func_expr.body)?;
-                let function = compiler.finish();
+                let function = if func_expr.is_constructor {
+                    if !allow_constructors {
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ConstructorsNotAllowed,
+                            span: func_expr.span,
+                        });
+                    }
+                    compiler.constructor(func_expr.inherit.as_ref(), &func_expr.body)?
+                } else {
+                    compiler.block(&func_expr.body)?;
+                    compiler.finish()
+                };
 
                 let func_id = self.function.functions.insert(function);
                 self.push_instruction(func_expr.span, ir::Instruction::Closure(func_id))

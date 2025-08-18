@@ -25,17 +25,36 @@ assert(t3.bar == 3);
 
 function Test4(b, c): Test3(b) constructor {
     static baz = 3;
-    function method() {
-        return self.quux;
+    function a_method() {
+        return self.qux;
     }
-    quux = c;
+    qux = c;
 }
 
 var t4 = new Test4(2, 4);
 assert(t4.foo == 1);
 assert(t4.bar == 2);
 assert(t4.baz == 3);
-assert(t4.quux == 4);
-assert(t4.method() == 4);
+assert(t4.qux == 4);
+assert(t4.a_method() == 4);
+
+var Test5 = function(b, c, d): Test4(b, c) constructor {
+    static baf = 5;
+    quux = d;
+    function b_method() {
+        return self.quux;
+    }
+};
+
+var t5 = new Test5(2, 4, 6);
+
+assert(t5.foo == 1);
+assert(t5.bar == 2);
+assert(t5.baz == 3);
+assert(t5.qux == 4);
+assert(t5.a_method() == 4);
+assert(t5.baf == 5);
+assert(t5.quux == 6);
+assert(t5.b_method() == 6);
 
 return true;
