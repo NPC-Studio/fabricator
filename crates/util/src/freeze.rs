@@ -14,7 +14,7 @@ impl<'f, T: ?Sized + for<'a> Freeze<'a>> Freeze<'f> for DynFreeze<T> {
 
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __scripting_Freeze {
+macro_rules! __freeze_Freeze {
     ($f:lifetime => $frozen:ty) => {
         $crate::freeze::DynFreeze::<
             dyn for<$f> $crate::freeze::Freeze<$f, Frozen = $frozen>,
@@ -26,7 +26,7 @@ macro_rules! __scripting_Freeze {
 }
 
 #[doc(inline)]
-pub use crate::__scripting_Freeze as Freeze;
+pub use crate::__freeze_Freeze as Freeze;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum AccessError {

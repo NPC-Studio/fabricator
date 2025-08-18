@@ -112,6 +112,10 @@ pub struct IrGenSettings {
     /// variables.
     pub allow_constructors: bool,
 
+    /// Allow `function` statements not at the top-level of a script file which do *not* act as
+    /// an export. Instead, they are interpreted as `self.func_name = function(...) { ... }`.
+    pub allow_non_top_level_func_stmt: bool,
+
     /// Allow `try {} catch(e) {}` blocks.
     ///
     /// These desugar to the equivalent of creating an inner closure and calling it with `pcall`.
@@ -128,6 +132,7 @@ impl IrGenSettings {
             block_scoping: true,
             closures: true,
             allow_constructors: false,
+            allow_non_top_level_func_stmt: false,
             allow_try_catch_blocks: false,
         }
     }
@@ -137,47 +142,46 @@ impl IrGenSettings {
             block_scoping: false,
             closures: false,
             allow_constructors: true,
+            allow_non_top_level_func_stmt: true,
             allow_try_catch_blocks: true,
         }
     }
 
     pub fn gen_chunk_ir<S>(
         self,
-        mut interner: impl StringInterner<String = S>,
+        interner: &mut dyn StringInterner<String = S>,
         block: &ast::Block<S>,
-        var_dict: impl VarDict<S>,
+        var_dict: &dyn VarDict<S>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
-        S: Eq + Hash + Clone,
+        S: Eq + Hash + Clone + AsRef<str>,
     {
-        let mut compiler =
-            FunctionCompiler::new(self, &mut interner, FunctionRef::Chunk, &var_dict);
+        let mut compiler = FunctionCompiler::new(self, interner, FunctionRef::Chunk, var_dict);
         compiler.block(block)?;
         Ok(compiler.finish())
     }
 
     pub fn gen_func_stmt_ir<S>(
         self,
-        mut interner: impl StringInterner<String = S>,
-        func_span: Span,
+        interner: &mut dyn StringInterner<String = S>,
         func_stmt: &ast::FunctionStmt<S>,
-        var_dict: impl VarDict<S>,
+        var_dict: &dyn VarDict<S>,
     ) -> Result<ir::Function<S>, IrGenError>
     where
         S: Eq + Hash + Clone + AsRef<str>,
     {
         let mut compiler = FunctionCompiler::new(
             self,
-            &mut interner,
-            FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_span),
-            &var_dict,
+            interner,
+            FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_stmt.span),
+            var_dict,
         );
         compiler.declare_parameters(&func_stmt.parameters)?;
         if func_stmt.is_constructor {
             if !self.allow_constructors {
                 return Err(IrGenError {
                     kind: IrGenErrorKind::ConstructorsNotAllowed,
-                    span: func_span,
+                    span: func_stmt.span,
                 });
             }
             compiler.constructor(func_stmt.inherit.as_ref(), &func_stmt.body)
@@ -304,7 +308,7 @@ enum MutableTarget<S> {
 
 impl<'a, S> FunctionCompiler<'a, S>
 where
-    S: Eq + Hash + Clone,
+    S: Eq + Hash + Clone + AsRef<str>,
 {
     fn new(
         settings: IrGenSettings,
@@ -486,33 +490,36 @@ where
         let mut static_names = HashSet::new();
 
         for stmt in &main_block.statements {
-            if let ast::Statement::Static(decls) = stmt {
-                for (decl_name, decl_value) in &decls.vars {
-                    if !static_names.insert(decl_name) {
-                        return Err(IrGenError {
-                            kind: IrGenErrorKind::ConstructorStaticNotUnique,
+            match stmt {
+                ast::Statement::Static(decls) => {
+                    for (decl_name, decl_value) in &decls.vars {
+                        if !static_names.insert(decl_name) {
+                            return Err(IrGenError {
+                                kind: IrGenErrorKind::ConstructorStaticNotUnique,
+                                span: decls.span,
+                            });
+                        }
+
+                        let key = self.push_instruction(
+                            decls.span,
+                            ir::Instruction::Constant(Constant::String(decl_name.inner.clone())),
+                        );
+                        let value = self.expression(decl_value.as_ref().ok_or(IrGenError {
+                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
                             span: decls.span,
-                        });
+                        })?)?;
+
+                        self.push_instruction(
+                            decls.span,
+                            ir::Instruction::SetField {
+                                object: our_super,
+                                key,
+                                value,
+                            },
+                        );
                     }
-
-                    let key = self.push_instruction(
-                        decls.span,
-                        ir::Instruction::Constant(Constant::String(decl_name.inner.clone())),
-                    );
-                    let value = self.expression(decl_value.as_ref().ok_or(IrGenError {
-                        kind: IrGenErrorKind::ConstructorStaticNotInitialized,
-                        span: decls.span,
-                    })?)?;
-
-                    self.push_instruction(
-                        decls.span,
-                        ir::Instruction::SetField {
-                            object: our_super,
-                            key,
-                            value,
-                        },
-                    );
                 }
+                _ => {}
             }
         }
 
@@ -571,13 +578,12 @@ where
         self.push_scope();
 
         for stmt in &main_block.statements {
+            // Declare a pseudo-variable when encountering any super object field statement.
+            // This variable's sole purpose is to prevent accessing a constructor `static`, which
+            // *looks* like a variable but is not usable as a variable in expressions.
             match stmt {
                 ast::Statement::Static(decls) => {
                     for (decl_name, _) in &decls.vars {
-                        // Declare a pseudo-variable when encountering the static statement.
-                        // This variable's sole purpose is to prevent accessing a constructor
-                        // `static`, which *looks* like a variable but is not usable as a variable
-                        // in expressions.
                         self.declare_var(decl_name.clone(), None)?;
                     }
                 }
@@ -633,10 +639,52 @@ where
                 kind: IrGenErrorKind::MisplacedExport,
                 span: enum_stmt.span,
             }),
-            ast::Statement::Function(func_stmt) => Err(IrGenError {
-                kind: IrGenErrorKind::MisplacedExport,
-                span: func_stmt.span,
-            }),
+            ast::Statement::Function(func_stmt) => {
+                if !self.settings.allow_non_top_level_func_stmt {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::MisplacedExport,
+                        span: func_stmt.span,
+                    });
+                }
+
+                let allow_constructors = self.settings.allow_constructors;
+                let mut compiler = self.start_inner_function(FunctionRef::Named(
+                    RefName::new(func_stmt.name.as_ref()),
+                    func_stmt.span,
+                ));
+
+                compiler.declare_parameters(&func_stmt.parameters)?;
+                let function = if func_stmt.is_constructor {
+                    if !allow_constructors {
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ConstructorsNotAllowed,
+                            span: func_stmt.span,
+                        });
+                    }
+                    compiler.constructor(func_stmt.inherit.as_ref(), &func_stmt.body)?
+                } else {
+                    compiler.block(&func_stmt.body)?;
+                    compiler.finish()
+                };
+
+                let func_id = self.function.functions.insert(function);
+                let func = self.push_instruction(func_stmt.span, ir::Instruction::Closure(func_id));
+
+                let this = self.push_instruction(func_stmt.span, ir::Instruction::This);
+                let key = self.push_instruction(
+                    func_stmt.span,
+                    ir::Instruction::Constant(Constant::String(func_stmt.name.inner.clone())),
+                );
+                self.push_instruction(
+                    func_stmt.span,
+                    ir::Instruction::SetField {
+                        object: this,
+                        key,
+                        value: func,
+                    },
+                );
+                Ok(())
+            }
             ast::Statement::Var(var_decls) => {
                 for (name, value) in &var_decls.vars {
                     self.var_decl(var_decls.span, name, value.as_ref())?;

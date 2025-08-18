@@ -25,13 +25,17 @@ assert(t3.bar == 3);
 
 function Test4(b, c): Test3(b) constructor {
     static baz = 3;
-    qux = c;
+    function method() {
+        return self.quux;
+    }
+    quux = c;
 }
 
 var t4 = new Test4(2, 4);
 assert(t4.foo == 1);
 assert(t4.bar == 2);
 assert(t4.baz == 3);
-assert(t4.qux == 4);
+assert(t4.quux == 4);
+assert(t4.method() == 4);
 
 return true;

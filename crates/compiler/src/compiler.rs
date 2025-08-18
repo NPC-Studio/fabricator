@@ -583,10 +583,9 @@ impl<'gc> Compiler<'gc> {
                     let mut ir = compile_settings
                         .ir_gen
                         .gen_func_stmt_ir(
-                            VmInterner::new(ctx),
-                            export.span(),
+                            &mut VmInterner::new(ctx),
                             func_stmt,
-                            CompilerVarDict {
+                            &CompilerVarDict {
                                 enums: &enums,
                                 global_vars: &global_vars,
                                 magic: &magic,
@@ -631,9 +630,9 @@ impl<'gc> Compiler<'gc> {
             let mut ir = compile_settings
                 .ir_gen
                 .gen_chunk_ir(
-                    VmInterner::new(self.ctx),
+                    &mut VmInterner::new(self.ctx),
                     &block,
-                    CompilerVarDict {
+                    &CompilerVarDict {
                         enums: &enums,
                         global_vars: &global_vars,
                         magic: &magic,
