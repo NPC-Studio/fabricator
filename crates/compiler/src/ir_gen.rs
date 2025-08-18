@@ -1148,9 +1148,10 @@ where
 
         if let Some(default) = &switch_stmt.default {
             self.block(default)?;
-            if self.current_block.is_some() {
-                self.end_current_block(ir::Exit::Jump(successor_block));
-            }
+        }
+
+        if self.current_block.is_some() {
+            self.end_current_block(ir::Exit::Jump(successor_block));
         }
 
         self.start_new_block(successor_block);
