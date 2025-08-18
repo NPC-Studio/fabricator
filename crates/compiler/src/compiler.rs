@@ -25,7 +25,7 @@ use crate::{
         verify_arguments::{ArgumentVerificationError, verify_arguments},
         verify_references::{ReferenceVerificationError, verify_references},
     },
-    code_gen::gen_prototype,
+    code_gen::{Prototype, gen_prototype},
     enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
     exports::{DuplicateExportError, Export, ExportSet},
     ir,
@@ -239,13 +239,6 @@ pub struct Compiler<'gc> {
     global_vars: HashSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
     chunks: Vec<Chunk<'gc>>,
-}
-
-struct Chunk<'gc> {
-    name: vm::RefName,
-    line_numbers: LineNumbers,
-    tokens: Vec<Token<vm::String<'gc>>>,
-    compile_settings: CompileSettings,
 }
 
 pub type DebugOutput<'gc> = Vec<(Gc<'gc, vm::Prototype<'gc>>, ir::Function<vm::String<'gc>>)>;
@@ -600,14 +593,7 @@ impl<'gc> Compiler<'gc> {
                             }
                         })?;
 
-                    verify_ir(&ir).expect("Internal IR generation error");
-                    for _ in 0..compile_settings.optimization_passes {
-                        optimize_ir(&mut ir);
-                    }
-                    verify_ir(&ir).expect("Internal IR optimization error");
-                    let proto =
-                        gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
-
+                    let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
                     let vm_proto = proto.into_vm(&ctx, chunk, magic);
                     let closure = vm::Closure::new(&ctx, vm_proto, vm::Value::Undefined).unwrap();
 
@@ -647,13 +633,7 @@ impl<'gc> Compiler<'gc> {
                     }
                 })?;
 
-            verify_ir(&ir).expect("Internal IR generation error");
-            for _ in 0..compile_settings.optimization_passes {
-                optimize_ir(&mut ir);
-            }
-            verify_ir(&ir).expect("Internal IR optimization error");
-            let proto = gen_prototype(&ir, |n| magic.find(n)).expect("Internal Codegen Error");
-
+            let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
             let vm_proto = proto.into_vm(&ctx, chunk, magic);
             debug_output.push((vm_proto, ir));
             outputs.push(vm_proto);
@@ -682,6 +662,13 @@ impl<'gc> Compiler<'gc> {
     }
 }
 
+struct Chunk<'gc> {
+    name: vm::RefName,
+    line_numbers: LineNumbers,
+    tokens: Vec<Token<vm::String<'gc>>>,
+    compile_settings: CompileSettings,
+}
+
 struct CompilerVarDict<'gc, 'a> {
     enums: &'a EnumSet<vm::String<'gc>>,
     global_vars: &'a HashSet<vm::String<'gc>>,
@@ -702,6 +689,28 @@ impl<'gc, 'a> VarDict<vm::String<'gc>> for CompilerVarDict<'gc, 'a> {
             FreeVarMode::GlobalVar
         } else {
             FreeVarMode::This
+        }
+    }
+}
+
+fn optimize_and_generate_proto<'gc>(
+    compile_settings: CompileSettings,
+    ir: &mut ir::Function<vm::String<'gc>>,
+    magic: &vm::MagicSet<'gc>,
+) -> Prototype<vm::String<'gc>> {
+    if let Err(err) = verify_ir(ir) {
+        panic!("Internal IR Generation Error: {err}\nIR: {ir:?}");
+    }
+    for _ in 0..compile_settings.optimization_passes {
+        optimize_ir(ir);
+    }
+    if let Err(err) = verify_ir(ir) {
+        panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
+    }
+    match gen_prototype(&ir, |n| magic.find(n)) {
+        Ok(proto) => proto,
+        Err(err) => {
+            panic!("Internal Codegen Error: {err}\nIR: {ir:?}");
         }
     }
 }
