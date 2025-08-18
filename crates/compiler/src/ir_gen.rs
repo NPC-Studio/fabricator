@@ -1105,6 +1105,8 @@ where
         self.pop_continue_target(cond_block);
         self.pop_break_target(successor_block);
 
+        self.push_instruction(repeat_stmt.span, ir::Instruction::CloseVariable(dec_var));
+
         Ok(())
     }
 

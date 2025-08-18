@@ -19,7 +19,7 @@ pub enum VariableVerificationErrorKind {
     CloseNotDominated(ir::InstLocation),
     #[error("has close instruction at {0} which does not close an open variable")]
     DeadClose(ir::InstLocation),
-    #[error("has incoming edges for block {0} are not all open or all closed")]
+    #[error("has incoming edges for block {0} that are not all open or all closed")]
     IndeterminateState(ir::BlockId),
     #[error("has a use at {0} which is not dominated by its open or may occur after a close")]
     UseNotInRange(ir::InstLocation),

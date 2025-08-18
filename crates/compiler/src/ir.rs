@@ -826,6 +826,9 @@ impl<S: AsRef<str>> Function<S> {
         };
 
         write_indent(f, 0)?;
+        writeln!(f, "reference: {:?}", self.reference)?;
+
+        write_indent(f, 0)?;
         writeln!(f, "start_block({})", self.start_block)?;
 
         for block_id in self.blocks.ids() {
