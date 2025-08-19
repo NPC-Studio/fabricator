@@ -45,8 +45,6 @@ pub enum IrGenErrorKind {
     DeclarationNotPermitted,
     #[error("assignment to read-only magic value")]
     ReadOnlyMagic,
-    #[error("cannot reference a pseudo-variable as a normal variable")]
-    PseudoVarAccessed,
     #[error("static variables in constructors must be at the top-level of the function block")]
     ConstructorStaticNotTopLevel,
     #[error("static variable in constructor does not have a unique name")]
@@ -59,8 +57,6 @@ pub enum IrGenErrorKind {
     BreakWithNoTarget,
     #[error("continue statement with no target")]
     ContinueWithNoTarget,
-    #[error("statement after unconditional jump")]
-    StatementWithNoCurrentBlock,
 }
 
 #[derive(Debug, Error)]
@@ -229,9 +225,9 @@ enum TryCatchExitCode {
 enum FunctionType {
     /// The function is a normal function.
     Normal,
-    /// The function must not explicitly return, and there is an implicit `return self;` at the end
-    /// of the function.
-    Constructor,
+    /// All function returns, including the end of the function, implicitly return the `this` value.
+    /// No function return may return an explicit value.
+    Constructor { this: ir::InstId },
     /// The function is a desugared `try {} catch(e) {}` block.
     ///
     /// The function must set a special variable to a value of `TryCatchReturnCode` before
@@ -255,7 +251,7 @@ struct Scope<S> {
 
     // All variable declarations for this scope which have not been shadowed. When a new declaration
     // shadows another, the new declaration will replace the old in this map.
-    visible: HashMap<ast::Ident<S>, VarDecl>,
+    visible: HashMap<ast::Ident<S>, ir::VarId>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -273,15 +269,6 @@ impl<S> Default for Scope<S> {
             visible: HashMap::new(),
         }
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-enum VarDecl {
-    // Variable declaration references a real IR variable.
-    Real(ir::VarId),
-    // Variable declaration looks like a variable declaration but is not a real variable, so
-    // accessing it must trigger an error.
-    Pseudo,
 }
 
 #[derive(Debug, Clone)]
@@ -365,9 +352,7 @@ where
         self.function.num_parameters = parameters.len();
 
         for (param_index, param) in parameters.iter().enumerate() {
-            let arg_var = self
-                .declare_var(param.name.clone(), Some(ir::Variable::Owned))?
-                .unwrap();
+            let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned)?;
 
             let mut value =
                 self.push_instruction(param.span, ir::Instruction::Argument(param_index));
@@ -403,8 +388,6 @@ where
         inherit: Option<&ast::Call<S>>,
         main_block: &ast::Block<S>,
     ) -> Result<ir::Function<S>, IrGenError> {
-        self.func_type = FunctionType::Constructor;
-
         // Create a hidden static variable to hold whether the constructor static object is
         // initialized.
         let is_initialized = self
@@ -572,17 +555,14 @@ where
         self.push_instruction(main_block.span, ir::Instruction::OpenThisScope(this_scope));
         self.push_instruction(main_block.span, ir::Instruction::SetThis(this_scope, this));
 
+        self.func_type = FunctionType::Constructor { this };
+
         self.push_scope();
 
         for stmt in &main_block.statements {
-            // Declare a pseudo-variable when encountering any super object field statement.
-            // This variable's sole purpose is to prevent accessing a constructor `static`, which
-            // *looks* like a variable but is not usable as a variable in expressions.
             match stmt {
-                ast::Statement::Static(decls) => {
-                    for (decl_name, _) in &decls.vars {
-                        self.declare_var(decl_name.clone(), None)?;
-                    }
+                ast::Statement::Static(_) => {
+                    // We have already handled all static statements.
                 }
                 _ => {
                     self.statement(stmt)?;
@@ -592,17 +572,13 @@ where
 
         self.pop_scope();
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Return { value: Some(this) });
-        }
+        self.end_current_block(ir::Exit::Return { value: Some(this) });
 
         Ok(self.finish())
     }
 
     fn finish(mut self) -> ir::Function<S> {
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Return { value: None });
-        }
+        self.end_current_block(ir::Exit::Return { value: None });
 
         assert!(self.break_target_stack.is_empty());
         assert!(self.continue_target_stack.is_empty());
@@ -622,13 +598,6 @@ where
     }
 
     fn statement(&mut self, statement: &ast::Statement<S>) -> Result<(), IrGenError> {
-        if self.current_block.is_none() {
-            return Err(IrGenError {
-                kind: IrGenErrorKind::StatementWithNoCurrentBlock,
-                span: statement.span(),
-            });
-        }
-
         match statement {
             ast::Statement::Empty(_) => Ok(()),
             ast::Statement::Block(block_stmt) => self.block(&block_stmt.block),
@@ -689,7 +658,7 @@ where
                 Ok(())
             }
             ast::Statement::Static(static_decls) => {
-                if matches!(self.func_type, FunctionType::Constructor) {
+                if matches!(self.func_type, FunctionType::Constructor { .. }) {
                     return Err(IrGenError {
                         kind: IrGenErrorKind::ConstructorStaticNotTopLevel,
                         span: static_decls.span,
@@ -751,9 +720,7 @@ where
         name: &ast::Ident<S>,
         value: Option<&ast::Expression<S>>,
     ) -> Result<(), IrGenError> {
-        let var_id = self
-            .declare_var(name.clone(), Some(ir::Variable::Owned))?
-            .unwrap();
+        let var_id = self.declare_var(name.clone(), ir::Variable::Owned)?;
         if let Some(value) = value {
             let inst_id = self.expression(value)?;
             self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
@@ -771,7 +738,7 @@ where
             if let Some(constant) = value.clone().fold_constant() {
                 // If our static is a constant, then we can just initialize it when the prototype is
                 // created.
-                self.declare_var(name.clone(), Some(ir::Variable::Static(constant)))?;
+                self.declare_var(name.clone(), ir::Variable::Static(constant))?;
             } else {
                 // Otherwise, we need to initialize two static variables, a hidden one for the
                 // initialization state and a visible one to hold the initialized value.
@@ -782,12 +749,8 @@ where
                     .variables
                     .insert(ir::Variable::Static(Constant::Boolean(false)));
                 // Create a normal static variable that holds the real value.
-                let var_id = self
-                    .declare_var(
-                        name.clone(),
-                        Some(ir::Variable::Static(Constant::Undefined)),
-                    )?
-                    .unwrap();
+                let var_id =
+                    self.declare_var(name.clone(), ir::Variable::Static(Constant::Undefined))?;
 
                 let init_block = self.new_block();
                 let successor = self.new_block();
@@ -813,10 +776,7 @@ where
             }
         } else {
             // If our static has no value then it is just initialized as `Undefined`.
-            self.declare_var(
-                name.clone(),
-                Some(ir::Variable::Static(Constant::Undefined)),
-            )?;
+            self.declare_var(name.clone(), ir::Variable::Static(Constant::Undefined))?;
         }
 
         Ok(())
@@ -949,9 +909,7 @@ where
         self.start_new_block(then_block);
         self.push_scope();
         self.statement(&if_statement.then_stmt)?;
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(successor));
-        }
+        self.end_current_block(ir::Exit::Jump(successor));
         self.pop_scope();
 
         self.start_new_block(else_block);
@@ -960,9 +918,7 @@ where
             self.statement(else_stmt)?;
             self.pop_scope();
         }
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(successor));
-        }
+        self.end_current_block(ir::Exit::Jump(successor));
 
         self.start_new_block(successor);
         Ok(())
@@ -972,50 +928,45 @@ where
         self.push_scope();
         self.statement(&for_statement.initializer)?;
 
-        if self.current_block.is_some() {
-            let cond_block = self.new_block();
-            let body_block = self.new_block();
-            let iter_block = self.new_block();
-            let successor_block = self.new_block();
+        let cond_block = self.new_block();
+        let body_block = self.new_block();
+        let iter_block = self.new_block();
+        let successor_block = self.new_block();
 
-            self.push_break_target(successor_block);
-            self.push_continue_target(iter_block);
+        self.push_break_target(successor_block);
+        self.push_continue_target(iter_block);
 
-            self.end_current_block(ir::Exit::Jump(cond_block));
-            self.start_new_block(cond_block);
+        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.start_new_block(cond_block);
 
-            let cond = self.expression(&for_statement.condition)?;
-            self.end_current_block(ir::Exit::Branch {
-                cond,
-                if_true: body_block,
-                if_false: successor_block,
-            });
+        let cond = self.expression(&for_statement.condition)?;
+        self.end_current_block(ir::Exit::Branch {
+            cond,
+            if_true: body_block,
+            if_false: successor_block,
+        });
 
-            self.start_new_block(body_block);
-            self.push_scope();
-            self.statement(&for_statement.body)?;
-            self.pop_scope();
+        self.start_new_block(body_block);
+        self.push_scope();
+        self.statement(&for_statement.body)?;
+        self.pop_scope();
 
-            if self.current_block.is_some() {
-                self.end_current_block(ir::Exit::Jump(iter_block));
-                self.start_new_block(iter_block);
+        self.end_current_block(ir::Exit::Jump(iter_block));
+        self.start_new_block(iter_block);
 
-                self.push_scope();
-                self.statement(&for_statement.iterator)?;
-                self.pop_scope();
+        self.push_scope();
+        self.statement(&for_statement.iterator)?;
+        self.pop_scope();
 
-                if self.current_block.is_some() {
-                    self.end_current_block(ir::Exit::Jump(cond_block));
-                }
-            }
+        self.end_current_block(ir::Exit::Jump(cond_block));
 
-            self.start_new_block(successor_block);
+        self.start_new_block(successor_block);
 
-            self.pop_continue_target(iter_block);
-            self.pop_break_target(successor_block);
-        }
+        self.pop_continue_target(iter_block);
+        self.pop_break_target(successor_block);
 
         self.pop_scope();
+
         Ok(())
     }
 
@@ -1042,9 +993,7 @@ where
         self.statement(&while_stmt.body)?;
         self.pop_scope();
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(cond_block));
-        }
+        self.end_current_block(ir::Exit::Jump(cond_block));
 
         self.start_new_block(successor_block);
 
@@ -1096,9 +1045,7 @@ where
         self.statement(&repeat_stmt.body)?;
         self.pop_scope();
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(cond_block));
-        }
+        self.end_current_block(ir::Exit::Jump(cond_block));
 
         self.start_new_block(successor_block);
 
@@ -1138,9 +1085,7 @@ where
 
             self.start_new_block(body_block);
             self.block(&case.body)?;
-            if self.current_block.is_some() {
-                self.end_current_block(ir::Exit::Jump(successor_block));
-            }
+            self.end_current_block(ir::Exit::Jump(successor_block));
 
             self.start_new_block(next_block);
         }
@@ -1149,9 +1094,7 @@ where
             self.block(default)?;
         }
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(successor_block));
-        }
+        self.end_current_block(ir::Exit::Jump(successor_block));
 
         self.start_new_block(successor_block);
         self.pop_break_target(successor_block);
@@ -1270,9 +1213,7 @@ where
         self.statement(&with_stmt.body)?;
         self.pop_scope();
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(successor_block));
-        }
+        self.end_current_block(ir::Exit::Jump(successor_block));
 
         self.start_new_block(successor_block);
 
@@ -1442,9 +1383,8 @@ where
 
         self.start_new_block(err_block);
         self.push_scope();
-        let err_var_id = self
-            .declare_var(try_catch_stmt.err_ident.clone(), Some(ir::Variable::Owned))?
-            .unwrap();
+        let err_var_id = self.declare_var(try_catch_stmt.err_ident.clone(), ir::Variable::Owned)?;
+
         self.push_instruction(
             try_catch_stmt.err_ident.span,
             ir::Instruction::SetVariable(err_var_id, ret_or_err),
@@ -1452,9 +1392,7 @@ where
         self.statement(&try_catch_stmt.catch_block)?;
         self.pop_scope();
 
-        if self.current_block.is_some() {
-            self.end_current_block(ir::Exit::Jump(successor_block));
-        }
+        self.end_current_block(ir::Exit::Jump(successor_block));
 
         self.start_new_block(successor_block);
         self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
@@ -1463,21 +1401,18 @@ where
     }
 
     fn do_return(&mut self, span: Span, value: Option<ir::InstId>) -> Result<(), IrGenError> {
-        let exit = if let Some(value) = value {
-            ir::Exit::Return { value: Some(value) }
-        } else {
-            ir::Exit::Return { value: None }
-        };
-
         match self.func_type {
             FunctionType::Normal => {
-                self.end_current_block(exit);
+                self.end_current_block(ir::Exit::Return { value });
             }
-            FunctionType::Constructor => {
-                return Err(IrGenError {
-                    kind: IrGenErrorKind::CannotReturnValue,
-                    span,
-                });
+            FunctionType::Constructor { this } => {
+                if value.is_some() {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::CannotReturnValue,
+                        span,
+                    });
+                }
+                self.end_current_block(ir::Exit::Return { value: Some(this) });
             }
             FunctionType::TryCatch { exit_code, .. } => {
                 let return_code = self.push_instruction(
@@ -1485,7 +1420,7 @@ where
                     ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
                 );
                 self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
-                self.end_current_block(exit);
+                self.end_current_block(ir::Exit::Return { value });
             }
         }
         Ok(())
@@ -1570,7 +1505,7 @@ where
             ast::Expression::Constant(c, span) => {
                 self.push_instruction(*span, ir::Instruction::Constant(c.clone()))
             }
-            ast::Expression::Ident(s) => self.ident_expr(s)?,
+            ast::Expression::Ident(s) => self.ident_expr(s),
             ast::Expression::Global(span) => self.push_instruction(*span, ir::Instruction::Globals),
             ast::Expression::This(span) => self.push_instruction(*span, ir::Instruction::This),
             ast::Expression::Other(span) => self.push_instruction(*span, ir::Instruction::Other),
@@ -1617,7 +1552,7 @@ where
                             }
                         }
                         ast::Field::Init(name) => {
-                            let value = self.ident_expr(name)?;
+                            let value = self.ident_expr(name);
                             self.push_instruction(
                                 field_span,
                                 ir::Instruction::SetFieldConst {
@@ -2053,8 +1988,8 @@ where
         Ok(res)
     }
 
-    fn ident_expr(&mut self, ident: &ast::Ident<S>) -> Result<ir::InstId, IrGenError> {
-        Ok(if let Some(var_id) = self.get_var(ident.span, ident)? {
+    fn ident_expr(&mut self, ident: &ast::Ident<S>) -> ir::InstId {
+        if let Some(var_id) = self.get_var(ident) {
             self.push_instruction(ident.span, ir::Instruction::GetVariable(var_id))
         } else {
             match self.var_dict.free_var_mode(ident) {
@@ -2086,7 +2021,7 @@ where
                 FreeVarMode::Magic { .. } => self
                     .push_instruction(ident.span, ir::Instruction::GetMagic(ident.inner.clone())),
             }
-        })
+        }
     }
 
     fn short_circuit_and(
@@ -2180,7 +2115,7 @@ where
     ) -> Result<MutableTarget<S>, IrGenError> {
         Ok(match target {
             ast::MutableExpr::Ident(ident) => {
-                if let Some(var_id) = self.get_var(ident.span, ident)? {
+                if let Some(var_id) = self.get_var(ident) {
                     MutableTarget::Var(var_id)
                 } else {
                     match self.var_dict.free_var_mode(ident) {
@@ -2308,10 +2243,7 @@ where
                 compiler
                     .declare_var(
                         name.clone(),
-                        match self.scopes[scope_index].visible[name] {
-                            VarDecl::Real(var_id) => Some(ir::Variable::Upper(var_id)),
-                            VarDecl::Pseudo => None,
-                        },
+                        ir::Variable::Upper(self.scopes[scope_index].visible[name]),
                     )
                     .unwrap();
             }
@@ -2329,13 +2261,9 @@ where
     fn pop_scope(&mut self) {
         if self.settings.block_scoping {
             if let Some(popped_scope) = self.scopes.pop() {
-                // Close every variable in the popped scope. If the current block doesn't exist,
-                // then we assume that either this block has exited, which is an implicit close, or
-                // that a `break` or `continue` statement has separately closed them.
-                if self.current_block.is_some() {
-                    for var_id in popped_scope.to_close {
-                        self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
-                    }
+                // Close every variable in the popped scope.
+                for var_id in popped_scope.to_close {
+                    self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
                 }
 
                 // Remove visible variables in the popped scope from the var lookup map.
@@ -2358,13 +2286,11 @@ where
         }
     }
 
-    // Declare a variable in the current scope. If the IR variable is `None`, declares a
-    // pseudo-variable.
     fn declare_var(
         &mut self,
         vname: ast::Ident<S>,
-        var: Option<ir::Variable<S>>,
-    ) -> Result<Option<ir::VarId>, IrGenError> {
+        var: ir::Variable<S>,
+    ) -> Result<ir::VarId, IrGenError> {
         if !self.var_dict.permit_declaration(&vname) {
             return Err(IrGenError {
                 kind: IrGenErrorKind::DeclarationNotPermitted,
@@ -2375,16 +2301,10 @@ where
         let top_scope_index = self.scopes.len() - 1;
         let top_scope = self.scopes.last_mut().unwrap();
 
-        let (var_decl, var_id, var_is_owned) = if let Some(var) = var {
-            let is_owned = var.is_owned();
-            let var_id = self.function.variables.insert(var);
-            let decl = VarDecl::Real(var_id);
-            (decl, Some(var_id), is_owned)
-        } else {
-            (VarDecl::Pseudo, None, false)
-        };
+        let var_is_owned = var.is_owned();
+        let var_id = self.function.variables.insert(var);
 
-        let shadowing = top_scope.visible.insert(vname.clone(), var_decl).is_some();
+        let shadowing = top_scope.visible.insert(vname.clone(), var_id).is_some();
 
         let scope_list = self.var_lookup.entry(vname).or_default();
         if shadowing {
@@ -2398,7 +2318,6 @@ where
         }
 
         if var_is_owned {
-            let var_id = var_id.unwrap();
             // We own this variable, so we need to open it when it is declared.
             if self.settings.block_scoping {
                 // Since we're using block scoping, we need to close this variable when the scope
@@ -2425,30 +2344,26 @@ where
         Ok(var_id)
     }
 
-    fn get_var(&mut self, span: Span, vname: &S) -> Result<Option<ir::VarId>, IrGenError> {
-        if let Some(scope_index) = self.var_lookup.get(vname).and_then(|l| l.last().copied()) {
-            match self.scopes[scope_index].visible[vname] {
-                VarDecl::Real(var_id) => Ok(Some(var_id)),
-                VarDecl::Pseudo => Err(IrGenError {
-                    kind: IrGenErrorKind::PseudoVarAccessed,
-                    span,
-                }),
-            }
-        } else {
-            Ok(None)
-        }
+    fn get_var(&mut self, vname: &S) -> Option<ir::VarId> {
+        let scope_index = self.var_lookup.get(vname).and_then(|l| l.last().copied())?;
+        Some(self.scopes[scope_index].visible[vname])
     }
 
     fn new_block(&mut self) -> ir::BlockId {
         self.function.blocks.insert(ir::Block::default())
     }
 
+    /// If there is a current block, finishes it with the given `Exit`.
     fn end_current_block(&mut self, exit: ir::Exit) {
-        let current_block = self.current_block.expect("no current block to end");
-        self.function.blocks[current_block].exit = exit;
-        self.current_block = None;
+        if let Some(current_block) = self.current_block {
+            self.function.blocks[current_block].exit = exit;
+            self.current_block = None;
+        }
     }
 
+    /// Start a new block.
+    ///
+    /// There must not currently be an active block.
     fn start_new_block(&mut self, block_id: ir::BlockId) {
         assert!(
             self.current_block.is_none(),
@@ -2490,9 +2405,18 @@ where
     }
 
     fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {
-        let current_block = self
-            .current_block
-            .expect("no current block to push instruction");
+        let current_block = if let Some(current) = self.current_block {
+            current
+        } else {
+            // If we do not have an active block, create a new orphan one.
+            //
+            // Blocks can abruptly end due to statements like break, continue, and return, so this
+            // will create a new *most likely unreachable* block to place instructions.
+            let dead_block = self.new_block();
+            self.current_block = Some(dead_block);
+            dead_block
+        };
+
         let inst_id = self.function.instructions.insert(inst);
         self.function.blocks[current_block]
             .instructions

@@ -44,6 +44,11 @@ var Test5 = function(b, c, d): Test4(b, c) constructor {
     function b_method() {
         return self.quux;
     }
+
+    // Explicit returns should return `self`.
+    return;
+
+    quip = 7;
 };
 
 var t5 = new Test5(2, 4, 6);
@@ -56,5 +61,6 @@ assert(t5.a_method() == 4);
 assert(t5.baf == 5);
 assert(t5.quux == 6);
 assert(t5.b_method() == 6);
+assert(t5["quip"] == undefined);
 
 return true;
