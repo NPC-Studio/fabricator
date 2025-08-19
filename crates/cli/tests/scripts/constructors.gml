@@ -7,7 +7,7 @@ assert(t1.foo == 1);
 
 function Test2() constructor {
     static foo = 1;
-    bar = 2;
+    bar = foo + 1;
 }
 
 var t2 = new Test2();
@@ -48,7 +48,7 @@ var Test5 = function(b, c, d): Test4(b, c) constructor {
     // Explicit returns should return `self`.
     return;
 
-    quip = 7;
+    quip = baf + 2;
 };
 
 var t5 = new Test5(2, 4, 6);
@@ -62,5 +62,20 @@ assert(t5.baf == 5);
 assert(t5.quux == 6);
 assert(t5.b_method() == 6);
 assert(t5["quip"] == undefined);
+
+var Test6 = function() constructor {
+    static FOO = undefined;
+    FOO = 10;
+
+    var obj = {};
+    obj.FOO = 1;
+    with obj {
+        // Constructor statics are variables, not implicity `self` variables.
+        assert(FOO == 10);
+    }
+};
+
+var t6 = new Test6();
+assert(t6.FOO == 10);
 
 return true;

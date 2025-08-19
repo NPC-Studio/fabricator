@@ -98,8 +98,8 @@ pub struct IrGenSettings {
     /// All `static` variables must be declared at the top level of the function with unique names,
     /// and are interpreted as fields on a shared super object. Declaring a `constructor` function
     /// *disables* normal function statics, and all statics not at the top-level trigger errors.
-    /// These variables fake and not allowed to be referenced as real variables (but may still be
-    /// shadowed).
+    /// Though these variables are synthetic, they may be referenced as real variables, but they
+    /// desugar to accessing a named variable in the super table.
     ///
     /// This option is included for compatibility purposes only, it is more straightforward to
     /// handle constructors and inheritance manually, and doing so does not disable normal static
@@ -227,7 +227,10 @@ enum FunctionType {
     Normal,
     /// All function returns, including the end of the function, implicitly return the `this` value.
     /// No function return may return an explicit value.
-    Constructor { this: ir::InstId },
+    Constructor {
+        this: ir::InstId,
+        parent: ir::InstId,
+    },
     /// The function is a desugared `try {} catch(e) {}` block.
     ///
     /// The function must set a special variable to a value of `TryCatchReturnCode` before
@@ -245,13 +248,34 @@ enum FunctionType {
     },
 }
 
+#[derive(Debug, Clone)]
+enum VarType<S> {
+    /// This variable is a normal IR variable.
+    Normal(ir::Variable<S>),
+    /// This variable is a constructor static and is inside the `parent` object of a constructor
+    /// under the stored field name.
+    ConstructorStatic(S),
+}
+
+impl<S> From<ir::Variable<S>> for VarType<S> {
+    fn from(var: ir::Variable<S>) -> Self {
+        VarType::Normal(var)
+    }
+}
+
+#[derive(Debug, Clone)]
+enum VarDecl<S> {
+    Normal(ir::VarId),
+    ConstructorStatic(S),
+}
+
 struct Scope<S> {
     // Variables to close when this scope ends. May include shadowed variables.
     to_close: Vec<ir::VarId>,
 
     // All variable declarations for this scope which have not been shadowed. When a new declaration
     // shadows another, the new declaration will replace the old in this map.
-    visible: HashMap<ast::Ident<S>, ir::VarId>,
+    visible: HashMap<ast::Ident<S>, VarDecl<S>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -273,7 +297,7 @@ impl<S> Default for Scope<S> {
 
 #[derive(Debug, Clone)]
 enum MutableTarget<S> {
-    Var(ir::VarId),
+    Var(VarDecl<S>),
     This {
         key: ir::InstId,
     },
@@ -352,7 +376,7 @@ where
         self.function.num_parameters = parameters.len();
 
         for (param_index, param) in parameters.iter().enumerate() {
-            let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned)?;
+            let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned.into())?;
 
             let mut value =
                 self.push_instruction(param.span, ir::Instruction::Argument(param_index));
@@ -374,10 +398,7 @@ where
                 )?;
             };
 
-            self.push_instruction(
-                param.name.span,
-                ir::Instruction::SetVariable(arg_var, value),
-            );
+            self.set_var(param.name.span, arg_var, value);
         }
 
         Ok(())
@@ -386,90 +407,153 @@ where
     fn constructor(
         mut self,
         inherit: Option<&ast::Call<S>>,
-        main_block: &ast::Block<S>,
+        body: &ast::Block<S>,
     ) -> Result<ir::Function<S>, IrGenError> {
-        // Create a hidden static variable to hold whether the constructor static object is
-        // initialized.
-        let is_initialized = self
-            .function
-            .variables
-            .insert(ir::Variable::Static(Constant::Boolean(false)));
+        // We need the `init_constructor_super`, `get_constructor_super`, and `set_super`
+        // intrinsics.
+
+        let init_constructor_super_name = self.interner.intern(BuiltIns::INIT_CONSTRUCTOR_SUPER);
+        let init_constructor_super = self.push_instruction(
+            body.span,
+            ir::Instruction::GetMagic(init_constructor_super_name),
+        );
 
         let get_constructor_super_name = self.interner.intern(BuiltIns::GET_CONSTRUCTOR_SUPER);
         let get_constructor_super = self.push_instruction(
-            main_block.span,
+            body.span,
             ir::Instruction::GetMagic(get_constructor_super_name),
         );
 
         let set_super_name = self.interner.intern(BuiltIns::SET_SUPER);
-        let set_super =
-            self.push_instruction(main_block.span, ir::Instruction::GetMagic(set_super_name));
+        let set_super = self.push_instruction(body.span, ir::Instruction::GetMagic(set_super_name));
 
-        let init_block = self.new_block();
-        let successor_block = self.new_block();
+        // First, get this prototype's super object.
 
-        let parent_func = if let Some(inherit) = inherit {
+        let our_closure = self.push_instruction(body.span, ir::Instruction::CurrentClosure);
+
+        let call_scope = self.function.call_scopes.insert(());
+        self.push_instruction(
+            body.span,
+            ir::Instruction::OpenCall {
+                scope: call_scope,
+                func: init_constructor_super,
+                args: vec![our_closure],
+            },
+        );
+
+        let our_super = self.push_instruction(body.span, ir::Instruction::GetReturn(call_scope, 0));
+        self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+
+        let inherit_func = if let Some(inherit) = inherit {
             Some(self.expression(&inherit.base)?)
         } else {
             None
         };
 
-        let this_closure = self.push_instruction(main_block.span, ir::Instruction::CurrentClosure);
+        // Create a new `self` object, if we are inheriting from another constructor, then use that
+        // constructor's return value as the `self`.
+
+        let this = if let Some(inherit_func) = inherit_func {
+            let Some(inherit) = inherit else {
+                unreachable!();
+            };
+
+            let mut args = Vec::new();
+            for arg in &inherit.arguments {
+                args.push(self.expression(arg)?);
+            }
+
+            let call_scope = self.function.call_scopes.insert(());
+            self.push_instruction(
+                inherit.span,
+                ir::Instruction::OpenCall {
+                    scope: call_scope,
+                    func: inherit_func,
+                    args,
+                },
+            );
+            let ret =
+                self.push_instruction(inherit.span, ir::Instruction::GetReturn(call_scope, 0));
+            self.push_instruction(inherit.span, ir::Instruction::CloseCall(call_scope));
+            ret
+        } else {
+            self.push_instruction(body.span, ir::Instruction::NewObject)
+        };
+
+        // Set the super-table as the parent object for the `self` value.
 
         let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
-            main_block.span,
+            body.span,
             ir::Instruction::OpenCall {
                 scope: call_scope,
-                func: get_constructor_super,
-                args: vec![this_closure],
+                func: set_super,
+                args: vec![this, our_super],
             },
         );
-        let our_super =
-            self.push_instruction(main_block.span, ir::Instruction::GetReturn(call_scope, 0));
-        self.push_instruction(main_block.span, ir::Instruction::CloseCall(call_scope));
+        self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+
+        // We must set this up early, because constructor statics may rely on each other, as long as
+        // it is in-order.
+
+        self.func_type = FunctionType::Constructor {
+            this,
+            parent: our_super,
+        };
+
+        let init_block = self.new_block();
+        let main_block = self.new_block();
+
+        let our_super_is_initialized = self
+            .function
+            .variables
+            .insert(ir::Variable::Static(Constant::Boolean(false)));
 
         let check_initialized = self.push_instruction(
-            main_block.span,
-            ir::Instruction::GetVariable(is_initialized),
+            body.span,
+            ir::Instruction::GetVariable(our_super_is_initialized),
         );
         self.end_current_block(ir::Exit::Branch {
             cond: check_initialized,
-            if_true: successor_block,
+            if_true: main_block,
             if_false: init_block,
         });
 
         self.start_new_block(init_block);
 
         if inherit.is_some() {
-            let call_scope = self.function.call_scopes.insert(());
-            self.push_instruction(
-                main_block.span,
-                ir::Instruction::OpenCall {
-                    scope: call_scope,
-                    func: get_constructor_super,
-                    args: vec![parent_func.unwrap()],
-                },
-            );
-            let parent_super =
-                self.push_instruction(main_block.span, ir::Instruction::GetReturn(call_scope, 0));
-            self.push_instruction(main_block.span, ir::Instruction::CloseCall(call_scope));
+            // We're explicitly allowing inheriting from a non-constructor here, if there is no
+            // initialized inherited super object, then this constructor will not have a super-super
+            // object.
 
             let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
-                main_block.span,
+                body.span,
+                ir::Instruction::OpenCall {
+                    scope: call_scope,
+                    func: get_constructor_super,
+                    args: vec![inherit_func.unwrap()],
+                },
+            );
+            let inherited_super =
+                self.push_instruction(body.span, ir::Instruction::GetReturn(call_scope, 0));
+            self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+
+            let call_scope = self.function.call_scopes.insert(());
+            self.push_instruction(
+                body.span,
                 ir::Instruction::OpenCall {
                     scope: call_scope,
                     func: set_super,
-                    args: vec![our_super, parent_super],
+                    args: vec![our_super, inherited_super],
                 },
             );
-            self.push_instruction(main_block.span, ir::Instruction::CloseCall(call_scope));
+            self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
         }
 
         let mut static_names = HashSet::new();
 
-        for stmt in &main_block.statements {
+        for stmt in &body.statements {
             match stmt {
                 ast::Statement::Static(decls) => {
                     for (decl_name, decl_value) in &decls.vars {
@@ -497,69 +581,36 @@ where
                                 value,
                             },
                         );
+
+                        self.declare_var(
+                            decl_name.clone(),
+                            VarType::ConstructorStatic(decl_name.inner.clone()),
+                        )?;
                     }
                 }
                 _ => {}
             }
         }
 
-        let true_ = self.push_instruction(main_block.span, ir::Instruction::Boolean(true));
+        let true_ = self.push_instruction(body.span, ir::Instruction::Boolean(true));
         self.push_instruction(
-            main_block.span,
-            ir::Instruction::SetVariable(is_initialized, true_),
+            body.span,
+            ir::Instruction::SetVariable(our_super_is_initialized, true_),
         );
 
-        self.end_current_block(ir::Exit::Jump(successor_block));
+        self.end_current_block(ir::Exit::Jump(main_block));
 
-        self.start_new_block(successor_block);
-
-        let this = if let Some(parent_func) = parent_func {
-            let Some(inherit) = inherit else {
-                unreachable!();
-            };
-
-            let mut args = Vec::new();
-            for arg in &inherit.arguments {
-                args.push(self.expression(arg)?);
-            }
-
-            let call_scope = self.function.call_scopes.insert(());
-            self.push_instruction(
-                inherit.span,
-                ir::Instruction::OpenCall {
-                    scope: call_scope,
-                    func: parent_func,
-                    args,
-                },
-            );
-            let ret =
-                self.push_instruction(inherit.span, ir::Instruction::GetReturn(call_scope, 0));
-            self.push_instruction(inherit.span, ir::Instruction::CloseCall(call_scope));
-            ret
-        } else {
-            self.push_instruction(main_block.span, ir::Instruction::NewObject)
-        };
-
-        let call_scope = self.function.call_scopes.insert(());
-        self.push_instruction(
-            main_block.span,
-            ir::Instruction::OpenCall {
-                scope: call_scope,
-                func: set_super,
-                args: vec![this, our_super],
-            },
-        );
-        self.push_instruction(main_block.span, ir::Instruction::CloseCall(call_scope));
-
-        let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(main_block.span, ir::Instruction::OpenThisScope(this_scope));
-        self.push_instruction(main_block.span, ir::Instruction::SetThis(this_scope, this));
-
-        self.func_type = FunctionType::Constructor { this };
+        self.start_new_block(main_block);
 
         self.push_scope();
 
-        for stmt in &main_block.statements {
+        // Our whole constructor body exists inside a single "this" scope.
+
+        let this_scope = self.function.this_scopes.insert(());
+        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
+        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
+
+        for stmt in &body.statements {
             match stmt {
                 ast::Statement::Static(_) => {
                     // We have already handled all static statements.
@@ -571,7 +622,6 @@ where
         }
 
         self.pop_scope();
-
         self.end_current_block(ir::Exit::Return { value: Some(this) });
 
         Ok(self.finish())
@@ -720,10 +770,10 @@ where
         name: &ast::Ident<S>,
         value: Option<&ast::Expression<S>>,
     ) -> Result<(), IrGenError> {
-        let var_id = self.declare_var(name.clone(), ir::Variable::Owned)?;
+        let var = self.declare_var(name.clone(), ir::Variable::Owned.into())?;
         if let Some(value) = value {
             let inst_id = self.expression(value)?;
-            self.push_instruction(span, ir::Instruction::SetVariable(var_id, inst_id));
+            self.set_var(span, var, inst_id);
         }
         Ok(())
     }
@@ -738,7 +788,7 @@ where
             if let Some(constant) = value.clone().fold_constant() {
                 // If our static is a constant, then we can just initialize it when the prototype is
                 // created.
-                self.declare_var(name.clone(), ir::Variable::Static(constant))?;
+                self.declare_var(name.clone(), ir::Variable::Static(constant).into())?;
             } else {
                 // Otherwise, we need to initialize two static variables, a hidden one for the
                 // initialization state and a visible one to hold the initialized value.
@@ -749,8 +799,10 @@ where
                     .variables
                     .insert(ir::Variable::Static(Constant::Boolean(false)));
                 // Create a normal static variable that holds the real value.
-                let var_id =
-                    self.declare_var(name.clone(), ir::Variable::Static(Constant::Undefined))?;
+                let var = self.declare_var(
+                    name.clone(),
+                    ir::Variable::Static(Constant::Undefined).into(),
+                )?;
 
                 let init_block = self.new_block();
                 let successor = self.new_block();
@@ -766,7 +818,7 @@ where
                 self.start_new_block(init_block);
 
                 let value = self.expression(value)?;
-                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+                self.set_var(span, var, value);
                 let true_ = self.push_instruction(span, ir::Instruction::Boolean(true));
                 self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
 
@@ -776,7 +828,10 @@ where
             }
         } else {
             // If our static has no value then it is just initialized as `Undefined`.
-            self.declare_var(name.clone(), ir::Variable::Static(Constant::Undefined))?;
+            self.declare_var(
+                name.clone(),
+                ir::Variable::Static(Constant::Undefined).into(),
+            )?;
         }
 
         Ok(())
@@ -1383,12 +1438,10 @@ where
 
         self.start_new_block(err_block);
         self.push_scope();
-        let err_var_id = self.declare_var(try_catch_stmt.err_ident.clone(), ir::Variable::Owned)?;
+        let err_var =
+            self.declare_var(try_catch_stmt.err_ident.clone(), ir::Variable::Owned.into())?;
 
-        self.push_instruction(
-            try_catch_stmt.err_ident.span,
-            ir::Instruction::SetVariable(err_var_id, ret_or_err),
-        );
+        self.set_var(try_catch_stmt.err_ident.span, err_var, ret_or_err);
         self.statement(&try_catch_stmt.catch_block)?;
         self.pop_scope();
 
@@ -1405,7 +1458,7 @@ where
             FunctionType::Normal => {
                 self.end_current_block(ir::Exit::Return { value });
             }
-            FunctionType::Constructor { this } => {
+            FunctionType::Constructor { this, .. } => {
                 if value.is_some() {
                     return Err(IrGenError {
                         kind: IrGenErrorKind::CannotReturnValue,
@@ -1989,8 +2042,8 @@ where
     }
 
     fn ident_expr(&mut self, ident: &ast::Ident<S>) -> ir::InstId {
-        if let Some(var_id) = self.get_var(ident) {
-            self.push_instruction(ident.span, ir::Instruction::GetVariable(var_id))
+        if let Some(var) = self.find_var(ident) {
+            self.get_var(ident.span, var)
         } else {
             match self.var_dict.free_var_mode(ident) {
                 FreeVarMode::This => {
@@ -2115,8 +2168,8 @@ where
     ) -> Result<MutableTarget<S>, IrGenError> {
         Ok(match target {
             ast::MutableExpr::Ident(ident) => {
-                if let Some(var_id) = self.get_var(ident) {
-                    MutableTarget::Var(var_id)
+                if let Some(var) = self.find_var(ident) {
+                    MutableTarget::Var(var.clone())
                 } else {
                     match self.var_dict.free_var_mode(ident) {
                         FreeVarMode::This => {
@@ -2166,30 +2219,38 @@ where
     }
 
     fn read_mutable_target(&mut self, span: Span, target: MutableTarget<S>) -> ir::InstId {
-        let inst = match target {
-            MutableTarget::Var(var_id) => ir::Instruction::GetVariable(var_id),
+        match target {
+            MutableTarget::Var(var) => self.get_var(span, var),
             MutableTarget::This { key } => {
                 let this = self.push_instruction(span, ir::Instruction::This);
-                ir::Instruction::GetField { object: this, key }
+                self.push_instruction(span, ir::Instruction::GetField { object: this, key })
             }
             MutableTarget::Globals { key } => {
                 let globals = self.push_instruction(span, ir::Instruction::Globals);
-                ir::Instruction::GetField {
-                    object: globals,
-                    key,
-                }
+                self.push_instruction(
+                    span,
+                    ir::Instruction::GetField {
+                        object: globals,
+                        key,
+                    },
+                )
             }
-            MutableTarget::Field { object, key } => ir::Instruction::GetField { object, key },
-            MutableTarget::Index { array, indexes } => ir::Instruction::GetIndex { array, indexes },
-            MutableTarget::Magic(name) => ir::Instruction::GetMagic(name),
-        };
-        self.push_instruction(span, inst)
+            MutableTarget::Field { object, key } => {
+                self.push_instruction(span, ir::Instruction::GetField { object, key })
+            }
+            MutableTarget::Index { array, indexes } => {
+                self.push_instruction(span, ir::Instruction::GetIndex { array, indexes })
+            }
+            MutableTarget::Magic(name) => {
+                self.push_instruction(span, ir::Instruction::GetMagic(name))
+            }
+        }
     }
 
     fn write_mutable_target(&mut self, span: Span, target: MutableTarget<S>, value: ir::InstId) {
         match target {
-            MutableTarget::Var(var_id) => {
-                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+            MutableTarget::Var(var) => {
+                self.set_var(span, var, value);
             }
             MutableTarget::This { key } => {
                 let this = self.push_instruction(span, ir::Instruction::This);
@@ -2233,6 +2294,13 @@ where
     }
 
     fn start_inner_function(&mut self, reference: FunctionRef) -> FunctionCompiler<'_, S> {
+        // Right now, we simply don't support closures and constructors being enabled at the same
+        // time.
+        assert!(
+            !(self.settings.allow_constructors && self.settings.closures),
+            "constructors and closures cannot be enabled at the same time, constructor statics cannot be captured by closures"
+        );
+
         let mut compiler =
             FunctionCompiler::new(self.settings, self.interner, reference, self.var_dict);
 
@@ -2240,12 +2308,11 @@ where
         if self.settings.closures {
             for (name, scope_list) in &self.var_lookup {
                 let &scope_index = scope_list.last().unwrap();
-                compiler
-                    .declare_var(
-                        name.clone(),
-                        ir::Variable::Upper(self.scopes[scope_index].visible[name]),
-                    )
-                    .unwrap();
+                if let VarDecl::Normal(var_id) = self.scopes[scope_index].visible[name] {
+                    compiler
+                        .declare_var(name.clone(), ir::Variable::Upper(var_id).into())
+                        .unwrap();
+                }
             }
         }
 
@@ -2289,8 +2356,8 @@ where
     fn declare_var(
         &mut self,
         vname: ast::Ident<S>,
-        var: ir::Variable<S>,
-    ) -> Result<ir::VarId, IrGenError> {
+        var_type: VarType<S>,
+    ) -> Result<VarDecl<S>, IrGenError> {
         if !self.var_dict.permit_declaration(&vname) {
             return Err(IrGenError {
                 kind: IrGenErrorKind::DeclarationNotPermitted,
@@ -2301,10 +2368,45 @@ where
         let top_scope_index = self.scopes.len() - 1;
         let top_scope = self.scopes.last_mut().unwrap();
 
-        let var_is_owned = var.is_owned();
-        let var_id = self.function.variables.insert(var);
+        let var_decl = match var_type {
+            VarType::Normal(variable) => {
+                let is_owned = variable.is_owned();
+                let var_id = self.function.variables.insert(variable);
 
-        let shadowing = top_scope.visible.insert(vname.clone(), var_id).is_some();
+                if is_owned {
+                    // This is an owned variable, so we need to open it when it is declared.
+                    if self.settings.block_scoping {
+                        // Since we're using block scoping, we need to close this variable when the
+                        // scope ends.
+                        top_scope.to_close.push(var_id);
+                        self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var_id));
+                    } else {
+                        // If we're not using block scoping, just open every variable at the very
+                        // start of the function. This keeps the IR well-formed even with no block
+                        // scoping and no explicit `CloseVariable` instructions.
+                        //
+                        // We push this instruction to `start_block`, which is kept otherwise empty
+                        // for this purpose.
+                        let inst_id = self
+                            .function
+                            .instructions
+                            .insert(ir::Instruction::OpenVariable(var_id));
+                        self.function.blocks[self.function.start_block]
+                            .instructions
+                            .push(inst_id);
+                    }
+                }
+
+                VarDecl::Normal(var_id)
+            }
+            VarType::ConstructorStatic(field) => VarDecl::ConstructorStatic(field),
+        };
+
+        let top_scope = self.scopes.last_mut().unwrap();
+        let shadowing = top_scope
+            .visible
+            .insert(vname.clone(), var_decl.clone())
+            .is_some();
 
         let scope_list = self.var_lookup.entry(vname).or_default();
         if shadowing {
@@ -2317,36 +2419,55 @@ where
             scope_list.push(top_scope_index);
         }
 
-        if var_is_owned {
-            // We own this variable, so we need to open it when it is declared.
-            if self.settings.block_scoping {
-                // Since we're using block scoping, we need to close this variable when the scope
-                // ends.
-                top_scope.to_close.push(var_id);
-                self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var_id));
-            } else {
-                // If we're not using block scoping, just open every variable at the very start of
-                // the function. This keeps the IR well-formed even with no block scoping and no
-                // explicit `CloseVariable` instructions.
-                //
-                // We push this instruction to `start_block`, which is kept otherwise empty for
-                // this purpose.
-                let inst_id = self
-                    .function
-                    .instructions
-                    .insert(ir::Instruction::OpenVariable(var_id));
-                self.function.blocks[self.function.start_block]
-                    .instructions
-                    .push(inst_id);
-            }
-        }
-
-        Ok(var_id)
+        Ok(var_decl)
     }
 
-    fn get_var(&mut self, vname: &S) -> Option<ir::VarId> {
+    fn find_var(&mut self, vname: &S) -> Option<VarDecl<S>> {
         let scope_index = self.var_lookup.get(vname).and_then(|l| l.last().copied())?;
-        Some(self.scopes[scope_index].visible[vname])
+        Some(self.scopes[scope_index].visible[vname].clone())
+    }
+
+    fn get_var(&mut self, span: Span, var: VarDecl<S>) -> ir::InstId {
+        match var {
+            VarDecl::Normal(var_id) => {
+                self.push_instruction(span, ir::Instruction::GetVariable(var_id))
+            }
+            VarDecl::ConstructorStatic(field) => {
+                let FunctionType::Constructor { parent, .. } = self.func_type else {
+                    panic!("constructor static var in non-constructor function")
+                };
+
+                self.push_instruction(
+                    span,
+                    ir::Instruction::GetFieldConst {
+                        object: parent,
+                        key: Constant::String(field.clone()),
+                    },
+                )
+            }
+        }
+    }
+
+    fn set_var(&mut self, span: Span, var: VarDecl<S>, value: ir::InstId) {
+        match var {
+            VarDecl::Normal(var_id) => {
+                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+            }
+            VarDecl::ConstructorStatic(field) => {
+                let FunctionType::Constructor { parent, .. } = self.func_type else {
+                    panic!("constructor static var in non-constructor function")
+                };
+
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetFieldConst {
+                        object: parent,
+                        key: Constant::String(field),
+                        value,
+                    },
+                );
+            }
+        }
     }
 
     fn new_block(&mut self) -> ir::BlockId {

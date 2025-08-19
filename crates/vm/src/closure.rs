@@ -491,6 +491,11 @@ impl<'gc> Prototype<'gc> {
     }
 
     #[inline]
+    pub fn constructor_super(&self) -> Option<Object<'gc>> {
+        self.constructor_super.get()
+    }
+
+    #[inline]
     pub fn used_registers(&self) -> usize {
         self.used_registers
     }

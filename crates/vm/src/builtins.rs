@@ -69,8 +69,14 @@ pub struct BuiltIns<'gc> {
     /// ```
     pub set_super: Callback<'gc>,
 
-    /// Get the constructor super object for the prototype of the given closure, if it is a
-    /// constructor.
+    /// Get the constructor super object for the prototype of the given closure, initializing it if
+    /// it is not yet initialized.
+    ///
+    /// This is an internal compiler support method.
+    pub init_constructor_super: Callback<'gc>,
+
+    /// Get the constructor super object for the prototype of the given closure, if it has been
+    /// initialized.
     ///
     /// This is an internal compiler support method.
     pub get_constructor_super: Callback<'gc>,
@@ -86,7 +92,8 @@ impl<'gc> BuiltIns<'gc> {
     pub const PCALL: &'static str = "pcall";
     pub const GET_SUPER: &'static str = "get_super";
     pub const SET_SUPER: &'static str = "set_super";
-    pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_prototype_super";
+    pub const INIT_CONSTRUCTOR_SUPER: &'static str = "__init_constructor_super";
+    pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_constructor_super";
     pub const WITH_LOOP_ITER: &'static str = "__with_loop_iter";
 
     pub fn new(mc: &Mutation<'gc>) -> Self {
@@ -134,10 +141,17 @@ impl<'gc> BuiltIns<'gc> {
                 Ok(())
             }),
 
-            get_constructor_super: Callback::from_fn(mc, |ctx, mut exec| {
+            init_constructor_super: Callback::from_fn(mc, |ctx, mut exec| {
                 let closure: Closure = exec.stack().consume(ctx)?;
                 exec.stack()
                     .replace(ctx, closure.prototype().init_constructor_super(&ctx));
+                Ok(())
+            }),
+
+            get_constructor_super: Callback::from_fn(mc, |ctx, mut exec| {
+                let closure: Closure = exec.stack().consume(ctx)?;
+                exec.stack()
+                    .replace(ctx, closure.prototype().constructor_super());
                 Ok(())
             }),
 
@@ -195,6 +209,11 @@ impl<'gc> BuiltIns<'gc> {
         magic.insert(
             ctx.intern(Self::SET_SUPER),
             MagicConstant::new_ptr(&ctx, self.set_super.into()),
+        );
+
+        magic.insert(
+            ctx.intern(Self::INIT_CONSTRUCTOR_SUPER),
+            MagicConstant::new_ptr(&ctx, self.init_constructor_super.into()),
         );
 
         magic.insert(
