@@ -104,8 +104,9 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
         let mut furthest_target = block_id;
         while let Some(&ir::Exit::Jump(target)) = empty_block_exits.get(&furthest_target) {
             if !encountered_jump_targets.insert(target) {
-                // If we encounter a loop, then this empty block's exit should be itself (the
+                // If we encounter a loop, then just make this empty block's exit itself (the
                 // shortest infinite loop).
+                ir.blocks[block_id].exit = ir::Exit::Jump(block_id);
                 furthest_target = block_id;
                 break;
             }

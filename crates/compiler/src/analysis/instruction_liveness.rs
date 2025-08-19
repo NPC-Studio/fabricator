@@ -103,7 +103,8 @@ impl InstructionLiveness {
                             return Err(InstructionVerificationError::UseNotDominated);
                         }
                     } else {
-                        if !dominators.dominates(source_block_id, block_id).unwrap() {
+                        // If a block is not reachable, there cannot be a a dominance error.
+                        if dominators.dominates(source_block_id, block_id) == Some(false) {
                             return Err(InstructionVerificationError::UseNotDominated);
                         }
                     }
@@ -112,7 +113,8 @@ impl InstructionLiveness {
 
             for inst_id in block.exit.sources() {
                 let (cond_block, _) = inst_positions[inst_id];
-                if !dominators.dominates(cond_block, block_id).unwrap() {
+                // If a block is not reachable, there cannot be a a dominance error.
+                if dominators.dominates(cond_block, block_id) == Some(false) {
                     return Err(InstructionVerificationError::UseNotDominated);
                 }
             }

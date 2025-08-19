@@ -1,0 +1,9 @@
+if black_box(false) {
+    while true {
+        // This should have no post-dominators from an exit node, a synthetic one will will need to
+        // be added in dead-code elimination.
+        black_box(undefined);
+    }
+}
+
+return true;
