@@ -2358,18 +2358,18 @@ where
         vname: ast::Ident<S>,
         var_type: VarType<S>,
     ) -> Result<VarDecl<S>, IrGenError> {
-        if !self.var_dict.permit_declaration(&vname) {
-            return Err(IrGenError {
-                kind: IrGenErrorKind::DeclarationNotPermitted,
-                span: vname.span,
-            });
-        }
-
         let top_scope_index = self.scopes.len() - 1;
         let top_scope = self.scopes.last_mut().unwrap();
 
         let var_decl = match var_type {
             VarType::Normal(variable) => {
+                if !self.var_dict.permit_declaration(&vname) {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::DeclarationNotPermitted,
+                        span: vname.span,
+                    });
+                }
+
                 let is_owned = variable.is_owned();
                 let var_id = self.function.variables.insert(variable);
 
@@ -2399,7 +2399,11 @@ where
 
                 VarDecl::Normal(var_id)
             }
-            VarType::ConstructorStatic(field) => VarDecl::ConstructorStatic(field),
+            VarType::ConstructorStatic(field) => {
+                // Permit any name for a constructor static, since they can be used as field names
+                // (which are unrestricted).
+                VarDecl::ConstructorStatic(field)
+            }
         };
 
         let top_scope = self.scopes.last_mut().unwrap();

@@ -56,7 +56,7 @@ pub enum CompileErrorKind {
     EnumEvaluation(#[source] EnumEvaluationError),
     #[error("duplicate export error: {0}")]
     DuplicateExport(#[source] DuplicateExportError),
-    #[error("enum or export `{name}` shares a name with an existing enum or export")]
+    #[error("enum or export `{name}` shares a name with a conflicting enum or export")]
     ShadowsSpecial { name: String, span: vm::Span },
     #[error("IR gen error: {0}")]
     IrGen(#[source] IrGenError),
@@ -203,11 +203,11 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 
 /// Items shared across compilation units.
 ///
-/// These will be accumulated by the compiler for separate compilation units and are part of the
-/// compiler output.
+/// These will be accumulated by the compiler during a compilation unit and are part of the compiler
+/// output.
 ///
 /// These can be shared across different instances of a [`Compiler`] to control sharing between
-/// different logical sets of FML scripts.
+/// different logical sets of FML scripts (compilation units).
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct ImportItems<'gc> {
@@ -433,8 +433,8 @@ impl<'gc> Compiler<'gc> {
 
             for i in prev_enum_len..enums.len() {
                 let enum_ = enums.get(i).unwrap();
-                // Enums are not allowed to share names with exports or magic variables.
-                if magic.find(&enum_.name).is_some() || global_vars.contains(&enum_.name.inner) {
+                // Enums are not allowed to shadow names of existing global variables.
+                if global_vars.contains(&enum_.name.inner) {
                     let line_number = chunk.line_number(enum_.span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ShadowsSpecial {
@@ -514,22 +514,9 @@ impl<'gc> Compiler<'gc> {
                 let export_name = export.name();
                 let export_span = export.span();
 
-                // Exports are not allowed to share names with enums.
-                if enums.find(export_name).is_some() {
-                    let line_number = chunk.line_number(export_span.start());
-                    return Err(CompileError {
-                        kind: CompileErrorKind::ShadowsSpecial {
-                            name: export_name.as_str().to_owned(),
-                            span: export_span,
-                        },
-                        chunk_name: chunk.name().clone(),
-                        line_number,
-                    });
-                }
-
-                // Exports are not allowed to share names with any other export or pre-existing
-                // magic variable.
-                if magic.find(export_name).is_some() || global_vars.contains(export_name) {
+                // New exports are not allowed to shadow names for existing enums or global
+                // variables.
+                if enums.find(export_name).is_some() || global_vars.contains(export_name) {
                     let line_number = chunk.line_number(export_span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ShadowsSpecial {
@@ -543,8 +530,7 @@ impl<'gc> Compiler<'gc> {
 
                 match export {
                     Export::Function(_) => {
-                        let (index, inserted) = magic.insert(export_name.clone(), stub_magic);
-                        assert!(inserted);
+                        let index = magic.insert(export_name.clone(), stub_magic).0;
                         export_magic_indexes.insert(i, index);
                     }
                     Export::GlobalVar(ident) => {
