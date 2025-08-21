@@ -379,7 +379,7 @@ where
             let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned.into())?;
 
             let mut value =
-                self.push_instruction(param.span, ir::Instruction::Argument(param_index));
+                self.push_instruction(param.span, ir::Instruction::FixedArgument(param_index));
 
             if let Some(default) = &param.default {
                 let cond = self.push_instruction(
@@ -441,7 +441,8 @@ where
             },
         );
 
-        let our_super = self.push_instruction(body.span, ir::Instruction::GetReturn(call_scope, 0));
+        let our_super =
+            self.push_instruction(body.span, ir::Instruction::FixedReturn(call_scope, 0));
         self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
 
         let inherit_func = if let Some(inherit) = inherit {
@@ -473,7 +474,7 @@ where
                 },
             );
             let ret =
-                self.push_instruction(inherit.span, ir::Instruction::GetReturn(call_scope, 0));
+                self.push_instruction(inherit.span, ir::Instruction::FixedReturn(call_scope, 0));
             self.push_instruction(inherit.span, ir::Instruction::CloseCall(call_scope));
             ret
         } else {
@@ -536,7 +537,7 @@ where
                 },
             );
             let inherited_super =
-                self.push_instruction(body.span, ir::Instruction::GetReturn(call_scope, 0));
+                self.push_instruction(body.span, ir::Instruction::FixedReturn(call_scope, 0));
             self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
 
             let call_scope = self.function.call_scopes.insert(());
@@ -1190,11 +1191,11 @@ where
 
         let iter_fn = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::GetReturn(setup_call_scope, 0),
+            ir::Instruction::FixedReturn(setup_call_scope, 0),
         );
         let init_state = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::GetReturn(setup_call_scope, 1),
+            ir::Instruction::FixedReturn(setup_call_scope, 1),
         );
 
         self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(setup_call_scope));
@@ -1246,11 +1247,11 @@ where
         );
         let next_state = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::GetReturn(iter_call_scope, 0),
+            ir::Instruction::FixedReturn(iter_call_scope, 0),
         );
         let iter_val = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::GetReturn(iter_call_scope, 1),
+            ir::Instruction::FixedReturn(iter_call_scope, 1),
         );
         self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(iter_call_scope));
 
@@ -1329,9 +1330,9 @@ where
             },
         );
         let success =
-            self.push_instruction(closure_span, ir::Instruction::GetReturn(call_scope, 0));
+            self.push_instruction(closure_span, ir::Instruction::FixedReturn(call_scope, 0));
         let ret_or_err =
-            self.push_instruction(closure_span, ir::Instruction::GetReturn(call_scope, 1));
+            self.push_instruction(closure_span, ir::Instruction::FixedReturn(call_scope, 1));
         self.push_instruction(closure_span, ir::Instruction::CloseCall(call_scope));
 
         let success_block = self.new_block();
@@ -1937,6 +1938,13 @@ where
                     },
                 )
             }
+            ast::Expression::Argument(arg_expr) => {
+                let arg_index = self.expression(&arg_expr.arg_index)?;
+                self.push_instruction(arg_expr.span, ir::Instruction::Argument(arg_index))
+            }
+            ast::Expression::ArgumentCount(span) => {
+                self.push_instruction(*span, ir::Instruction::ArgumentCount)
+            }
         })
     }
 
@@ -1994,7 +2002,7 @@ where
             },
         );
 
-        let ret = self.push_instruction(call.span, ir::Instruction::GetReturn(call_scope, 0));
+        let ret = self.push_instruction(call.span, ir::Instruction::FixedReturn(call_scope, 0));
         self.push_instruction(call.span, ir::Instruction::CloseCall(call_scope));
 
         if let Some(this_scope) = this_scope {

@@ -108,6 +108,9 @@ pub enum TokenKind<S> {
     Other,
     New,
 
+    Argument,
+    ArgumentCount,
+
     Integer(S),
     /// Hex integer starting with `0x`.
     HexInteger(S),
@@ -208,6 +211,8 @@ impl<S> TokenKind<S> {
             TokenKind::This => TokenKind::This,
             TokenKind::Other => TokenKind::Other,
             TokenKind::New => TokenKind::New,
+            TokenKind::Argument => TokenKind::Argument,
+            TokenKind::ArgumentCount => TokenKind::ArgumentCount,
             TokenKind::Integer(i) => TokenKind::Integer(i),
             TokenKind::HexInteger(i) => TokenKind::HexInteger(i),
             TokenKind::DollarHexInteger(i) => TokenKind::DollarHexInteger(i),
@@ -305,6 +310,8 @@ impl<S> TokenKind<S> {
             TokenKind::This => TokenKind::This,
             TokenKind::Other => TokenKind::Other,
             TokenKind::New => TokenKind::New,
+            TokenKind::Argument => TokenKind::Argument,
+            TokenKind::ArgumentCount => TokenKind::ArgumentCount,
             TokenKind::Integer(i) => TokenKind::Integer(map(i)),
             TokenKind::HexInteger(i) => TokenKind::HexInteger(map(i)),
             TokenKind::DollarHexInteger(i) => TokenKind::DollarHexInteger(map(i)),
@@ -494,6 +501,10 @@ impl<R, S: PartialEq<R>> PartialEq<TokenKind<R>> for TokenKind<S> {
             (TokenKind::Other, _) => false,
             (TokenKind::New, TokenKind::New) => true,
             (TokenKind::New, _) => false,
+            (TokenKind::Argument, TokenKind::Argument) => true,
+            (TokenKind::Argument, _) => false,
+            (TokenKind::ArgumentCount, TokenKind::ArgumentCount) => true,
+            (TokenKind::ArgumentCount, _) => false,
             (TokenKind::Integer(a), TokenKind::Integer(b)) => a == b,
             (TokenKind::Integer(_), _) => false,
             (TokenKind::HexInteger(a), TokenKind::HexInteger(b)) => a == b,

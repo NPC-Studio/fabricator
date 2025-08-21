@@ -391,7 +391,7 @@ impl CallScopeLiveness {
     ) -> Result<NestedScopeLiveness<ir::CallScope>, CallScopeVerificationError> {
         NestedScopeLiveness::compute_with(ir, |inst| match *inst {
             ir::Instruction::OpenCall { scope, .. } => Some((scope, ScopeInstType::Open)),
-            ir::Instruction::GetReturn(scope, _) => Some((scope, ScopeInstType::Use)),
+            ir::Instruction::FixedReturn(scope, _) => Some((scope, ScopeInstType::Use)),
             ir::Instruction::CloseCall(scope) => Some((scope, ScopeInstType::Close)),
             _ => None,
         })

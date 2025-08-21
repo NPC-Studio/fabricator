@@ -393,6 +393,8 @@ where
                     "self" => TokenKind::This,
                     "other" => TokenKind::Other,
                     "new" => TokenKind::New,
+                    "argument" => TokenKind::Argument,
+                    "argument_count" => TokenKind::ArgumentCount,
                     id => TokenKind::Identifier(self.interner.intern(id)),
                 }
             }

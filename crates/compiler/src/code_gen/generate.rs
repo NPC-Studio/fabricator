@@ -94,14 +94,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut block_vm_starts = SecondaryMap::<ir::BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
 
-    // Resize the stack to the expected number of arguments.
-    vm_instructions.push((
-        Instruction::StackResizeConst {
-            stack_top: get_const_index(&Constant::Integer(ir.num_parameters.try_into().unwrap()))?,
-        },
-        func_span,
-    ));
-
     // Whenever entering a scope, if we know that something inside that scope will need to change
     // and then restore the previous state, we save the state to restore upon entering the *outer*
     // scope.
@@ -162,6 +154,19 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
         if let ir::Exit::Return { .. } = block.exit {
             needs_to_save(ir.instructions.len())?;
+        }
+
+        // If we have an instruction that reads the argument count, we need to at *least* save the
+        // bottom-level stack top value (which is the argument count).
+        for &inst_id in &block.instructions {
+            match ir.instructions[inst_id] {
+                ir::Instruction::ArgumentCount => {
+                    if saved_stack_top_registers.is_empty() {
+                        saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -390,13 +395,31 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::Argument(index) => {
+                ir::Instruction::FixedArgument(index) => {
                     vm_instructions.push((
                         Instruction::StackGetConst {
                             dest: reg_alloc.instruction_registers[inst_id],
                             stack_pos: get_const_index(&Constant::Integer(
                                 index.try_into().unwrap(),
                             ))?,
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::ArgumentCount => {
+                    vm_instructions.push((
+                        Instruction::Copy {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            source: saved_stack_top_registers[0],
+                        },
+                        span,
+                    ));
+                }
+                ir::Instruction::Argument(index) => {
+                    vm_instructions.push((
+                        Instruction::StackGet {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                            stack_pos: reg_alloc.instruction_registers[index],
                         },
                         span,
                     ));
@@ -772,7 +795,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ));
                     }
                 }
-                ir::Instruction::GetReturn(scope, index) => {
+                ir::Instruction::FixedReturn(scope, index) => {
                     let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
                     vm_instructions.push((
                         Instruction::StackGetOffset {

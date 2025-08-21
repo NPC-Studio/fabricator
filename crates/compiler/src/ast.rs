@@ -163,6 +163,8 @@ pub enum Expression<S> {
     Call(Call<S>),
     Field(FieldExpr<S>),
     Index(IndexExpr<S>),
+    Argument(ArgumentExpr<S>),
+    ArgumentCount(Span),
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +236,12 @@ pub struct IndexExpr<S> {
     pub base: Box<Expression<S>>,
     pub accessor_type: Option<AccessorType>,
     pub indexes: Vec<Expression<S>>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArgumentExpr<S> {
+    pub arg_index: Box<Expression<S>>,
     pub span: Span,
 }
 
@@ -755,11 +763,13 @@ impl<S> Expression<S> {
             Expression::Call(call_expr) => call_expr.walk(visitor),
             Expression::Field(field_expr) => field_expr.walk(visitor),
             Expression::Index(index_expr) => index_expr.walk(visitor),
+            Expression::Argument(arg_expr) => arg_expr.walk(visitor),
             Expression::Ident(_)
             | Expression::Global(_)
             | Expression::This(_)
             | Expression::Other(_)
-            | Expression::Constant(..) => ControlFlow::Continue(()),
+            | Expression::Constant(..)
+            | Expression::ArgumentCount(_) => ControlFlow::Continue(()),
         }
     }
 
@@ -777,11 +787,13 @@ impl<S> Expression<S> {
             Expression::Call(call_expr) => call_expr.walk_mut(visitor),
             Expression::Field(field_expr) => field_expr.walk_mut(visitor),
             Expression::Index(index_expr) => index_expr.walk_mut(visitor),
+            Expression::Argument(arg_expr) => arg_expr.walk_mut(visitor),
             Expression::Ident(_)
             | Expression::Global(_)
             | Expression::This(_)
             | Expression::Other(_)
-            | Expression::Constant(..) => ControlFlow::Continue(()),
+            | Expression::Constant(..)
+            | Expression::ArgumentCount(_) => ControlFlow::Continue(()),
         }
     }
 
@@ -804,6 +816,8 @@ impl<S> Expression<S> {
             Expression::Call(call) => call.span,
             Expression::Field(field_expr) => field_expr.span,
             Expression::Index(index_expr) => index_expr.span,
+            Expression::Argument(arg_expr) => arg_expr.span,
+            Expression::ArgumentCount(span) => *span,
         }
     }
 }
@@ -1034,6 +1048,18 @@ impl<S> IndexExpr<S> {
         for expr in &mut self.indexes {
             visitor.visit_expr_mut(expr)?;
         }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<S> ArgumentExpr<S> {
+    pub fn walk<V: Visitor<S>>(&self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr(&self.arg_index)?;
+        ControlFlow::Continue(())
+    }
+
+    pub fn walk_mut<V: VisitorMut<S>>(&mut self, visitor: &mut V) -> ControlFlow<V::Break> {
+        visitor.visit_expr_mut(&mut self.arg_index)?;
         ControlFlow::Continue(())
     }
 }

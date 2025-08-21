@@ -24,8 +24,7 @@ pub struct RegisterAllocation {
 }
 
 impl RegisterAllocation {
-    /// Try and allocate registers for all temporary uses, instructions, shadow variables, and
-    /// scopes.
+    /// Try and allocate registers for all instructions and shadow variables.
     ///
     /// Will try to coalesce registers for shadow variables and the registers for the `Phi` /
     /// `Upsilon` instructions that read and write to them.
@@ -59,8 +58,8 @@ impl RegisterAllocation {
         // really are extensions of the fact that we do register assignment in a completely greedy
         // fashion.
 
-        let mut coalesced_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
         let mut shadow_registers = SecondaryMap::<ir::ShadowVar, RegIdx>::new();
+        let mut coalesced_instruction_registers = SecondaryMap::<ir::InstId, RegIdx>::new();
 
         for shadow_var in shadow_liveness.live_shadow_vars() {
             let mut interfering_registers = [0u8; 32];

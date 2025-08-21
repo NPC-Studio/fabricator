@@ -278,7 +278,9 @@ pub enum Instruction<S> {
     CloseThisScope(ThisScope),
     NewObject,
     NewArray,
-    Argument(usize),
+    FixedArgument(usize),
+    ArgumentCount,
+    Argument(InstId),
     GetField {
         object: InstId,
         key: InstId,
@@ -331,7 +333,7 @@ pub enum Instruction<S> {
         func: InstId,
         args: Vec<InstId>,
     },
-    GetReturn(CallScope, usize),
+    FixedReturn(CallScope, usize),
     CloseCall(CallScope),
 }
 
@@ -366,6 +368,7 @@ impl<S> Instruction<S> {
             &Instruction::SetVariable(_, source) => make_iter!([source]),
             &Instruction::SetMagic(_, source) => make_iter!([source]),
             &Instruction::SetThis(_, this) => make_iter!([this]),
+            &Instruction::Argument(ind) => make_iter!([ind]),
             &Instruction::GetField { object, key } => make_iter!([object, key]),
             &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -406,6 +409,7 @@ impl<S> Instruction<S> {
             Instruction::SetVariable(_, source) => make_iter!([source]),
             Instruction::SetMagic(_, source) => make_iter!([source]),
             Instruction::SetThis(_, this) => make_iter!([this]),
+            Instruction::Argument(ind) => make_iter!([ind]),
             Instruction::GetField { object, key } => make_iter!([object, key]),
             Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
             Instruction::GetFieldConst { object, .. } => make_iter!([object]),
@@ -430,55 +434,58 @@ impl<S> Instruction<S> {
 
     pub fn has_value(&self) -> bool {
         match self {
-            Instruction::Copy(..) => true,
-            Instruction::Undefined => true,
-            Instruction::Boolean(..) => true,
-            Instruction::Constant(..) => true,
-            Instruction::Closure(..) => true,
-            Instruction::GetVariable(..) => true,
-            Instruction::GetMagic(..) => true,
-            Instruction::Globals => true,
-            Instruction::This => true,
-            Instruction::Other => true,
-            Instruction::CurrentClosure => true,
-            Instruction::NewObject => true,
-            Instruction::NewArray => true,
-            Instruction::Argument(..) => true,
-            Instruction::GetField { .. } => true,
-            Instruction::GetFieldConst { .. } => true,
-            Instruction::GetIndex { .. } => true,
-            Instruction::GetIndexConst { .. } => true,
-            Instruction::Phi(..) => true,
-            Instruction::UnOp { .. } => true,
-            Instruction::BinOp { .. } => true,
-            Instruction::GetReturn(..) => true,
+            Instruction::Copy(..)
+            | Instruction::Undefined
+            | Instruction::Boolean(..)
+            | Instruction::Constant(..)
+            | Instruction::Closure(..)
+            | Instruction::GetVariable(..)
+            | Instruction::GetMagic(..)
+            | Instruction::Globals
+            | Instruction::This
+            | Instruction::Other
+            | Instruction::CurrentClosure
+            | Instruction::NewObject
+            | Instruction::NewArray
+            | Instruction::FixedArgument(..)
+            | Instruction::ArgumentCount
+            | Instruction::Argument(..)
+            | Instruction::GetField { .. }
+            | Instruction::GetFieldConst { .. }
+            | Instruction::GetIndex { .. }
+            | Instruction::GetIndexConst { .. }
+            | Instruction::Phi(..)
+            | Instruction::UnOp { .. }
+            | Instruction::BinOp { .. }
+            | Instruction::FixedReturn(..) => true,
             _ => false,
         }
     }
 
     pub fn has_effect(&self) -> bool {
         match self {
-            Instruction::OpenVariable(..) => true,
-            Instruction::SetVariable { .. } => true,
-            Instruction::CloseVariable(_) => true,
-            Instruction::GetMagic(..) => true,
-            Instruction::SetMagic(..) => true,
-            Instruction::OpenThisScope(..) => true,
-            Instruction::SetThis(..) => true,
-            Instruction::CloseThisScope(..) => true,
-            Instruction::GetField { .. } => true,
-            Instruction::SetField { .. } => true,
-            Instruction::GetFieldConst { .. } => true,
-            Instruction::SetFieldConst { .. } => true,
-            Instruction::GetIndex { .. } => true,
-            Instruction::SetIndex { .. } => true,
-            Instruction::GetIndexConst { .. } => true,
-            Instruction::SetIndexConst { .. } => true,
-            Instruction::Upsilon(..) => true,
-            Instruction::UnOp { .. } => true,
-            Instruction::BinOp { .. } => true,
-            Instruction::OpenCall { .. } => true,
-            Instruction::CloseCall(..) => true,
+            Instruction::OpenVariable(..)
+            | Instruction::SetVariable { .. }
+            | Instruction::CloseVariable(..)
+            | Instruction::GetMagic(..)
+            | Instruction::SetMagic(..)
+            | Instruction::OpenThisScope(..)
+            | Instruction::SetThis(..)
+            | Instruction::CloseThisScope(..)
+            | Instruction::Argument(..)
+            | Instruction::GetField { .. }
+            | Instruction::SetField { .. }
+            | Instruction::GetFieldConst { .. }
+            | Instruction::SetFieldConst { .. }
+            | Instruction::GetIndex { .. }
+            | Instruction::SetIndex { .. }
+            | Instruction::GetIndexConst { .. }
+            | Instruction::SetIndexConst { .. }
+            | Instruction::Upsilon(..)
+            | Instruction::UnOp { .. }
+            | Instruction::BinOp { .. }
+            | Instruction::OpenCall { .. }
+            | Instruction::CloseCall(..) => true,
             _ => false,
         }
     }
@@ -669,6 +676,12 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::NewArray => {
                         writeln!(f, "new_array()")?;
                     }
+                    Instruction::FixedArgument(ind) => {
+                        writeln!(f, "fixed_argument({ind})")?;
+                    }
+                    Instruction::ArgumentCount => {
+                        writeln!(f, "argument_count()")?;
+                    }
                     Instruction::Argument(ind) => {
                         writeln!(f, "argument({ind})")?;
                     }
@@ -788,7 +801,7 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         writeln!(f, "])")?;
                     }
-                    Instruction::GetReturn(scope, index) => {
+                    Instruction::FixedReturn(scope, index) => {
                         writeln!(f, "get_return({scope}, {})", index)?;
                     }
                     Instruction::CloseCall(scope) => {

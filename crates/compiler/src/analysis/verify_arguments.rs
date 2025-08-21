@@ -15,7 +15,7 @@ pub struct ArgumentVerificationError {
 pub fn verify_arguments<S>(ir: &ir::Function<S>) -> Result<(), ArgumentVerificationError> {
     for (block_id, block) in ir.blocks.iter() {
         for (inst_index, inst_id) in block.instructions.iter().copied().enumerate() {
-            if let ir::Instruction::Argument(index) = ir.instructions[inst_id] {
+            if let ir::Instruction::FixedArgument(index) = ir.instructions[inst_id] {
                 if index >= ir.num_parameters {
                     return Err(ArgumentVerificationError {
                         location: ir::InstLocation::new(block_id, inst_index),

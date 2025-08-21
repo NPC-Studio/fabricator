@@ -886,6 +886,17 @@ where
             TokenKind::Global => Ok(ast::Expression::Global(tok_span)),
             TokenKind::This => Ok(ast::Expression::This(tok_span)),
             TokenKind::Other => Ok(ast::Expression::Other(tok_span)),
+            TokenKind::Argument => {
+                // `argument` can ONLY be referenced like `argument[{index}]`.
+                self.parse_token(TokenKind::LeftBracket)?;
+                let arg_index = self.parse_expression()?;
+                let span = tok_span.combine(self.parse_token(TokenKind::RightBracket)?);
+                Ok(ast::Expression::Argument(ast::ArgumentExpr {
+                    arg_index: Box::new(arg_index),
+                    span,
+                }))
+            }
+            TokenKind::ArgumentCount => Ok(ast::Expression::ArgumentCount(tok_span)),
             token => Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     unexpected: token_indicator(&token),
@@ -1367,7 +1378,7 @@ fn get_accessor_type<S>(token: &TokenKind<S>) -> Option<ast::AccessorType> {
 fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
     match *t {
         TokenKind::EndOfStream => "<eof>",
-        TokenKind::Newline => "\n",
+        TokenKind::Newline => "<nl>",
         TokenKind::Macro => "#macro",
         TokenKind::LeftParen => "(",
         TokenKind::RightParen => ")",
@@ -1452,6 +1463,8 @@ fn token_indicator<S>(t: &TokenKind<S>) -> &'static str {
         TokenKind::This => "self",
         TokenKind::Other => "other",
         TokenKind::New => "new",
+        TokenKind::Argument => "argument",
+        TokenKind::ArgumentCount => "argument_count",
         TokenKind::Integer(_) => "<integer>",
         TokenKind::HexInteger(_) => "<hex_integer>",
         TokenKind::DollarHexInteger(_) => "<dollar_hex_integer>",
