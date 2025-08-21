@@ -10,7 +10,7 @@ use gc_arena::Gc;
 
 use crate::{
     api::{
-        collision::collision_api, drawing::drawing_api, magic::MagicExt as _,
+        collision::collision_api, drawing::drawing_api, magic::MagicExt as _, object::object_api,
         platform::platform_api, room::room_api,
     },
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
@@ -169,16 +169,22 @@ pub fn create_state(
 
         magic.merge_unique(&platform_api(ctx))?;
         magic.merge_unique(&collision_api(ctx))?;
+        magic.merge_unique(&object_api(ctx, &config)?)?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
 
         let magic = Gc::new(&ctx, magic);
 
-        let mut code_buf = String::new();
-
         let mut script_compiler =
             compiler::Compiler::new(ctx, config_name, compiler::ImportItems::from_magic(magic));
-        for script in project.scripts.values() {
+
+        let mut scripts = project.scripts.values().collect::<Vec<_>>();
+
+        // Compile scripts in a deterministic order (lexicographically sorted by name).
+        scripts.sort_by_key(|s| &s.name);
+
+        let mut code_buf = String::new();
+        for script in scripts {
             code_buf.clear();
             File::open(&script.path)?.read_to_string(&mut code_buf)?;
             script_compiler.add_chunk(
