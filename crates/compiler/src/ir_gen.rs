@@ -480,6 +480,12 @@ where
         } else {
             self.push_instruction(body.span, ir::Instruction::NewObject)
         };
+        // Our whole constructor body, including all static initializers, exists inside a single
+        // "this" scope.
+
+        let this_scope = self.function.this_scopes.insert(());
+        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
+        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
 
         // Set the super-table as the parent object for the `self` value.
 
@@ -604,12 +610,6 @@ where
         self.start_new_block(main_block);
 
         self.push_scope();
-
-        // Our whole constructor body exists inside a single "this" scope.
-
-        let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
-        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
 
         for stmt in &body.statements {
             match stmt {

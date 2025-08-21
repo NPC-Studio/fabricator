@@ -208,7 +208,7 @@ macro_rules! impl_int_from {
         )*
     };
 }
-impl_int_from!(i64, u64, i32, u32, i16, u16, i8, u8);
+impl_int_from!(isize, usize, i64, u64, i32, u32, i16, u16, i8, u8);
 
 macro_rules! impl_float_from {
     ($($f:ty),* $(,)?) => {

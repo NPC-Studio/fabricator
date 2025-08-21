@@ -185,16 +185,19 @@ pub struct Execution<'gc, 'a> {
 
 impl<'gc, 'a> Execution<'gc, 'a> {
     /// Return a slice of the current call stack containing callback arguments and returns.
+    #[inline]
     pub fn stack(&mut self) -> Stack<'gc, '_> {
         Stack::new(&mut self.thread.stack, self.stack_bottom)
     }
 
     /// Return the current `this` value.
+    #[inline]
     pub fn this(&self) -> Value<'gc> {
         self.this
     }
 
     /// Return the current `other` value.
+    #[inline]
     pub fn other(&self) -> Value<'gc> {
         self.other
     }

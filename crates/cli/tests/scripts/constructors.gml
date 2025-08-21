@@ -17,11 +17,15 @@ assert(t2.bar == 2);
 function Test3(b) constructor {
     static foo = 1;
     bar = b;
+    static a_method = function() {
+        return self.bar;
+    };
 }
 
 var t3 = new Test3(3);
 assert(t3.foo == 1);
 assert(t3.bar == 3);
+assert(t3.a_method() == 3);
 
 function Test4(b, c): Test3(b) constructor {
     static baz = 3;

@@ -25,6 +25,10 @@ impl<'gc> Array<'gc> {
         Self(Gc::new(mc, RefLock::new(Vec::with_capacity(capacity))))
     }
 
+    pub fn from_iter(mc: &Mutation<'gc>, iter: impl IntoIterator<Item = Value<'gc>>) -> Self {
+        Self(Gc::new(mc, RefLock::new(Vec::from_iter(iter))))
+    }
+
     #[inline]
     pub fn from_inner(inner: Gc<'gc, ArrayInner<'gc>>) -> Self {
         Self(inner)
@@ -37,6 +41,10 @@ impl<'gc> Array<'gc> {
 
     pub fn len(self) -> usize {
         self.0.borrow().len()
+    }
+
+    pub fn resize(self, mc: &Mutation<'gc>, new_len: usize, value: Value<'gc>) {
+        self.0.borrow_mut(mc).resize(new_len, value);
     }
 
     pub fn is_empty(self) -> bool {
