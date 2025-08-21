@@ -20,8 +20,23 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // Dead code elimination algorithm from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
+    // Find all of the (forward) reachable blocks and number them according to a topological
+    // ordering. We will use this to find back-edges.
+
+    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
+    let topological_ordering = reachable_blocks
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, block_id)| (block_id.index() as usize, i))
+        .collect::<IndexMap<_>>();
+
+    // We ignore (forward) unreachable blocks in analysis, since they must only contain dead conde.
+    let block_is_reachable = |id: ir::BlockId| topological_ordering.contains(id.index() as usize);
+
     // Normally blocks don't have a shared "exit" block, so in order to calculate the post-dominator
-    // tree, we need to create an exit node that is a successor to every block that returns.
+    // tree, we need to create an exit node that is a successor to every block that exits the
+    // function.
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     enum RevNode {
         Exit,
@@ -37,30 +52,24 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.successors());
+    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| {
+        ir.blocks[b]
+            .exit
+            .successors()
+            .filter(|&b| block_is_reachable(b))
+    });
 
     let mut exit_blocks = ir
         .blocks
         .iter()
         .filter_map(|(block_id, block)| {
-            if block.exit.exits_function() {
+            if block_is_reachable(block_id) && block.exit.exits_function() {
                 Some(block_id)
             } else {
                 None
             }
         })
         .collect::<Vec<_>>();
-
-    fn rev_successors(
-        node: RevNode,
-        predecessors: &Predecessors<ir::BlockId>,
-        exit_blocks: impl IntoIterator<Item = ir::BlockId>,
-    ) -> impl Iterator<Item = RevNode> {
-        match node {
-            RevNode::Exit => Either::Left(exit_blocks.into_iter().map(RevNode::Node)),
-            RevNode::Node(block_id) => Either::Right(predecessors.get(block_id).map(RevNode::Node)),
-        }
-    }
 
     // Unlike in Cytron et al., we have two types of instructions: regular instructions and branch
     // instructions. Our worklist must allow for both.
@@ -82,10 +91,12 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // loop. Since an infinite loop is an effect, we mark all of these blocks with back-edges as
     // having live branches.
     //
-    // Additionally, we may have blocks that are *unreachable* from our synthetic exit node due to
-    // being in an infinite loop with no exit. For these blocks, any block with a back-edge is added
+    // Additionally, we may have blocks that are (reverse) *unreachable* from our synthetic exit
+    // node due to being in an infinite loop with no exit. Any such block with a back-edge is added
     // to `exit_blocks`, to ensure that every block is reachable from the synthetic exit node.
 
+    // We're filtering out blocks that are not also *forward* reachable here, since we know they
+    // only contain dead code.
     let mut reverse_reachable_blocks = IndexSet::new();
     depth_first_search(
         RevNode::Exit,
@@ -93,18 +104,16 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
             if let RevNode::Node(n) = node {
                 reverse_reachable_blocks.insert(n.index() as usize);
             }
-            rev_successors(node, &predecessors, exit_blocks.iter().copied())
+
+            match node {
+                RevNode::Exit => Either::Left(exit_blocks.iter().copied().map(RevNode::Node)),
+                RevNode::Node(block_id) => {
+                    Either::Right(predecessors.get(block_id).map(RevNode::Node))
+                }
+            }
         },
         |_| {},
     );
-
-    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
-    let topological_ordering = reachable_blocks
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(i, block_id)| (block_id.index() as usize, i))
-        .collect::<IndexMap<_>>();
 
     for &block_id in &reachable_blocks {
         let topological_number = topological_ordering[block_id.index() as usize];
@@ -117,9 +126,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
             live_branches.insert(block_id.index() as usize);
             worklist.push(Work::Branch(block_id));
 
-            // For every unreachable block with a back-edge, add a link to the synthetic exit. This
-            // makes every block reachable from the synthetic exit and gives us *some* information
-            // about control dependencies within infinite loops.
+            // For every reverse unreachable block with a back-edge, add a link to the synthetic
+            // exit. This makes every block reachable from the synthetic exit and gives us *some*
+            // information about control dependencies within infinite loops.
             //
             // This is what major compilers do, see: https://reviews.llvm.org/D29705
             if !reverse_reachable_blocks.contains(block_id.index() as usize) {
@@ -138,8 +147,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     }
 
     // We will need the post-dominance frontier to determine control-flow dependence.
-    let post_dominators = Dominators::compute(RevNode::Exit, |node| {
-        rev_successors(node, &predecessors, exit_blocks.iter().copied())
+    let post_dominators = Dominators::compute(RevNode::Exit, |node| match node {
+        RevNode::Exit => Either::Left(exit_blocks.iter().copied().map(RevNode::Node)),
+        RevNode::Node(block_id) => Either::Right(predecessors.get(block_id).map(RevNode::Node)),
     });
 
     // We need to add all live instructions to the work queue. First do two things...
