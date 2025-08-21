@@ -155,19 +155,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
         if let ir::Exit::Return { .. } = block.exit {
             needs_to_save(ir.instructions.len())?;
         }
-
-        // If we have an instruction that reads the argument count, we need to at *least* save the
-        // bottom-level stack top value (which is the argument count).
-        for &inst_id in &block.instructions {
-            match ir.instructions[inst_id] {
-                ir::Instruction::ArgumentCount => {
-                    if saved_stack_top_registers.is_empty() {
-                        saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     let get_current_stack_top_register =
@@ -407,13 +394,22 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     ));
                 }
                 ir::Instruction::ArgumentCount => {
-                    vm_instructions.push((
-                        Instruction::Copy {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                            source: saved_stack_top_registers[0],
-                        },
-                        span,
-                    ));
+                    if saved_stack_top_registers.is_empty() {
+                        vm_instructions.push((
+                            Instruction::StackTop {
+                                dest: reg_alloc.instruction_registers[inst_id],
+                            },
+                            span,
+                        ));
+                    } else {
+                        vm_instructions.push((
+                            Instruction::Copy {
+                                dest: reg_alloc.instruction_registers[inst_id],
+                                source: saved_stack_top_registers[0],
+                            },
+                            span,
+                        ));
+                    }
                 }
                 ir::Instruction::Argument(index) => {
                     vm_instructions.push((
