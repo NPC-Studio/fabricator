@@ -361,6 +361,9 @@ where
                 match self.string_buffer.as_str() {
                     "mod" => TokenKind::Mod,
                     "div" => TokenKind::Div,
+                    "and" => TokenKind::And,
+                    "or" => TokenKind::Or,
+                    "xor" => TokenKind::Xor,
                     "enum" => TokenKind::Enum,
                     "function" => TokenKind::Function,
                     "constructor" => TokenKind::Constructor,
