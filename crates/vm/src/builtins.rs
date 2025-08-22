@@ -169,8 +169,8 @@ impl<'gc> BuiltIns<'gc> {
                     match target {
                         Value::Object(object) => {
                             // Objects are a loop with one iteration of the object.
-                            exec.stack().push_back(singleton_iter.into());
-                            exec.stack().push_back(object.into());
+                            exec.stack().push_back(singleton_iter);
+                            exec.stack().push_back(object);
                             Ok(())
                         }
                         Value::UserData(user_data) => {
@@ -195,37 +195,37 @@ impl<'gc> BuiltIns<'gc> {
 
         magic.insert(
             ctx.intern(Self::METHOD),
-            MagicConstant::new_ptr(&ctx, self.method.into()),
+            MagicConstant::new_ptr(&ctx, self.method),
         );
 
         magic.insert(
             ctx.intern(Self::PCALL),
-            MagicConstant::new_ptr(&ctx, self.pcall.into()),
+            MagicConstant::new_ptr(&ctx, self.pcall),
         );
 
         magic.insert(
             ctx.intern(Self::GET_SUPER),
-            MagicConstant::new_ptr(&ctx, self.get_super.into()),
+            MagicConstant::new_ptr(&ctx, self.get_super),
         );
 
         magic.insert(
             ctx.intern(Self::SET_SUPER),
-            MagicConstant::new_ptr(&ctx, self.set_super.into()),
+            MagicConstant::new_ptr(&ctx, self.set_super),
         );
 
         magic.insert(
             ctx.intern(Self::INIT_CONSTRUCTOR_SUPER),
-            MagicConstant::new_ptr(&ctx, self.init_constructor_super.into()),
+            MagicConstant::new_ptr(&ctx, self.init_constructor_super),
         );
 
         magic.insert(
             ctx.intern(Self::GET_CONSTRUCTOR_SUPER),
-            MagicConstant::new_ptr(&ctx, self.get_constructor_super.into()),
+            MagicConstant::new_ptr(&ctx, self.get_constructor_super),
         );
 
         magic.insert(
             ctx.intern(Self::WITH_LOOP_ITER),
-            MagicConstant::new_ptr(&ctx, self.with_loop_iter.into()),
+            MagicConstant::new_ptr(&ctx, self.with_loop_iter),
         );
 
         magic

@@ -1,10 +1,10 @@
-use std::{borrow::Borrow, fmt, ops::Deref, string::String as StdString};
+use std::{borrow::Borrow, fmt, ops::Deref, sync::Arc};
 
 use gc_arena::{Collect, Gc, Mutation};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(no_drop)]
-pub struct String<'gc>(Gc<'gc, StdString>);
+pub struct String<'gc>(Gc<'gc, Arc<str>>);
 
 impl<'gc> fmt::Display for String<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -14,11 +14,15 @@ impl<'gc> fmt::Display for String<'gc> {
 
 impl<'gc> String<'gc> {
     pub fn new(mc: &Mutation<'gc>, s: &str) -> String<'gc> {
-        String(Gc::new(mc, s.to_owned()))
+        String(Gc::new(mc, s.to_owned().into_boxed_str().into()))
     }
 
     pub fn as_str(self) -> &'gc str {
-        self.0.as_ref().as_str()
+        self.0.as_ref().as_ref()
+    }
+
+    pub fn as_shared_str(self) -> &'gc Arc<str> {
+        self.0.as_ref()
     }
 }
 

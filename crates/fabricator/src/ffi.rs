@@ -89,7 +89,7 @@ impl<'gc> vm::FromValue<'gc> for Pointer {
 impl<'gc> vm::IntoValue<'gc> for Pointer {
     fn into_value(self, ctx: vm::Context<'gc>) -> vm::Value<'gc> {
         let c_str = unsafe { CStr::from_ptr(self.0 as *const _) };
-        vm::Value::String(ctx.intern(c_str.to_string_lossy().as_ref()))
+        ctx.intern(c_str.to_string_lossy().as_ref()).into()
     }
 }
 

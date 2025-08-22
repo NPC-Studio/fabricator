@@ -25,7 +25,7 @@ pub use self::{
     closure::{Closure, Constant, Prototype},
     conversion::{FromMultiValue, FromValue, IntoMultiValue, IntoValue, TypeError, Variadic},
     debug::{Chunk, FunctionRef, LineNumber, RefName, Span},
-    error::{Error, ExternError, ExternScriptError, RuntimeError, ScriptError},
+    error::{Error, ExternError, ExternScriptError, ExternValue, RuntimeError, ScriptError},
     instructions::ByteCode,
     interpreter::{Context, Interpreter},
     magic::{Magic, MagicSet},

@@ -40,7 +40,7 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                 State::ctx_with_mut(ctx, |root| -> Result<_, Error> {
                     let instance = root.instances.get_mut(id).context("expired instance")?;
                     instance.position[0] = val
-                        .to_float()
+                        .cast_float()
                         .ok_or_else(|| Error::msg("field must be set to number"))?;
                     Ok(())
                 })?
@@ -59,7 +59,7 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                 State::ctx_with_mut(ctx, |root| -> Result<_, Error> {
                     let instance = root.instances.get_mut(id).context("expired instance")?;
                     instance.position[1] = val
-                        .to_float()
+                        .cast_float()
                         .ok_or_else(|| Error::msg("field must be set to number"))?;
                     Ok(())
                 })?
@@ -78,7 +78,7 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                 State::ctx_with_mut(ctx, |root| -> Result<_, Error> {
                     let instance = root.instances.get_mut(id).context("expired instance")?;
                     let angle_deg = val
-                        .to_float()
+                        .cast_float()
                         .ok_or_else(|| Error::msg("field must be set to number"))?;
                     instance.rotation = -angle_deg.to_radians() % (f64::consts::PI * 2.0);
                     Ok(())

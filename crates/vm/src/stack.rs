@@ -50,12 +50,12 @@ impl<'gc, 'a> Stack<'gc, 'a> {
             .unwrap_or_default()
     }
 
-    pub fn push_back(&mut self, value: Value<'gc>) {
-        self.values.push(value);
+    pub fn push_back(&mut self, value: impl Into<Value<'gc>>) {
+        self.values.push(value.into());
     }
 
-    pub fn push_front(&mut self, value: Value<'gc>) {
-        self.values.insert(self.bottom, value);
+    pub fn push_front(&mut self, value: impl Into<Value<'gc>>) {
+        self.values.insert(self.bottom, value.into());
     }
 
     pub fn pop_back(&mut self) -> Option<Value<'gc>> {

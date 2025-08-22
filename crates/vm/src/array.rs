@@ -39,27 +39,32 @@ impl<'gc> Array<'gc> {
         self.0
     }
 
+    #[inline]
     pub fn len(self) -> usize {
         self.0.borrow().len()
     }
 
-    pub fn resize(self, mc: &Mutation<'gc>, new_len: usize, value: Value<'gc>) {
-        self.0.borrow_mut(mc).resize(new_len, value);
+    #[inline]
+    pub fn resize(self, mc: &Mutation<'gc>, new_len: usize, value: impl Into<Value<'gc>>) {
+        self.0.borrow_mut(mc).resize(new_len, value.into());
     }
 
+    #[inline]
     pub fn is_empty(self) -> bool {
         self.0.borrow().is_empty()
     }
 
+    #[inline]
     pub fn get(self, index: usize) -> Value<'gc> {
         self.0.borrow().get(index).copied().unwrap_or_default()
     }
 
-    pub fn set(self, mc: &Mutation<'gc>, index: usize, value: Value<'gc>) {
+    #[inline]
+    pub fn set(self, mc: &Mutation<'gc>, index: usize, value: impl Into<Value<'gc>>) {
         let mut this = self.0.borrow_mut(mc);
         if index >= this.len() {
             this.resize(index + 1, Value::Undefined);
         }
-        this[index] = value;
+        this[index] = value.into();
     }
 }

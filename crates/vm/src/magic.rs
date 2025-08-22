@@ -6,7 +6,7 @@ use std::{
 use gc_arena::{Collect, Gc, Mutation, barrier};
 use thiserror::Error;
 
-use crate::{error::Error, interpreter::Context, string::String, value::Value};
+use crate::{error::RuntimeError, interpreter::Context, string::String, value::Value};
 
 #[derive(Debug, Error)]
 #[error("cannot write to a read only magic value")]
@@ -25,9 +25,9 @@ pub struct MagicReadOnly;
 /// Magic variables can optionally be writeable. This does not *replace* the magic value like would
 /// occur normally in FML, instead it triggers a write callback for that particular magic value.
 pub trait Magic<'gc> {
-    fn get(&self, ctx: Context<'gc>) -> Result<Value<'gc>, Error<'gc>>;
+    fn get(&self, ctx: Context<'gc>) -> Result<Value<'gc>, RuntimeError>;
 
-    fn set(&self, _ctx: Context<'gc>, _value: Value<'gc>) -> Result<(), Error<'gc>> {
+    fn set(&self, _ctx: Context<'gc>, _value: Value<'gc>) -> Result<(), RuntimeError> {
         Err(MagicReadOnly.into())
     }
 
@@ -43,17 +43,17 @@ pub trait Magic<'gc> {
 pub struct MagicConstant<'gc>(Value<'gc>);
 
 impl<'gc> MagicConstant<'gc> {
-    pub fn new(value: Value<'gc>) -> Self {
-        Self(value)
+    pub fn new(value: impl Into<Value<'gc>>) -> Self {
+        Self(value.into())
     }
 
-    pub fn new_ptr(mc: &Mutation<'gc>, value: Value<'gc>) -> Gc<'gc, dyn Magic<'gc>> {
+    pub fn new_ptr(mc: &Mutation<'gc>, value: impl Into<Value<'gc>>) -> Gc<'gc, dyn Magic<'gc>> {
         gc_arena::unsize!(Gc::new(mc, Self::new(value)) => dyn Magic)
     }
 }
 
 impl<'gc> Magic<'gc> for MagicConstant<'gc> {
-    fn get(&self, _ctx: Context<'gc>) -> Result<Value<'gc>, Error<'gc>> {
+    fn get(&self, _ctx: Context<'gc>) -> Result<Value<'gc>, RuntimeError> {
         Ok(self.0)
     }
 }

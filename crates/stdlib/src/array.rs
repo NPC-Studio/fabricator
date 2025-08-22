@@ -15,7 +15,7 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_create"),
-        MagicConstant::new_ptr(&ctx, array_create.into()),
+        MagicConstant::new_ptr(&ctx, array_create),
     );
 
     let array_create_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -33,7 +33,7 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_create_ext"),
-        MagicConstant::new_ptr(&ctx, array_create_ext.into()),
+        MagicConstant::new_ptr(&ctx, array_create_ext),
     );
 
     let array_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -44,6 +44,6 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_length"),
-        MagicConstant::new_ptr(&ctx, array_length.into()),
+        MagicConstant::new_ptr(&ctx, array_length),
     );
 }

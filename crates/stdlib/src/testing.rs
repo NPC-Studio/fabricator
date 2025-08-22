@@ -7,16 +7,13 @@ pub fn testing_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     let assert = vm::Callback::from_fn(&ctx, |_, mut exec| {
         let stack = exec.stack();
         for i in 0..stack.len() {
-            if !stack.get(i).to_bool() {
+            if !stack.get(i).cast_bool() {
                 return Err("assert failed".into());
             }
         }
         Ok(())
     });
-    lib.insert(
-        ctx.intern("assert"),
-        MagicConstant::new_ptr(&ctx, assert.into()),
-    );
+    lib.insert(ctx.intern("assert"), MagicConstant::new_ptr(&ctx, assert));
 
     let print = vm::Callback::from_fn(&ctx, |_, mut exec| {
         let stack = exec.stack();
@@ -29,14 +26,11 @@ pub fn testing_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
         println!();
         Ok(())
     });
-    lib.insert(
-        ctx.intern("print"),
-        MagicConstant::new_ptr(&ctx, print.into()),
-    );
+    lib.insert(ctx.intern("print"), MagicConstant::new_ptr(&ctx, print));
 
     let black_box = vm::Callback::from_fn(&ctx, |_, _| Ok(()));
     lib.insert(
         ctx.intern("black_box"),
-        MagicConstant::new_ptr(&ctx, black_box.into()),
+        MagicConstant::new_ptr(&ctx, black_box),
     );
 }

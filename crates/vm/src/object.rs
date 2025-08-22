@@ -70,9 +70,9 @@ impl<'gc> Object<'gc> {
         self,
         mc: &Mutation<'gc>,
         key: String<'gc>,
-        value: Value<'gc>,
+        value: impl Into<Value<'gc>>,
     ) -> Option<Value<'gc>> {
-        self.0.borrow_mut(mc).map.insert(key, value)
+        self.0.borrow_mut(mc).map.insert(key, value.into())
     }
 
     pub fn parent(self) -> Option<Object<'gc>> {

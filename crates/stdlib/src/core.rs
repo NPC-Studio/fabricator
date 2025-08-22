@@ -24,14 +24,11 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
         exec.stack().replace(ctx, ctx.intern(type_name));
         Ok(())
     });
-    lib.insert(
-        ctx.intern("typeof"),
-        MagicConstant::new_ptr(&ctx, typeof_.into()),
-    );
+    lib.insert(ctx.intern("typeof"), MagicConstant::new_ptr(&ctx, typeof_));
 
     let int64 = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: vm::Value = exec.stack().consume(ctx)?;
-        let int = if let Some(i) = arg.to_integer() {
+        let int = if let Some(i) = arg.cast_integer() {
             i
         } else if let vm::Value::String(i) = arg {
             i.parse()?
@@ -45,10 +42,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
         exec.stack().replace(ctx, int);
         Ok(())
     });
-    lib.insert(
-        ctx.intern("int64"),
-        MagicConstant::new_ptr(&ctx, int64.into()),
-    );
+    lib.insert(ctx.intern("int64"), MagicConstant::new_ptr(&ctx, int64));
 
     let ord = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: vm::String = exec.stack().consume(ctx)?;
@@ -60,43 +54,43 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
         exec.stack().replace(ctx, c.unwrap() as i64);
         Ok(())
     });
-    lib.insert(ctx.intern("ord"), MagicConstant::new_ptr(&ctx, ord.into()));
+    lib.insert(ctx.intern("ord"), MagicConstant::new_ptr(&ctx, ord));
 
     lib.insert(
         ctx.intern("os_type"),
-        MagicConstant::new_ptr(&ctx, ctx.intern(env::consts::OS).into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern(env::consts::OS)),
     );
     lib.insert(
         ctx.intern("os_windows"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("windows").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("windows")),
     );
     lib.insert(
         ctx.intern("os_macosx"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("macos").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("macos")),
     );
     lib.insert(
         ctx.intern("os_linux"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("linux").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("linux")),
     );
     lib.insert(
         ctx.intern("os_switch"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("switch").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("switch")),
     );
     lib.insert(
         ctx.intern("os_ps4"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("ps4").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("ps4")),
     );
     lib.insert(
         ctx.intern("os_ps5"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("ps5").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("ps5")),
     );
     lib.insert(
         ctx.intern("os_gdk"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("gdk").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("gdk")),
     );
     lib.insert(
         ctx.intern("os_xboxseriesx"),
-        MagicConstant::new_ptr(&ctx, ctx.intern("xboxseriesx").into()),
+        MagicConstant::new_ptr(&ctx, ctx.intern("xboxseriesx")),
     );
 }
 

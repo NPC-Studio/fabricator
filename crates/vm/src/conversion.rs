@@ -179,6 +179,12 @@ impl<'gc> FromValue<'gc> for Value<'gc> {
     }
 }
 
+impl<'gc> FromValue<'gc> for bool {
+    fn from_value(_ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        Ok(value.cast_bool())
+    }
+}
+
 macro_rules! impl_int_from {
     ($($i:ty),* $(,)?) => {
         $(
@@ -188,7 +194,7 @@ macro_rules! impl_int_from {
                     _: Context<'gc>,
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
-                    if let Some(i) = value.to_integer() {
+                    if let Some(i) = value.cast_integer() {
                         if let Ok(i) = <$i>::try_from(i) {
                             Ok(i)
                         } else {
@@ -218,7 +224,7 @@ macro_rules! impl_float_from {
                     _: Context<'gc>,
                     value: Value<'gc>,
                 ) -> Result<Self, TypeError> {
-                    if let Some(n) = value.to_float() {
+                    if let Some(n) = value.cast_float() {
                         Ok(n as $f)
                     } else {
                         Err(TypeError {
@@ -256,13 +262,24 @@ macro_rules! impl_from {
     };
 }
 impl_from! {
-    [Boolean bool],
-    [String String<'gc>],
     [Object Object<'gc>],
     [Array Array<'gc>],
     [Closure Closure<'gc>],
     [Callback Callback<'gc>],
     [UserData UserData<'gc>],
+}
+
+impl<'gc> FromValue<'gc> for String<'gc> {
+    fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        if let Some(s) = value.cast_string(ctx) {
+            Ok(s)
+        } else {
+            Err(TypeError {
+                expected: "string",
+                found: value.type_name(),
+            })
+        }
+    }
 }
 
 impl<'gc> FromValue<'gc> for Function<'gc> {

@@ -1,4 +1,4 @@
-use std::{fmt, mem, ops::ControlFlow, string::String as StdString};
+use std::{fmt, mem, ops::ControlFlow};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
@@ -7,7 +7,7 @@ use crate::{
     array::Array,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
-    error::{Error, ExternError, RuntimeError, ScriptError},
+    error::{Error, ExternError, ExternValue, RuntimeError, ScriptError},
     instructions::{self, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
@@ -18,37 +18,41 @@ use crate::{
 
 #[derive(Debug, Clone, Error)]
 pub enum OpError {
-    #[error("bad unary op")]
-    BadUnOp {
-        op: &'static str,
-        target_ty: &'static str,
-    },
-    #[error("bad binary op")]
+    #[error("bad unary op {op:?} {arg:?}")]
+    BadUnOp { op: &'static str, arg: ExternValue },
+    #[error("bad binary op {left:?} {op:?} {right:?}")]
     BadBinOp {
         op: &'static str,
-        left_ty: &'static str,
-        right_ty: &'static str,
+        left: ExternValue,
+        right: ExternValue,
     },
-    #[error("bad object type {obj_ty:?}")]
-    BadObject { obj_ty: &'static str },
-    #[error("bad key type {key_ty:?}")]
-    BadKey { key_ty: &'static str },
-    #[error("bad array type {array_ty:?}")]
-    BadArray { array_ty: &'static str },
-    #[error("bad index of type {target_ty:?}: {index_desc}")]
+    #[error("bad object {object:?}")]
+    BadObject { object: ExternValue },
+    #[error("bad key {key:?}")]
+    BadKey { key: ExternValue },
+    #[error("bad array {array:?}")]
+    BadArray { array: ExternValue },
+    #[error("bad index {index:?} of {target:?}")]
     BadIndex {
-        target_ty: &'static str,
-        index_desc: &'static str,
+        target: ExternValue,
+        index: ExternValue,
     },
-    #[error("no such field {field:?} in object of type {target_ty:?}")]
+    #[error("{target:?} does not allow multi-indexing")]
+    BadMultiIndex { target: ExternValue },
+    #[error("no such field {field:?} in {target:?}")]
     NoSuchField {
-        target_ty: &'static str,
-        field: StdString,
+        target: ExternValue,
+        field: ExternValue,
     },
-    #[error("bad call of type {target_ty:?}")]
-    BadCall { target_ty: &'static str },
-    #[error("bad stack index: {index_desc}")]
-    BadStackIdx { index_desc: &'static str },
+    #[error("bad call of {target:?}")]
+    BadCall { target: &'static str },
+    #[error("bad stack index {index}")]
+    BadStackIdx { index: ExternValue },
+    #[error("bad stack index {index} and offset {offset}")]
+    BadStackIdxOffset {
+        index: ExternValue,
+        offset: ExternValue,
+    },
 }
 
 #[derive(Debug)]
@@ -488,12 +492,12 @@ struct Dispatch<'gc, 'a> {
 
 impl<'gc, 'a> Dispatch<'gc, 'a> {
     #[inline]
-    fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error<'gc>> {
+    fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, RuntimeError> {
         match obj {
             Value::Object(object) => object.get(key).ok_or_else(|| {
                 OpError::NoSuchField {
-                    target_ty: obj.type_name(),
-                    field: key.as_str().to_owned(),
+                    target: obj.into(),
+                    field: Value::from(key).into(),
                 }
                 .into()
             }),
@@ -501,16 +505,10 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 if let Some(methods) = user_data.methods() {
                     Ok(methods.get_field(self.ctx, user_data, key)?)
                 } else {
-                    Err(OpError::BadObject {
-                        obj_ty: obj.type_name(),
-                    }
-                    .into())
+                    Err(OpError::BadObject { object: obj.into() }.into())
                 }
             }
-            _ => Err(OpError::BadObject {
-                obj_ty: obj.type_name(),
-            }
-            .into()),
+            _ => Err(OpError::BadObject { object: obj.into() }.into()),
         }
     }
 
@@ -520,7 +518,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         obj: Value<'gc>,
         key: String<'gc>,
         value: Value<'gc>,
-    ) -> Result<(), Error<'gc>> {
+    ) -> Result<(), RuntimeError> {
         match obj {
             Value::Object(object) => {
                 object.set(&self.ctx, key, value);
@@ -529,17 +527,11 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 if let Some(methods) = user_data.methods() {
                     methods.set_field(self.ctx, user_data, key, value)?;
                 } else {
-                    return Err(OpError::BadObject {
-                        obj_ty: obj.type_name(),
-                    }
-                    .into());
+                    return Err(OpError::BadObject { object: obj.into() }.into());
                 }
             }
             _ => {
-                return Err(OpError::BadObject {
-                    obj_ty: obj.type_name(),
-                }
-                .into());
+                return Err(OpError::BadObject { object: obj.into() }.into());
             }
         }
 
@@ -551,20 +543,19 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         &self,
         target: Value<'gc>,
         indexes: &[Value<'gc>],
-    ) -> Result<Value<'gc>, Error<'gc>> {
+    ) -> Result<Value<'gc>, RuntimeError> {
         match target {
             Value::Object(object) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "multiple indexes",
+                    return Err(OpError::BadMultiIndex {
+                        target: target.into(),
                     }
                     .into());
                 }
-                let Value::String(index) = indexes[0] else {
+                let Some(index) = indexes[0].cast_string(self.ctx) else {
                     return Err(OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "non-string index",
+                        target: target.into(),
+                        index: indexes[0].into(),
                     }
                     .into());
                 };
@@ -572,18 +563,17 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
             }
             Value::Array(array) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "multiple indexes",
+                    return Err(OpError::BadMultiIndex {
+                        target: target.into(),
                     }
                     .into());
                 }
                 let index = indexes[0]
-                    .to_integer()
+                    .cast_integer()
                     .and_then(|i| i.try_into().ok())
                     .ok_or_else(|| OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "non-numeric index",
+                        target: target.into(),
+                        index: indexes[0].into(),
                     })?;
                 Ok(array.get(index))
             }
@@ -592,13 +582,13 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     Ok(methods.get_index(self.ctx, user_data, indexes)?)
                 } else {
                     Err(OpError::BadArray {
-                        array_ty: target.type_name(),
+                        array: target.into(),
                     }
                     .into())
                 }
             }
             _ => Err(OpError::BadArray {
-                array_ty: target.type_name(),
+                array: target.into(),
             }
             .into()),
         }
@@ -610,23 +600,39 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         target: Value<'gc>,
         indexes: &[Value<'gc>],
         value: Value<'gc>,
-    ) -> Result<(), Error<'gc>> {
+    ) -> Result<(), RuntimeError> {
         match target {
+            Value::Object(object) => {
+                if indexes.len() != 1 {
+                    return Err(OpError::BadMultiIndex {
+                        target: target.into(),
+                    }
+                    .into());
+                }
+                let Some(index) = indexes[0].cast_string(self.ctx) else {
+                    return Err(OpError::BadIndex {
+                        target: target.into(),
+                        index: indexes[0].into(),
+                    }
+                    .into());
+                };
+                object.set(&self.ctx, index, value);
+                Ok(())
+            }
             Value::Array(array) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "multiple indexes",
+                    return Err(OpError::BadMultiIndex {
+                        target: target.into(),
                     }
                     .into());
                 }
 
                 let index = indexes[0]
-                    .to_integer()
+                    .cast_integer()
                     .and_then(|i| i.try_into().ok())
                     .ok_or_else(|| OpError::BadIndex {
-                        target_ty: target.type_name(),
-                        index_desc: "non-numeric index",
+                        target: target.into(),
+                        index: indexes[0].into(),
                     })?;
                 array.set(&self.ctx, index, value);
                 Ok(())
@@ -636,13 +642,13 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     Ok(methods.set_index(self.ctx, user_data, indexes, value)?)
                 } else {
                     Err(OpError::BadArray {
-                        array_ty: target.type_name(),
+                        array: target.into(),
                     }
                     .into())
                 }
             }
             _ => Err(OpError::BadArray {
-                array_ty: target.type_name(),
+                array: target.into(),
             }
             .into()),
         }
@@ -795,9 +801,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn get_field(&mut self, dest: RegIdx, object: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
         let key_val = self.registers[key as usize];
-        let Value::String(key) = key_val else {
+        let Some(key) = key_val.cast_string(self.ctx) else {
             return Err(OpError::BadKey {
-                key_ty: key_val.type_name(),
+                key: key_val.into(),
             }
             .into());
         };
@@ -809,17 +815,17 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn set_field(&mut self, object: RegIdx, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
         let key_val = self.registers[key as usize];
-        let Value::String(key) = self.registers[key as usize] else {
+        let Some(key) = key_val.cast_string(self.ctx) else {
             return Err(OpError::BadKey {
-                key_ty: key_val.type_name(),
+                key: key_val.into(),
             }
             .into());
         };
-        self.do_set_field(
+        Ok(self.do_set_field(
             self.registers[object as usize],
             key,
             self.registers[value as usize],
-        )
+        )?)
     }
 
     #[inline]
@@ -846,11 +852,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let Constant::String(key) = self.frame.closure.prototype().constants()[key as usize] else {
             panic!("const key is not a string");
         };
-        self.do_set_field(
+        Ok(self.do_set_field(
             self.registers[object as usize],
             key,
             self.registers[value as usize],
-        )
+        )?)
     }
 
     #[inline]
@@ -926,13 +932,13 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn test(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize].to_bool().into();
+        self.registers[dest as usize] = self.registers[arg as usize].cast_bool().into();
         Ok(())
     }
 
     #[inline]
     fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = (!self.registers[arg as usize].to_bool()).into();
+        self.registers[dest as usize] = (!self.registers[arg as usize].cast_bool()).into();
         Ok(())
     }
 
@@ -941,7 +947,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let arg = self.registers[arg as usize];
         self.registers[dest as usize] = arg.negate().ok_or_else(|| OpError::BadUnOp {
             op: "negate",
-            target_ty: arg.type_name(),
+            arg: arg.into(),
         })?;
         Ok(())
     }
@@ -953,7 +959,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_negate()
             .ok_or_else(|| OpError::BadUnOp {
                 op: "bit_negate",
-                target_ty: arg.type_name(),
+                arg: arg.into(),
             })?
             .into();
         Ok(())
@@ -965,7 +971,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] =
             arg.add(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
                 op: "increment",
-                target_ty: arg.type_name(),
+                arg: arg.into(),
             })?;
         Ok(())
     }
@@ -976,7 +982,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] =
             arg.sub(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
                 op: "decrement",
-                target_ty: arg.type_name(),
+                arg: arg.into(),
             })?;
         Ok(())
     }
@@ -988,8 +994,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest as usize];
         *dest = left.add(right).ok_or_else(|| OpError::BadBinOp {
             op: "add",
-            left_ty: left.type_name(),
-            right_ty: right.type_name(),
+            left: left.into(),
+            right: right.into(),
         })?;
         Ok(())
     }
@@ -1001,8 +1007,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest as usize];
         *dest = left.sub(right).ok_or_else(|| OpError::BadBinOp {
             op: "subtract",
-            left_ty: left.type_name(),
-            right_ty: right.type_name(),
+            left: left.into(),
+            right: right.into(),
         })?;
         Ok(())
     }
@@ -1014,8 +1020,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest as usize];
         *dest = left.mult(right).ok_or_else(|| OpError::BadBinOp {
             op: "multiply",
-            left_ty: left.type_name(),
-            right_ty: right.type_name(),
+            left: left.into(),
+            right: right.into(),
         })?;
         Ok(())
     }
@@ -1027,8 +1033,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest as usize];
         *dest = left.div(right).ok_or_else(|| OpError::BadBinOp {
             op: "divide",
-            left_ty: left.type_name(),
-            right_ty: right.type_name(),
+            left: left.into(),
+            right: right.into(),
         })?;
         Ok(())
     }
@@ -1040,8 +1046,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest as usize];
         *dest = left.rem(right).ok_or_else(|| OpError::BadBinOp {
             op: "remainder",
-            left_ty: left.type_name(),
-            right_ty: right.type_name(),
+            left: left.into(),
+            right: right.into(),
         })?;
         Ok(())
     }
@@ -1055,8 +1061,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .idiv(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "int_divide",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1093,8 +1099,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .less_than(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "is_less",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1113,8 +1119,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .less_equal(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "is_less_equal",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1156,8 +1162,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_and(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "bit_and",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1172,8 +1178,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_or(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "bit_or",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1188,8 +1194,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_xor(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "bit_xor",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1209,8 +1215,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_shift_left(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "bit_shift_left",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1230,8 +1236,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .bit_shift_right(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "bit_shift_right",
-                left_ty: left.type_name(),
-                right_ty: right.type_name(),
+                left: left.into(),
+                right: right.into(),
             })?
             .into();
         Ok(())
@@ -1253,7 +1259,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn jump_if(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
-        Ok(self.registers[test as usize].to_bool() == is_true)
+        Ok(self.registers[test as usize].cast_bool() == is_true)
     }
 
     #[inline]
@@ -1266,27 +1272,25 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_resize(&mut self, stack_top: RegIdx) -> Result<(), Self::Error> {
         let stack_top = self.registers[stack_top as usize];
         let stack_top = stack_top
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_top.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_top.into(),
             })?;
         self.stack.resize(stack_top);
         Ok(())
     }
 
     #[inline]
-    fn stack_resize_const(&mut self, stack_pos: ConstIdx) -> Result<(), Self::Error> {
-        let stack_top = self.frame.closure.prototype().constants()[stack_pos as usize]
+    fn stack_resize_const(&mut self, stack_top: ConstIdx) -> Result<(), Self::Error> {
+        let stack_top = self.frame.closure.prototype().constants()[stack_top as usize];
+        let stack_top = stack_top
             .to_value()
-            .to_integer()
+            .cast_integer()
             .expect("const index is not integer")
             .try_into()
             .map_err(|_| OpError::BadStackIdx {
-                index_desc: "constant out of range",
+                index: stack_top.to_value().into(),
             })?;
         self.stack.resize(stack_top);
         Ok(())
@@ -1296,13 +1300,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_get(&mut self, dest: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
         let stack_idx = self.registers[stack_pos as usize];
         let stack_idx = stack_idx
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_idx.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_idx.into(),
             })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
@@ -1311,13 +1312,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn stack_get_const(&mut self, dest: RegIdx, stack_pos: ConstIdx) -> Result<(), Self::Error> {
-        let stack_idx = self.frame.closure.prototype().constants()[stack_pos as usize]
+        let stack_idx = self.frame.closure.prototype().constants()[stack_pos as usize];
+        let stack_idx = stack_idx
             .to_value()
-            .to_integer()
+            .cast_integer()
             .expect("const index is not integer")
             .try_into()
             .map_err(|_| OpError::BadStackIdx {
-                index_desc: "constant out of range",
+                index: stack_idx.to_value().into(),
             })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
@@ -1333,18 +1335,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let offset = self.frame.closure.prototype().constants()[offset as usize]
             .to_value()
-            .to_integer()
+            .cast_integer()
             .expect("const index is not integer");
         let stack_idx = self.registers[stack_base as usize];
         let stack_idx = stack_idx
-            .to_integer()
-            .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_idx.type_name(),
-            })?
-            .checked_add(offset)
+            .cast_integer()
+            .and_then(|i| i.checked_add(offset))
             .and_then(|i| i.try_into().ok())
-            .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: "number out of range",
+            .ok_or_else(|| OpError::BadStackIdxOffset {
+                index: stack_idx.into(),
+                offset: Value::Integer(offset).into(),
             })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
@@ -1355,13 +1355,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_set(&mut self, source: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
         let stack_idx = self.registers[stack_pos as usize];
         let stack_idx: usize = stack_idx
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_idx.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_idx.into(),
             })?;
         // We need to implicitly grow the stack if the register is out of range.
         if stack_idx >= self.stack.len() {
@@ -1392,13 +1389,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let mut stack_bottom: usize = stack_bottom
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_bottom.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_bottom.into(),
             })?;
         stack_bottom = stack_bottom.min(self.stack.len());
 
@@ -1416,13 +1410,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let mut stack_bottom: usize = stack_bottom
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_bottom.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_bottom.into(),
             })?;
         stack_bottom = stack_bottom.min(self.stack.len());
 
@@ -1473,18 +1464,15 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<ControlFlow<Self::Break>, Self::Error> {
         let func = self.registers[func as usize];
         let func = func.to_function().ok_or_else(|| OpError::BadCall {
-            target_ty: func.type_name(),
+            target: func.type_name(),
         })?;
 
         let stack_bottom = self.registers[stack_bottom as usize];
         let stack_bottom: usize = stack_bottom
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_bottom.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_bottom.into(),
             })?;
         if stack_bottom > self.stack.len() {
             self.stack.resize(stack_bottom);
@@ -1500,13 +1488,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let stack_bottom: usize = stack_bottom
-            .to_integer()
+            .cast_integer()
+            .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
-                index_desc: stack_bottom.type_name(),
-            })?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx {
-                index_desc: "number out of range",
+                index: stack_bottom.into(),
             })?;
         let stack_bottom = stack_bottom.min(self.stack.len());
 

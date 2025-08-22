@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub fn create_magic_ro<'gc>(
     mc: &Mutation<'gc>,
-    read: impl Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error> + 'static,
+    read: impl Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError> + 'static,
 ) -> Gc<'gc, dyn vm::Magic<'gc>> {
     #[derive(Collect)]
     #[collect(require_static)]
@@ -14,9 +14,9 @@ pub fn create_magic_ro<'gc>(
 
     impl<'gc, R> vm::Magic<'gc> for Magic<R>
     where
-        R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error>,
+        R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError>,
     {
-        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
+        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError> {
             (self.read)(ctx)
         }
     }
@@ -26,8 +26,8 @@ pub fn create_magic_ro<'gc>(
 
 pub fn create_magic_rw<'gc>(
     mc: &Mutation<'gc>,
-    read: impl Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error> + 'static,
-    write: impl Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error<'gc>> + 'static,
+    read: impl Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError> + 'static,
+    write: impl Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::RuntimeError> + 'static,
 ) -> Gc<'gc, dyn vm::Magic<'gc>> {
     #[derive(Collect)]
     #[collect(require_static)]
@@ -38,14 +38,18 @@ pub fn create_magic_rw<'gc>(
 
     impl<'gc, R, W> vm::Magic<'gc> for Magic<R, W>
     where
-        R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error>,
-        W: Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::Error<'gc>>,
+        R: Fn(vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError>,
+        W: Fn(vm::Context<'gc>, vm::Value<'gc>) -> Result<(), vm::RuntimeError>,
     {
-        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
+        fn get(&self, ctx: vm::Context<'gc>) -> Result<vm::Value<'gc>, vm::RuntimeError> {
             (self.read)(ctx)
         }
 
-        fn set(&self, ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<(), vm::Error<'gc>> {
+        fn set(
+            &self,
+            ctx: vm::Context<'gc>,
+            value: vm::Value<'gc>,
+        ) -> Result<(), vm::RuntimeError> {
             (self.write)(ctx, value)
         }
 

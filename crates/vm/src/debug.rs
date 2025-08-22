@@ -116,7 +116,7 @@ impl fmt::Display for LineNumber {
 ///
 /// Static so that it can be stored within error types.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct RefName(Arc<StdString>);
+pub struct RefName(Arc<str>);
 
 impl fmt::Display for RefName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -126,12 +126,12 @@ impl fmt::Display for RefName {
 
 impl RefName {
     pub fn new(name: impl Into<StdString>) -> Self {
-        Self(Arc::new(name.into()))
+        Self(name.into().into_boxed_str().into())
     }
 }
 
 impl ops::Deref for RefName {
-    type Target = StdString;
+    type Target = str;
 
     fn deref(&self) -> &Self::Target {
         &self.0

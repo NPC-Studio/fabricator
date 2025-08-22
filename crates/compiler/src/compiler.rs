@@ -588,7 +588,7 @@ impl<'gc> Compiler<'gc> {
                     vm::MagicSet::replace(
                         magic_write,
                         magic_index,
-                        MagicConstant::new_ptr(&ctx, closure.into()),
+                        MagicConstant::new_ptr(&ctx, closure),
                     )
                     .unwrap();
                 }

@@ -3,8 +3,8 @@ use std::fmt;
 use gc_arena::{Collect, Gc, Mutation};
 
 use crate::{
-    array::Array, callback::Callback, closure::Closure, object::Object, string::String,
-    userdata::UserData,
+    array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
+    string::String, userdata::UserData,
 };
 
 #[derive(Copy, Clone, Collect)]
@@ -54,31 +54,21 @@ pub enum Value<'gc> {
 impl<'gc> fmt::Debug for Value<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Undefined => write!(f, "Value::Undefined"),
-            Value::Boolean(b) => write!(f, "Value::Boolean({b})"),
-            Value::Integer(i) => write!(f, "Value::Integer({i})"),
-            Value::Float(n) => write!(f, "Value::Float({n})"),
-            Value::String(s) => write!(f, "Value::String({s})"),
-            Value::Object(object) => {
-                write!(f, "Value::Object{:p})", Gc::as_ptr(object.into_inner()))
-            }
-            Value::Array(array) => write!(f, "Value::Array({:p})", Gc::as_ptr(array.into_inner())),
+            Value::Undefined => write!(f, "`undefined`"),
+            Value::Boolean(b) => write!(f, "`{b}`"),
+            Value::Integer(i) => write!(f, "`{i}`"),
+            Value::Float(n) => write!(f, "`{n}`"),
+            Value::String(s) => write!(f, "{s:?}"),
+            Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
+            Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
             Value::Closure(closure) => {
-                write!(f, "Value::Closure({:p})", Gc::as_ptr(closure.into_inner()))
+                write!(f, "<closure {:p}>", Gc::as_ptr(closure.into_inner()))
             }
             Value::Callback(callback) => {
-                write!(
-                    f,
-                    "Value::Callback({:p})",
-                    Gc::as_ptr(callback.into_inner())
-                )
+                write!(f, "<callback {:p}>", Gc::as_ptr(callback.into_inner()))
             }
             Value::UserData(user_data) => {
-                write!(
-                    f,
-                    "Value::UserData({:p})",
-                    Gc::as_ptr(user_data.into_inner())
-                )
+                write!(f, "<user_data {:p}>", Gc::as_ptr(user_data.into_inner()))
             }
         }
     }
@@ -192,7 +182,16 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_bool(self) -> bool {
+    pub fn to_function(self) -> Option<Function<'gc>> {
+        match self {
+            Value::Closure(closure) => Some(Function::Closure(closure)),
+            Value::Callback(callback) => Some(Function::Callback(callback)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn cast_bool(self) -> bool {
         match self {
             Value::Undefined => false,
             Value::Boolean(b) => b,
@@ -203,7 +202,7 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_integer(self) -> Option<i64> {
+    pub fn cast_integer(self) -> Option<i64> {
         match self {
             Value::Boolean(b) => Some(if b { 1 } else { 0 }),
             Value::Integer(i) => Some(i),
@@ -212,7 +211,7 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_float(self) -> Option<f64> {
+    pub fn cast_float(self) -> Option<f64> {
         match self {
             Value::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
             Value::Integer(i) => Some(i as f64),
@@ -222,10 +221,12 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
-    pub fn to_function(self) -> Option<Function<'gc>> {
+    pub fn cast_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
         match self {
-            Value::Closure(closure) => Some(Function::Closure(closure)),
-            Value::Callback(callback) => Some(Function::Callback(callback)),
+            Value::Boolean(b) => Some(ctx.intern(if b { "true" } else { "false" })),
+            Value::Integer(i) => Some(ctx.intern(&i.to_string())),
+            Value::Float(f) => Some(ctx.intern(&f.to_string())),
+            Value::String(s) => Some(s),
             _ => None,
         }
     }
@@ -242,9 +243,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(Value::Integer(a.wrapping_add(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a + b))
         } else {
             None
@@ -253,9 +254,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn sub(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(Value::Integer(a.wrapping_sub(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a - b))
         } else {
             None
@@ -264,9 +265,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(Value::Integer(a.wrapping_mul(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a * b))
         } else {
             None
@@ -275,7 +276,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn div(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a / b))
         } else {
             None
@@ -284,9 +285,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(Value::Integer(a.wrapping_rem(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a % b))
         } else {
             None
@@ -295,17 +296,17 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
-        let self_int = if let Some(i) = self.to_integer() {
+        let self_int = if let Some(i) = self.cast_integer() {
             i
-        } else if let Some(f) = self.to_float() {
+        } else if let Some(f) = self.cast_float() {
             f.round() as i64
         } else {
             return None;
         };
 
-        let other_int = if let Some(i) = other.to_integer() {
+        let other_int = if let Some(i) = other.cast_integer() {
             i
-        } else if let Some(f) = other.to_float() {
+        } else if let Some(f) = other.cast_float() {
             f.round() as i64
         } else {
             return None;
@@ -328,9 +329,9 @@ impl<'gc> Value<'gc> {
             (Value::Callback(a), Value::Callback(b)) => a == b,
             (Value::UserData(a), Value::UserData(b)) => a == b,
             _ => {
-                if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+                if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
                     a == b
-                } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+                } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
                     a == b
                 } else {
                     false
@@ -341,9 +342,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(a < b)
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(a < b)
         } else {
             None
@@ -352,9 +353,9 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
+        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
             Some(a <= b)
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(a <= b)
         } else {
             None
@@ -363,47 +364,47 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn and(&self, other: Value<'gc>) -> bool {
-        self.to_bool() && other.to_bool()
+        self.cast_bool() && other.cast_bool()
     }
 
     #[inline]
     pub fn or(&self, other: Value<'gc>) -> bool {
-        self.to_bool() || other.to_bool()
+        self.cast_bool() || other.cast_bool()
     }
 
     #[inline]
     pub fn xor(&self, other: Value<'gc>) -> bool {
-        self.to_bool() ^ other.to_bool()
+        self.cast_bool() ^ other.cast_bool()
     }
 
     #[inline]
     pub fn bit_negate(&self) -> Option<i64> {
-        Some(!self.to_integer()?)
+        Some(!self.cast_integer()?)
     }
 
     #[inline]
     pub fn bit_and(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_integer()? & other.to_integer()?)
+        Some(self.cast_integer()? & other.cast_integer()?)
     }
 
     #[inline]
     pub fn bit_or(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_integer()? | other.to_integer()?)
+        Some(self.cast_integer()? | other.cast_integer()?)
     }
 
     #[inline]
     pub fn bit_xor(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_integer()? ^ other.to_integer()?)
+        Some(self.cast_integer()? ^ other.cast_integer()?)
     }
 
     #[inline]
     pub fn bit_shift_left(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_integer()? << other.to_integer()?)
+        Some(self.cast_integer()? << other.cast_integer()?)
     }
 
     #[inline]
     pub fn bit_shift_right(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_integer()? >> other.to_integer()?)
+        Some(self.cast_integer()? >> other.cast_integer()?)
     }
 
     #[inline]

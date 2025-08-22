@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt, ops, string::String as StdString, sync::Arc};
+use std::{error::Error as StdError, fmt, ops, sync::Arc};
 
 use gc_arena::{Collect, Gc};
 use thiserror::Error;
@@ -29,8 +29,101 @@ impl<'gc> ScriptError<'gc> {
         Self(value)
     }
 
+    pub fn to_value(self) -> Value<'gc> {
+        self.0
+    }
+
     pub fn to_extern(self) -> ExternScriptError {
         self.into()
+    }
+}
+
+/// An external representation of a [`Value`], useful for errors.
+///
+/// All primitive values (undefined, booleans, integers, floats) are represented here exactly.
+/// Strings are cheaply cloned from an internal shared string. All other Gc types are stored in
+/// their *raw pointer* form.
+#[derive(Clone)]
+pub enum ExternValue {
+    Undefined,
+    Boolean(bool),
+    Integer(i64),
+    Float(f64),
+    String(Arc<str>),
+    Object(*const ()),
+    Array(*const ()),
+    Closure(*const ()),
+    Callback(*const ()),
+    UserData(*const ()),
+}
+
+// SAFETY: The pointers in `ExternValue` are not actually dereferenced at all, they are purely
+// informational.
+unsafe impl Send for ExternValue {}
+unsafe impl Sync for ExternValue {}
+
+impl fmt::Debug for ExternValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExternValue::Undefined => write!(f, "`undefined`"),
+            ExternValue::Boolean(b) => write!(f, "`{b}`"),
+            ExternValue::Integer(i) => write!(f, "`{i}`"),
+            ExternValue::Float(n) => write!(f, "`{n}`"),
+            ExternValue::String(s) => write!(f, "{s:?}"),
+            ExternValue::Object(object) => write!(f, "<object {object:p}>"),
+            ExternValue::Array(array) => write!(f, "<array {array:p}>"),
+            ExternValue::Closure(closure) => {
+                write!(f, "<closure {closure:p}>")
+            }
+            ExternValue::Callback(callback) => {
+                write!(f, "<callback {callback:p}>")
+            }
+            ExternValue::UserData(user_data) => {
+                write!(f, "<user_data {user_data:p}>")
+            }
+        }
+    }
+}
+
+impl fmt::Display for ExternValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExternValue::Undefined => write!(f, "undefined"),
+            ExternValue::Boolean(b) => write!(f, "{b}"),
+            ExternValue::Integer(i) => write!(f, "{i}"),
+            ExternValue::Float(n) => write!(f, "{n}"),
+            ExternValue::String(s) => write!(f, "{s}"),
+            ExternValue::Object(object) => {
+                write!(f, "<object {object:p}>")
+            }
+            ExternValue::Array(array) => write!(f, "<array {array:p}>"),
+            ExternValue::Closure(closure) => {
+                write!(f, "<closure {closure:p}>")
+            }
+            ExternValue::Callback(callback) => {
+                write!(f, "<callback {callback:p}>")
+            }
+            ExternValue::UserData(user_data) => {
+                write!(f, "<user_data {user_data:p}>")
+            }
+        }
+    }
+}
+
+impl<'gc> From<Value<'gc>> for ExternValue {
+    fn from(value: Value<'gc>) -> Self {
+        match value {
+            Value::Undefined => ExternValue::Undefined,
+            Value::Boolean(b) => ExternValue::Boolean(b),
+            Value::Integer(i) => ExternValue::Integer(i),
+            Value::Float(n) => ExternValue::Float(n),
+            Value::String(s) => ExternValue::String(s.as_shared_str().clone()),
+            Value::Object(o) => ExternValue::Object(Gc::as_ptr(o.into_inner()) as *const ()),
+            Value::Array(a) => ExternValue::Array(Gc::as_ptr(a.into_inner()) as *const ()),
+            Value::Closure(c) => ExternValue::Closure(Gc::as_ptr(c.into_inner()) as *const ()),
+            Value::Callback(c) => ExternValue::Callback(Gc::as_ptr(c.into_inner()) as *const ()),
+            Value::UserData(u) => ExternValue::UserData(Gc::as_ptr(u.into_inner()) as *const ()),
+        }
     }
 }
 
@@ -40,54 +133,12 @@ impl<'gc> ScriptError<'gc> {
 /// Strings are converted into normal Rust strings. All other Gc types are stored in their *raw
 /// pointer* form.
 #[derive(Debug, Clone, Error)]
-pub enum ExternScriptError {
-    #[error("nil")]
-    Undefined,
-    #[error("{0}")]
-    Boolean(bool),
-    #[error("{0}")]
-    Integer(i64),
-    #[error("{0}")]
-    Float(f64),
-    #[error("{0:?}")]
-    String(StdString),
-    #[error("<object {0:p}>")]
-    Object(*const ()),
-    #[error("<array {0:p}>")]
-    Array(*const ()),
-    #[error("<closure {0:p}>")]
-    Closure(*const ()),
-    #[error("<callback {0:p}>")]
-    Callback(*const ()),
-    #[error("<userdata {0:p}>")]
-    UserData(*const ()),
-}
-
-// SAFETY: The pointers in `ExternScriptError` are not actually dereferenced at all, they are purely
-// informational.
-unsafe impl Send for ExternScriptError {}
-unsafe impl Sync for ExternScriptError {}
+#[error("{0}")]
+pub struct ExternScriptError(pub ExternValue);
 
 impl<'gc> From<ScriptError<'gc>> for ExternScriptError {
     fn from(error: ScriptError<'gc>) -> Self {
-        match error.0 {
-            Value::Undefined => ExternScriptError::Undefined,
-            Value::Boolean(b) => ExternScriptError::Boolean(b),
-            Value::Integer(i) => ExternScriptError::Integer(i),
-            Value::Float(n) => ExternScriptError::Float(n),
-            Value::String(s) => ExternScriptError::String(s.to_string()),
-            Value::Object(o) => ExternScriptError::Object(Gc::as_ptr(o.into_inner()) as *const ()),
-            Value::Array(a) => ExternScriptError::Array(Gc::as_ptr(a.into_inner()) as *const ()),
-            Value::Closure(c) => {
-                ExternScriptError::Closure(Gc::as_ptr(c.into_inner()) as *const ())
-            }
-            Value::Callback(c) => {
-                ExternScriptError::Callback(Gc::as_ptr(c.into_inner()) as *const ())
-            }
-            Value::UserData(u) => {
-                ExternScriptError::UserData(Gc::as_ptr(u.into_inner()) as *const ())
-            }
-        }
+        ExternScriptError(error.to_value().into())
     }
 }
 
