@@ -20,4 +20,18 @@ assert(a[1] == 11);
 assert(a[2] == 12);
 assert(a[3] == 13);
 
+var b = array_create(3, "hello");
+assert(b[0] == "hello");
+assert(b[1] == "hello");
+assert(b[2] == "hello");
+assert(b[3] == undefined);
+
+var c = array_create_ext(3, function(i) {
+	return i;
+});
+assert(c[0] == 0);
+assert(c[1] == 1);
+assert(c[2] == 2);
+assert(c[3] == undefined);
+
 return true;

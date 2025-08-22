@@ -1,14 +1,13 @@
-use std::{fmt, mem, ops::ControlFlow};
+use std::{fmt, mem, ops::ControlFlow, string::String as StdString};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
-    ScriptError,
     array::Array,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
-    error::{Error, ExternError},
+    error::{Error, ExternError, RuntimeError, ScriptError},
     instructions::{self, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
@@ -17,24 +16,39 @@ use crate::{
     value::{Function, Value},
 };
 
-#[derive(Debug, Copy, Clone, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum OpError {
-    #[error("bad op")]
-    BadOp,
-    #[error("bad object")]
-    BadObject,
-    #[error("bad key")]
-    BadKey,
-    #[error("bad index target")]
-    BadIndexTarget,
-    #[error("bad index")]
-    BadIndex,
-    #[error("no such field")]
-    NoSuchField,
-    #[error("bad call")]
-    BadCall,
-    #[error("bad stack index")]
-    BadStackIdx,
+    #[error("bad unary op")]
+    BadUnOp {
+        op: &'static str,
+        target_ty: &'static str,
+    },
+    #[error("bad binary op")]
+    BadBinOp {
+        op: &'static str,
+        left_ty: &'static str,
+        right_ty: &'static str,
+    },
+    #[error("bad object type {obj_ty:?}")]
+    BadObject { obj_ty: &'static str },
+    #[error("bad key type {key_ty:?}")]
+    BadKey { key_ty: &'static str },
+    #[error("bad array type {array_ty:?}")]
+    BadArray { array_ty: &'static str },
+    #[error("bad index of type {target_ty:?}: {index_desc}")]
+    BadIndex {
+        target_ty: &'static str,
+        index_desc: &'static str,
+    },
+    #[error("no such field {field:?} in object of type {target_ty:?}")]
+    NoSuchField {
+        target_ty: &'static str,
+        field: StdString,
+    },
+    #[error("bad call of type {target_ty:?}")]
+    BadCall { target_ty: &'static str },
+    #[error("bad stack index: {index_desc}")]
+    BadStackIdx { index_desc: &'static str },
 }
 
 #[derive(Debug)]
@@ -230,13 +244,45 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         }
     }
 
+    /// Return a new `Execution` with the same stack bottom and `this` / `other` values.
+    ///
+    /// Equivalent to `Execution::with(0, Value::Undefined)`.
+    pub fn reborrow(&mut self) -> Execution<'gc, '_> {
+        Execution {
+            thread: self.thread,
+            stack_bottom: self.stack_bottom,
+            this: self.this,
+            other: self.other,
+        }
+    }
+
     /// Within a callback, call the given closure using the parent `Thread`.
     ///
     /// Arguments to the closure will be taken from the stack and returns placed back into the
     /// stack.
-    pub fn call(&mut self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<(), VmError<'gc>> {
+    pub fn call_closure(
+        &mut self,
+        ctx: Context<'gc>,
+        closure: Closure<'gc>,
+    ) -> Result<(), VmError<'gc>> {
         self.thread
             .call(ctx, closure, self.this, self.other, self.stack_bottom)
+    }
+
+    /// Call a `Function` within a callback.
+    ///
+    /// Arguments to the function will be taken from the stack and returns placed back into the
+    /// stack.
+    ///
+    /// If the provided `function` is a closure, then any returned `VmError` will be turned into an
+    /// `ExternVmError` and placed into a `RuntimeError`.
+    pub fn call(&mut self, ctx: Context<'gc>, function: Function<'gc>) -> Result<(), RuntimeError> {
+        match function {
+            Function::Closure(closure) => Ok(self
+                .call_closure(ctx, closure)
+                .map_err(|e| e.into_extern())?),
+            Function::Callback(callback) => callback.call(ctx, self.reborrow()),
+        }
     }
 }
 
@@ -327,7 +373,7 @@ impl<'gc> ThreadState<'gc> {
                                     other: frame.other,
                                 };
                                 if let Err(err) = callback.call(ctx, execution) {
-                                    error = Some(err);
+                                    error = Some(err.into());
                                 }
                             }
                         }
@@ -444,15 +490,27 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
     #[inline]
     fn do_get_field(&self, obj: Value<'gc>, key: String<'gc>) -> Result<Value<'gc>, Error<'gc>> {
         match obj {
-            Value::Object(object) => object.get(key).ok_or(OpError::NoSuchField.into()),
+            Value::Object(object) => object.get(key).ok_or_else(|| {
+                OpError::NoSuchField {
+                    target_ty: obj.type_name(),
+                    field: key.as_str().to_owned(),
+                }
+                .into()
+            }),
             Value::UserData(user_data) => {
                 if let Some(methods) = user_data.methods() {
-                    methods.get_field(self.ctx, user_data, key)
+                    Ok(methods.get_field(self.ctx, user_data, key)?)
                 } else {
-                    Err(OpError::BadObject.into())
+                    Err(OpError::BadObject {
+                        obj_ty: obj.type_name(),
+                    }
+                    .into())
                 }
             }
-            _ => Err(OpError::BadObject.into()),
+            _ => Err(OpError::BadObject {
+                obj_ty: obj.type_name(),
+            }
+            .into()),
         }
     }
 
@@ -471,10 +529,18 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 if let Some(methods) = user_data.methods() {
                     methods.set_field(self.ctx, user_data, key, value)?;
                 } else {
-                    return Err(OpError::BadObject.into());
+                    return Err(OpError::BadObject {
+                        obj_ty: obj.type_name(),
+                    }
+                    .into());
                 }
             }
-            _ => return Err(OpError::BadObject.into()),
+            _ => {
+                return Err(OpError::BadObject {
+                    obj_ty: obj.type_name(),
+                }
+                .into());
+            }
         }
 
         Ok(())
@@ -483,68 +549,102 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
     #[inline]
     fn do_get_index(
         &self,
-        array: Value<'gc>,
+        target: Value<'gc>,
         indexes: &[Value<'gc>],
     ) -> Result<Value<'gc>, Error<'gc>> {
-        match array {
+        match target {
             Value::Object(object) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex.into());
+                    return Err(OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "multiple indexes",
+                    }
+                    .into());
                 }
                 let Value::String(index) = indexes[0] else {
-                    return Err(OpError::BadIndex.into());
+                    return Err(OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "non-string index",
+                    }
+                    .into());
                 };
                 Ok(object.get(index).unwrap_or_default())
             }
             Value::Array(array) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex.into());
+                    return Err(OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "multiple indexes",
+                    }
+                    .into());
                 }
                 let index = indexes[0]
                     .to_integer()
                     .and_then(|i| i.try_into().ok())
-                    .ok_or(OpError::BadIndex)?;
+                    .ok_or_else(|| OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "non-numeric index",
+                    })?;
                 Ok(array.get(index))
             }
             Value::UserData(user_data) => {
                 if let Some(methods) = user_data.methods() {
-                    methods.get_index(self.ctx, user_data, indexes)
+                    Ok(methods.get_index(self.ctx, user_data, indexes)?)
                 } else {
-                    Err(OpError::BadIndexTarget.into())
+                    Err(OpError::BadArray {
+                        array_ty: target.type_name(),
+                    }
+                    .into())
                 }
             }
-            _ => Err(OpError::BadIndexTarget.into()),
+            _ => Err(OpError::BadArray {
+                array_ty: target.type_name(),
+            }
+            .into()),
         }
     }
 
     #[inline]
     fn do_set_index(
         &self,
-        array: Value<'gc>,
+        target: Value<'gc>,
         indexes: &[Value<'gc>],
         value: Value<'gc>,
     ) -> Result<(), Error<'gc>> {
-        match array {
+        match target {
             Value::Array(array) => {
                 if indexes.len() != 1 {
-                    return Err(OpError::BadIndex.into());
+                    return Err(OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "multiple indexes",
+                    }
+                    .into());
                 }
 
                 let index = indexes[0]
                     .to_integer()
                     .and_then(|i| i.try_into().ok())
-                    .ok_or(OpError::BadIndex)?;
+                    .ok_or_else(|| OpError::BadIndex {
+                        target_ty: target.type_name(),
+                        index_desc: "non-numeric index",
+                    })?;
                 array.set(&self.ctx, index, value);
                 Ok(())
             }
             Value::UserData(user_data) => {
                 if let Some(methods) = user_data.methods() {
-                    methods.set_index(self.ctx, user_data, indexes, value)
+                    Ok(methods.set_index(self.ctx, user_data, indexes, value)?)
                 } else {
-                    Err(OpError::BadObject.into())
+                    Err(OpError::BadArray {
+                        array_ty: target.type_name(),
+                    }
+                    .into())
                 }
             }
-            _ => Err(OpError::BadIndexTarget.into()),
+            _ => Err(OpError::BadArray {
+                array_ty: target.type_name(),
+            }
+            .into()),
         }
     }
 }
@@ -694,8 +794,12 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn get_field(&mut self, dest: RegIdx, object: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
-        let Value::String(key) = self.registers[key as usize] else {
-            return Err(OpError::BadKey.into());
+        let key_val = self.registers[key as usize];
+        let Value::String(key) = key_val else {
+            return Err(OpError::BadKey {
+                key_ty: key_val.type_name(),
+            }
+            .into());
         };
 
         self.registers[dest as usize] = self.do_get_field(self.registers[object as usize], key)?;
@@ -704,8 +808,12 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn set_field(&mut self, object: RegIdx, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
+        let key_val = self.registers[key as usize];
         let Value::String(key) = self.registers[key as usize] else {
-            return Err(OpError::BadKey.into());
+            return Err(OpError::BadKey {
+                key_ty: key_val.type_name(),
+            }
+            .into());
         };
         self.do_set_field(
             self.registers[object as usize],
@@ -830,34 +938,46 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize]
-            .negate()
-            .ok_or(OpError::BadOp)?;
+        let arg = self.registers[arg as usize];
+        self.registers[dest as usize] = arg.negate().ok_or_else(|| OpError::BadUnOp {
+            op: "negate",
+            target_ty: arg.type_name(),
+        })?;
         Ok(())
     }
 
     #[inline]
     fn bit_negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize]
+        let arg = self.registers[arg as usize];
+        self.registers[dest as usize] = arg
             .bit_negate()
-            .ok_or(OpError::BadOp)?
+            .ok_or_else(|| OpError::BadUnOp {
+                op: "bit_negate",
+                target_ty: arg.type_name(),
+            })?
             .into();
         Ok(())
     }
 
     #[inline]
     fn increment(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize]
-            .add(Value::Integer(1))
-            .ok_or(OpError::BadOp)?;
+        let arg = self.registers[arg as usize];
+        self.registers[dest as usize] =
+            arg.add(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
+                op: "increment",
+                target_ty: arg.type_name(),
+            })?;
         Ok(())
     }
 
     #[inline]
     fn decrement(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize]
-            .sub(Value::Integer(1))
-            .ok_or(OpError::BadOp)?;
+        let arg = self.registers[arg as usize];
+        self.registers[dest as usize] =
+            arg.sub(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
+                op: "decrement",
+                target_ty: arg.type_name(),
+            })?;
         Ok(())
     }
 
@@ -866,7 +986,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.add(right).ok_or(OpError::BadOp)?;
+        *dest = left.add(right).ok_or_else(|| OpError::BadBinOp {
+            op: "add",
+            left_ty: left.type_name(),
+            right_ty: right.type_name(),
+        })?;
         Ok(())
     }
 
@@ -875,7 +999,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.sub(right).ok_or(OpError::BadOp)?;
+        *dest = left.sub(right).ok_or_else(|| OpError::BadBinOp {
+            op: "subtract",
+            left_ty: left.type_name(),
+            right_ty: right.type_name(),
+        })?;
         Ok(())
     }
 
@@ -884,7 +1012,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.mult(right).ok_or(OpError::BadOp)?;
+        *dest = left.mult(right).ok_or_else(|| OpError::BadBinOp {
+            op: "multiply",
+            left_ty: left.type_name(),
+            right_ty: right.type_name(),
+        })?;
         Ok(())
     }
 
@@ -893,7 +1025,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.div(right).ok_or(OpError::BadOp)?;
+        *dest = left.div(right).ok_or_else(|| OpError::BadBinOp {
+            op: "divide",
+            left_ty: left.type_name(),
+            right_ty: right.type_name(),
+        })?;
         Ok(())
     }
 
@@ -902,7 +1038,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.rem(right).ok_or(OpError::BadOp)?;
+        *dest = left.rem(right).ok_or_else(|| OpError::BadBinOp {
+            op: "remainder",
+            left_ty: left.type_name(),
+            right_ty: right.type_name(),
+        })?;
         Ok(())
     }
 
@@ -911,7 +1051,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.idiv(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .idiv(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "int_divide",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -940,9 +1087,15 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn is_less(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[left as usize]
-            .less_than(self.registers[right as usize])
-            .ok_or(OpError::BadOp)?
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        self.registers[dest as usize] = left
+            .less_than(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "is_less",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
             .into();
         Ok(())
     }
@@ -954,9 +1107,15 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[left as usize]
-            .less_equal(self.registers[right as usize])
-            .ok_or(OpError::BadOp)?
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        self.registers[dest as usize] = left
+            .less_equal(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "is_less_equal",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
             .into();
         Ok(())
     }
@@ -993,7 +1152,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.bit_and(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .bit_and(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "bit_and",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -1002,7 +1168,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.bit_or(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .bit_or(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "bit_or",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -1011,7 +1184,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.bit_xor(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .bit_xor(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "bit_xor",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -1025,7 +1205,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.bit_shift_left(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .bit_shift_left(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "bit_shift_left",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -1039,7 +1226,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.bit_shift_right(right).ok_or(OpError::BadOp)?.into();
+        *dest = left
+            .bit_shift_right(right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "bit_shift_right",
+                left_ty: left.type_name(),
+                right_ty: right.type_name(),
+            })?
+            .into();
         Ok(())
     }
 
@@ -1070,11 +1264,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn stack_resize(&mut self, stack_top: RegIdx) -> Result<(), Self::Error> {
-        let stack_top = self.registers[stack_top as usize]
+        let stack_top = self.registers[stack_top as usize];
+        let stack_top = stack_top
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_top.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         self.stack.resize(stack_top);
         Ok(())
     }
@@ -1086,18 +1285,25 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .to_integer()
             .expect("const index is not integer")
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "constant out of range",
+            })?;
         self.stack.resize(stack_top);
         Ok(())
     }
 
     #[inline]
     fn stack_get(&mut self, dest: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
-        let stack_idx = self.registers[stack_pos as usize]
+        let stack_idx = self.registers[stack_pos as usize];
+        let stack_idx = stack_idx
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_idx.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
         Ok(())
@@ -1110,7 +1316,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .to_integer()
             .expect("const index is not integer")
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "constant out of range",
+            })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
         Ok(())
@@ -1127,13 +1335,17 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .to_value()
             .to_integer()
             .expect("const index is not integer");
-        let stack_idx = self.registers[stack_base as usize]
+        let stack_idx = self.registers[stack_base as usize];
+        let stack_idx = stack_idx
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_idx.type_name(),
+            })?
             .checked_add(offset)
-            .ok_or(OpError::BadStackIdx)?
-            .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .and_then(|i| i.try_into().ok())
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         // We return `Undefined` if the `stack_idx` is out of range.
         self.registers[dest as usize] = self.stack.get(stack_idx);
         Ok(())
@@ -1141,11 +1353,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn stack_set(&mut self, source: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
-        let stack_idx: usize = self.registers[stack_pos as usize]
+        let stack_idx = self.registers[stack_pos as usize];
+        let stack_idx: usize = stack_idx
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_idx.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         // We need to implicitly grow the stack if the register is out of range.
         if stack_idx >= self.stack.len() {
             self.stack.resize(stack_idx + 1);
@@ -1173,11 +1390,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         array: RegIdx,
         stack_bottom: RegIdx,
     ) -> Result<(), Self::Error> {
-        let mut stack_bottom: usize = self.registers[stack_bottom as usize]
+        let stack_bottom = self.registers[stack_bottom as usize];
+        let mut stack_bottom: usize = stack_bottom
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_bottom.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         stack_bottom = stack_bottom.min(self.stack.len());
 
         self.registers[dest as usize] =
@@ -1192,11 +1414,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         stack_bottom: RegIdx,
         value: RegIdx,
     ) -> Result<(), Self::Error> {
-        let mut stack_bottom: usize = self.registers[stack_bottom as usize]
+        let stack_bottom = self.registers[stack_bottom as usize];
+        let mut stack_bottom: usize = stack_bottom
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_bottom.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         stack_bottom = stack_bottom.min(self.stack.len());
 
         self.do_set_index(
@@ -1244,15 +1471,21 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         func: RegIdx,
         stack_bottom: RegIdx,
     ) -> Result<ControlFlow<Self::Break>, Self::Error> {
-        let func = self.registers[func as usize]
-            .to_function()
-            .ok_or(OpError::BadCall)?;
+        let func = self.registers[func as usize];
+        let func = func.to_function().ok_or_else(|| OpError::BadCall {
+            target_ty: func.type_name(),
+        })?;
 
-        let stack_bottom: usize = self.registers[stack_bottom as usize]
+        let stack_bottom = self.registers[stack_bottom as usize];
+        let stack_bottom: usize = stack_bottom
             .to_integer()
-            .ok_or(OpError::BadStackIdx)?
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_bottom.type_name(),
+            })?
             .try_into()
-            .map_err(|_| OpError::BadStackIdx)?;
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
         if stack_bottom > self.stack.len() {
             self.stack.resize(stack_bottom);
         }
@@ -1265,13 +1498,17 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error> {
-        let stack_bottom = usize::try_from(
-            self.registers[stack_bottom as usize]
-                .to_integer()
-                .ok_or(OpError::BadStackIdx)?,
-        )
-        .map_err(|_| OpError::BadStackIdx)?
-        .min(self.stack.len());
+        let stack_bottom = self.registers[stack_bottom as usize];
+        let stack_bottom: usize = stack_bottom
+            .to_integer()
+            .ok_or_else(|| OpError::BadStackIdx {
+                index_desc: stack_bottom.type_name(),
+            })?
+            .try_into()
+            .map_err(|_| OpError::BadStackIdx {
+                index_desc: "number out of range",
+            })?;
+        let stack_bottom = stack_bottom.min(self.stack.len());
 
         Ok(Next::Return {
             returns_bottom: stack_bottom,

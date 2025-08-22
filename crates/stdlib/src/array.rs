@@ -18,6 +18,24 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
         MagicConstant::new_ptr(&ctx, array_create.into()),
     );
 
+    let array_create_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (length, create): (usize, vm::Function) = exec.stack().consume(ctx)?;
+        let array = vm::Array::with_capacity(&ctx, length);
+
+        for i in 0..length {
+            exec.stack().replace(ctx, i as i64);
+            exec.call(ctx, create)?;
+            array.set(&ctx, i, exec.stack().get(0));
+        }
+
+        exec.stack().replace(ctx, array);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("array_create_ext"),
+        MagicConstant::new_ptr(&ctx, array_create_ext.into()),
+    );
+
     let array_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let mut stack = exec.stack();
         let array: vm::Array = stack.consume(ctx)?;

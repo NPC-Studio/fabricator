@@ -125,9 +125,11 @@ impl<'gc> BuiltIns<'gc> {
             pcall: Callback::from_fn(mc, |ctx, mut exec| {
                 let function: Function = exec.stack().from_front(ctx)?;
                 let res = match function {
-                    Function::Closure(closure) => exec.call(ctx, closure).map_err(|e| e.error),
+                    Function::Closure(closure) => {
+                        exec.call_closure(ctx, closure).map_err(|e| e.error)
+                    }
                     Function::Callback(callback) => {
-                        callback.call(ctx, exec.with(0, Value::Undefined))
+                        callback.call(ctx, exec.reborrow()).map_err(|e| e.into())
                     }
                 };
                 match res {

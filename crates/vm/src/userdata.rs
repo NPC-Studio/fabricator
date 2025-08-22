@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     any::{Any, AnyInner},
-    error::Error,
+    error::RuntimeError,
     interpreter::Context,
     string::String,
     value::Value,
@@ -24,7 +24,7 @@ pub trait UserDataMethods<'gc> {
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         key: String<'gc>,
-    ) -> Result<Value<'gc>, Error<'gc>>;
+    ) -> Result<Value<'gc>, RuntimeError>;
 
     fn set_field(
         &self,
@@ -32,14 +32,14 @@ pub trait UserDataMethods<'gc> {
         ud: UserData<'gc>,
         key: String<'gc>,
         value: Value<'gc>,
-    ) -> Result<(), Error<'gc>>;
+    ) -> Result<(), RuntimeError>;
 
     fn get_index(
         &self,
         ctx: Context<'gc>,
         ud: UserData<'gc>,
         indexes: &[Value<'gc>],
-    ) -> Result<Value<'gc>, Error<'gc>>;
+    ) -> Result<Value<'gc>, RuntimeError>;
 
     fn set_index(
         &self,
@@ -47,7 +47,7 @@ pub trait UserDataMethods<'gc> {
         ud: UserData<'gc>,
         indexes: &[Value<'gc>],
         value: Value<'gc>,
-    ) -> Result<(), Error<'gc>>;
+    ) -> Result<(), RuntimeError>;
 
     /// Return an iterator function and state value for iteration in a `with` loop.
     ///
@@ -61,7 +61,7 @@ pub trait UserDataMethods<'gc> {
     /// the iterator function will no longer be called and no additional results will be yielded. If
     /// the initial call of this method returns an `undefined` state value on the first call, then
     /// this implies an empty result and no iteration will be performed.
-    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), Error<'gc>>;
+    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), RuntimeError>;
 }
 
 /// Meta-data for a `UserData` type.

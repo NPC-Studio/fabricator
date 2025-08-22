@@ -2,10 +2,10 @@ use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation};
 
-use crate::{error::Error, interpreter::Context, thread::Execution, value::Value};
+use crate::{error::RuntimeError, interpreter::Context, thread::Execution, value::Value};
 
 pub trait CallbackFn<'gc> {
-    fn call(&self, ctx: Context<'gc>, exec: Execution<'gc, '_>) -> Result<(), Error<'gc>>;
+    fn call(&self, ctx: Context<'gc>, exec: Execution<'gc, '_>) -> Result<(), RuntimeError>;
 }
 
 #[derive(Copy, Clone, Collect)]
@@ -33,7 +33,7 @@ impl<'gc> Callback<'gc> {
     ///
     /// If there is a `this` object bound to the callback, then the provided `exec` will be rebound
     /// with it.
-    pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), Error<'gc>> {
+    pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), RuntimeError> {
         self.0.callback_fn.call(ctx, exec.with(0, self.0.this))
     }
 
@@ -61,7 +61,7 @@ impl<'gc> Callback<'gc> {
     /// to associate GC data with this function, use [`Callback::from_fn_with`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
-        F: 'static + Fn(Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
+        F: 'static + Fn(Context<'gc>, Execution<'gc, '_>) -> Result<(), RuntimeError>,
     {
         Self::from_fn_with_root(mc, (), move |_, ctx, exec| call(ctx, exec))
     }
@@ -71,7 +71,7 @@ impl<'gc> Callback<'gc> {
     pub fn from_fn_with_root<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
         R: 'gc + Collect<'gc>,
-        F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
+        F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), RuntimeError>,
     {
         #[derive(Collect)]
         #[collect(no_drop)]
@@ -84,9 +84,13 @@ impl<'gc> Callback<'gc> {
         impl<'gc, R, F> CallbackFn<'gc> for RootCallback<R, F>
         where
             R: 'gc + Collect<'gc>,
-            F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), Error<'gc>>,
+            F: 'static + Fn(&R, Context<'gc>, Execution<'gc, '_>) -> Result<(), RuntimeError>,
         {
-            fn call(&self, ctx: Context<'gc>, exec: Execution<'gc, '_>) -> Result<(), Error<'gc>> {
+            fn call(
+                &self,
+                ctx: Context<'gc>,
+                exec: Execution<'gc, '_>,
+            ) -> Result<(), RuntimeError> {
                 (self.call)(&self.root, ctx, exec)
             }
         }

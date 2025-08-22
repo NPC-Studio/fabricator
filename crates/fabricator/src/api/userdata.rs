@@ -131,7 +131,7 @@ where
         ctx: vm::Context<'gc>,
         ud: vm::UserData<'gc>,
         key: vm::String<'gc>,
-    ) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
+    ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
         let u = ud.downcast::<U>()?;
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.read)(ctx, u)?)
@@ -147,7 +147,7 @@ where
         ud: vm::UserData<'gc>,
         key: vm::String<'gc>,
         value: vm::Value<'gc>,
-    ) -> Result<(), vm::Error<'gc>> {
+    ) -> Result<(), vm::RuntimeError> {
         let u = ud.downcast_write::<U>(&ctx)?;
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.write)(ctx, u, value)?)
@@ -161,7 +161,7 @@ where
         _ctx: vm::Context<'gc>,
         _ud: vm::UserData<'gc>,
         _indexes: &[vm::Value<'gc>],
-    ) -> Result<vm::Value<'gc>, vm::Error<'gc>> {
+    ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
         Err("no index access".into())
     }
 
@@ -171,7 +171,7 @@ where
         _ud: vm::UserData<'gc>,
         _indexes: &[vm::Value<'gc>],
         _value: vm::Value<'gc>,
-    ) -> Result<(), vm::Error<'gc>> {
+    ) -> Result<(), vm::RuntimeError> {
         Err("no index access".into())
     }
 
@@ -179,7 +179,7 @@ where
         &self,
         _ctx: fabricator_vm::Context<'gc>,
         _ud: fabricator_vm::UserData<'gc>,
-    ) -> Result<(), fabricator_vm::Error<'gc>> {
+    ) -> Result<(), fabricator_vm::RuntimeError> {
         Err("no iteration".into())
     }
 }
