@@ -1,11 +1,15 @@
-use std::f64;
+pub mod array;
+pub mod core;
+pub mod math;
+pub mod testing;
 
-use fabricator_vm::{self as vm, magic::MagicConstant};
+use fabricator_vm::{self as vm};
 use gc_arena::{Collect, Gc, Rootable};
+
+use crate::{array::array_lib, core::core_lib, math::math_lib, testing::testing_lib};
 
 pub trait StdlibContext<'gc> {
     fn stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>>;
-
     fn testing_stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>>;
 }
 
@@ -19,31 +23,9 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
                 let mut stdlib = vm::BuiltIns::new(&ctx).magic_set(ctx);
 
-                stdlib.insert(
-                    ctx.intern("pi"),
-                    MagicConstant::new_ptr(&ctx, f64::consts::PI.into()),
-                );
-
-                let cos = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-                    let arg: f64 = exec.stack().consume(ctx)?;
-                    exec.stack().replace(ctx, arg.cos());
-                    Ok(())
-                });
-                stdlib.insert(ctx.intern("cos"), MagicConstant::new_ptr(&ctx, cos.into()));
-
-                let sin = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-                    let arg: f64 = exec.stack().consume(ctx)?;
-                    exec.stack().replace(ctx, arg.sin());
-                    Ok(())
-                });
-                stdlib.insert(ctx.intern("sin"), MagicConstant::new_ptr(&ctx, sin.into()));
-
-                let abs = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-                    let arg: f64 = exec.stack().consume(ctx)?;
-                    exec.stack().replace(ctx, arg.abs());
-                    Ok(())
-                });
-                stdlib.insert(ctx.intern("abs"), MagicConstant::new_ptr(&ctx, abs.into()));
+                core_lib(ctx, &mut stdlib);
+                math_lib(ctx, &mut stdlib);
+                array_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }
@@ -61,48 +43,12 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
 
         impl<'gc> vm::Singleton<'gc> for TestingStdlibSingleton<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
-                let mut testing_stdlib = vm::MagicSet::new();
-                let assert = vm::Callback::from_fn(&ctx, |_, mut exec| {
-                    let stack = exec.stack();
-                    for i in 0..stack.len() {
-                        if !stack.get(i).to_bool() {
-                            return Err("assert failed".into());
-                        }
-                    }
-                    Ok(())
-                });
-                testing_stdlib.insert(
-                    ctx.intern("assert"),
-                    MagicConstant::new_ptr(&ctx, assert.into()),
-                );
+                let mut lib = vm::MagicSet::new();
 
-                let print = vm::Callback::from_fn(&ctx, |_, mut exec| {
-                    let stack = exec.stack();
-                    for i in 0..stack.len() {
-                        print!("{:?}", stack.get(i));
-                        if i != stack.len() - 1 {
-                            print!("\t");
-                        }
-                    }
-                    println!();
-                    Ok(())
-                });
-                testing_stdlib.insert(
-                    ctx.intern("print"),
-                    MagicConstant::new_ptr(&ctx, print.into()),
-                );
+                lib.merge(&ctx.stdlib());
+                testing_lib(ctx, &mut lib);
 
-                let black_box = vm::Callback::from_fn(&ctx, |_, _| Ok(()));
-                testing_stdlib.insert(
-                    ctx.intern("black_box"),
-                    MagicConstant::new_ptr(&ctx, black_box.into()),
-                );
-
-                let mut combined = vm::MagicSet::new();
-                combined.merge(&ctx.stdlib());
-                combined.merge(&testing_stdlib);
-
-                Self(Gc::new(&ctx, combined))
+                Self(Gc::new(&ctx, lib))
             }
         }
 

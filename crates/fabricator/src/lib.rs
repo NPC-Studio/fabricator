@@ -1,4 +1,5 @@
 pub mod api;
+pub mod ffi;
 pub mod game;
 pub mod project;
 pub mod state;

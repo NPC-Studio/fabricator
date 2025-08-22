@@ -148,6 +148,35 @@ pub struct Script {
     pub mode: ScriptMode,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FfiType {
+    /// An `f64`.
+    Number,
+    /// A `*const ()`, usually a `CStr`.
+    Pointer,
+}
+
+#[derive(Debug)]
+pub struct ExtensionFunction {
+    pub name: String,
+    pub external_name: String,
+    pub arg_types: Vec<FfiType>,
+    pub return_type: FfiType,
+}
+
+#[derive(Debug)]
+pub struct ExtensionFile {
+    /// A list of module alternatives, one per supported platform.
+    pub module_paths: Vec<PathBuf>,
+    pub functions: Vec<ExtensionFunction>,
+}
+
+#[derive(Debug)]
+pub struct Extension {
+    pub name: String,
+    pub files: Vec<ExtensionFile>,
+}
+
 #[derive(Debug)]
 pub struct TextureGroup {
     pub name: String,
@@ -164,6 +193,7 @@ pub struct Project {
     pub objects: HashMap<String, Object>,
     pub rooms: HashMap<String, Room>,
     pub scripts: HashMap<String, Script>,
+    pub extensions: HashMap<String, Extension>,
     pub room_order: Vec<String>,
 }
 

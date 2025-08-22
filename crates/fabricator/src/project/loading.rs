@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::BufReader,
     path::{Path, PathBuf},
@@ -10,9 +10,9 @@ use serde::Deserialize;
 use serde_json as json;
 
 use crate::project::{
-    AnimationFrame, CollisionKind, EventScript, Frame, Instance, Layer, Object, ObjectEvent,
-    Project, Room, Script, ScriptMode, Sprite, TextureGroup,
-    strip_json_trailing_commas::StripJsonTrailingCommas,
+    AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
+    FfiType, Frame, Instance, Layer, Object, ObjectEvent, Project, Room, Script, ScriptMode,
+    Sprite, TextureGroup, strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
 pub fn load_project(project_file: &Path) -> Result<Project, Error> {
@@ -48,6 +48,7 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         objects: HashMap::new(),
         rooms: HashMap::new(),
         scripts: HashMap::new(),
+        extensions: HashMap::new(),
         room_order,
     };
 
@@ -71,6 +72,10 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
             YyResource::Script(yy_script) => {
                 let script = read_script(base_path, yy_script)?;
                 project.scripts.insert(script.name.clone(), script);
+            }
+            YyResource::Extension(yy_extension) => {
+                let extension = read_extension(base_path, yy_extension)?;
+                project.extensions.insert(extension.name.clone(), extension);
             }
             YyResource::Other => {}
         }
@@ -223,6 +228,63 @@ struct YyScript {
 }
 
 #[derive(Deserialize)]
+struct YyExtensionProxyFile {
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(try_from = "u8")]
+enum YyFfiType {
+    String,
+    Number,
+}
+
+impl Into<FfiType> for YyFfiType {
+    fn into(self) -> FfiType {
+        match self {
+            YyFfiType::String => FfiType::Pointer,
+            YyFfiType::Number => FfiType::Number,
+        }
+    }
+}
+
+impl TryFrom<u8> for YyFfiType {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(YyFfiType::String),
+            2 => Ok(YyFfiType::Number),
+            n => Err(format!("invalid FFI type code {n}")),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct YyExtensionFunction {
+    name: String,
+    #[serde(rename = "externalName")]
+    external_name: String,
+    args: Vec<YyFfiType>,
+    #[serde(rename = "returnType")]
+    return_type: YyFfiType,
+}
+
+#[derive(Deserialize)]
+struct YyExtensionFile {
+    filename: String,
+    #[serde(rename = "ProxyFiles")]
+    proxy_files: Vec<YyExtensionProxyFile>,
+    functions: Vec<YyExtensionFunction>,
+}
+
+#[derive(Deserialize)]
+struct YyExtension {
+    name: String,
+    files: Vec<YyExtensionFile>,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyResource {
     #[serde(rename = "GMSprite")]
@@ -233,6 +295,8 @@ enum YyResource {
     Room(YyRoom),
     #[serde(rename = "GMScript")]
     Script(YyScript),
+    #[serde(rename = "GMExtension")]
+    Extension(YyExtension),
     #[serde(other)]
     Other,
 }
@@ -413,4 +477,49 @@ fn read_script(base_path: PathBuf, yy_script: YyScript) -> Result<Script, Error>
         yy_script.name,
         base_path
     );
+}
+
+fn read_extension(base_path: PathBuf, yy_extension: YyExtension) -> Result<Extension, Error> {
+    let mut extension = Extension {
+        name: yy_extension.name,
+        files: Vec::new(),
+    };
+
+    for file in yy_extension.files {
+        let module_paths: HashSet<PathBuf> = file
+            .proxy_files
+            .into_iter()
+            .map(|f| f.name)
+            .chain([file.filename])
+            .map(|n| base_path.join(n))
+            .collect();
+
+        let functions = file
+            .functions
+            .into_iter()
+            .map(|f| {
+                // An empty external name means that the symbol name is the same as the regular
+                // name.
+                let external_name = if f.external_name.is_empty() {
+                    f.name.clone()
+                } else {
+                    f.external_name
+                };
+
+                ExtensionFunction {
+                    name: f.name,
+                    external_name,
+                    arg_types: f.args.into_iter().map(|t| t.into()).collect(),
+                    return_type: f.return_type.into(),
+                }
+            })
+            .collect();
+
+        extension.files.push(ExtensionFile {
+            module_paths: module_paths.into_iter().collect(),
+            functions,
+        });
+    }
+
+    Ok(extension)
 }

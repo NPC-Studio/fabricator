@@ -13,6 +13,7 @@ use crate::{
         collision::collision_api, drawing::drawing_api, magic::MagicExt as _, object::object_api,
         platform::platform_api, room::room_api,
     },
+    ffi::load_extension_file,
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
     state::{
         AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
@@ -172,6 +173,16 @@ pub fn create_state(
         magic.merge_unique(&object_api(ctx, &config)?)?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
+
+        for extension in project.extensions.values() {
+            for file in &extension.files {
+                if let Some(callbacks) = load_extension_file(ctx, file)? {
+                    for (name, callback) in callbacks {
+                        magic.add_constant(&ctx, name, callback.into())?;
+                    }
+                }
+            }
+        }
 
         let magic = Gc::new(&ctx, magic);
 

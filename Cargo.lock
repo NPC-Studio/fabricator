@@ -643,6 +643,8 @@ dependencies = [
  "fabricator-util",
  "fabricator-vm",
  "gc-arena",
+ "libloading",
+ "log",
  "num",
  "rand",
  "serde",
