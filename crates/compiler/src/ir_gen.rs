@@ -51,8 +51,8 @@ pub enum IrGenErrorKind {
     ConstructorStaticNotInitialized,
     #[error("static variable in constructor does not have a unique name")]
     ConstructorStaticNotUnique,
-    #[error("block scoping is disabled and a variable shadows another with an incompatible kind")]
-    VariableShadowsIncompatible,
+    #[error("block scoping is disabled and a variable is redeclared with an incompatible kind")]
+    BadVariableRedeclaration,
     #[error("function not allowed to have a return statement with an argument")]
     CannotReturnValue,
     #[error("break statement with no target")]
@@ -2368,60 +2368,52 @@ where
         vname: ast::Ident<S>,
         var_type: VarType<S>,
     ) -> Result<VarDecl<S>, IrGenError> {
-        assert!(
-            !(self.settings.closures && !self.settings.block_scoping),
-            "enabling closures requires block scoping"
-        );
-
         if !self.settings.block_scoping
             && let Some(shadowed_var) = self.find_var(&vname)
         {
-            // When block scoping is turned off, shadowing becomes complicated.
+            // When block scoping is turned off, variable shadowing within functions is disallowed.
             //
-            // A normal, owned variable is never actually shadowed by another normal, owned
-            // variable, instead it is a re-use of the original variable.
+            // A normal variable declaration that shares the name with another is not shadowing, it
+            // is instead a re-declaration of the same variable. Re-declaration with another kind of
+            // variable is always an error.
             //
-            // We forbid static variables from *ever* being shadowed by any kind of variable,
-            // because since they are static they can't actually share values, and there is no block
-            // scoping to disambiguate an owned variable from a static one.
+            // We forbid static variables from being re-declared at all, because multiple static
+            // initializers doesn't make much sense.
             //
-            // Upper variables should never be present, because closures should only be enabled with
-            // block scoping.
+            // We simply ignore the existence of upper variables here to match JS, since
+            // non-block-scoping variables (declared with the `var`) can shadow others across
+            // function boundaries.
             //
-            // Constructor statics can also never be shadowed by anything else for the same reason
-            // as normal statics.
+            // Constructor static declarations already cannot share the same name because they are
+            // object fields, and cannot be re-declared as a different kind.
             match shadowed_var {
                 VarDecl::Normal(shadowed_var_id) => {
                     match (&var_type, &self.function.variables[shadowed_var_id]) {
+                        (VarType::Normal(ir::Variable::Upper(_)), _) => {
+                            panic!(
+                                "multiple upper variables with the same name cannot be in scope"
+                            );
+                        }
+                        (_, ir::Variable::Upper(_)) => {
+                            // Allow new declarations to shadow any existing upper variables.
+                        }
                         (VarType::Normal(ir::Variable::Owned), ir::Variable::Owned) => {
+                            // Normal owned variable re-declarations simply modify the same
+                            // variable.
                             return Ok(VarDecl::Normal(shadowed_var_id));
                         }
-                        (VarType::Normal(ir::Variable::Owned), ir::Variable::Upper(_)) => {
-                            unreachable!()
-                        }
-                        (VarType::Normal(ir::Variable::Owned), ir::Variable::Static(_)) => {
+                        _ => {
+                            // Everything else is an invalid re-declaration.
                             return Err(IrGenError {
-                                kind: IrGenErrorKind::VariableShadowsIncompatible,
-                                span: vname.span,
-                            });
-                        }
-                        (VarType::Normal(ir::Variable::Static(_)), _) => {
-                            return Err(IrGenError {
-                                kind: IrGenErrorKind::VariableShadowsIncompatible,
-                                span: vname.span,
-                            });
-                        }
-                        (VarType::Normal(ir::Variable::Upper(_)), _) => unreachable!(),
-                        (VarType::ConstructorStatic(_), _) => {
-                            return Err(IrGenError {
-                                kind: IrGenErrorKind::VariableShadowsIncompatible,
+                                kind: IrGenErrorKind::BadVariableRedeclaration,
                                 span: vname.span,
                             });
                         }
                     }
                 }
                 VarDecl::ConstructorStatic(_) => {
-                    panic!("constructor should not have the same name")
+                    // This should be checked in the handler of the constructor body.
+                    panic!("constructor static should not have the same name")
                 }
             }
         }
