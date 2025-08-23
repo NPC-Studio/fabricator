@@ -47,10 +47,12 @@ pub enum IrGenErrorKind {
     ReadOnlyMagic,
     #[error("static variables in constructors must be at the top-level of the function block")]
     ConstructorStaticNotTopLevel,
-    #[error("static variable in constructor does not have a unique name")]
-    ConstructorStaticNotUnique,
     #[error("static variables in constructors must be initialized")]
     ConstructorStaticNotInitialized,
+    #[error("static variable in constructor does not have a unique name")]
+    ConstructorStaticNotUnique,
+    #[error("block scoping is disabled and a variable shadows another with an incompatible kind")]
+    VariableShadowsIncompatible,
     #[error("function not allowed to have a return statement with an argument")]
     CannotReturnValue,
     #[error("break statement with no target")]
@@ -2366,6 +2368,64 @@ where
         vname: ast::Ident<S>,
         var_type: VarType<S>,
     ) -> Result<VarDecl<S>, IrGenError> {
+        assert!(
+            !(self.settings.closures && !self.settings.block_scoping),
+            "enabling closures requires block scoping"
+        );
+
+        if !self.settings.block_scoping
+            && let Some(shadowed_var) = self.find_var(&vname)
+        {
+            // When block scoping is turned off, shadowing becomes complicated.
+            //
+            // A normal, owned variable is never actually shadowed by another normal, owned
+            // variable, instead it is a re-use of the original variable.
+            //
+            // We forbid static variables from *ever* being shadowed by any kind of variable,
+            // because since they are static they can't actually share values, and there is no block
+            // scoping to disambiguate an owned variable from a static one.
+            //
+            // Upper variables should never be present, because closures should only be enabled with
+            // block scoping.
+            //
+            // Constructor statics can also never be shadowed by anything else for the same reason
+            // as normal statics.
+            match shadowed_var {
+                VarDecl::Normal(shadowed_var_id) => {
+                    match (&var_type, &self.function.variables[shadowed_var_id]) {
+                        (VarType::Normal(ir::Variable::Owned), ir::Variable::Owned) => {
+                            return Ok(VarDecl::Normal(shadowed_var_id));
+                        }
+                        (VarType::Normal(ir::Variable::Owned), ir::Variable::Upper(_)) => {
+                            unreachable!()
+                        }
+                        (VarType::Normal(ir::Variable::Owned), ir::Variable::Static(_)) => {
+                            return Err(IrGenError {
+                                kind: IrGenErrorKind::VariableShadowsIncompatible,
+                                span: vname.span,
+                            });
+                        }
+                        (VarType::Normal(ir::Variable::Static(_)), _) => {
+                            return Err(IrGenError {
+                                kind: IrGenErrorKind::VariableShadowsIncompatible,
+                                span: vname.span,
+                            });
+                        }
+                        (VarType::Normal(ir::Variable::Upper(_)), _) => unreachable!(),
+                        (VarType::ConstructorStatic(_), _) => {
+                            return Err(IrGenError {
+                                kind: IrGenErrorKind::VariableShadowsIncompatible,
+                                span: vname.span,
+                            });
+                        }
+                    }
+                }
+                VarDecl::ConstructorStatic(_) => {
+                    panic!("constructor should not have the same name")
+                }
+            }
+        }
+
         let top_scope_index = self.scopes.len() - 1;
         let top_scope = self.scopes.last_mut().unwrap();
 
