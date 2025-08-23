@@ -5,4 +5,5 @@ pub mod magic;
 pub mod object;
 pub mod platform;
 pub mod room;
+pub mod stub;
 pub mod userdata;
