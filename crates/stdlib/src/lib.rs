@@ -1,12 +1,17 @@
 pub mod array;
+pub mod buffer;
 pub mod core;
 pub mod math;
+pub mod string;
 pub mod testing;
 
 use fabricator_vm::{self as vm};
 use gc_arena::{Collect, Gc, Rootable};
 
-use crate::{array::array_lib, core::core_lib, math::math_lib, testing::testing_lib};
+use crate::{
+    array::array_lib, buffer::buffer_lib, core::core_lib, math::math_lib, string::string_lib,
+    testing::testing_lib,
+};
 
 pub trait StdlibContext<'gc> {
     fn stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>>;
@@ -24,8 +29,10 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 let mut stdlib = vm::BuiltIns::new(&ctx).magic_set(ctx);
 
                 core_lib(ctx, &mut stdlib);
+                string_lib(ctx, &mut stdlib);
                 math_lib(ctx, &mut stdlib);
                 array_lib(ctx, &mut stdlib);
+                buffer_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }
