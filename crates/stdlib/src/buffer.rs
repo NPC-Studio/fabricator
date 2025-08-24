@@ -102,17 +102,25 @@ impl BufferState {
         else {
             return Err(format!("read of string from pos {cursor}, no NUL found",).into());
         };
+        let end = cursor + nul;
 
-        let slice = &self.data[cursor..nul];
+        let slice = &self.data[cursor..end];
         self.cursor = nul + 1;
         Ok(slice)
     }
 
-    fn cursor_read_until_end(&mut self) -> &[u8] {
+    fn cursor_read_until_nul_or_end(&mut self) -> &[u8] {
         let cursor = self
             .cursor
             .next_multiple_of(2usize.pow(self.alignment_power_of_2));
-        let slice = &self.data[cursor..];
+        let end = cursor
+            + self.data[self.cursor..]
+                .iter()
+                .copied()
+                .enumerate()
+                .find_map(|(i, b)| if b == 0 { Some(i) } else { None })
+                .unwrap_or(self.data.len() - cursor);
+        let slice = &self.data[cursor..end];
         self.cursor = self.data.len();
         slice
     }
@@ -318,13 +326,15 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 (bytes[0] != 0).into()
             }
             DataType::String => {
-                // Read a string up until the next NUL.
+                // Read a string up until the next NUL. If there is no NUL character found, this
+                // will error.
                 let string = ctx.intern(str::from_utf8(buffer.cursor_read_until_nul()?)?);
                 string.into()
             }
             DataType::Text => {
-                // Read the entire rest of the buffer as a string.
-                let string = ctx.intern(str::from_utf8(buffer.cursor_read_until_end())?);
+                // Read the entire rest of the buffer as a string, or until encountering the first
+                // NUL character.
+                let string = ctx.intern(str::from_utf8(buffer.cursor_read_until_nul_or_end())?);
                 string.into()
             }
         };
