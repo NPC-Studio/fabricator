@@ -358,25 +358,38 @@ impl<'gc> Compiler<'gc> {
 
         // Apply a config and resolve all macro interdependencies.
 
-        let resolved_macros = match macros.clone().resolve(Some(config.as_str())) {
-            Ok(macros) => macros,
-            Err(err) => {
-                let macro_ = macros.get(err.0).unwrap();
-                let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0)) {
-                    Ok(i) => i,
-                    Err(i) => i
-                        .checked_sub(1)
-                        .expect("pre-existing macros should not have recursion errors"),
-                };
-                let chunk = &chunks[chunk_index];
-                let line_number = chunk.line_numbers.line(macro_.span.start());
-                return Err(CompileError {
-                    kind: CompileErrorKind::RecursiveMacro(err),
-                    chunk_name: chunk.name.clone(),
-                    line_number,
-                });
-            }
-        };
+        let resolved_macros =
+            match macros
+                .clone()
+                .resolve_with_skip_recursive(config.as_str(), |token| {
+                    // GMS2 doesn't expand macro tokens that match a defined macro if the token name
+                    // is also a part of the stdlib. This allows re-defining builtins with macros
+                    // (at the cost of making the macro system even more complicated and special
+                    // case).
+                    //
+                    // We do something similar here, except we skip expansion for *all* exports
+                    // defined in a previous compilation unit.
+                    magic.find(token).is_none() && !global_vars.contains(token)
+                }) {
+                Ok(macros) => macros,
+                Err(err) => {
+                    let macro_ = macros.get(err.0).unwrap();
+                    let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0))
+                    {
+                        Ok(i) => i,
+                        Err(i) => i
+                            .checked_sub(1)
+                            .expect("pre-existing macros should not have recursion errors"),
+                    };
+                    let chunk = &chunks[chunk_index];
+                    let line_number = chunk.line_numbers.line(macro_.span.start());
+                    return Err(CompileError {
+                        kind: CompileErrorKind::RecursiveMacro(err),
+                        chunk_name: chunk.name.clone(),
+                        line_number,
+                    });
+                }
+            };
 
         // Use macro definitions to replace macro instances in every chunk, then parse the resulting
         // token list.

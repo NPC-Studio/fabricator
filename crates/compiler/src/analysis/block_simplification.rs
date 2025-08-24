@@ -118,9 +118,8 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    // Finally, replace every block exit which jumps to an empty block with that block's (now
-    // furthest) target.
-
+    // Replace every block exit which jumps to an empty block with that block's (now furthest)
+    // target.
     for block in ir.blocks.values_mut() {
         match &mut block.exit {
             &mut ir::Exit::Jump(target) => {

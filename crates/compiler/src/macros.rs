@@ -63,16 +63,12 @@ impl<S> Default for ConfigurationSet<S> {
 }
 
 impl<S: Eq + Hash> ConfigurationSet<S> {
-    pub fn index_for_config<Q: ?Sized>(&self, config: Option<&Q>) -> Option<usize>
+    pub fn index_for_config<Q: ?Sized>(&self, config: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
         Q: Hash + Eq,
     {
-        if let Some(config) = config {
-            self.for_config.get(config).copied().or(self.default)
-        } else {
-            self.default
-        }
+        self.for_config.get(config).copied().or(self.default)
     }
 }
 
@@ -191,7 +187,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                 let macro_name;
 
                 // An identifier followed by a colon is a configuration-specific macro, with the
-                // config name followed by a colon.
+                // config name before the colon.
                 if let Some(Token {
                     kind: TokenKind::Colon,
                     ..
@@ -281,11 +277,27 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     ///
     /// Will return `Err` if any macro depends on itself recursively.
     ///
-    /// If `config` is provided, then this will expand using macros with the given named
-    /// configuration if they exist, otherwise falling back to the default.
-    pub fn resolve<Q: ?Sized>(
+    /// This will expand using macros with the given named configuration if they exist, otherwise
+    /// falling back to the default. If only the default configuration is desired, macro
+    /// configuration cannot be the empty string, so providing the empty string here will always
+    /// result in the default configuration.
+    pub fn resolve<Q: ?Sized>(self, config: &Q) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
+    where
+        S: Borrow<S> + Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.resolve_with_skip_recursive(config, |_| true)
+    }
+
+    /// A version of `MacroSet::resolve` that allows optionally skipping recursive expansion.
+    ///
+    /// For any token in a macro that matches another macro, if the `recursively_expand` callback
+    /// returns false this token will *not* be recursively expanded. GMS2 skips such recursive
+    /// expansion for builtin function names.
+    pub fn resolve_with_skip_recursive<Q: ?Sized>(
         self,
-        config: Option<&Q>,
+        config: &Q,
+        recursively_expand: impl Fn(&S) -> bool,
     ) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
@@ -332,7 +344,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                         .get(ident)
                         .and_then(|c| c.index_for_config(config))
                     {
-                        if !evaluated_macros.contains(ind) {
+                        if recursively_expand(ident) && !evaluated_macros.contains(ind) {
                             if !has_unevaluated_dependency {
                                 has_unevaluated_dependency = true;
 
@@ -371,10 +383,21 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             let macro_ = &self.macros[macro_index];
             for token in &macro_.tokens {
                 let ind = match &token.kind {
-                    TokenKind::Identifier(ident) => self
-                        .macro_dict
-                        .get(ident)
-                        .and_then(|c| c.index_for_config(config)),
+                    TokenKind::Identifier(ident) => {
+                        if let Some(index) = self
+                            .macro_dict
+                            .get(ident)
+                            .and_then(|c| c.index_for_config(config))
+                        {
+                            if recursively_expand(ident) {
+                                Some(index)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
 
@@ -411,11 +434,6 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                 .filter_map(|(k, v)| Some((k, v.index_for_config(config)?)))
                 .collect(),
         })
-    }
-
-    /// Resolve dependencies with the default configuration.
-    pub fn resolve_dependencies_default(self) -> Result<ResolvedMacroSet<S>, RecursiveMacro> {
-        self.resolve::<S>(None)
     }
 }
 
@@ -507,7 +525,7 @@ mod tests {
         let mut macros = MacroSet::new();
 
         macros.extract(&mut tokens).unwrap();
-        let macros = macros.clone().resolve(Some("correct")).unwrap();
+        let macros = macros.clone().resolve("correct").unwrap();
 
         assert_eq!(
             macros
@@ -542,6 +560,6 @@ mod tests {
         let mut macros = MacroSet::default();
 
         macros.extract(&mut tokens).unwrap();
-        assert!(macros.resolve_dependencies_default().is_err());
+        assert!(macros.resolve("").is_err());
     }
 }
