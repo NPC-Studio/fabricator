@@ -80,40 +80,42 @@ pub fn block_branch_to_jump<S>(ir: &mut ir::Function<S>) {
     }
 }
 
-/// For all empty blocks, try to combine exits for blocks which jump to them.
+/// For all empty blocks, try to redirect exits for blocks which jump to them.
 pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
-    // First, gather a list of every empty block and a map from empty blocks' `BlockId` to `Exit`.
-    let mut empty_blocks = Vec::new();
-    let mut empty_block_exits = HashMap::new();
+    // Gather a list of every empty block and a map from empty blocks' `BlockId` to `Exit`.
+    let mut empty_block_redirects = HashMap::new();
     for (block_id, block) in ir.blocks.iter() {
         if block.instructions.is_empty() {
-            empty_blocks.push(block_id);
-            empty_block_exits.insert(block_id, block.exit);
+            empty_block_redirects.insert(block_id, block.exit);
         }
     }
-
-    // Then, resolve all chains of jumps in the map of empty block exits so that each jump is the
-    // furthest in the chain.
 
     // A set to detect loops in the chain of empty jump targets.
     let mut encountered_jump_targets: HashSet<ir::BlockId> = HashSet::new();
 
-    for &block_id in &empty_blocks {
+    // Resolve all chains of jumps in the map of empty block exits so that each jump is the furthest
+    // in the chain.
+    for block_id in empty_block_redirects.keys().copied().collect::<Vec<_>>() {
         encountered_jump_targets.clear();
+        encountered_jump_targets.insert(block_id);
 
-        let mut furthest_target = block_id;
-        while let Some(&ir::Exit::Jump(target)) = empty_block_exits.get(&furthest_target) {
-            if !encountered_jump_targets.insert(target) {
-                // If we encounter a loop, then just make this empty block's exit itself (the
-                // shortest infinite loop).
+        let mut next_block = block_id;
+        while let Some(&empty_exit) = empty_block_redirects.get(&next_block) {
+            empty_block_redirects.insert(block_id, empty_exit);
+
+            let ir::Exit::Jump(target) = empty_exit else {
+                break;
+            };
+            next_block = target;
+
+            if !encountered_jump_targets.insert(next_block) {
+                // If we encounter a loop, then modify the first empty block's exit to be itself
+                // (the shortest infinite loop) and update the redirection map accordingly.
                 ir.blocks[block_id].exit = ir::Exit::Jump(block_id);
-                furthest_target = block_id;
+                empty_block_redirects.insert(block_id, ir::Exit::Jump(block_id));
                 break;
             }
-            furthest_target = target;
         }
-
-        empty_block_exits.insert(block_id, ir::Exit::Jump(furthest_target));
     }
 
     // Finally, replace every block exit which jumps to an empty block with that block's (now
@@ -122,17 +124,17 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
     for block in ir.blocks.values_mut() {
         match &mut block.exit {
             &mut ir::Exit::Jump(target) => {
-                if let Some(&exit) = empty_block_exits.get(&target) {
+                if let Some(&exit) = empty_block_redirects.get(&target) {
                     block.exit = exit;
                 }
             }
             ir::Exit::Branch {
                 if_false, if_true, ..
             } => {
-                if let Some(&ir::Exit::Jump(target)) = empty_block_exits.get(if_false) {
+                if let Some(&ir::Exit::Jump(target)) = empty_block_redirects.get(if_false) {
                     *if_false = target;
                 }
-                if let Some(&ir::Exit::Jump(target)) = empty_block_exits.get(if_true) {
+                if let Some(&ir::Exit::Jump(target)) = empty_block_redirects.get(if_true) {
                     *if_true = target;
                 }
             }
