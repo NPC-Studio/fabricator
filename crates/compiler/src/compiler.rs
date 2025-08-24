@@ -1,7 +1,7 @@
 use std::{collections::HashSet, path::Path};
 
 use fabricator_util::index_containers::IndexMap;
-use fabricator_vm::{self as vm, magic::MagicConstant};
+use fabricator_vm as vm;
 use gc_arena::{Collect, Gc};
 use thiserror::Error;
 
@@ -494,7 +494,7 @@ impl<'gc> Compiler<'gc> {
         // The magic index for each exported item, if one exists.
         let mut export_magic_indexes = IndexMap::new();
 
-        let stub_magic = MagicConstant::new_ptr(&ctx, vm::Value::Undefined);
+        let stub_magic = vm::MagicConstant::new_ptr(&ctx, vm::Value::Undefined);
 
         for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
             let prev_exports_len = exports.len();
@@ -588,7 +588,7 @@ impl<'gc> Compiler<'gc> {
                     vm::MagicSet::replace(
                         magic_write,
                         magic_index,
-                        MagicConstant::new_ptr(&ctx, closure),
+                        vm::MagicConstant::new_ptr(&ctx, closure),
                     )
                     .unwrap();
                 }

@@ -7,6 +7,50 @@ use std::{
 use fabricator_compiler as compiler;
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
+use gc_arena::Gc;
+
+pub fn testing_stdlib<'gc>(ctx: vm::Context<'gc>) -> Gc<'gc, vm::MagicSet<'gc>> {
+    let mut lib = vm::MagicSet::new();
+    lib.merge(&ctx.stdlib());
+
+    let assert = vm::Callback::from_fn(&ctx, |_, mut exec| {
+        let stack = exec.stack();
+        for i in 0..stack.len() {
+            if !stack.get(i).cast_bool() {
+                return Err("assert failed".into());
+            }
+        }
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("assert"),
+        vm::magic::MagicConstant::new_ptr(&ctx, assert),
+    );
+
+    let print = vm::Callback::from_fn(&ctx, |_, mut exec| {
+        let stack = exec.stack();
+        for i in 0..stack.len() {
+            print!("{:?}", stack.get(i));
+            if i != stack.len() - 1 {
+                print!("\t");
+            }
+        }
+        println!();
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("print"),
+        vm::magic::MagicConstant::new_ptr(&ctx, print),
+    );
+
+    let black_box = vm::Callback::from_fn(&ctx, |_, _| Ok(()));
+    lib.insert(
+        ctx.intern("black_box"),
+        vm::magic::MagicConstant::new_ptr(&ctx, black_box),
+    );
+
+    Gc::new(&ctx, lib)
+}
 
 fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, Box<dyn Error>> {
     let mut interpreter = vm::Interpreter::new();
@@ -15,7 +59,7 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, Box<dyn Error>
         let (proto, _, _) = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::from_magic(ctx.testing_stdlib()),
+            compiler::ImportItems::from_magic(testing_stdlib(ctx)),
             if compat {
                 compiler::CompileSettings::compat()
             } else {

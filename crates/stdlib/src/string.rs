@@ -1,6 +1,9 @@
-use std::mem;
+use std::{
+    io::{self, Write},
+    mem,
+};
 
-use fabricator_vm::{self as vm, magic::MagicConstant};
+use fabricator_vm as vm;
 
 pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let string_trim = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -20,7 +23,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("string_trim"),
-        MagicConstant::new_ptr(&ctx, string_trim),
+        vm::MagicConstant::new_ptr(&ctx, string_trim),
     );
 
     let string_byte_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -30,7 +33,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("string_byte_length"),
-        MagicConstant::new_ptr(&ctx, string_byte_length),
+        vm::MagicConstant::new_ptr(&ctx, string_byte_length),
     );
 
     let ord = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -43,7 +46,27 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         exec.stack().replace(ctx, c.unwrap() as i64);
         Ok(())
     });
-    lib.insert(ctx.intern("ord"), MagicConstant::new_ptr(&ctx, ord));
+    lib.insert(ctx.intern("ord"), vm::MagicConstant::new_ptr(&ctx, ord));
+
+    let show_debug_message = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let Some(fmt_string) = exec.stack().get(0).cast_string(ctx) else {
+            return Err("`show_debug_message` must be given a formatting string".into());
+        };
+
+        let mut stdout = io::stdout().lock();
+        for part in split_format(&fmt_string) {
+            match part {
+                FormatPart::Str(s) => write!(stdout, "{}", s)?,
+                FormatPart::Arg(arg) => write!(stdout, "{}", exec.stack().get(arg + 1))?,
+            }
+        }
+        writeln!(stdout)?;
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("show_debug_message"),
+        vm::MagicConstant::new_ptr(&ctx, show_debug_message),
+    );
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

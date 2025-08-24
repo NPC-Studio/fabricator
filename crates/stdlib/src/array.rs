@@ -1,11 +1,8 @@
 use std::iter;
 
-use fabricator_vm::{
-    self as vm,
-    magic::{MagicConstant, MagicSet},
-};
+use fabricator_vm as vm;
 
-pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
+pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let array_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let mut stack = exec.stack();
         let (length, value): (usize, vm::Value) = stack.consume(ctx)?;
@@ -15,7 +12,7 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_create"),
-        MagicConstant::new_ptr(&ctx, array_create),
+        vm::MagicConstant::new_ptr(&ctx, array_create),
     );
 
     let array_create_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -33,7 +30,7 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_create_ext"),
-        MagicConstant::new_ptr(&ctx, array_create_ext),
+        vm::MagicConstant::new_ptr(&ctx, array_create_ext),
     );
 
     let array_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -44,6 +41,6 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("array_length"),
-        MagicConstant::new_ptr(&ctx, array_length),
+        vm::MagicConstant::new_ptr(&ctx, array_length),
     );
 }

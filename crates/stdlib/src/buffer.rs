@@ -3,7 +3,7 @@ use std::{
     str,
 };
 
-use fabricator_vm::{self as vm, magic::MagicConstant};
+use fabricator_vm as vm;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BufferType {
@@ -168,7 +168,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     ] {
         lib.insert(
             ctx.intern(name),
-            MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, buffer_type)),
+            vm::MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, buffer_type)),
         );
     }
 
@@ -179,7 +179,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     ] {
         lib.insert(
             ctx.intern(name),
-            MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, buffer_seek)),
+            vm::MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, buffer_seek)),
         );
     }
 
@@ -199,7 +199,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     ] {
         lib.insert(
             ctx.intern(name),
-            MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, data_type)),
+            vm::MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, data_type)),
         );
     }
 
@@ -218,7 +218,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("buffer_create"),
-        MagicConstant::new_ptr(&ctx, buffer_create),
+        vm::MagicConstant::new_ptr(&ctx, buffer_create),
     );
 
     let buffer_write = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -276,7 +276,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("buffer_write"),
-        MagicConstant::new_ptr(&ctx, buffer_write),
+        vm::MagicConstant::new_ptr(&ctx, buffer_write),
     );
 
     let buffer_seek = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -295,7 +295,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("buffer_seek"),
-        MagicConstant::new_ptr(&ctx, buffer_seek),
+        vm::MagicConstant::new_ptr(&ctx, buffer_seek),
     );
 
     let buffer_read = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -344,7 +344,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("buffer_read"),
-        MagicConstant::new_ptr(&ctx, buffer_read),
+        vm::MagicConstant::new_ptr(&ctx, buffer_read),
     );
 
     let buffer_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -358,6 +358,6 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(
         ctx.intern("buffer_delete"),
-        MagicConstant::new_ptr(&ctx, buffer_delete),
+        vm::MagicConstant::new_ptr(&ctx, buffer_delete),
     );
 }

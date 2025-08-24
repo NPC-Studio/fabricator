@@ -28,7 +28,7 @@ pub use self::{
     error::{Error, ExternError, ExternScriptError, ExternValue, RuntimeError, ScriptError},
     instructions::ByteCode,
     interpreter::{Context, Interpreter},
-    magic::{Magic, MagicSet},
+    magic::{Magic, MagicConstant, MagicSet},
     object::Object,
     registry::{Registry, Singleton},
     stack::Stack,

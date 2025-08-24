@@ -2,20 +2,19 @@ pub mod array;
 pub mod buffer;
 pub mod core;
 pub mod math;
+pub mod os;
 pub mod string;
-pub mod testing;
 
-use fabricator_vm::{self as vm};
+use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    array::array_lib, buffer::buffer_lib, core::core_lib, math::math_lib, string::string_lib,
-    testing::testing_lib,
+    array::array_lib, buffer::buffer_lib, core::core_lib, math::math_lib, os::os_lib,
+    string::string_lib,
 };
 
 pub trait StdlibContext<'gc> {
     fn stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>>;
-    fn testing_stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>>;
 }
 
 impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
@@ -33,6 +32,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 math_lib(ctx, &mut stdlib);
                 array_lib(ctx, &mut stdlib);
                 buffer_lib(ctx, &mut stdlib);
+                os_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }
@@ -40,27 +40,6 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
 
         self.registry()
             .singleton::<Rootable![StdlibSingleton<'_>]>(self)
-            .0
-    }
-
-    fn testing_stdlib(self) -> Gc<'gc, vm::MagicSet<'gc>> {
-        #[derive(Collect)]
-        #[collect(no_drop)]
-        struct TestingStdlibSingleton<'gc>(Gc<'gc, vm::MagicSet<'gc>>);
-
-        impl<'gc> vm::Singleton<'gc> for TestingStdlibSingleton<'gc> {
-            fn create(ctx: vm::Context<'gc>) -> Self {
-                let mut lib = vm::MagicSet::new();
-
-                lib.merge(&ctx.stdlib());
-                testing_lib(ctx, &mut lib);
-
-                Self(Gc::new(&ctx, lib))
-            }
-        }
-
-        self.registry()
-            .singleton::<Rootable![TestingStdlibSingleton<'_>]>(self)
             .0
     }
 }

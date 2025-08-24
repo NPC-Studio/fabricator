@@ -38,7 +38,7 @@ fn main() -> ExitCode {
             let (proto, _, _) = Compiler::compile_chunk(
                 ctx,
                 "default",
-                ImportItems::from_magic(ctx.testing_stdlib()),
+                ImportItems::from_magic(ctx.stdlib()),
                 settings,
                 path.to_string_lossy().into_owned(),
                 &code,
@@ -70,7 +70,7 @@ fn main() -> ExitCode {
             let (_, _, debug) = Compiler::compile_chunk(
                 ctx,
                 "default",
-                ImportItems::from_magic(ctx.testing_stdlib()),
+                ImportItems::from_magic(ctx.stdlib()),
                 settings,
                 path.to_string_lossy().into_owned(),
                 &code,

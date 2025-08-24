@@ -1,4 +1,4 @@
-use fabricator_vm::{self as vm, magic::MagicConstant};
+use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Mutation};
 use thiserror::Error;
 
@@ -134,7 +134,7 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
         name: fabricator_vm::String<'gc>,
         value: fabricator_vm::Value<'gc>,
     ) -> Result<usize, DuplicateMagicName> {
-        self.add(name, MagicConstant::new_ptr(mc, value))
+        self.add(name, vm::MagicConstant::new_ptr(mc, value))
     }
 
     fn merge_unique(&mut self, other: &vm::MagicSet<'gc>) -> Result<(), DuplicateMagicName> {

@@ -124,17 +124,21 @@ impl fmt::Display for RefName {
     }
 }
 
-impl RefName {
-    pub fn new(name: impl Into<StdString>) -> Self {
-        Self(name.into().into_boxed_str().into())
-    }
-}
-
 impl ops::Deref for RefName {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl RefName {
+    pub fn new(name: impl Into<StdString>) -> Self {
+        Self(name.into().into_boxed_str().into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
     }
 }
 
