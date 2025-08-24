@@ -67,4 +67,13 @@
     }
 }
 
+{
+    var j = 0;
+    for (var i = 0; i < 10; ++i) {
+        j += 1;
+        i += 1;
+    }
+    assert(j == 5);
+}
+
 return true;

@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{fs::File, io::Read, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use fabricator_compiler::{
@@ -22,7 +22,7 @@ enum Command {
     Dump { path: PathBuf },
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut interpreter = vm::Interpreter::new();
     interpreter.enter(|ctx| match cli.command {
@@ -50,9 +50,11 @@ fn main() {
             match thread.exec(ctx, closure) {
                 Ok(ret) => {
                     println!("returns: {:?}", ret);
+                    ExitCode::SUCCESS
                 }
                 Err(err) => {
                     println!("error: {}", err);
+                    ExitCode::FAILURE
                 }
             }
         }
@@ -98,6 +100,7 @@ fn main() {
                 println!("IR: {:#?}", ir);
                 println!("Bytecode: {:#?}", proto);
             }
+            ExitCode::SUCCESS
         }
-    });
+    })
 }
