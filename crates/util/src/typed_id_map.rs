@@ -78,6 +78,11 @@ impl<I: Id, V> IdMap<I, V> {
     }
 
     #[inline]
+    pub fn insert_with_id(&mut self, value: impl FnOnce(I) -> V) -> I {
+        I::from_id(self.map.insert_with_id(move |id| value(I::from_id(id))))
+    }
+
+    #[inline]
     pub fn remove(&mut self, id: I) -> Option<V> {
         self.map.remove(id.into_id())
     }

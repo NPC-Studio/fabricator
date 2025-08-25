@@ -101,6 +101,10 @@ impl<V> IdMap<V> {
     }
 
     pub fn insert(&mut self, value: V) -> Id {
+        self.insert_with_id(|_| value)
+    }
+
+    pub fn insert_with_id(&mut self, value: impl FnOnce(Id) -> V) -> Id {
         if let Some(slot) = self.slots.get_mut(self.next_free as usize) {
             assert!(slot.is_vacant(), "allocated slot in free list");
 
@@ -116,17 +120,21 @@ impl<V> IdMap<V> {
                 .checked_add(1)
                 .expect("occupancy count desync");
 
+            let id = Id {
+                index,
+                generation: NonZero::new(generation).unwrap(),
+            };
+
+            slot.u.value = ManuallyDrop::new(value(id));
+            // SAFETY: Set the generation (setting the slot to !vacant) after calling the callback
+            // in case the callback panics, so such a panic doesn't drop an uninitialized value.
             slot.generation = generation;
-            slot.u.value = ManuallyDrop::new(value);
             assert!(!slot.is_vacant());
 
             self.next_free = next_free;
             self.occupancy = occupancy;
 
-            Id {
-                index,
-                generation: NonZero::new(generation).unwrap(),
-            }
+            id
         } else {
             assert_eq!(self.next_free as usize, self.slots.len());
 
@@ -138,9 +146,11 @@ impl<V> IdMap<V> {
                 .checked_add(1)
                 .expect("occupancy count desync");
 
+            let id = Id { index, generation };
+
             let slot = Slot {
                 u: SlotUnion {
-                    value: ManuallyDrop::new(value),
+                    value: ManuallyDrop::new(value(id)),
                 },
                 generation: generation.get(),
             };
@@ -150,7 +160,7 @@ impl<V> IdMap<V> {
             self.next_free = next_free;
             self.occupancy = occupancy;
 
-            Id { index, generation }
+            id
         }
     }
 
