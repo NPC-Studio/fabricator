@@ -1001,11 +1001,13 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left as usize];
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
-        *dest = left.add(right).ok_or_else(|| OpError::BadBinOp {
-            op: "add",
-            left: left.into(),
-            right: right.into(),
-        })?;
+        *dest = left
+            .add_or_append(self.ctx, right)
+            .ok_or_else(|| OpError::BadBinOp {
+                op: "add",
+                left: left.into(),
+                right: right.into(),
+            })?;
         Ok(())
     }
 

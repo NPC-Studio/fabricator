@@ -58,7 +58,7 @@ impl<'gc> fmt::Debug for Value<'gc> {
             Value::Boolean(b) => write!(f, "`{b}`"),
             Value::Integer(i) => write!(f, "`{i}`"),
             Value::Float(n) => write!(f, "`{n}`"),
-            Value::String(s) => write!(f, "{s:?}"),
+            Value::String(s) => write!(f, "{:?}", s.as_str()),
             Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
             Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
             Value::Closure(closure) => {
@@ -228,6 +228,17 @@ impl<'gc> Value<'gc> {
             Value::Float(f) => Some(ctx.intern(&f.to_string())),
             Value::String(s) => Some(s),
             _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn add_or_append(self, ctx: Context<'gc>, other: Value<'gc>) -> Option<Value<'gc>> {
+        if let Some(r) = self.add(other) {
+            Some(r)
+        } else if let (Value::String(a), Value::String(b)) = (self, other) {
+            Some(ctx.intern(&format!("{a}{b}")).into())
+        } else {
+            None
         }
     }
 
