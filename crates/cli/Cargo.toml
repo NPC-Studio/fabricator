@@ -4,8 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
 gc-arena.workspace = true
+rustyline = "17"
 
 fabricator-compiler.workspace = true
 fabricator-stdlib.workspace = true

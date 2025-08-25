@@ -15,6 +15,8 @@ pub enum ParseErrorKind {
         unexpected: &'static str,
         expected: &'static str,
     },
+    #[error("end of token stream, expected {expected:?}")]
+    EndOfStream { expected: &'static str },
     #[error("invalid numeric literal")]
     BadNumber,
     #[error("function declarations with inheritance must be annotated with `constructor`")]
@@ -23,6 +25,22 @@ pub enum ParseErrorKind {
     NewDisallowed,
     #[error("accessor indexing is disallowed")]
     AccessorsDisallowed,
+}
+
+impl ParseErrorKind {
+    /// Generate an `EndOfStream` parse error when the unexpected token is `EndOfStream`, otherwise
+    /// generate an `Unexpected` parse error with the unexpected string as the token indicator
+    /// string.
+    fn unexpected_token<S>(t: &TokenKind<S>, expected: &'static str) -> ParseErrorKind {
+        if matches!(t, TokenKind::EndOfStream) {
+            ParseErrorKind::EndOfStream { expected }
+        } else {
+            ParseErrorKind::Unexpected {
+                unexpected: token_indicator(t),
+                expected,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -372,6 +390,17 @@ where
                             span,
                         });
                     }
+                    Err(ParseError {
+                        kind: ParseErrorKind::EndOfStream { .. },
+                        span,
+                    }) => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::EndOfStream {
+                                expected: "<statement>",
+                            },
+                            span,
+                        });
+                    }
                     Err(err) => return Err(err),
                 };
 
@@ -615,10 +644,10 @@ where
                 break;
             } else if default.is_some() {
                 return Err(ParseError {
-                    kind: ParseErrorKind::Unexpected {
-                        unexpected: token_indicator(&next.kind),
-                        expected: token_indicator::<()>(&TokenKind::RightBrace),
-                    },
+                    kind: ParseErrorKind::unexpected_token(
+                        &next.kind,
+                        token_indicator::<()>(&TokenKind::RightBrace),
+                    ),
                     span: next.span,
                 });
             }
@@ -655,10 +684,7 @@ where
                 }
                 token => {
                     return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(token),
-                            expected: "<switch statement case>",
-                        },
+                        kind: ParseErrorKind::unexpected_token(token, "<switch statement case>"),
                         span,
                     });
                 }
@@ -898,10 +924,7 @@ where
             }
             TokenKind::ArgumentCount => Ok(ast::Expression::ArgumentCount(tok_span)),
             token => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&token),
-                    expected: "<grouped expression or name>",
-                },
+                kind: ParseErrorKind::unexpected_token(&token, "<grouped expression or name>"),
                 span: tok_span,
             }),
         }
@@ -1169,10 +1192,7 @@ where
                 }
                 _ => {
                     return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            unexpected: token_indicator(&next.kind),
-                            expected: "',' or '}'",
-                        },
+                        kind: ParseErrorKind::unexpected_token(&next.kind, "',' or '}'"),
                         span: next.span,
                     });
                 }
@@ -1189,10 +1209,7 @@ where
         match kind {
             TokenKind::Identifier(ident) => Ok(ast::Ident { inner: ident, span }),
             t => Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&t),
-                    expected: "<identifier>",
-                },
+                kind: ParseErrorKind::unexpected_token(&t, "<identifier>"),
                 span,
             }),
         }
@@ -1204,10 +1221,7 @@ where
             Ok(span)
         } else {
             Err(ParseError {
-                kind: ParseErrorKind::Unexpected {
-                    unexpected: token_indicator(&kind),
-                    expected: token_indicator(&expected),
-                },
+                kind: ParseErrorKind::unexpected_token(&kind, token_indicator(&expected)),
                 span,
             })
         }

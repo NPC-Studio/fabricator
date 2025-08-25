@@ -27,22 +27,6 @@ pub fn testing_stdlib<'gc>(ctx: vm::Context<'gc>) -> Gc<'gc, vm::MagicSet<'gc>> 
         vm::magic::MagicConstant::new_ptr(&ctx, assert),
     );
 
-    let print = vm::Callback::from_fn(&ctx, |_, mut exec| {
-        let stack = exec.stack();
-        for i in 0..stack.len() {
-            print!("{:?}", stack.get(i));
-            if i != stack.len() - 1 {
-                print!("\t");
-            }
-        }
-        println!();
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("print"),
-        vm::magic::MagicConstant::new_ptr(&ctx, print),
-    );
-
     let black_box = vm::Callback::from_fn(&ctx, |_, _| Ok(()));
     lib.insert(
         ctx.intern("black_box"),

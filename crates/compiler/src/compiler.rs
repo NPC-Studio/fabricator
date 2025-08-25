@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::Path};
 
 use fabricator_util::index_containers::IndexMap;
 use fabricator_vm as vm;
-use gc_arena::{Collect, Gc};
+use gc_arena::{Collect, DynamicRoot, DynamicRootSet, Gc, Mutation, Rootable};
 use thiserror::Error;
 
 use crate::{
@@ -224,6 +224,49 @@ impl<'gc> ImportItems<'gc> {
             enums: None,
             global_vars: None,
             magic,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedImportItems {
+    macros: Option<DynamicRoot<Rootable![MacroSet<vm::String<'_>>]>>,
+    enums: Option<DynamicRoot<Rootable![EnumSet<vm::String<'_>>]>>,
+    global_vars: Option<DynamicRoot<Rootable![HashSet<vm::String<'_>>]>>,
+    magic: vm::StashedMagicSet,
+}
+
+impl<'gc> vm::Stashable<'gc> for ImportItems<'gc> {
+    type Stashed = StashedImportItems;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedImportItems {
+            macros: self
+                .macros
+                .map(|macros| roots.stash::<Rootable![MacroSet<vm::String<'_>>]>(mc, macros)),
+            enums: self
+                .enums
+                .map(|enums| roots.stash::<Rootable![EnumSet<vm::String<'_>>]>(mc, enums)),
+            global_vars: self
+                .global_vars
+                .map(|globals| roots.stash::<Rootable![HashSet<vm::String<'_>>]>(mc, globals)),
+            magic: vm::Stashable::stash(self.magic, mc, roots),
+        }
+    }
+}
+
+impl vm::Fetchable for StashedImportItems {
+    type Fetched<'gc> = ImportItems<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> ImportItems<'gc> {
+        ImportItems {
+            macros: self.macros.as_ref().map(|macros| roots.fetch(&macros)),
+            enums: self.enums.as_ref().map(|enums| roots.fetch(&enums)),
+            global_vars: self
+                .global_vars
+                .as_ref()
+                .map(|globals| roots.fetch(&globals)),
+            magic: self.magic.fetch(roots),
         }
     }
 }
