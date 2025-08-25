@@ -2,13 +2,13 @@ use std::env;
 
 use fabricator_vm as vm;
 
-use crate::api::magic::MagicExt as _;
+use crate::{api::magic::MagicExt as _, project::Project};
 
-pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
+pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'gc> {
     fn create_stub_constant<'gc>(
         ctx: vm::Context<'gc>,
         magic: &mut vm::MagicSet<'gc>,
-        name: &'static str,
+        name: &str,
         value: impl Into<vm::Value<'gc>>,
     ) {
         magic
@@ -30,11 +30,13 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                 Ok(())
             });
         magic
-            .add_constant(&ctx, ctx.intern(name), stub_callback.into())
+            .add_constant(&ctx, ctx.intern(name), stub_callback)
             .unwrap();
     }
 
     let mut magic = vm::MagicSet::new();
+
+    let unit_userdata: vm::Value = vm::UserData::new_static(&ctx, ()).into();
 
     create_stub_constant(
         ctx,
@@ -55,6 +57,12 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     create_stub_callback(ctx, &mut magic, "gpu_set_zwriteenable", []);
     create_stub_callback(ctx, &mut magic, "gpu_set_ztestenable", []);
     create_stub_callback(ctx, &mut magic, "gpu_set_zfunc", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_begin", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_add_position_3d", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_add_texcoord", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_add_color", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_end", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "display_reset", []);
 
     create_stub_constant(ctx, &mut magic, "cmpfunc_always", vm::Value::Undefined);
 
@@ -120,6 +128,33 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     for gp_axis in ["gp_axislv", "gp_axislh", "gp_axisrv", "gp_axisrh"] {
         create_stub_constant(ctx, &mut magic, gp_axis, 0);
     }
+
+    for font in project.fonts.values() {
+        create_stub_constant(ctx, &mut magic, &font.name, unit_userdata);
+    }
+
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "room_get_name",
+        [ctx.intern("the_room").into()],
+    );
+
+    create_stub_callback(ctx, &mut magic, "layer_get_id", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "layer_tilemap_get_id", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "layer_get_depth", [0.into()]);
+    create_stub_callback(ctx, &mut magic, "layer_depth", []);
+    create_stub_callback(ctx, &mut magic, "layer_set_visible", []);
+    create_stub_callback(ctx, &mut magic, "layer_create", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "layer_destroy", []);
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "layer_get_all_elements",
+        [vm::Array::new(&ctx).into()],
+    );
+
+    create_stub_callback(ctx, &mut magic, "draw_self", []);
 
     magic
 }

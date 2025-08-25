@@ -21,6 +21,7 @@ gc-arena = { git = "https://github.com/kyren/gc-arena", rev = "cef6db5e15bdf27f3
 log = "0.4"
 num = "0.4"
 rand = "0.9"
+rayon = "1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

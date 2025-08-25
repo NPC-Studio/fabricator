@@ -3,6 +3,7 @@ pub mod drawing;
 pub mod instance;
 pub mod magic;
 pub mod object;
+pub mod os;
 pub mod platform;
 pub mod room;
 pub mod stub;

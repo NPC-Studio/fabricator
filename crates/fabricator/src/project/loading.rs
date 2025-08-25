@@ -6,13 +6,14 @@ use std::{
 };
 
 use anyhow::{Context as _, Error, bail};
+use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::Deserialize;
 use serde_json as json;
 
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
-    FfiType, Frame, Instance, Layer, Object, ObjectEvent, Project, Room, Script, ScriptMode,
-    Sprite, TextureGroup, strip_json_trailing_commas::StripJsonTrailingCommas,
+    FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, Object, ObjectEvent, Project, Room,
+    Script, ScriptMode, Sprite, TextureGroup, strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
 pub fn load_project(project_file: &Path) -> Result<Project, Error> {
@@ -49,35 +50,72 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         rooms: HashMap::new(),
         scripts: HashMap::new(),
         extensions: HashMap::new(),
+        fonts: HashMap::new(),
         room_order,
     };
 
-    for resource in &yy_project.resources {
-        let resource_path = project.base_path.join(&resource.id.path);
-        let base_path = resource_path.parent().expect("no base path").to_owned();
+    enum LoadedResource {
+        Sprite(Sprite),
+        Object(Object),
+        Room(Room),
+        Script(Script),
+        Extension(Extension),
+        Font(Font),
+        Other,
+    }
 
-        match load_yy(&resource_path)? {
-            YyResource::Sprite(yy_sprite) => {
-                let sprite = read_sprite(base_path, yy_sprite)?;
+    let loaded_resources = yy_project
+        .resources
+        .into_par_iter()
+        .map(|resource| -> Result<LoadedResource, Error> {
+            let resource_path = project.base_path.join(&resource.id.path);
+            let base_path = resource_path.parent().expect("no base path").to_owned();
+
+            let resource = match load_yy(&resource_path)? {
+                YyResource::Sprite(yy_sprite) => {
+                    LoadedResource::Sprite(read_sprite(base_path, yy_sprite)?)
+                }
+                YyResource::Object(yy_object) => {
+                    LoadedResource::Object(read_object(base_path, yy_object)?)
+                }
+                YyResource::Room(yy_room) => LoadedResource::Room(read_room(base_path, yy_room)?),
+                YyResource::Script(yy_script) => {
+                    LoadedResource::Script(read_script(base_path, yy_script)?)
+                }
+                YyResource::Extension(yy_extension) => {
+                    LoadedResource::Extension(read_extension(base_path, yy_extension)?)
+                }
+                YyResource::Font(yy_font) => LoadedResource::Font(read_font(base_path, yy_font)?),
+                YyResource::Other => LoadedResource::Other,
+            };
+
+            log::debug!("loaded resource at {resource_path:?}");
+
+            Ok(resource)
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    for resource in loaded_resources {
+        match resource {
+            LoadedResource::Sprite(sprite) => {
                 project.sprites.insert(sprite.name.clone(), sprite);
             }
-            YyResource::Object(yy_object) => {
-                let object = read_object(base_path, yy_object)?;
+            LoadedResource::Object(object) => {
                 project.objects.insert(object.name.clone(), object);
             }
-            YyResource::Room(yy_room) => {
-                let room = read_room(base_path, yy_room)?;
+            LoadedResource::Room(room) => {
                 project.rooms.insert(room.name.clone(), room);
             }
-            YyResource::Script(yy_script) => {
-                let script = read_script(base_path, yy_script)?;
+            LoadedResource::Script(script) => {
                 project.scripts.insert(script.name.clone(), script);
             }
-            YyResource::Extension(yy_extension) => {
-                let extension = read_extension(base_path, yy_extension)?;
+            LoadedResource::Extension(extension) => {
                 project.extensions.insert(extension.name.clone(), extension);
             }
-            YyResource::Other => {}
+            LoadedResource::Font(font) => {
+                project.fonts.insert(font.name.clone(), font);
+            }
+            LoadedResource::Other => {}
         }
     }
 
@@ -285,6 +323,34 @@ struct YyExtension {
 }
 
 #[derive(Deserialize)]
+struct YyGlyph {
+    character: u32,
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
+    offset: i16,
+    shift: i16,
+}
+
+#[derive(Deserialize)]
+struct YyKerningPair {
+    first: u32,
+    second: u32,
+    amount: i16,
+}
+
+#[derive(Deserialize)]
+struct YyFont {
+    name: String,
+    #[serde(rename = "fontName")]
+    font_name: String,
+    glyphs: HashMap<String, YyGlyph>,
+    #[serde(rename = "kerningPairs")]
+    kerning_pairs: Vec<YyKerningPair>,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyResource {
     #[serde(rename = "GMSprite")]
@@ -297,6 +363,8 @@ enum YyResource {
     Script(YyScript),
     #[serde(rename = "GMExtension")]
     Extension(YyExtension),
+    #[serde(rename = "GMFont")]
+    Font(YyFont),
     #[serde(other)]
     Other,
 }
@@ -522,4 +590,46 @@ fn read_extension(base_path: PathBuf, yy_extension: YyExtension) -> Result<Exten
     }
 
     Ok(extension)
+}
+
+fn read_font(base_path: PathBuf, yy_font: YyFont) -> Result<Font, Error> {
+    let font_image_path = base_path.join(&format!("{}.png", yy_font.name));
+    let mut font = Font {
+        name: yy_font.name,
+        font_name: yy_font.font_name,
+        font_image_path,
+        glyphs: HashMap::new(),
+        kerning_pairs: Vec::new(),
+    };
+
+    fn convert_char(c: u32) -> Result<char, Error> {
+        char::from_u32(c).with_context(|| format!("invalid character with number {c:?}"))
+    }
+
+    for (_, glyph) in yy_font.glyphs {
+        let character = convert_char(glyph.character)?;
+
+        font.glyphs.insert(
+            character,
+            Glyph {
+                character,
+                x: glyph.x,
+                y: glyph.y,
+                width: glyph.w,
+                height: glyph.h,
+                offset: glyph.offset,
+                shift: glyph.shift,
+            },
+        );
+    }
+
+    for kerning_pair in yy_font.kerning_pairs {
+        font.kerning_pairs.push(KerningPair {
+            first: convert_char(kerning_pair.first)?,
+            second: convert_char(kerning_pair.second)?,
+            amount: kerning_pair.amount,
+        });
+    }
+
+    Ok(font)
 }

@@ -16,7 +16,7 @@ pub fn drawing_api<'gc>(
         magic.add_constant(
             &ctx,
             ctx.intern(&sprite.name),
-            vm::UserData::new_static(&ctx, sprite_id).into(),
+            vm::UserData::new_static(&ctx, sprite_id),
         )?;
     }
 
@@ -41,7 +41,7 @@ pub fn drawing_api<'gc>(
 
         Ok(())
     });
-    magic.add_constant(&ctx, ctx.intern("draw_sprite"), draw_sprite.into())?;
+    magic.add_constant(&ctx, ctx.intern("draw_sprite"), draw_sprite)?;
 
     Ok(magic)
 }

@@ -1,7 +1,7 @@
 use fabricator_vm as vm;
 
 use crate::{
-    api::magic::{DuplicateMagicName, MagicExt as _, create_magic_rw},
+    api::magic::{DuplicateMagicName, MagicExt as _, create_magic_ro, create_magic_rw},
     state::{Configuration, RoomId, State},
 };
 
@@ -15,7 +15,7 @@ pub fn room_api<'gc>(
         magic.add_constant(
             &ctx,
             ctx.intern(&room.name),
-            vm::UserData::new_static(&ctx, room_id).into(),
+            vm::UserData::new_static(&ctx, room_id),
         )?;
     }
 
@@ -40,6 +40,20 @@ pub fn room_api<'gc>(
         },
     );
     magic.add(ctx.intern("room"), room_magic)?;
+
+    let room_width = create_magic_ro(&ctx, |ctx| {
+        Ok(State::ctx_with(ctx, |state| {
+            vm::Value::Integer(state.config.rooms[state.current_room.unwrap()].size[0] as i64)
+        })?)
+    });
+    magic.add(ctx.intern("room_width"), room_width)?;
+
+    let room_height = create_magic_ro(&ctx, |ctx| {
+        Ok(State::ctx_with(ctx, |state| {
+            vm::Value::Integer(state.config.rooms[state.current_room.unwrap()].size[1] as i64)
+        })?)
+    });
+    magic.add(ctx.intern("room_height"), room_height)?;
 
     Ok(magic)
 }

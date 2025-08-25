@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    f64,
+    f64, fmt,
     path::PathBuf,
 };
 
@@ -83,6 +83,47 @@ impl ScriptPrototype {
         assert!(!prototype.has_upvalues());
         ScriptPrototype {
             prototype: ctx.stash(prototype),
+        }
+    }
+
+    pub fn identifier<'gc>(&self, ctx: vm::Context<'gc>) -> impl fmt::Display {
+        struct Identifier {
+            chunk_name: vm::RefName,
+            line_number: Option<vm::LineNumber>,
+            function_ref_name: Option<vm::RefName>,
+        }
+
+        impl fmt::Display for Identifier {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let chunk_name = &self.chunk_name;
+                match (&self.function_ref_name, &self.line_number) {
+                    (Some(line_number), Some(function_ref_name)) => {
+                        write!(f, "{chunk_name}:{function_ref_name}:{line_number}")
+                    }
+                    (Some(line_number), None) => write!(f, "{chunk_name}:{line_number}"),
+                    _ => write!(f, "{chunk_name}"),
+                }
+            }
+        }
+
+        let prototype = ctx.fetch(&self.prototype);
+        let chunk = prototype.chunk();
+        match prototype.reference() {
+            vm::FunctionRef::Named(ref_name, span) => Identifier {
+                chunk_name: chunk.name().clone(),
+                line_number: Some(chunk.line_number(span.start())),
+                function_ref_name: Some(ref_name.clone()),
+            },
+            vm::FunctionRef::Expression(span) => Identifier {
+                chunk_name: chunk.name().clone(),
+                line_number: Some(chunk.line_number(span.start())),
+                function_ref_name: None,
+            },
+            vm::FunctionRef::Chunk => Identifier {
+                chunk_name: chunk.name().clone(),
+                line_number: None,
+                function_ref_name: None,
+            },
         }
     }
 

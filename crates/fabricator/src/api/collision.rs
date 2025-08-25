@@ -60,7 +60,7 @@ pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         })?
     });
     magic
-        .add_constant(&ctx, ctx.intern("collision_line"), collision_line.into())
+        .add_constant(&ctx, ctx.intern("collision_line"), collision_line)
         .unwrap();
 
     magic

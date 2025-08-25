@@ -91,7 +91,7 @@ pub trait MagicExt<'gc> {
         &mut self,
         mc: &Mutation<'gc>,
         name: vm::String<'gc>,
-        value: vm::Value<'gc>,
+        value: impl Into<vm::Value<'gc>>,
     ) -> Result<usize, DuplicateMagicName>;
 
     /// Merge the given `MagicSet` if and only if every name in it is unique, otherwise, does
@@ -105,8 +105,8 @@ pub trait MagicExt<'gc> {
 impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
     fn add(
         &mut self,
-        name: fabricator_vm::String<'gc>,
-        value: Gc<'gc, dyn fabricator_vm::Magic<'gc>>,
+        name: vm::String<'gc>,
+        value: Gc<'gc, dyn vm::Magic<'gc>>,
     ) -> Result<usize, DuplicateMagicName> {
         if self.find(&name).is_some() {
             return Err(DuplicateMagicName(name.as_str().to_owned()));
@@ -119,11 +119,11 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
     fn add_impl<M>(
         &mut self,
         mc: &Mutation<'gc>,
-        name: fabricator_vm::String<'gc>,
+        name: vm::String<'gc>,
         magic: M,
     ) -> Result<usize, DuplicateMagicName>
     where
-        M: fabricator_vm::Magic<'gc> + Collect<'gc> + 'gc,
+        M: vm::Magic<'gc> + Collect<'gc> + 'gc,
     {
         self.add(name, gc_arena::unsize!(Gc::new(mc, magic) => dyn vm::Magic))
     }
@@ -131,10 +131,10 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
     fn add_constant(
         &mut self,
         mc: &Mutation<'gc>,
-        name: fabricator_vm::String<'gc>,
-        value: fabricator_vm::Value<'gc>,
+        name: vm::String<'gc>,
+        value: impl Into<vm::Value<'gc>>,
     ) -> Result<usize, DuplicateMagicName> {
-        self.add(name, vm::MagicConstant::new_ptr(mc, value))
+        self.add(name, vm::MagicConstant::new_ptr(mc, value.into()))
     }
 
     fn merge_unique(&mut self, other: &vm::MagicSet<'gc>) -> Result<(), DuplicateMagicName> {

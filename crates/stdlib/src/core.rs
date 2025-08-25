@@ -42,6 +42,16 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(ctx.intern("int64"), vm::MagicConstant::new_ptr(&ctx, int64));
 
+    let is_numeric = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let arg: vm::Value = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, arg.cast_float().is_some());
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("is_numeric"),
+        vm::MagicConstant::new_ptr(&ctx, is_numeric),
+    );
+
     let is_string = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: vm::Value = exec.stack().consume(ctx)?;
         exec.stack()

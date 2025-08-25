@@ -8,6 +8,7 @@ use anyhow::{Context as _, Error, anyhow, bail};
 use fabricator_math::{Affine2, Vec2};
 use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
+use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 use crate::{
     project::Project,
@@ -74,9 +75,13 @@ impl Game {
         let mut interpreter = vm::Interpreter::new();
         let main_thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
 
+        log::info!("creating new game state...");
         let mut state = create_state(&mut interpreter, &project, config)?;
+        log::info!("game state created!");
+
         for script in state.scripts.scripts.clone() {
             interpreter.enter(|ctx| -> Result<_, Error> {
+                log::debug!("executing script {}", script.identifier(ctx));
                 let thread = ctx.fetch(&main_thread);
                 let closure = script.create_closure(ctx);
                 State::ctx_cell(ctx).freeze(&mut state, || thread.exec(ctx, closure))?;
@@ -93,60 +98,76 @@ impl Game {
                 .push(texture_id);
         }
 
+        log::info!("packing textures...");
+        let texture_page_list = texture_groups
+            .into_par_iter()
+            .map(|(group_name, group)| {
+                let project_texture_group = project
+                    .texture_groups
+                    .get(&group_name)
+                    .with_context(|| anyhow!("invalid texture group name {:?}", group_name))?;
+
+                let border = project_texture_group.border as u32;
+
+                let mut to_place = group
+                    .into_iter()
+                    .map(|texture_id| (texture_id, ()))
+                    .collect::<SecondaryMap<_, _>>();
+
+                let mut texture_pages = Vec::new();
+
+                while !to_place.is_empty() {
+                    let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
+
+                    for texture_id in to_place.ids() {
+                        let padded_size =
+                            state.config.textures[texture_id].size + Vec2::splat(border * 2);
+                        if padded_size[0] > TEXTURE_PAGE_SIZE[0]
+                            || padded_size[1] > TEXTURE_PAGE_SIZE[1]
+                        {
+                            bail!(
+                                "texture size {:?} is greater than the texture page size",
+                                padded_size
+                            );
+                        }
+                        packer.add(texture_id, padded_size);
+                    }
+
+                    let mut texture_page = TexturePage {
+                        size: TEXTURE_PAGE_SIZE,
+                        textures: SecondaryMap::new(),
+                        border,
+                    };
+
+                    let prev_place_len = to_place.len();
+                    for packed in packer.pack() {
+                        if let Some(mut position) = packed.placement {
+                            position += Vec2::splat(border);
+                            texture_page.textures.insert(packed.item, position);
+                            to_place.remove(packed.item);
+                        }
+                    }
+
+                    assert!(
+                        to_place.len() < prev_place_len,
+                        "should always add at least a single texture per iteration"
+                    );
+
+                    texture_pages.push(texture_page);
+                }
+
+                log::info!("finished packing textures for group {group_name}");
+
+                Ok(texture_pages)
+            })
+            .collect::<Result<Vec<Vec<_>>, Error>>()?;
+
         let mut texture_pages = IdMap::<TexturePageId, TexturePage>::new();
-
-        for (group_name, group) in texture_groups {
-            let project_texture_group = project
-                .texture_groups
-                .get(&group_name)
-                .with_context(|| anyhow!("invalid texture group name {:?}", group_name))?;
-
-            let border = project_texture_group.border as u32;
-
-            let mut to_place = group
-                .into_iter()
-                .map(|texture_id| (texture_id, ()))
-                .collect::<SecondaryMap<_, _>>();
-
-            while !to_place.is_empty() {
-                let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
-
-                for texture_id in to_place.ids() {
-                    let padded_size =
-                        state.config.textures[texture_id].size + Vec2::splat(border * 2);
-                    if padded_size[0] > TEXTURE_PAGE_SIZE[0]
-                        || padded_size[1] > TEXTURE_PAGE_SIZE[1]
-                    {
-                        bail!(
-                            "texture size {:?} is greater than the texture page size",
-                            padded_size
-                        );
-                    }
-                    packer.add(texture_id, padded_size);
-                }
-
-                let texture_page_id = texture_pages.insert(TexturePage {
-                    size: TEXTURE_PAGE_SIZE,
-                    textures: SecondaryMap::new(),
-                    border,
-                });
-                let texture_page = &mut texture_pages[texture_page_id];
-
-                let prev_place_len = to_place.len();
-                for packed in packer.pack() {
-                    if let Some(mut position) = packed.placement {
-                        position += Vec2::splat(border);
-                        texture_page.textures.insert(packed.item, position);
-                        to_place.remove(packed.item);
-                    }
-                }
-
-                assert!(
-                    to_place.len() < prev_place_len,
-                    "should always add at least a single texture per iteration"
-                );
-            }
+        for texture_page in texture_page_list.into_iter().flatten() {
+            texture_pages.insert(texture_page);
         }
+
+        log::info!("finished packing all textures!");
 
         Ok(Game {
             interpreter,
@@ -159,6 +180,10 @@ impl Game {
 
     pub fn texture_pages(&self) -> impl Iterator<Item = (TexturePageId, &TexturePage)> + '_ {
         self.texture_pages.iter()
+    }
+
+    pub fn texture_map(&self) -> &IdMap<TextureId, Texture> {
+        &self.state.config.textures
     }
 
     pub fn texture(&self, texture_id: TextureId) -> &Texture {

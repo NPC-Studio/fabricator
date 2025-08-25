@@ -11,7 +11,7 @@ use gc_arena::Gc;
 use crate::{
     api::{
         collision::collision_api, drawing::drawing_api, magic::MagicExt as _, object::object_api,
-        platform::platform_api, room::room_api, stub::stub_api,
+        os::os_api, platform::platform_api, room::room_api, stub::stub_api,
     },
     ffi::load_extension_file,
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
@@ -168,9 +168,10 @@ pub fn create_state(
 
         magic.merge_unique(&ctx.stdlib())?;
 
+        magic.merge_unique(&os_api(ctx))?;
         magic.merge_unique(&platform_api(ctx))?;
         magic.merge_unique(&collision_api(ctx))?;
-        magic.merge_unique(&stub_api(ctx))?;
+        magic.merge_unique(&stub_api(ctx, project))?;
         magic.merge_unique(&object_api(ctx, &config)?)?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
@@ -179,7 +180,7 @@ pub fn create_state(
             for file in &extension.files {
                 if let Some(callbacks) = load_extension_file(ctx, file)? {
                     for (name, callback) in callbacks {
-                        magic.add_constant(&ctx, name, callback.into())?;
+                        magic.add_constant(&ctx, name, callback)?;
                     }
                 }
             }

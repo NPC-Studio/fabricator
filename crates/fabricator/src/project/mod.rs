@@ -178,6 +178,33 @@ pub struct Extension {
 }
 
 #[derive(Debug)]
+pub struct Glyph {
+    pub character: char,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub offset: i16,
+    pub shift: i16,
+}
+
+#[derive(Debug)]
+pub struct KerningPair {
+    pub first: char,
+    pub second: char,
+    pub amount: i16,
+}
+
+#[derive(Debug)]
+pub struct Font {
+    pub name: String,
+    pub font_name: String,
+    pub font_image_path: PathBuf,
+    pub glyphs: HashMap<char, Glyph>,
+    pub kerning_pairs: Vec<KerningPair>,
+}
+
+#[derive(Debug)]
 pub struct TextureGroup {
     pub name: String,
     pub auto_crop: bool,
@@ -194,6 +221,7 @@ pub struct Project {
     pub rooms: HashMap<String, Room>,
     pub scripts: HashMap<String, Script>,
     pub extensions: HashMap<String, Extension>,
+    pub fonts: HashMap<String, Font>,
     pub room_order: Vec<String>,
 }
 

@@ -2,15 +2,13 @@ pub mod array;
 pub mod buffer;
 pub mod core;
 pub mod math;
-pub mod os;
 pub mod string;
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    array::array_lib, buffer::buffer_lib, core::core_lib, math::math_lib, os::os_lib,
-    string::string_lib,
+    array::array_lib, buffer::buffer_lib, core::core_lib, math::math_lib, string::string_lib,
 };
 
 pub trait StdlibContext<'gc> {
@@ -32,7 +30,6 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 math_lib(ctx, &mut stdlib);
                 array_lib(ctx, &mut stdlib);
                 buffer_lib(ctx, &mut stdlib);
-                os_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }

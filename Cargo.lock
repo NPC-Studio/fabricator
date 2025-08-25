@@ -647,6 +647,7 @@ dependencies = [
  "log",
  "num",
  "rand",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -701,8 +702,10 @@ dependencies = [
  "fabricator-math",
  "fabricator-util",
  "image",
+ "log",
  "num",
  "pollster",
+ "rayon",
  "wgpu",
  "winit",
 ]

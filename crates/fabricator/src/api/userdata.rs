@@ -175,11 +175,7 @@ where
         Err("no index access".into())
     }
 
-    fn iter(
-        &self,
-        _ctx: fabricator_vm::Context<'gc>,
-        _ud: fabricator_vm::UserData<'gc>,
-    ) -> Result<(), fabricator_vm::RuntimeError> {
+    fn iter(&self, _ctx: vm::Context<'gc>, _ud: vm::UserData<'gc>) -> Result<(), vm::RuntimeError> {
         Err("no iteration".into())
     }
 }

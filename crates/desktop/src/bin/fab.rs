@@ -14,6 +14,7 @@ use fabricator_desktop::{
 };
 use fabricator_math::{Affine2, Box2, Vec2, cast};
 use fabricator_util::typed_id_map::SecondaryMap;
+use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use winit::{
     application::ApplicationHandler,
     event::{MouseButton, WindowEvent},
@@ -82,6 +83,7 @@ impl AppState {
         let mut textures =
             SecondaryMap::<fab::TextureId, (fab::TexturePageId, Vec2<f32>, Box2<f32>)>::new();
 
+        log::info!("loading textures...");
         for (page_id, page) in game.texture_pages() {
             let page_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("page texture"),
@@ -112,57 +114,70 @@ impl AppState {
                 ),
             );
 
-            for (texture_id, &position) in page.textures.iter() {
-                let texture_desc = game.texture(texture_id);
+            let texture_map = game.texture_map();
 
-                let image = image::ImageReader::open(&texture_desc.image_path)
-                    .unwrap()
-                    .decode()
-                    .unwrap()
-                    .into_rgba8()
-                    .into_flat_samples();
+            let loaded_textures = page
+                .textures
+                .iter()
+                .collect::<Vec<_>>()
+                .into_par_iter()
+                .map(|(texture_id, &position)| {
+                    let texture_desc = &texture_map[texture_id];
 
-                assert_eq!(
-                    texture_desc.size,
-                    Vec2::new(image.layout.width, image.layout.height)
-                );
+                    let image = image::ImageReader::open(&texture_desc.image_path)
+                        .unwrap()
+                        .decode()
+                        .unwrap()
+                        .into_rgba8()
+                        .into_flat_samples();
 
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &page_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: position[0],
-                            y: position[1],
-                            z: 0,
+                    assert_eq!(
+                        texture_desc.size,
+                        Vec2::new(image.layout.width, image.layout.height)
+                    );
+
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &page_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: position[0],
+                                y: position[1],
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
                         },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &image.samples,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(image.layout.height_stride.try_into().unwrap()),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width: texture_desc.size[0],
-                        height: texture_desc.size[1],
-                        depth_or_array_layers: 1,
-                    },
-                );
+                        &image.samples,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(image.layout.height_stride.try_into().unwrap()),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d {
+                            width: texture_desc.size[0],
+                            height: texture_desc.size[1],
+                            depth_or_array_layers: 1,
+                        },
+                    );
 
-                textures.insert(
-                    texture_id,
                     (
+                        texture_id,
                         page_id,
-                        texture_desc.size.cast(),
+                        texture_desc.size.cast::<f32>(),
                         Box2::with_size(position, texture_desc.size)
                             .cast::<f32>()
                             .scale(Vec2::splat(1.0) / page.size.cast()),
-                    ),
-                );
+                    )
+                })
+                .collect_vec_list()
+                .into_iter()
+                .flatten();
+
+            for (texture_id, page_id, texture_size, texture_box) in loaded_textures {
+                textures.insert(texture_id, (page_id, texture_size, texture_box));
             }
         }
+        log::info!("textures loaded!");
 
         let state = AppState {
             window,

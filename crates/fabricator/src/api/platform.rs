@@ -25,11 +25,7 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         ("mb_any", MouseButtons::all()),
     ] {
         magic
-            .add_constant(
-                &ctx,
-                ctx.intern(name),
-                vm::UserData::new_static(&ctx, val).into(),
-            )
+            .add_constant(&ctx, ctx.intern(name), vm::UserData::new_static(&ctx, val))
             .unwrap();
     }
 
@@ -43,11 +39,7 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         })?
     });
     magic
-        .add_constant(
-            &ctx,
-            ctx.intern("mouse_check_button"),
-            mouse_check_button.into(),
-        )
+        .add_constant(&ctx, ctx.intern("mouse_check_button"), mouse_check_button)
         .unwrap();
 
     magic

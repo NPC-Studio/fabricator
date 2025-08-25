@@ -49,18 +49,18 @@ pub fn object_api<'gc>(
     let mut magic = vm::MagicSet::new();
 
     magic
-        .add_constant(&ctx, ctx.intern("noone"), no_one(ctx).into())
+        .add_constant(&ctx, ctx.intern("noone"), no_one(ctx))
         .unwrap();
 
     magic
-        .add_constant(&ctx, ctx.intern("all"), all(ctx).into())
+        .add_constant(&ctx, ctx.intern("all"), all(ctx))
         .unwrap();
 
     for (object_id, object) in config.objects.iter() {
         magic.add_constant(
             &ctx,
             ctx.intern(&object.name),
-            vm::UserData::new_static(&ctx, object_id).into(),
+            vm::UserData::new_static(&ctx, object_id),
         )?;
     }
 

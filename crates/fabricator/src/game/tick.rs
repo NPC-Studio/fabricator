@@ -19,6 +19,11 @@ pub fn tick_state(
     thread: &vm::StashedThread,
 ) -> Result<(), Error> {
     if let Some(next_room) = state.next_room.take() {
+        log::info!(
+            "switching room to {:?}",
+            &state.config.rooms[next_room].name
+        );
+
         state
             .instances
             .retain(|_, instance| state.config.objects[instance.object].persistent);
@@ -82,6 +87,10 @@ pub fn tick_state(
                         let thread = ctx.fetch(thread);
                         let this = ctx.fetch(&state.instances[instance_id].this);
 
+                        log::info!(
+                            "creating object {}",
+                            &state.config.objects[instance_template.object].name
+                        );
                         FreezeMany::new()
                             .freeze(State::ctx_cell(ctx), state)
                             .freeze(InputState::ctx_cell(ctx), input_state)
