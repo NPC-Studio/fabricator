@@ -239,11 +239,12 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         span,
                     ));
                 }
-                ir::Instruction::Closure(func_id) => {
+                ir::Instruction::Closure { func, bind_this } => {
                     vm_instructions.push((
                         Instruction::Closure {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            proto: prototype_indexes[func_id],
+                            proto: prototype_indexes[func],
+                            bind_this,
                         },
                         span,
                     ));

@@ -745,7 +745,12 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
-    fn closure(&mut self, dest: RegIdx, proto: ProtoIdx) -> Result<(), Self::Error> {
+    fn closure(
+        &mut self,
+        dest: RegIdx,
+        proto: ProtoIdx,
+        bind_this: bool,
+    ) -> Result<(), Self::Error> {
         let proto = self.frame.closure.prototype().prototypes()[proto as usize];
 
         let mut heap = Vec::new();
@@ -768,12 +773,16 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             }
         }
 
-        // inner closures inherit the set of magic values from the parent, and inherit the
-        // current `this` value.
+        // Inner closures bind the current `this` value if the `bind_this` flag is set, otherwise
+        // they are created unbound.
         self.registers[dest as usize] = Closure::from_parts(
             &self.ctx,
             proto,
-            self.frame.this,
+            if bind_this {
+                self.frame.this
+            } else {
+                Value::Undefined
+            },
             Gc::new(&self.ctx, heap.into_boxed_slice()),
         )?
         .into();

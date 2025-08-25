@@ -55,7 +55,7 @@ pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
             ir::Instruction::GetVariable(var_id) | ir::Instruction::SetVariable(var_id, _) => {
                 used_variables.insert(var_id.index() as usize);
             }
-            ir::Instruction::Closure(func) => {
+            ir::Instruction::Closure { func, .. } => {
                 for var in ir.functions[func].variables.values() {
                     // Creating a closure uses every upper variable that the closure closes
                     // over.
@@ -140,8 +140,8 @@ pub fn clean_unused_functions<S>(ir: &mut ir::Function<S>) {
     let mut used_functions = IndexSet::new();
 
     for inst in ir.instructions.values() {
-        if let &ir::Instruction::Closure(func_id) = inst {
-            used_functions.insert(func_id.index() as usize);
+        if let &ir::Instruction::Closure { func, .. } = inst {
+            used_functions.insert(func.index() as usize);
         }
     }
 

@@ -107,10 +107,10 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     }
                 }
 
-                ir::Instruction::Closure(func_id) => {
-                    if !ir.functions.contains(func_id) {
+                ir::Instruction::Closure { func, .. } => {
+                    if !ir.functions.contains(func) {
                         return Err(ReferenceVerificationError::BadFunction {
-                            bad: func_id,
+                            bad: func,
                             inst_location,
                         });
                     }

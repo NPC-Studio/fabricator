@@ -98,8 +98,7 @@ fn run_tests(dir: &str) -> bool {
                         }
                     }
                     Err(err) => {
-                        let _ =
-                            writeln!(stdout(), "error encountered running {:?}: {:?}", path, err);
+                        let _ = writeln!(stdout(), "error encountered running {:?}: {}", path, err);
                         all_passed = false;
                     }
                 }

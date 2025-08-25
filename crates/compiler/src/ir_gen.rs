@@ -188,6 +188,17 @@ impl IrGenSettings {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ClosureBindMode {
+    /// Closures bind the ambient `this` and `other`.
+    BindDefault,
+    /// For any created closures, open a temporary "this" scope to bind the given `this` object for
+    /// that constructor only. This is used inside struct literals.
+    BindNewThis(ir::InstId),
+    /// Make all closures unbound. This is the default in static initializers.
+    BindNothing,
+}
+
 struct FunctionCompiler<'a, S> {
     settings: IrGenSettings,
     interner: &'a mut dyn StringInterner<String = S>,
@@ -202,6 +213,7 @@ struct FunctionCompiler<'a, S> {
 
     break_target_stack: Vec<NonLocalJump>,
     continue_target_stack: Vec<NonLocalJump>,
+    closure_bind_mode: Vec<ClosureBindMode>,
 
     scopes: Vec<Scope<S>>,
 
@@ -368,6 +380,7 @@ where
             current_block: Some(first_block),
             continue_target_stack: Vec::new(),
             break_target_stack: Vec::new(),
+            closure_bind_mode: Vec::new(),
             // Even with no block scoping, all functions must have one top-level scope.
             scopes: vec![Scope::default()],
             var_lookup: HashMap::new(),
@@ -482,12 +495,6 @@ where
         } else {
             self.push_instruction(body.span, ir::Instruction::NewObject)
         };
-        // Our whole constructor body, including all static initializers, exists inside a single
-        // "this" scope.
-
-        let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
-        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
 
         // Set the super-table as the parent object for the `self` value.
 
@@ -560,6 +567,14 @@ where
             self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
         }
 
+        // All static initializers have a "this" scope of the current super object
+        let super_scope = self.function.this_scopes.insert(());
+        self.push_instruction(body.span, ir::Instruction::OpenThisScope(super_scope));
+        self.push_instruction(body.span, ir::Instruction::SetThis(super_scope, our_super));
+
+        // All function expressions within static initializers are *unbound*.
+        self.push_closure_bind_mode(ClosureBindMode::BindNothing);
+
         let mut static_names = HashSet::new();
 
         for stmt in &body.statements {
@@ -601,6 +616,10 @@ where
             }
         }
 
+        self.pop_closure_bind_mode(ClosureBindMode::BindNothing);
+
+        self.push_instruction(body.span, ir::Instruction::CloseThisScope(super_scope));
+
         let true_ = self.push_instruction(body.span, ir::Instruction::Boolean(true));
         self.push_instruction(
             body.span,
@@ -610,6 +629,11 @@ where
         self.end_current_block(ir::Exit::Jump(main_block));
 
         self.start_new_block(main_block);
+
+        // Our constructor body exists inside a "this" scope for the constructed object.
+        let this_scope = self.function.this_scopes.insert(());
+        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
+        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
 
         self.push_scope();
 
@@ -687,7 +711,7 @@ where
                 };
 
                 let func_id = self.function.functions.insert(function);
-                let func = self.push_instruction(func_stmt.span, ir::Instruction::Closure(func_id));
+                let func = self.new_closure(func_stmt.span, func_id);
 
                 let this = self.push_instruction(func_stmt.span, ir::Instruction::This);
                 let key = self.push_instruction(
@@ -1320,7 +1344,13 @@ where
         let function = compiler.finish();
         let func_id = self.function.functions.insert(function);
 
-        let inner_closure = self.push_instruction(closure_span, ir::Instruction::Closure(func_id));
+        let inner_closure = self.push_instruction(
+            closure_span,
+            ir::Instruction::Closure {
+                func: func_id,
+                bind_this: true,
+            },
+        );
 
         let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
@@ -1573,22 +1603,9 @@ where
                     let field_span = field.span();
                     match field {
                         ast::Field::Value(name, value) => {
-                            let this_scope = if matches!(value, ast::Expression::Function(_)) {
-                                // Within a struct literal, closures always bind `this` to the
-                                // struct currently being created.
-                                let this_scope = self.function.this_scopes.insert(());
-                                self.push_instruction(
-                                    field_span,
-                                    ir::Instruction::OpenThisScope(this_scope),
-                                );
-                                self.push_instruction(
-                                    field_span,
-                                    ir::Instruction::SetThis(this_scope, object),
-                                );
-                                Some(this_scope)
-                            } else {
-                                None
-                            };
+                            // Within a struct literal, closures always bind `this` to the struct
+                            // currently being created.
+                            self.push_closure_bind_mode(ClosureBindMode::BindNewThis(object));
 
                             let value = self.expression(value)?;
                             self.push_instruction(
@@ -1600,12 +1617,7 @@ where
                                 },
                             );
 
-                            if let Some(this_scope) = this_scope {
-                                self.push_instruction(
-                                    field_span,
-                                    ir::Instruction::CloseThisScope(this_scope),
-                                );
-                            }
+                            self.pop_closure_bind_mode(ClosureBindMode::BindNewThis(object));
                         }
                         ast::Field::Init(name) => {
                             let value = self.ident_expr(name);
@@ -1909,7 +1921,7 @@ where
                 };
 
                 let func_id = self.function.functions.insert(function);
-                self.push_instruction(func_expr.span, ir::Instruction::Closure(func_id))
+                self.new_closure(func_expr.span, func_id)
             }
             ast::Expression::Call(call) => self.call_expr(call)?,
             ast::Expression::Field(field_expr) => {
@@ -2587,6 +2599,56 @@ where
                 .is_some_and(|j| j.target == block_id),
             "mismatched continue target pop"
         );
+    }
+
+    fn push_closure_bind_mode(&mut self, mode: ClosureBindMode) {
+        self.closure_bind_mode.push(mode);
+    }
+
+    fn pop_closure_bind_mode(&mut self, mode: ClosureBindMode) {
+        assert!(
+            self.closure_bind_mode.pop().is_some_and(|m| m == mode),
+            "mismatched closure bind mode pop"
+        );
+    }
+
+    /// Create a new function with the current function bind mode
+    fn new_closure(&mut self, span: Span, func_id: ir::FuncId) -> ir::InstId {
+        match self
+            .closure_bind_mode
+            .last()
+            .copied()
+            .unwrap_or(ClosureBindMode::BindDefault)
+        {
+            ClosureBindMode::BindDefault => self.push_instruction(
+                span,
+                ir::Instruction::Closure {
+                    func: func_id,
+                    bind_this: true,
+                },
+            ),
+            ClosureBindMode::BindNewThis(this) => {
+                let this_scope = self.function.this_scopes.insert(());
+                self.push_instruction(span, ir::Instruction::OpenThisScope(this_scope));
+                self.push_instruction(span, ir::Instruction::SetThis(this_scope, this));
+                let closure = self.push_instruction(
+                    span,
+                    ir::Instruction::Closure {
+                        func: func_id,
+                        bind_this: true,
+                    },
+                );
+                self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
+                closure
+            }
+            ClosureBindMode::BindNothing => self.push_instruction(
+                span,
+                ir::Instruction::Closure {
+                    func: func_id,
+                    bind_this: false,
+                },
+            ),
+        }
     }
 
     fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {

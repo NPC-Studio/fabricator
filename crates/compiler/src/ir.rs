@@ -262,7 +262,10 @@ pub enum Instruction<S> {
     Undefined,
     Boolean(bool),
     Constant(Constant<S>),
-    Closure(FuncId),
+    Closure {
+        func: FuncId,
+        bind_this: bool,
+    },
     OpenVariable(VarId),
     GetVariable(VarId),
     SetVariable(VarId, InstId),
@@ -438,7 +441,7 @@ impl<S> Instruction<S> {
             | Instruction::Undefined
             | Instruction::Boolean(..)
             | Instruction::Constant(..)
-            | Instruction::Closure(..)
+            | Instruction::Closure { .. }
             | Instruction::GetVariable(..)
             | Instruction::GetMagic(..)
             | Instruction::Globals
@@ -628,8 +631,8 @@ impl<S: AsRef<str>> Function<S> {
                     Instruction::Constant(ref constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;
                     }
-                    Instruction::Closure(closure) => {
-                        writeln!(f, "closure({closure})")?;
+                    Instruction::Closure { func, bind_this } => {
+                        writeln!(f, "closure({func}, bind_this = {bind_this})")?;
                     }
                     Instruction::OpenVariable(var) => {
                         writeln!(f, "open_var({var})")?;

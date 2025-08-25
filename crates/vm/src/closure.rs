@@ -235,7 +235,7 @@ impl<'gc> Prototype<'gc> {
                     verify_reg_idx(source)?;
                 }
                 Instruction::SwapThisOther {} => {}
-                Instruction::Closure { dest, proto } => {
+                Instruction::Closure { dest, proto, .. } => {
                     verify_reg_idx(dest)?;
                     verify_proto_idx(proto)?;
                 }

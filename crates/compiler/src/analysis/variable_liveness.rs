@@ -71,7 +71,7 @@ impl VariableLiveness {
                         variables.insert(var_id, ());
                         variable_uses.get_or_insert_default(var_id).push(inst_loc);
                     }
-                    ir::Instruction::Closure(func) => {
+                    ir::Instruction::Closure { func, .. } => {
                         for var in ir.functions[func].variables.values() {
                             // Creating a closure uses every upper variable that the closure closes
                             // over.

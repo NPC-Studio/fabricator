@@ -59,7 +59,7 @@ macro_rules! for_each_instruction {
             /// Swap the values of the `this` and `other` registers.
             swap_this_other = SwapThisOther {};
 
-            [basic] closure = Closure { dest: RegIdx, proto: ProtoIdx };
+            [basic] closure = Closure { dest: RegIdx, proto: ProtoIdx, bind_this: bool };
 
             [basic]
             /// Set the `dest` register to the currently executing closure.
