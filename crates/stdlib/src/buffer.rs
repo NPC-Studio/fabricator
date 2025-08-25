@@ -95,13 +95,11 @@ impl BufferState {
         let cursor = self
             .cursor
             .next_multiple_of(2usize.pow(self.alignment_power_of_2));
-        let end = cursor
-            + self.data[self.cursor..]
-                .iter()
-                .copied()
-                .enumerate()
-                .find_map(|(i, b)| if b == 0 { Some(i) } else { None })
-                .unwrap_or(self.data.len() - cursor);
+        let end = self.data[cursor..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|i| cursor + i)
+            .unwrap_or(self.data.len());
         let slice = &self.data[cursor..end];
         self.cursor = self.data.len();
         slice

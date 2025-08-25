@@ -74,15 +74,6 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
-    pub fn remove(&mut self, i: usize) -> Option<Value<'gc>> {
-        let index = self.bottom + i;
-        if index < self.values.len() {
-            Some(self.values.remove(index))
-        } else {
-            None
-        }
-    }
-
     pub fn len(&self) -> usize {
         self.values.len() - self.bottom
     }
@@ -121,6 +112,14 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.drain((start, end))
     }
 
+    pub fn from_index<V: FromValue<'gc>>(
+        &self,
+        ctx: Context<'gc>,
+        i: usize,
+    ) -> Result<V, TypeError> {
+        V::from_value(ctx, self.get(i))
+    }
+
     pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         for v in v.into_multi_value(ctx) {
             self.values.push(v.into_value(ctx));
@@ -140,17 +139,22 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         V::from_value(ctx, self.pop_back().unwrap_or_default())
     }
 
-    pub fn from_front<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_value(ctx, self.pop_front().unwrap_or_default())
+    pub fn from_front<V: FromMultiValue<'gc>>(
+        &mut self,
+        ctx: Context<'gc>,
+    ) -> Result<V, TypeError> {
+        // `Vec::extract_if` does not remove values if the iterator is not consumed, which is what
+        // we want here.
+        V::from_multi_value(ctx, self.values.extract_if(self.bottom.., |_| true))
+    }
+
+    pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
+        V::from_multi_value(ctx, self.drain(..))
     }
 
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         self.clear();
         self.extend(v.into_multi_value(ctx));
-    }
-
-    pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
-        V::from_multi_value(ctx, self.drain(..))
     }
 }
 
@@ -164,25 +168,25 @@ impl<'gc: 'b, 'a, 'b> IntoIterator for &'b Stack<'gc, 'a> {
 }
 
 impl<'gc, 'a> Extend<Value<'gc>> for Stack<'gc, 'a> {
-    fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc, 'a, 'b> Extend<Value<'gc>> for &'b mut Stack<'gc, 'a> {
-    fn extend<T: IntoIterator<Item = Value<'gc>>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc, 'a> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
-    fn extend<T: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc: 'b, 'a, 'b, 'c> Extend<&'b Value<'gc>> for &'c mut Stack<'gc, 'a> {
-    fn extend<T: IntoIterator<Item = &'b Value<'gc>>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = &'b Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }

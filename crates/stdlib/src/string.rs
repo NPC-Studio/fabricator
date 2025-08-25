@@ -60,9 +60,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(ctx.intern("ord"), vm::MagicConstant::new_ptr(&ctx, ord));
 
     let show_debug_message = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let Some(fmt_string) = exec.stack().get(0).cast_string(ctx) else {
-            return Err("`show_debug_message` must be given a formatting string".into());
-        };
+        let fmt_string: vm::String = exec.stack().from_index(ctx, 0)?;
 
         let mut stdout = io::stdout().lock();
         for part in split_format(&fmt_string) {
@@ -72,6 +70,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             }
         }
         writeln!(stdout)?;
+        exec.stack().clear();
         Ok(())
     });
     lib.insert(
@@ -101,6 +100,44 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("string"),
         vm::MagicConstant::new_ptr(&ctx, string),
+    );
+
+    let string_char_at = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (string, index): (vm::String, usize) = exec.stack().consume(ctx)?;
+        let mut chars = string.chars();
+        let index = index.checked_sub(1).ok_or_else(|| {
+            format!("index given to `string_char_at` is 1-indexed and cannot be 0")
+        })?;
+        let c = chars.nth(index).ok_or_else(|| {
+            format!(
+                "index {index} is out of range in string of length {}",
+                string.chars().count()
+            )
+        })?;
+        exec.stack().replace(ctx, c.to_string());
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_char_at"),
+        vm::MagicConstant::new_ptr(&ctx, string_char_at),
+    );
+
+    let string_digits = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let input: vm::String = exec.stack().consume(ctx)?;
+        let mut output = String::new();
+
+        for c in input.chars() {
+            if c.is_digit(10) {
+                output.push(c);
+            }
+        }
+
+        exec.stack().replace(ctx, output);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_digits"),
+        vm::MagicConstant::new_ptr(&ctx, string_digits),
     );
 }
 

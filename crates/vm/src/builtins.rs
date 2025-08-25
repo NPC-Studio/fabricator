@@ -123,18 +123,19 @@ impl<'gc> BuiltIns<'gc> {
             }),
 
             pcall: Callback::from_fn(mc, |ctx, mut exec| {
-                let function: Function = exec.stack().from_front(ctx)?;
+                let function: Function = exec.stack().from_index(ctx, 0)?;
+                let mut sub_exec = exec.with_stack_bottom(1);
                 let res = match function {
                     Function::Closure(closure) => {
-                        exec.call_closure(ctx, closure).map_err(|e| e.error)
+                        sub_exec.call_closure(ctx, closure).map_err(|e| e.error)
                     }
                     Function::Callback(callback) => {
-                        callback.call(ctx, exec.reborrow()).map_err(|e| e.into())
+                        callback.call(ctx, sub_exec).map_err(|e| e.into())
                     }
                 };
                 match res {
                     Ok(_) => {
-                        exec.stack().into_front(ctx, true);
+                        exec.stack()[0] = true.into();
                     }
                     Err(err) => {
                         exec.stack().replace(ctx, (false, err.to_value(ctx)));

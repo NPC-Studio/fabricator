@@ -1,4 +1,4 @@
-use fabricator_vm::{self as vm, IntoValue as _};
+use fabricator_vm::{self as vm};
 
 use crate::{
     api::magic::{MagicExt as _, create_magic_ro},
@@ -9,12 +9,12 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     let mut magic = vm::MagicSet::new();
 
     let mouse_x_magic = create_magic_ro(&ctx, |ctx| {
-        InputState::ctx_with(ctx, |input| Ok(input.mouse_position[0].into_value(ctx)))?
+        InputState::ctx_with(ctx, |input| Ok((input.mouse_position[0] as f64).into()))?
     });
     magic.add(ctx.intern("mouse_x"), mouse_x_magic).unwrap();
 
     let mouse_y_magic = create_magic_ro(&ctx, |ctx| {
-        InputState::ctx_with(ctx, |input| Ok(input.mouse_position[1].into_value(ctx)))?
+        InputState::ctx_with(ctx, |input| Ok((input.mouse_position[1] as f64).into()))?
     });
     magic.add(ctx.intern("mouse_y"), mouse_y_magic).unwrap();
 

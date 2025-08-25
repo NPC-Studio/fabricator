@@ -16,7 +16,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             vm::Value::UserData(_) => "ptr",
         };
 
-        exec.stack().replace(ctx, ctx.intern(type_name));
+        exec.stack().replace(ctx, type_name);
         Ok(())
     });
     lib.insert(
@@ -132,7 +132,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let array_concat = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let array = vm::Array::new(&ctx);
         for i in 0..exec.stack().len() {
-            let arr: vm::Array = vm::FromValue::from_value(ctx, exec.stack().get(i))?;
+            let arr: vm::Array = exec.stack().from_index(ctx, i)?;
             array.extend(&ctx, arr.borrow().iter().copied());
         }
         exec.stack().replace(ctx, array);
