@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    cell::{Ref, RefMut},
+    collections::HashMap,
+};
 
 use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
@@ -18,8 +21,8 @@ pub type ObjectInner<'gc> = RefLock<ObjectState<'gc>>;
 #[derive(Debug, Default, Collect)]
 #[collect(no_drop)]
 pub struct ObjectState<'gc> {
-    map: HashMap<String<'gc>, Value<'gc>>,
-    parent: Option<Object<'gc>>,
+    pub map: HashMap<String<'gc>, Value<'gc>>,
+    pub parent: Option<Object<'gc>>,
 }
 
 impl<'gc> PartialEq for Object<'gc> {
@@ -105,5 +108,13 @@ impl<'gc> Object<'gc> {
         self.0.borrow_mut(mc).parent = new_parent;
 
         Ok(())
+    }
+
+    pub fn borrow(&self) -> Ref<'_, ObjectState<'gc>> {
+        self.0.borrow()
+    }
+
+    pub fn borrow_mut(&self, mc: &Mutation<'gc>) -> RefMut<'_, ObjectState<'gc>> {
+        self.0.borrow_mut(mc)
     }
 }

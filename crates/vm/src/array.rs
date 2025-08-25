@@ -1,3 +1,5 @@
+use std::cell::{Ref, RefMut};
+
 use gc_arena::{Collect, Gc, Mutation, RefLock};
 
 use crate::value::Value;
@@ -66,5 +68,25 @@ impl<'gc> Array<'gc> {
             this.resize(index + 1, Value::Undefined);
         }
         this[index] = value.into();
+    }
+
+    #[inline]
+    pub fn push(self, mc: &Mutation<'gc>, value: impl Into<Value<'gc>>) {
+        let mut this = self.0.borrow_mut(mc);
+        this.push(value.into());
+    }
+
+    #[inline]
+    pub fn extend(self, mc: &Mutation<'gc>, values: impl IntoIterator<Item = Value<'gc>>) {
+        let mut this = self.0.borrow_mut(mc);
+        this.extend(values);
+    }
+
+    pub fn borrow(&self) -> Ref<'_, Vec<Value<'gc>>> {
+        self.0.borrow()
+    }
+
+    pub fn borrow_mut(&self, mc: &Mutation<'gc>) -> RefMut<'_, Vec<Value<'gc>>> {
+        self.0.borrow_mut(mc)
     }
 }
