@@ -265,6 +265,27 @@ impl<'gc> Chunk<'gc> {
     pub fn line_number(self, byte_offset: usize) -> LineNumber {
         (self.0.metadata().methods.line_number)(self.0, byte_offset)
     }
+
+    /// Returns a printable identifier for a function within a chunk.
+    pub fn function_identifier(self, reference: FunctionRef) -> FunctionIdentifier {
+        match reference {
+            FunctionRef::Named(ref_name, span) => FunctionIdentifier {
+                chunk_name: self.name().clone(),
+                line_number: Some(self.line_number(span.start())),
+                function_ref_name: Some(ref_name.clone()),
+            },
+            FunctionRef::Expression(span) => FunctionIdentifier {
+                chunk_name: self.name().clone(),
+                line_number: Some(self.line_number(span.start())),
+                function_ref_name: None,
+            },
+            FunctionRef::Chunk => FunctionIdentifier {
+                chunk_name: self.name().clone(),
+                line_number: None,
+                function_ref_name: None,
+            },
+        }
+    }
 }
 
 /// The source origination of a prototype within some chunk.
@@ -285,6 +306,25 @@ impl FunctionRef {
             FunctionRef::Named(_, span) => span,
             FunctionRef::Expression(span) => span,
             FunctionRef::Chunk => Span::everywhere(),
+        }
+    }
+}
+
+pub struct FunctionIdentifier {
+    chunk_name: RefName,
+    line_number: Option<LineNumber>,
+    function_ref_name: Option<RefName>,
+}
+
+impl fmt::Display for FunctionIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let chunk_name = &self.chunk_name;
+        match (&self.function_ref_name, &self.line_number) {
+            (Some(line_number), Some(function_ref_name)) => {
+                write!(f, "{chunk_name}:{function_ref_name}:{line_number}")
+            }
+            (Some(line_number), None) => write!(f, "{chunk_name}:{line_number}"),
+            _ => write!(f, "{chunk_name}"),
         }
     }
 }

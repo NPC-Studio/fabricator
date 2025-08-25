@@ -227,6 +227,9 @@ pub struct Project {
 
 impl Project {
     pub fn load(project_file: &Path) -> Result<Project, Error> {
-        load_project(project_file)
+        log::info!("loading project file {project_file:?}...");
+        let project = load_project(project_file)?;
+        log::info!("finished loading project file {project_file:?}!");
+        Ok(project)
     }
 }

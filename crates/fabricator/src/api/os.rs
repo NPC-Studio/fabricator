@@ -1,8 +1,9 @@
-use std::env;
+use std::{env, fs};
 
+use fabricator_stdlib::buffer;
 use fabricator_vm as vm;
 
-use crate::api::magic::MagicExt as _;
+use crate::{api::magic::MagicExt as _, state::State};
 
 pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     let mut magic = vm::MagicSet::new();
@@ -54,6 +55,52 @@ pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
             ctx.intern("environment_get_variable"),
             environment_get_variable,
         )
+        .unwrap();
+
+    let file_exists = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        State::ctx_with(ctx, |state| {
+            let file_name: vm::String = exec.stack().consume(ctx)?;
+            let path = state.config.data_path.join(file_name.as_str());
+            exec.stack().replace(ctx, fs::exists(&path)?);
+            Ok(())
+        })?
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("file_exists"), file_exists)
+        .unwrap();
+
+    let get_timer = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        State::ctx_with(ctx, |state| {
+            exec.stack()
+                .replace(ctx, state.start_instant.elapsed().as_micros() as i64);
+            Ok(())
+        })?
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("get_timer"), get_timer)
+        .unwrap();
+
+    let show_error = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let arg: vm::String = exec.stack().consume(ctx)?;
+        Err(arg.as_str().to_owned().into())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("show_error"), show_error)
+        .unwrap();
+
+    let buffer_load = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        State::ctx_with(ctx, |state| {
+            let file_name: vm::String = exec.stack().consume(ctx)?;
+            let path = state.config.data_path.join(file_name.as_str());
+            let data = fs::read(path)?;
+            let buffer = buffer::Buffer::new(data, buffer::BufferType::Growable, 1);
+            exec.stack()
+                .replace(ctx, vm::UserData::new_static(&ctx, buffer));
+            Ok(())
+        })?
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("buffer_load"), buffer_load)
         .unwrap();
 
     magic

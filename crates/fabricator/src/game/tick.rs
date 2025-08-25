@@ -30,8 +30,6 @@ pub fn tick_state(
 
         state.current_room = Some(next_room);
 
-        let dummy_ud = interpreter.enter(|ctx| ctx.stash(vm::UserData::new_static(&ctx, ())));
-
         for layer in state.config.rooms[state.current_room.unwrap()]
             .layers
             .clone()
@@ -41,20 +39,6 @@ pub fn tick_state(
                 interpreter.enter(|ctx| -> Result<_, Error> {
                     let instance_template = &state.config.instance_templates[template_id];
 
-                    let instance_id = state.instances.insert(Instance {
-                        object: instance_template.object,
-                        position: instance_template.position,
-                        rotation: 0.0,
-                        depth: layer.depth,
-                        this: dummy_ud.clone(),
-                        properties: ctx.stash(vm::Object::new(&ctx)),
-                        event_closures: HashMap::new(),
-                        animation_time: 0.0,
-                    });
-
-                    state.instances[instance_id].this =
-                        ctx.stash(create_instance_ud(ctx, instance_id));
-
                     if state.config.objects[instance_template.object].persistent {
                         if state.persistent_instances.contains(&template_id) {
                             return Ok(());
@@ -62,6 +46,22 @@ pub fn tick_state(
 
                         state.persistent_instances.insert(template_id);
                     }
+
+                    log::info!(
+                        "creating object {}",
+                        &state.config.objects[instance_template.object].name
+                    );
+
+                    let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                        object: instance_template.object,
+                        position: instance_template.position,
+                        rotation: 0.0,
+                        depth: layer.depth,
+                        this: ctx.stash(create_instance_ud(ctx, instance_id)),
+                        properties: ctx.stash(vm::Object::new(&ctx)),
+                        event_closures: HashMap::new(),
+                        animation_time: 0.0,
+                    });
 
                     for (&event, script) in state
                         .scripts
@@ -87,10 +87,6 @@ pub fn tick_state(
                         let thread = ctx.fetch(thread);
                         let this = ctx.fetch(&state.instances[instance_id].this);
 
-                        log::info!(
-                            "creating object {}",
-                            &state.config.objects[instance_template.object].name
-                        );
                         FreezeMany::new()
                             .freeze(State::ctx_cell(ctx), state)
                             .freeze(InputState::ctx_cell(ctx), input_state)
@@ -100,7 +96,7 @@ pub fn tick_state(
                                     ctx,
                                     create_script.create_closure(ctx),
                                     this.into(),
-                                    this.into(),
+                                    vm::Value::Undefined,
                                 )
                             })?;
                     }
@@ -140,7 +136,9 @@ pub fn tick_state(
                     .freeze(State::ctx_cell(ctx), state)
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
-                    .in_scope(|| thread.exec_with(ctx, closure, this.into(), this.into()))?;
+                    .in_scope(|| {
+                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
+                    })?;
             }
             Ok(())
         })?;
@@ -159,7 +157,9 @@ pub fn tick_state(
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .freeze(DrawingState::ctx_cell(ctx), drawing_state)
-                    .in_scope(|| thread.exec_with(ctx, closure, this.into(), this.into()))?;
+                    .in_scope(|| {
+                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
+                    })?;
             }
             Ok(())
         })?;

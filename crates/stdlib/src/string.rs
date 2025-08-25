@@ -1,5 +1,6 @@
 use std::{
-    io::{self, Write},
+    fmt::Write as _,
+    io::{self, Write as _},
     mem,
 };
 
@@ -24,6 +25,16 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("string_trim"),
         vm::MagicConstant::new_ptr(&ctx, string_trim),
+    );
+
+    let string_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let string: vm::String = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, string.chars().count() as i64);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_length"),
+        vm::MagicConstant::new_ptr(&ctx, string_length),
     );
 
     let string_byte_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -66,6 +77,30 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("show_debug_message"),
         vm::MagicConstant::new_ptr(&ctx, show_debug_message),
+    );
+
+    let string = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let out = match exec.stack().get(0) {
+            vm::Value::String(fmt) => {
+                let mut out = String::new();
+                for part in split_format(&fmt) {
+                    match part {
+                        FormatPart::Str(s) => out.push_str(s),
+                        FormatPart::Arg(arg) => {
+                            write!(&mut out, "{}", exec.stack().get(arg + 1)).unwrap()
+                        }
+                    }
+                }
+                ctx.intern(&out)
+            }
+            other => ctx.intern(&other.to_string()),
+        };
+        exec.stack().replace(ctx, out);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string"),
+        vm::MagicConstant::new_ptr(&ctx, string),
     );
 }
 

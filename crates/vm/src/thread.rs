@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use crate::{
     array::Array,
+    callback::Callback,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor, SharedValue},
     debug::{LineNumber, RefName},
     error::{Error, ExternError, ExternValue, RuntimeError, ScriptError},
@@ -113,6 +114,7 @@ pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct ThreadState<'gc> {
+    frames: Vec<Frame<'gc>>,
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
     heap: Vec<OwnedHeapVar<'gc>>,
@@ -125,6 +127,7 @@ impl<'gc> Thread<'gc> {
         Thread(Gc::new(
             mc,
             RefLock::new(ThreadState {
+                frames: Vec::new(),
                 registers: Vec::new(),
                 stack: Vec::new(),
                 heap: Vec::new(),
@@ -142,51 +145,68 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    /// Calls `Thread::exec_with` with both `this` and `other` set to `ctx.globals()`.
+    /// Calls `Thread::exec_with` with `this` and `other` set to `ctx.globals()`.
     pub fn exec(
         self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
     ) -> Result<Vec<Value<'gc>>, ExternVmError> {
-        let globals = ctx.globals().into();
-        self.exec_with(ctx, closure, globals, globals)
+        self.exec_with(ctx, closure, ctx.globals().into(), ctx.globals().into())
     }
 
-    /// Execute a closure on this `Thread`.
-    ///
-    /// if `this` or `other` are `Value::Undefined`, then they will be automatically set to
-    /// `ctx.globals()`.
+    /// Execute a closure on this `Thread` with the given values of `this` and `other`.
     pub fn exec_with(
         self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        mut this: Value<'gc>,
-        mut other: Value<'gc>,
+        this: Value<'gc>,
+        other: Value<'gc>,
     ) -> Result<Vec<Value<'gc>>, ExternVmError> {
-        let mut thread = self.0.try_borrow_mut(&ctx).expect("thread locked");
-        assert!(thread.registers.is_empty() && thread.stack.is_empty() && thread.heap.is_empty());
+        self.with_inner(&ctx, |state| {
+            state
+                .call(ctx, closure, this, other, 0)
+                .map_err(VmError::into_extern)?;
+
+            Ok(state.stack.drain(..).collect())
+        })
+    }
+
+    /// Create a top-level [`Execution`] context outside of a callback.
+    ///
+    /// The provided `Execution` will have the `this` and `other` set to `ctx.globals()`.
+    pub fn with_exec<R>(self, ctx: Context<'gc>, f: impl FnOnce(Execution<'gc, '_>) -> R) -> R {
+        self.with_inner(&ctx, |state| {
+            f(Execution {
+                thread: state,
+                stack_bottom: 0,
+                this: ctx.globals().into(),
+                other: ctx.globals().into(),
+            })
+        })
+    }
+
+    fn with_inner<R>(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut ThreadState<'gc>) -> R) -> R {
+        let mut thread = self.0.try_borrow_mut(mc).expect("thread locked");
+        assert!(
+            thread.frames.is_empty()
+                && thread.registers.is_empty()
+                && thread.stack.is_empty()
+                && thread.heap.is_empty()
+        );
 
         struct DropGuard<'gc, 'a>(&'a mut ThreadState<'gc>);
 
         impl<'gc, 'a> Drop for DropGuard<'gc, 'a> {
             fn drop(&mut self) {
+                self.0.frames.clear();
                 self.0.registers.clear();
                 self.0.stack.clear();
                 self.0.heap.clear();
             }
         }
 
-        this = this.null_coalesce(ctx.globals().into());
-        other = other.null_coalesce(ctx.globals().into());
-
         let guard = DropGuard(&mut *thread);
-
-        guard
-            .0
-            .call(ctx, closure, this, other, 0)
-            .map_err(VmError::into_extern)?;
-
-        Ok(guard.0.stack.drain(..).collect())
+        f(guard.0)
     }
 }
 
@@ -220,37 +240,39 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         self.other
     }
 
-    /// Return a new execution context with potentially changed stack bottom and  `this` / `other`
-    /// values.
-    ///
-    /// If the provided `stack_bottom` is not 0, then the returned `Execution` will have a stack
-    /// starting at this new provided bottom value.
-    ///
-    /// If the provided `this` value is not `Value::Undefined`, then returns an `Execution` with the
-    /// `this` set as the provided value and the `other` set as the previous value of `this`.
-    pub fn with(&mut self, stack_bottom: usize, this: Value<'gc>) -> Execution<'gc, '_> {
+    /// Return a new execution context with a stack starting at the new provided bottom value.
+    pub fn with_stack_bottom(&mut self, stack_bottom: usize) -> Execution<'gc, '_> {
         assert!(self.thread.stack.len() >= self.stack_bottom + stack_bottom);
-
-        if this.is_undefined() {
-            Execution {
-                thread: self.thread,
-                stack_bottom: self.stack_bottom + stack_bottom,
-                this: self.this,
-                other: self.other,
-            }
-        } else {
-            Execution {
-                thread: self.thread,
-                stack_bottom: self.stack_bottom + stack_bottom,
-                this: this,
-                other: self.this,
-            }
+        Execution {
+            thread: self.thread,
+            stack_bottom: self.stack_bottom + stack_bottom,
+            this: self.this,
+            other: self.other,
         }
     }
 
-    /// Return a new `Execution` with the same stack bottom and `this` / `other` values.
-    ///
-    /// Equivalent to `Execution::with(0, Value::Undefined)`.
+    /// Return a new execution context with the `this` value set to the one provided, and the
+    /// `other` value set as the previous `this` value.
+    pub fn with_this(&mut self, this: Value<'gc>) -> Execution<'gc, '_> {
+        Execution {
+            thread: self.thread,
+            stack_bottom: self.stack_bottom,
+            this: this,
+            other: self.this,
+        }
+    }
+
+    /// Return a new execution context with the `this` and `other` values set to the ones provided.
+    pub fn with_this_other(&mut self, this: Value<'gc>, other: Value<'gc>) -> Execution<'gc, '_> {
+        Execution {
+            thread: self.thread,
+            stack_bottom: self.stack_bottom,
+            this: this,
+            other: other,
+        }
+    }
+
+    /// Return a new, unmodified `Execution` which borrows from this one.
     pub fn reborrow(&mut self) -> Execution<'gc, '_> {
         Execution {
             thread: self.thread,
@@ -285,63 +307,153 @@ impl<'gc, 'a> Execution<'gc, 'a> {
             Function::Closure(closure) => Ok(self
                 .call_closure(ctx, closure)
                 .map_err(|e| e.into_extern())?),
-            Function::Callback(callback) => callback.call(ctx, self.reborrow()),
+            Function::Callback(callback) => {
+                self.thread.frames.push(Frame::Callback(callback));
+                let res = callback.call(ctx, self.reborrow());
+                assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
+                res
+            }
         }
     }
+
+    /// Returns the current execution frame depth.
+    ///
+    /// Every function call, both normal script closures and Rust callbacks, increase the frame
+    /// depth by 1.
+    ///
+    /// This will always be at least 1 for the callback currently executing.
+    pub fn frame_depth(&self) -> usize {
+        self.thread.frames.len()
+    }
+
+    /// Return a descriptor for this frame or an upper frame.
+    ///
+    /// The index 0 will return *this* frame, which will always be a callback frame.
+    ///
+    /// Any higher index will return upper frames, starting with the immediate caller and ending
+    /// with the top-level executing frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if given an index that is larger than the return value of [`Execution::frame_depth`].
+    pub fn upper_frame(&self, index: usize) -> ExecutionFrame<'gc> {
+        assert!(index < self.thread.frames.len());
+        match &self.thread.frames[self.thread.frames.len() - 1 - index] {
+            Frame::Script(script_frame) => {
+                let closure = script_frame.closure;
+                let prototype = closure.prototype();
+                let bytecode = prototype.bytecode();
+                let chunk = prototype.chunk();
+                let inst_index = bytecode.instruction_index_for_pc(script_frame.pc).unwrap();
+                let span = bytecode.span(inst_index);
+                let line_number = chunk.line_number(span.start());
+                ExecutionFrame::Closure {
+                    closure,
+                    line_number,
+                }
+            }
+            &Frame::Callback(callback) => ExecutionFrame::Callback(callback),
+        }
+    }
+}
+
+pub enum ExecutionFrame<'gc> {
+    Closure {
+        closure: Closure<'gc>,
+        line_number: LineNumber,
+    },
+    Callback(Callback<'gc>),
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+struct ScriptFrame<'gc> {
+    closure: Closure<'gc>,
+    this: Value<'gc>,
+    other: Value<'gc>,
+    register_bottom: usize,
+    stack_bottom: usize,
+    heap_bottom: usize,
+    pc: usize,
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+enum Frame<'gc> {
+    Script(ScriptFrame<'gc>),
+    Callback(Callback<'gc>),
 }
 
 impl<'gc> ThreadState<'gc> {
     fn call(
         &mut self,
         ctx: Context<'gc>,
-        closure: Closure<'gc>,
-        mut this: Value<'gc>,
-        mut other: Value<'gc>,
-        stack_bottom: usize,
+        initial_closure: Closure<'gc>,
+        mut initial_this: Value<'gc>,
+        mut initial_other: Value<'gc>,
+        initial_stack_bottom: usize,
     ) -> Result<(), VmError<'gc>> {
-        let proto = closure.prototype();
-        let used_registers = proto.used_registers();
-        assert!(used_registers <= 256);
-
-        let register_bottom = self.registers.len();
-        self.registers
-            .resize(register_bottom + 256, Value::Undefined);
-
-        let heap_bottom = self.heap.len();
-        for hd in closure.heap() {
-            if let &HeapVar::Owned(idx) = hd {
-                let idx = heap_bottom + idx as usize;
-                self.heap
-                    .resize_with(idx + 1, || OwnedHeapVar::unique(Value::Undefined));
+        fn grow_heap<'gc>(
+            heap: &mut Vec<OwnedHeapVar<'gc>>,
+            heap_bottom: usize,
+            closure: Closure<'gc>,
+        ) {
+            for hd in closure.heap() {
+                if let &HeapVar::Owned(idx) = hd {
+                    let idx = heap_bottom + idx as usize;
+                    heap.resize_with(idx + 1, || OwnedHeapVar::unique(Value::Undefined));
+                }
             }
         }
 
-        if !closure.this().is_undefined() {
-            other = this;
-            this = closure.this();
+        let bottom_frame = self.frames.len();
+
+        if !initial_closure.this().is_undefined() {
+            initial_other = initial_this;
+            initial_this = initial_closure.this();
         }
 
-        let mut frame = Frame {
-            closure,
-            this,
-            other,
-            pc: 0,
-        };
+        self.frames.push({
+            let register_bottom = self.registers.len();
+            self.registers
+                .resize(register_bottom + 256, Value::Undefined);
+
+            let heap_bottom = self.heap.len();
+            grow_heap(&mut self.heap, heap_bottom, initial_closure);
+
+            Frame::Script(ScriptFrame {
+                closure: initial_closure,
+                this: initial_this,
+                other: initial_other,
+                register_bottom,
+                stack_bottom: initial_stack_bottom,
+                heap_bottom,
+                pc: 0,
+            })
+        });
 
         loop {
+            let Frame::Script(frame) = self.frames.last_mut().unwrap() else {
+                unreachable!()
+            };
+
             let mut dispatcher = instructions::Dispatcher::new(
                 &frame.closure.prototype().as_ref().bytecode(),
                 frame.pc,
             );
 
+            let registers = (&mut self.registers
+                [frame.register_bottom..frame.register_bottom + 256])
+                .try_into()
+                .unwrap();
+            let heap = &mut self.heap[frame.heap_bottom..];
+            let stack = Stack::new(&mut self.stack, frame.stack_bottom);
             let ret = dispatcher.dispatch_loop(&mut Dispatch {
                 ctx,
-                frame: &mut frame,
-                registers: (&mut self.registers[register_bottom..register_bottom + 256])
-                    .try_into()
-                    .unwrap(),
-                heap: &mut self.heap[heap_bottom..],
-                stack: Stack::new(&mut self.stack, stack_bottom),
+                frame,
+                registers,
+                heap,
+                stack,
             });
             frame.pc = dispatcher.pc();
 
@@ -354,42 +466,73 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         match function {
                             Function::Closure(closure) => {
+                                assert!(closure.prototype().used_registers() <= 256);
+
+                                let mut this = frame.this;
+                                let mut other = frame.other;
+                                if !closure.this().is_undefined() {
+                                    other = this;
+                                    this = closure.this();
+                                }
+
                                 // We only preserve the registers that the prototype claims to use,
-                                self.registers.truncate(register_bottom + used_registers);
-
-                                self.call(
-                                    ctx,
-                                    closure,
-                                    frame.this,
-                                    frame.other,
-                                    stack_bottom + args_bottom,
-                                )?;
-
-                                // Resize the register slice to be 256 wide.
+                                // resize registers to be 256 above the registers we are preserving.
+                                let register_bottom = frame.register_bottom
+                                    + frame.closure.prototype().used_registers();
                                 self.registers
                                     .resize(register_bottom + 256, Value::Undefined);
+
+                                let stack_bottom = frame.stack_bottom + args_bottom;
+
+                                let heap_bottom = self.heap.len();
+                                grow_heap(&mut self.heap, heap_bottom, closure);
+
+                                self.frames.push(Frame::Script(ScriptFrame {
+                                    closure,
+                                    this,
+                                    other,
+                                    register_bottom,
+                                    stack_bottom,
+                                    heap_bottom,
+                                    pc: 0,
+                                }));
                             }
                             Function::Callback(callback) => {
+                                let stack_bottom = frame.stack_bottom + args_bottom;
+                                let this = frame.this;
+                                let other = frame.other;
+                                self.frames.push(Frame::Callback(callback));
                                 let execution = Execution {
                                     thread: self,
-                                    stack_bottom: stack_bottom + args_bottom,
-                                    this: frame.this,
-                                    other: frame.other,
+                                    stack_bottom,
+                                    this,
+                                    other,
                                 };
                                 if let Err(err) = callback.call(ctx, execution) {
                                     error = Some(err.into());
                                 }
+                                assert!(matches!(self.frames.pop(), Some(Frame::Callback(_))));
                             }
                         }
                     }
                     Next::Return { returns_bottom } => {
-                        // Clear the registers for this frame.
-                        self.registers.truncate(register_bottom);
+                        // Clear the registers and heap values for this frame.
+                        self.registers.truncate(frame.register_bottom);
+                        self.registers
+                            .resize(frame.register_bottom + 256, Value::Undefined);
+                        self.heap.truncate(frame.heap_bottom);
+
                         // Drain everything on the stack up until the returns.
                         self.stack
-                            .drain(stack_bottom..stack_bottom + returns_bottom);
+                            .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
 
-                        return Ok(());
+                        // Pop the returning frame.
+                        self.frames.pop().unwrap();
+
+                        // If we are now below our initial frame, then return.
+                        if self.frames.len() == bottom_frame {
+                            return Ok(());
+                        }
                     }
                 },
                 Err(err) => {
@@ -398,12 +541,19 @@ impl<'gc> ThreadState<'gc> {
             }
 
             if let Some(err) = error {
-                let prototype = frame.closure.prototype();
+                let Frame::Script(top_frame) = self.frames.last().unwrap() else {
+                    unreachable!()
+                };
+
+                let prototype = top_frame.closure.prototype();
                 let bytecode = prototype.bytecode();
-                let inst_index = bytecode.instruction_index_for_pc(frame.pc).unwrap();
+                let inst_index = bytecode.instruction_index_for_pc(dispatcher.pc()).unwrap();
                 let inst = bytecode.instruction(inst_index);
                 let span = bytecode.span(inst_index);
                 let chunk = prototype.chunk();
+
+                self.frames.truncate(bottom_frame);
+
                 return Err(VmError {
                     error: err,
                     chunk_name: chunk.name().clone(),
@@ -464,13 +614,6 @@ impl<'gc> OwnedHeapVar<'gc> {
     }
 }
 
-struct Frame<'gc> {
-    closure: Closure<'gc>,
-    this: Value<'gc>,
-    other: Value<'gc>,
-    pc: usize,
-}
-
 enum Next<'gc> {
     Call {
         function: Function<'gc>,
@@ -483,7 +626,7 @@ enum Next<'gc> {
 
 struct Dispatch<'gc, 'a> {
     ctx: Context<'gc>,
-    frame: &'a mut Frame<'gc>,
+    frame: &'a mut ScriptFrame<'gc>,
     // The register slice is fixed size to avoid bounds checks.
     registers: &'a mut [Value<'gc>; 256],
     heap: &'a mut [OwnedHeapVar<'gc>],

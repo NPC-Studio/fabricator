@@ -77,8 +77,9 @@ impl Game {
 
         log::info!("creating new game state...");
         let mut state = create_state(&mut interpreter, &project, config)?;
-        log::info!("game state created!");
+        log::info!("finished creating new game state!");
 
+        log::info!("execuing all global scripts...");
         for script in state.scripts.scripts.clone() {
             interpreter.enter(|ctx| -> Result<_, Error> {
                 log::debug!("executing script {}", script.identifier(ctx));
@@ -88,6 +89,7 @@ impl Game {
                 Ok(())
             })?;
         }
+        log::info!("finished executing all global scripts!");
 
         let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
 

@@ -723,6 +723,7 @@ version = "0.1.0"
 dependencies = [
  "fabricator-vm",
  "gc-arena",
+ "serde_json",
  "thiserror 2.0.12",
 ]
 

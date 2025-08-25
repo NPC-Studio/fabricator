@@ -46,22 +46,23 @@ struct BufferState {
 }
 
 impl Buffer {
-    pub fn read<'a>(&'a self) -> Ref<'a, [u8]> {
-        Ref::map(self.inner.borrow(), |cell| cell.data.as_slice())
-    }
-
-    fn new(buffer_type: BufferType, mut size: usize, alignment: usize) -> Self {
+    pub fn new(mut data: Vec<u8>, buffer_type: BufferType, alignment: usize) -> Self {
         assert!(alignment.is_power_of_two());
         let alignment_power_of_2 = alignment.ilog2();
-        size = size.checked_next_multiple_of(alignment).unwrap();
+        let new_len = data.len().checked_next_multiple_of(alignment).unwrap();
+        data.resize(new_len, 0);
         Self {
             inner: RefCell::new(BufferState {
                 buffer_type,
                 alignment_power_of_2,
-                data: vec![0; size],
+                data,
                 cursor: 0,
             }),
         }
+    }
+
+    pub fn data<'a>(&'a self) -> Ref<'a, [u8]> {
+        Ref::map(self.inner.borrow(), |cell| cell.data.as_slice())
     }
 }
 
@@ -88,25 +89,6 @@ impl BufferState {
         self.read_at(cursor, data)?;
         self.cursor = cursor + data.len();
         Ok(())
-    }
-
-    fn cursor_read_until_nul(&mut self) -> Result<&[u8], vm::RuntimeError> {
-        let cursor = self
-            .cursor
-            .next_multiple_of(2usize.pow(self.alignment_power_of_2));
-        let Some(nul) = self.data[self.cursor..]
-            .iter()
-            .copied()
-            .enumerate()
-            .find_map(|(i, b)| if b == 0 { Some(i) } else { None })
-        else {
-            return Err(format!("read of string from pos {cursor}, no NUL found",).into());
-        };
-        let end = cursor + nul;
-
-        let slice = &self.data[cursor..end];
-        self.cursor = nul + 1;
-        Ok(slice)
     }
 
     fn cursor_read_until_nul_or_end(&mut self) -> &[u8] {
@@ -137,9 +119,8 @@ impl BufferState {
                     .into());
                 }
                 BufferType::Growable => {
-                    let new_size =
-                        write_end.next_multiple_of(2usize.pow(self.alignment_power_of_2));
-                    self.data.resize(new_size, 0);
+                    let new_len = write_end.next_multiple_of(2usize.pow(self.alignment_power_of_2));
+                    self.data.resize(new_len, 0);
                 }
             }
         }
@@ -212,7 +193,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let buf_type = *buf_type.downcast_static::<BufferType>()?;
         exec.stack().push_back(vm::UserData::new_static(
             &ctx,
-            Buffer::new(buf_type, size, alignment),
+            Buffer::new(vec![0; size], buf_type, alignment),
         ));
         Ok(())
     });
@@ -325,13 +306,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 buffer.cursor_read(&mut bytes)?;
                 (bytes[0] != 0).into()
             }
-            DataType::String => {
-                // Read a string up until the next NUL. If there is no NUL character found, this
-                // will error.
-                let string = ctx.intern(str::from_utf8(buffer.cursor_read_until_nul()?)?);
-                string.into()
-            }
-            DataType::Text => {
+            DataType::String | DataType::Text => {
                 // Read the entire rest of the buffer as a string, or until encountering the first
                 // NUL character.
                 let string = ctx.intern(str::from_utf8(buffer.cursor_read_until_nul_or_end())?);

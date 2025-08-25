@@ -1,0 +1,50 @@
+use fabricator_vm as vm;
+
+pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
+    fn json_to_value<'gc>(
+        ctx: vm::Context<'gc>,
+        value: serde_json::Value,
+    ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+        Ok(match value {
+            serde_json::Value::Null => vm::Value::Undefined,
+            serde_json::Value::Bool(b) => vm::Value::Boolean(b),
+            serde_json::Value::Number(number) => {
+                if let Some(i) = number.as_i64() {
+                    vm::Value::Integer(i)
+                } else if let Some(n) = number.as_f64() {
+                    vm::Value::Float(n)
+                } else {
+                    return Err(format!("json number {number:?} is not an i64 or f64").into());
+                }
+            }
+            serde_json::Value::String(s) => ctx.intern(&s).into(),
+            serde_json::Value::Array(values) => {
+                let array = vm::Array::new(&ctx);
+                for value in values {
+                    array.push(&ctx, json_to_value(ctx, value)?);
+                }
+                vm::Value::Array(array)
+            }
+            serde_json::Value::Object(map) => {
+                let obj = vm::Object::new(&ctx);
+                for (key, value) in map {
+                    let key = ctx.intern(&key);
+                    let value = json_to_value(ctx, value)?;
+                    obj.set(&ctx, key, value);
+                }
+                vm::Value::Object(obj)
+            }
+        })
+    }
+    let json_parse = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let json: vm::String = exec.stack().consume(ctx)?;
+        let value: serde_json::Value = serde_json::from_str(json.as_str())?;
+        let value = json_to_value(ctx, value)?;
+        exec.stack().push_back(value);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("json_parse"),
+        vm::MagicConstant::new_ptr(&ctx, json_parse),
+    );
+}

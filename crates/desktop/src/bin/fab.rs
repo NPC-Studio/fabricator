@@ -63,7 +63,8 @@ impl AppState {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        let game = fab::Game::new(fab::Project::load(project_file).unwrap(), config).unwrap();
+        let project = fab::Project::load(project_file).unwrap();
+        let game = fab::Game::new(project, config).unwrap();
 
         let pipeline = pipeline::Pipeline::new(&device, surface_format.add_srgb_suffix());
 
@@ -177,7 +178,7 @@ impl AppState {
                 textures.insert(texture_id, (page_id, texture_size, texture_box));
             }
         }
-        log::info!("textures loaded!");
+        log::info!("finished loading textures!");
 
         let state = AppState {
             window,

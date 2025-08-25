@@ -34,7 +34,7 @@ impl<'gc> Callback<'gc> {
     /// If there is a `this` object bound to the callback, then the provided `exec` will be rebound
     /// with it.
     pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), RuntimeError> {
-        self.0.callback_fn.call(ctx, exec.with(0, self.0.this))
+        self.0.callback_fn.call(ctx, exec.with_this(self.0.this))
     }
 
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.

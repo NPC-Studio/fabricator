@@ -277,8 +277,8 @@ pub enum ExternError {
 impl fmt::Display for ExternError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExternError::Script(err) => write!(f, "script error: {err:#}"),
-            ExternError::Runtime(err) => write!(f, "runtime error: {err:#}"),
+            ExternError::Script(err) => write!(f, "script error: {err}"),
+            ExternError::Runtime(err) => write!(f, "runtime error: {err}"),
         }
     }
 }

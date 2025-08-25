@@ -1,4 +1,4 @@
-use std::{collections::HashMap, f64, fs::File, io::Read as _};
+use std::{collections::HashMap, f64, fs::File, io::Read as _, time::Instant};
 
 use anyhow::{Context as _, Error, anyhow};
 use fabricator_compiler as compiler;
@@ -154,6 +154,7 @@ pub fn create_state(
     }
 
     let config = Configuration {
+        data_path: project.base_path.join("datafiles"),
         tick_rate: TICK_RATE,
         textures,
         sprites,
@@ -188,6 +189,7 @@ pub fn create_state(
 
         let magic = Gc::new(&ctx, magic);
 
+        log::info!("compiling all global scripts...");
         let mut script_compiler =
             compiler::Compiler::new(ctx, config_name, compiler::ImportItems::from_magic(magic));
 
@@ -211,7 +213,9 @@ pub fn create_state(
         }
 
         let (scripts, script_imports, _) = script_compiler.compile()?;
+        log::info!("finished compiling all global scripts!");
 
+        log::info!("compiling all object scripts...");
         for (object_name, proj_object) in &project.objects {
             for (&event, script) in &proj_object.event_scripts {
                 code_buf.clear();
@@ -234,6 +238,7 @@ pub fn create_state(
                     .insert(event, ScriptPrototype::new(ctx, proto));
             }
         }
+        log::info!("finished compiling all object scripts!");
 
         Ok(Scripts {
             magic: ctx.stash(magic),
@@ -251,6 +256,7 @@ pub fn create_state(
         .with_context(|| "no such room `{first_room:?}`")?;
 
     Ok(State {
+        start_instant: Instant::now(),
         config,
         scripts,
         current_room: None,

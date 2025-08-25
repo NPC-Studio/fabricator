@@ -4,7 +4,7 @@ use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
 
 use crate::{
-    debug::{Chunk, FunctionRef},
+    debug::{Chunk, FunctionIdentifier, FunctionRef},
     instructions::{ByteCode, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
     magic::MagicSet,
     object::Object,
@@ -442,6 +442,11 @@ impl<'gc> Prototype<'gc> {
     #[inline]
     pub fn reference(&self) -> &FunctionRef {
         &self.reference
+    }
+
+    #[inline]
+    pub fn identifier(&self) -> FunctionIdentifier {
+        self.chunk.function_identifier(self.reference.clone())
     }
 
     #[inline]

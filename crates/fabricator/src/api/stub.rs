@@ -24,7 +24,7 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
     ) {
         let stub_callback =
             vm::Callback::from_fn_with_root(&ctx, returns, move |returns, _ctx, mut exec| {
-                log::info!("call of stubbed out callback {name}");
+                log::debug!("call of stubbed out callback {name}");
                 exec.stack().clear();
                 exec.stack().extend(returns);
                 Ok(())
@@ -63,6 +63,10 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
     create_stub_callback(ctx, &mut magic, "vertex_format_add_color", []);
     create_stub_callback(ctx, &mut magic, "vertex_format_end", [unit_userdata]);
     create_stub_callback(ctx, &mut magic, "display_reset", []);
+    create_stub_callback(ctx, &mut magic, "window_set_size", []);
+    create_stub_callback(ctx, &mut magic, "window_set_fullscreen", []);
+    create_stub_callback(ctx, &mut magic, "window_center", []);
+    create_stub_callback(ctx, &mut magic, "window_enable_borderless_fullscreen", []);
 
     create_stub_constant(ctx, &mut magic, "cmpfunc_always", vm::Value::Undefined);
 
