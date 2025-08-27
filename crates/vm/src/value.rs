@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gc_arena::{Collect, Gc, Mutation};
+use gc_arena::{Collect, Mutation};
 
 use crate::{
     array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
@@ -59,17 +59,11 @@ impl<'gc> fmt::Debug for Value<'gc> {
             Value::Integer(i) => write!(f, "`{i}`"),
             Value::Float(n) => write!(f, "`{n}`"),
             Value::String(s) => write!(f, "{:?}", s.as_str()),
-            Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
-            Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
-            Value::Closure(closure) => {
-                write!(f, "<closure {:p}>", Gc::as_ptr(closure.into_inner()))
-            }
-            Value::Callback(callback) => {
-                write!(f, "<callback {:p}>", Gc::as_ptr(callback.into_inner()))
-            }
-            Value::UserData(user_data) => {
-                write!(f, "<user_data {:p}>", Gc::as_ptr(user_data.into_inner()))
-            }
+            Value::Object(object) => write!(f, "<object {:p}>", object.into_inner()),
+            Value::Array(array) => write!(f, "<array {:p}>", array.into_inner()),
+            Value::Closure(closure) => write!(f, "<closure {:p}>", closure.into_inner()),
+            Value::Callback(callback) => write!(f, "<callback {:p}>", callback.into_inner()),
+            Value::UserData(user_data) => write!(f, "<user_data {:p}>", user_data.into_inner()),
         }
     }
 }
@@ -82,17 +76,11 @@ impl<'gc> fmt::Display for Value<'gc> {
             Value::Integer(i) => write!(f, "{i}"),
             Value::Float(n) => write!(f, "{n}"),
             Value::String(s) => write!(f, "{s}"),
-            Value::Object(object) => write!(f, "<object {:p}>", Gc::as_ptr(object.into_inner())),
-            Value::Array(array) => write!(f, "<array {:p}>", Gc::as_ptr(array.into_inner())),
-            Value::Closure(closure) => {
-                write!(f, "<closure {:p}>", Gc::as_ptr(closure.into_inner()))
-            }
-            Value::Callback(callback) => {
-                write!(f, "<callback {:p}>", Gc::as_ptr(callback.into_inner()))
-            }
-            Value::UserData(user_data) => {
-                write!(f, "<user_data {:p}>", Gc::as_ptr(user_data.into_inner()))
-            }
+            Value::Object(object) => write!(f, "<object {:p}>", object.into_inner()),
+            Value::Array(array) => write!(f, "<array {:p}>", array.into_inner()),
+            Value::Closure(closure) => write!(f, "<closure {:p}>", closure.into_inner()),
+            Value::Callback(callback) => write!(f, "<callback {:p}>", callback.into_inner()),
+            Value::UserData(user_data) => write!(f, "<user_data {:p}>", user_data.into_inner()),
         }
     }
 }

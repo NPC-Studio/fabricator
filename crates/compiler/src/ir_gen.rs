@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
 };
 
-use fabricator_vm::{BuiltIns, FunctionRef, RefName, Span};
+use fabricator_vm::{BuiltIns, FunctionRef, SharedStr, Span};
 use thiserror::Error;
 
 use crate::{ast, constant::Constant, ir, string_interner::StringInterner};
@@ -169,7 +169,7 @@ impl IrGenSettings {
         let mut compiler = FunctionCompiler::new(
             self,
             interner,
-            FunctionRef::Named(RefName::new(func_stmt.name.as_ref()), func_stmt.span),
+            FunctionRef::Named(SharedStr::new(func_stmt.name.as_ref()), func_stmt.span),
             var_dict,
         );
         compiler.declare_parameters(&func_stmt.parameters)?;
@@ -692,7 +692,7 @@ where
 
                 let allow_constructors = self.settings.allow_constructors;
                 let mut compiler = self.start_inner_function(FunctionRef::Named(
-                    RefName::new(func_stmt.name.as_ref()),
+                    SharedStr::new(func_stmt.name.as_ref()),
                     func_stmt.span,
                 ));
 

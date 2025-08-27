@@ -97,15 +97,12 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let array = vm::Array::new(&ctx);
         for frame in 0..max_depth {
             let frame_desc = match exec.upper_frame(frame) {
-                vm::ExecutionFrame::Closure {
-                    closure,
-                    line_number,
-                } => ctx.intern(&format!(
+                vm::BacktraceFrame::Closure(closure_frame) => ctx.intern(&format!(
                     "{}:{}",
-                    closure.prototype().chunk().name(),
-                    line_number,
+                    closure_frame.chunk_name(),
+                    closure_frame.line_number(),
                 )),
-                vm::ExecutionFrame::Callback(callback) => {
+                vm::BacktraceFrame::Callback(callback) => {
                     ctx.intern(&vm::Value::Callback(callback).to_string())
                 }
             };

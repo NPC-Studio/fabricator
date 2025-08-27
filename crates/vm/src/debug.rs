@@ -1,8 +1,11 @@
-use std::{fmt, ops, string::String as StdString, sync::Arc};
+use std::fmt;
 
 use gc_arena::{Collect, Gc, Mutation, Rootable, arena::Root, barrier};
 
-use crate::any::{Any, AnyInner};
+use crate::{
+    any::{Any, AnyInner},
+    string::SharedStr,
+};
 
 /// A region of some chunk, expressed in byte offsets.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Collect)]
@@ -112,42 +115,12 @@ impl fmt::Display for LineNumber {
     }
 }
 
-/// A static, shared string for named references.
-///
-/// Static so that it can be stored within error types.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct RefName(Arc<str>);
-
-impl fmt::Display for RefName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl ops::Deref for RefName {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl RefName {
-    pub fn new(name: impl Into<StdString>) -> Self {
-        Self(name.into().into_boxed_str().into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
 /// A trait for representing a single unit of FML source code, generally a single source file, for
 /// the purposes of displaying debug information.
 pub trait ChunkData {
     /// The name of this chunk, usually the name of the source code file.
     #[must_use]
-    fn name(&self) -> &RefName;
+    fn name(&self) -> &SharedStr;
 
     /// Returns the line number for a given byte offset.
     #[must_use]
@@ -155,7 +128,7 @@ pub trait ChunkData {
 }
 
 impl<T: ChunkData> ChunkData for gc_arena::Static<T> {
-    fn name(&self) -> &RefName {
+    fn name(&self) -> &SharedStr {
         self.0.name()
     }
 
@@ -166,7 +139,7 @@ impl<T: ChunkData> ChunkData for gc_arena::Static<T> {
 
 #[derive(Debug, Copy, Clone)]
 struct ChunkMethods {
-    name: for<'gc> fn(Any<'gc, ChunkMeta>) -> &'gc RefName,
+    name: for<'gc> fn(Any<'gc, ChunkMeta>) -> &'gc SharedStr,
     line_number: for<'gc> fn(Any<'gc, ChunkMeta>, usize) -> LineNumber,
 }
 
@@ -258,7 +231,7 @@ impl<'gc> Chunk<'gc> {
         self.downcast::<gc_arena::Static<T>>().map(|r| &r.0)
     }
 
-    pub fn name(self) -> &'gc RefName {
+    pub fn name(self) -> &'gc SharedStr {
         (self.0.metadata().methods.name)(self.0)
     }
 
@@ -293,7 +266,7 @@ impl<'gc> Chunk<'gc> {
 #[collect(require_static)]
 pub enum FunctionRef {
     // The function has a name from a declaration statement and the span is of the statement.
-    Named(RefName, Span),
+    Named(SharedStr, Span),
     // The function is an anonymous expression and the span is of the expression.
     Expression(Span),
     // The function is top-level and represents execution of an entire chunk.
@@ -311,9 +284,9 @@ impl FunctionRef {
 }
 
 pub struct FunctionIdentifier {
-    chunk_name: RefName,
+    chunk_name: SharedStr,
     line_number: Option<LineNumber>,
-    function_ref_name: Option<RefName>,
+    function_ref_name: Option<SharedStr>,
 }
 
 impl fmt::Display for FunctionIdentifier {

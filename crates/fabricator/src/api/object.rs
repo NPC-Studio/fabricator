@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::Context as _;
 use fabricator_math::Vec2;
 use fabricator_vm as vm;
 use gc_arena::{Collect, Rootable};
@@ -137,6 +138,7 @@ pub fn object_api<'gc>(
                 exec.with_this(instance_ud.into())
                     .call_closure(ctx, create_script.create_closure(ctx))
                     .map_err(|e| e.into_extern())
+                    .context("creating an instance in `create_instance_depth`")
             })?;
         }
 

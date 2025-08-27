@@ -3,7 +3,7 @@ use std::{error::Error as StdError, fmt, ops, sync::Arc};
 use gc_arena::{Collect, Gc};
 use thiserror::Error;
 
-use crate::{interpreter::Context, userdata::UserData, value::Value};
+use crate::{interpreter::Context, string::SharedStr, userdata::UserData, value::Value};
 
 /// An error raised directly from FML which contains a `Value`.
 ///
@@ -38,29 +38,48 @@ impl<'gc> ScriptError<'gc> {
     }
 }
 
+/// A raw pointer to a Gc object that can be exported outside of the Gc context.
+///
+/// This is safe to use and construct, but dereferencing the held pointer in any way is wildly
+/// unsafe.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct RawGc(pub *const ());
+
+impl fmt::Display for RawGc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:p}", self.0)
+    }
+}
+
+impl RawGc {
+    pub fn new<'gc, T>(gc: Gc<'gc, T>) -> Self {
+        Self(Gc::as_ptr(gc) as *const ())
+    }
+}
+
+// SAFETY: The pointer held in `RawGc` needs to be held in error types which must be `Send` and is
+// mostly just informative. If it is dereferenced, it is entirely up to the user to make this sound.
+unsafe impl Send for RawGc {}
+unsafe impl Sync for RawGc {}
+
 /// An external representation of a [`Value`], useful for errors.
 ///
 /// All primitive values (undefined, booleans, integers, floats) are represented here exactly.
-/// Strings are cheaply cloned from an internal shared string. All other Gc types are stored in
-/// their *raw pointer* form.
+/// Strings are cheaply cloned from an internal shared string. All other Gc types are stored as
+/// `RawGc`.
 #[derive(Clone)]
 pub enum ExternValue {
     Undefined,
     Boolean(bool),
     Integer(i64),
     Float(f64),
-    String(Arc<str>),
-    Object(*const ()),
-    Array(*const ()),
-    Closure(*const ()),
-    Callback(*const ()),
-    UserData(*const ()),
+    String(SharedStr),
+    Object(RawGc),
+    Array(RawGc),
+    Closure(RawGc),
+    Callback(RawGc),
+    UserData(RawGc),
 }
-
-// SAFETY: The pointers in `ExternValue` are not actually dereferenced at all, they are purely
-// informational.
-unsafe impl Send for ExternValue {}
-unsafe impl Sync for ExternValue {}
 
 impl fmt::Debug for ExternValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -70,16 +89,16 @@ impl fmt::Debug for ExternValue {
             ExternValue::Integer(i) => write!(f, "`{i}`"),
             ExternValue::Float(n) => write!(f, "`{n}`"),
             ExternValue::String(s) => write!(f, "{s:?}"),
-            ExternValue::Object(object) => write!(f, "<object {object:p}>"),
-            ExternValue::Array(array) => write!(f, "<array {array:p}>"),
+            ExternValue::Object(object) => write!(f, "<object {object}>"),
+            ExternValue::Array(array) => write!(f, "<array {array}>"),
             ExternValue::Closure(closure) => {
-                write!(f, "<closure {closure:p}>")
+                write!(f, "<closure {closure}>")
             }
             ExternValue::Callback(callback) => {
-                write!(f, "<callback {callback:p}>")
+                write!(f, "<callback {callback}>")
             }
             ExternValue::UserData(user_data) => {
-                write!(f, "<user_data {user_data:p}>")
+                write!(f, "<user_data {user_data}>")
             }
         }
     }
@@ -94,17 +113,17 @@ impl fmt::Display for ExternValue {
             ExternValue::Float(n) => write!(f, "{n}"),
             ExternValue::String(s) => write!(f, "{s}"),
             ExternValue::Object(object) => {
-                write!(f, "<object {object:p}>")
+                write!(f, "<object {object}>")
             }
-            ExternValue::Array(array) => write!(f, "<array {array:p}>"),
+            ExternValue::Array(array) => write!(f, "<array {array}>"),
             ExternValue::Closure(closure) => {
-                write!(f, "<closure {closure:p}>")
+                write!(f, "<closure {closure}>")
             }
             ExternValue::Callback(callback) => {
-                write!(f, "<callback {callback:p}>")
+                write!(f, "<callback {callback}>")
             }
             ExternValue::UserData(user_data) => {
-                write!(f, "<user_data {user_data:p}>")
+                write!(f, "<user_data {user_data}>")
             }
         }
     }
@@ -117,21 +136,17 @@ impl<'gc> From<Value<'gc>> for ExternValue {
             Value::Boolean(b) => ExternValue::Boolean(b),
             Value::Integer(i) => ExternValue::Integer(i),
             Value::Float(n) => ExternValue::Float(n),
-            Value::String(s) => ExternValue::String(s.as_shared_str().clone()),
-            Value::Object(o) => ExternValue::Object(Gc::as_ptr(o.into_inner()) as *const ()),
-            Value::Array(a) => ExternValue::Array(Gc::as_ptr(a.into_inner()) as *const ()),
-            Value::Closure(c) => ExternValue::Closure(Gc::as_ptr(c.into_inner()) as *const ()),
-            Value::Callback(c) => ExternValue::Callback(Gc::as_ptr(c.into_inner()) as *const ()),
-            Value::UserData(u) => ExternValue::UserData(Gc::as_ptr(u.into_inner()) as *const ()),
+            Value::String(s) => ExternValue::String(s.as_shared().clone()),
+            Value::Object(o) => ExternValue::Object(RawGc::new(o.into_inner())),
+            Value::Array(a) => ExternValue::Array(RawGc::new(a.into_inner())),
+            Value::Closure(c) => ExternValue::Closure(RawGc::new(c.into_inner())),
+            Value::Callback(c) => ExternValue::Callback(RawGc::new(c.into_inner())),
+            Value::UserData(u) => ExternValue::UserData(RawGc::new(u.into_inner())),
         }
     }
 }
 
-/// A [`ScriptError`] that is not bound to the GC context.
-///
-/// All primitive values (undefined, booleans, integers, floats) are represented here exactly.
-/// Strings are converted into normal Rust strings. All other Gc types are stored in their *raw
-/// pointer* form.
+/// A [`ScriptError`] that is not bound to the GC context and holds an [`ExternValue`].
 #[derive(Debug, Clone, Error)]
 #[error("{0}")]
 pub struct ExternScriptError(pub ExternValue);

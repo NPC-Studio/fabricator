@@ -67,7 +67,7 @@ pub enum CompileErrorKind {
 pub struct CompileError {
     #[source]
     pub kind: CompileErrorKind,
-    pub chunk_name: vm::RefName,
+    pub chunk_name: vm::SharedStr,
     pub line_number: vm::LineNumber,
 }
 
@@ -115,12 +115,12 @@ impl CompileSettings {
 }
 
 pub struct SourceChunk {
-    pub name: vm::RefName,
+    pub name: vm::SharedStr,
     pub line_numbers: LineNumbers,
 }
 
 impl vm::debug::ChunkData for SourceChunk {
-    fn name(&self) -> &vm::RefName {
+    fn name(&self) -> &vm::SharedStr {
         &self.name
     }
 
@@ -339,7 +339,7 @@ impl<'gc> Compiler<'gc> {
         chunk_name: impl Into<String>,
         code: &str,
     ) -> Result<(), CompileError> {
-        let chunk_name = vm::RefName::new(chunk_name);
+        let chunk_name = vm::SharedStr::new(chunk_name);
         let line_numbers = LineNumbers::new(code);
 
         let mut tokens = Vec::new();
@@ -705,7 +705,7 @@ impl<'gc> Compiler<'gc> {
 }
 
 struct Chunk<'gc> {
-    name: vm::RefName,
+    name: vm::SharedStr,
     line_numbers: LineNumbers,
     tokens: Vec<Token<vm::String<'gc>>>,
     compile_settings: CompileSettings,
