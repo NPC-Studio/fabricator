@@ -191,6 +191,19 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    pub fn to_integer(self) -> Option<i64> {
+        match self {
+            Value::Integer(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Interpret any value as a boolean.
+    ///
+    /// Boolean values are returned as themselves, `Value::Undefined` returns false, integers and
+    /// floats return true if they are greater than 0.5 and false otherwise, and all other value
+    /// types return true.
+    #[inline]
     pub fn cast_bool(self) -> bool {
         match self {
             Value::Undefined => false,
@@ -201,15 +214,24 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// Interpret numeric values as integers.
+    ///
+    /// Integers are returned as themselves, booleans return 0 or 1, and floats are rounded to the
+    /// nearest integer.
     #[inline]
     pub fn cast_integer(self) -> Option<i64> {
         match self {
             Value::Boolean(b) => Some(if b { 1 } else { 0 }),
             Value::Integer(i) => Some(i),
+            Value::Float(f) => Some(f.round() as i64),
             _ => None,
         }
     }
 
+    /// Interpret numeric values as floats.
+    ///
+    /// Floats are returned as themselves, booleans return 0.0 or 1.0, and integers are converted
+    /// to floats.
     #[inline]
     pub fn cast_float(self) -> Option<f64> {
         match self {
@@ -220,6 +242,10 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// Interpret any scalar value as a string.
+    ///
+    /// Strings are returned as lthemselves, booleans return either `"true"` or `"false"`, numeric
+    /// values are printed.
     #[inline]
     pub fn cast_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
         match self {
@@ -231,6 +257,8 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// If both values are numeric, return the two values added together. If both values are
+    /// strings, appends them.
     #[inline]
     pub fn add_or_append(self, ctx: Context<'gc>, other: Value<'gc>) -> Option<Value<'gc>> {
         if let Some(r) = self.add(other) {
@@ -254,7 +282,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(Value::Integer(a.wrapping_add(b)))
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a + b))
@@ -265,7 +293,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn sub(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(Value::Integer(a.wrapping_sub(b)))
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a - b))
@@ -276,7 +304,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(Value::Integer(a.wrapping_mul(b)))
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a * b))
@@ -296,7 +324,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(Value::Integer(a.wrapping_rem(b)))
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(Value::Float(a % b))
@@ -307,7 +335,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
-        let self_int = if let Some(i) = self.cast_integer() {
+        let self_int = if let Some(i) = self.to_integer() {
             i
         } else if let Some(f) = self.cast_float() {
             f.round() as i64
@@ -315,7 +343,7 @@ impl<'gc> Value<'gc> {
             return None;
         };
 
-        let other_int = if let Some(i) = other.cast_integer() {
+        let other_int = if let Some(i) = other.to_integer() {
             i
         } else if let Some(f) = other.cast_float() {
             f.round() as i64
@@ -340,7 +368,7 @@ impl<'gc> Value<'gc> {
             (Value::Callback(a), Value::Callback(b)) => a == b,
             (Value::UserData(a), Value::UserData(b)) => a == b,
             _ => {
-                if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+                if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
                     a == b
                 } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
                     a == b
@@ -353,7 +381,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(a < b)
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(a < b)
@@ -364,7 +392,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.cast_integer(), other.cast_integer()) {
+        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
             Some(a <= b)
         } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
             Some(a <= b)

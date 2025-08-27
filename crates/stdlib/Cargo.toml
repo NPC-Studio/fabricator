@@ -5,7 +5,8 @@ edition.workspace = true
 
 [dependencies]
 gc-arena.workspace = true
-thiserror.workspace = true
+rand.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 fabricator-vm.workspace = true
