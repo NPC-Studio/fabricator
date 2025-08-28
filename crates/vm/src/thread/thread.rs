@@ -25,7 +25,7 @@ pub struct VmError<'gc> {
 impl<'gc> fmt::Display for VmError<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}", self.error)?;
-        write!(f, "vm backtrace:")?;
+        write!(f, "VM backtrace:")?;
         for (i, frame) in self.backtrace.iter().rev().enumerate() {
             writeln!(f)?;
             write!(f, "{:>4}: ", i)?;
@@ -66,7 +66,7 @@ pub struct ExternVmError {
 impl fmt::Display for ExternVmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}", self.error)?;
-        write!(f, "vm backtrace:")?;
+        write!(f, "VM backtrace:")?;
         for (i, frame) in self.backtrace.iter().rev().enumerate() {
             writeln!(f)?;
             write!(f, "{:>4}: ", i)?;

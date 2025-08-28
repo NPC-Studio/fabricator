@@ -6,7 +6,7 @@ use crate::{
     object::Object,
     registry::{Registry, Singleton},
     stash::{Fetchable, Stashable},
-    string::String,
+    string::{InternedStrings, String},
 };
 
 #[derive(Copy, Clone)]
@@ -59,8 +59,12 @@ impl<'gc> Context<'gc> {
         self.state.registry.fetch(f)
     }
 
+    pub fn interned_strings(self) -> InternedStrings<'gc> {
+        self.state.interned_strings
+    }
+
     pub fn intern(self, s: &str) -> String<'gc> {
-        String::new(&self, s)
+        self.state.interned_strings.intern(&self, s)
     }
 }
 
@@ -100,6 +104,7 @@ impl Interpreter {
 struct State<'gc> {
     globals: Object<'gc>,
     registry: Registry<'gc>,
+    interned_strings: InternedStrings<'gc>,
 }
 
 impl<'gc> State<'gc> {
@@ -107,6 +112,7 @@ impl<'gc> State<'gc> {
         Self {
             globals: Object::new(mc),
             registry: Registry::new(mc),
+            interned_strings: InternedStrings::new(mc),
         }
     }
 

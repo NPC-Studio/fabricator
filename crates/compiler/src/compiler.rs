@@ -404,7 +404,7 @@ impl<'gc> Compiler<'gc> {
         let resolved_macros =
             match macros
                 .clone()
-                .resolve_with_skip_recursive(config.as_str(), |token| {
+                .resolve_with_skip_recursive(&ctx.intern(&config), |&token| {
                     // GMS2 doesn't expand macro tokens that match a defined macro if the token name
                     // is also a part of the stdlib. This allows re-defining builtins with macros
                     // (at the cost of making the macro system even more complicated and special
@@ -412,7 +412,7 @@ impl<'gc> Compiler<'gc> {
                     //
                     // We do something similar here, except we skip expansion for *all* exports
                     // defined in a previous compilation unit.
-                    magic.find(token).is_none() && !global_vars.contains(token)
+                    magic.find(token).is_none() && !global_vars.contains(&token)
                 }) {
                 Ok(macros) => macros,
                 Err(err) => {
@@ -723,7 +723,7 @@ impl<'gc, 'a> VarDict<vm::String<'gc>> for CompilerVarDict<'gc, 'a> {
     }
 
     fn free_var_mode(&self, ident: &vm::String<'gc>) -> FreeVarMode {
-        if let Some(index) = self.magic.find(ident) {
+        if let Some(index) = self.magic.find(*ident) {
             FreeVarMode::Magic {
                 is_read_only: self.magic.get(index).unwrap().read_only(),
             }
@@ -749,7 +749,7 @@ fn optimize_and_generate_proto<'gc>(
     if let Err(err) = verify_ir(ir) {
         panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
     }
-    match gen_prototype(&ir, |n| magic.find(n)) {
+    match gen_prototype(&ir, |n| magic.find(*n)) {
         Ok(proto) => proto,
         Err(err) => {
             panic!("Internal Codegen Error: {err}\nIR: {ir:?}");

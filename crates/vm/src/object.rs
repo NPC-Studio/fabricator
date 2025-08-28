@@ -1,12 +1,12 @@
-use std::{
-    cell::{Ref, RefMut},
-    collections::HashMap,
-};
+use std::cell::{Ref, RefMut};
 
 use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
 
-use crate::{string::String, value::Value};
+use crate::{
+    string::{String, StringMap},
+    value::Value,
+};
 
 #[derive(Debug, Error)]
 #[error("new object parent would create a cycle")]
@@ -21,7 +21,7 @@ pub type ObjectInner<'gc> = RefLock<ObjectState<'gc>>;
 #[derive(Debug, Default, Collect)]
 #[collect(no_drop)]
 pub struct ObjectState<'gc> {
-    pub map: HashMap<String<'gc>, Value<'gc>>,
+    pub map: StringMap<'gc, Value<'gc>>,
     pub parent: Option<Object<'gc>>,
 }
 

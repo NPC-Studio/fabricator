@@ -36,7 +36,7 @@ pub use self::{
         Fetchable, Stashable, StashedClosure, StashedMagicSet, StashedObject, StashedPrototype,
         StashedThread, StashedUserData, StashedUserDataMethods,
     },
-    string::{SharedStr, String},
+    string::{InternedStrings, SharedStr, String, StringMap},
     thread::{BacktraceFrame, Execution, ExternVmError, OpError, Thread, VmError},
     userdata::{UserData, UserDataMeta, UserDataMethods},
     value::{Function, Value},

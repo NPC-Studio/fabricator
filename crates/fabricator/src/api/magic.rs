@@ -108,7 +108,7 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
         name: vm::String<'gc>,
         value: Gc<'gc, dyn vm::Magic<'gc>>,
     ) -> Result<usize, DuplicateMagicName> {
-        if self.find(&name).is_some() {
+        if self.find(name).is_some() {
             return Err(DuplicateMagicName(name.as_str().to_owned()));
         }
 
@@ -139,7 +139,7 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
 
     fn merge_unique(&mut self, other: &vm::MagicSet<'gc>) -> Result<(), DuplicateMagicName> {
         for (name, _) in other.names() {
-            if self.find(&name).is_some() {
+            if self.find(name).is_some() {
                 return Err(DuplicateMagicName(name.as_str().to_owned()));
             }
         }

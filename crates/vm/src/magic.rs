@@ -1,12 +1,14 @@
-use std::{
-    collections::{HashMap, hash_map},
-    fmt,
-};
+use std::{collections::hash_map, fmt};
 
 use gc_arena::{Collect, Gc, Mutation, barrier};
 use thiserror::Error;
 
-use crate::{error::RuntimeError, interpreter::Context, string::String, value::Value};
+use crate::{
+    error::RuntimeError,
+    interpreter::Context,
+    string::{String, StringMap},
+    value::Value,
+};
 
 #[derive(Debug, Error)]
 #[error("cannot write to a read only magic value")]
@@ -69,12 +71,12 @@ pub struct BadMagicIndex(pub usize);
 #[collect(no_drop)]
 pub struct MagicSet<'gc> {
     registered: Vec<gc_arena::Lock<Gc<'gc, dyn Magic<'gc>>>>,
-    names: HashMap<String<'gc>, usize>,
+    names: StringMap<'gc, usize>,
 }
 
 impl<'gc> fmt::Debug for MagicSet<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct MagicSetDebug<'a, 'gc>(&'a HashMap<String<'gc>, usize>);
+        struct MagicSetDebug<'a, 'gc>(&'a StringMap<'gc, usize>);
 
         impl<'a, 'gc> fmt::Debug for MagicSetDebug<'a, 'gc> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -140,8 +142,8 @@ impl<'gc> MagicSet<'gc> {
     }
 
     /// Find the index for a magic variable with the given name, if it exists.
-    pub fn find(&self, name: &str) -> Option<usize> {
-        self.names.get(name).copied()
+    pub fn find(&self, name: String<'gc>) -> Option<usize> {
+        self.names.get(&name).copied()
     }
 
     /// Get the magic value associated with the given index.
