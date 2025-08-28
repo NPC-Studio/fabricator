@@ -244,6 +244,7 @@ enum FunctionType {
     Constructor {
         this: ir::InstId,
         parent: ir::InstId,
+        parent_var: ir::VarId,
     },
     /// The function is a desugared `try {} catch(e) {}` block.
     ///
@@ -256,6 +257,9 @@ enum FunctionType {
         /// Allow top-level `continue` within the function and desugar this into setting the
         /// `Continue` return code followed by a return.
         allow_continue: bool,
+        /// Allow top-level `return` with an arguemnt within the function and desugar this into
+        /// setting the `Return` return code followed by returning a value.
+        allow_return_with_arg: bool,
         /// The variable which must hold the `TryCatchReturnCode`. If the variable is not set, then
         /// the outer function will always proceed with normal execution.
         exit_code: ir::VarId,
@@ -269,6 +273,8 @@ enum VarType<S> {
     /// This variable is a constructor static and is inside the `parent` object of a constructor
     /// under the stored field name.
     ConstructorStatic(S),
+    /// This variable references a captures constructor static in a closure.
+    UpperConstructorStatic { parent: ir::VarId, field: S },
 }
 
 impl<S> From<ir::Variable<S>> for VarType<S> {
@@ -281,6 +287,11 @@ impl<S> From<ir::Variable<S>> for VarType<S> {
 enum VarDecl<S> {
     Normal(ir::VarId),
     ConstructorStatic(S),
+    /// This variable references a captures constructor static in a closure.
+    UpperConstructorStatic {
+        parent: ir::VarId,
+        field: S,
+    },
 }
 
 struct Scope<S> {
@@ -460,6 +471,13 @@ where
             self.push_instruction(body.span, ir::Instruction::FixedReturn(call_scope, 0));
         self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
 
+        let our_super_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(body.span, ir::Instruction::OpenVariable(our_super_var));
+        self.push_instruction(
+            body.span,
+            ir::Instruction::SetVariable(our_super_var, our_super),
+        );
+
         let inherit_func = if let Some(inherit) = inherit {
             Some(self.expression(&inherit.base)?)
         } else {
@@ -515,6 +533,7 @@ where
         self.func_type = FunctionType::Constructor {
             this,
             parent: our_super,
+            parent_var: our_super_var,
         };
 
         let init_block = self.new_block();
@@ -691,10 +710,10 @@ where
                 }
 
                 let allow_constructors = self.settings.allow_constructors;
-                let mut compiler = self.start_inner_function(FunctionRef::Named(
-                    SharedStr::new(func_stmt.name.as_ref()),
-                    func_stmt.span,
-                ));
+                let mut compiler = self.start_inner_function(
+                    FunctionRef::Named(SharedStr::new(func_stmt.name.as_ref()), func_stmt.span),
+                    false,
+                );
 
                 compiler.declare_parameters(&func_stmt.parameters)?;
                 let function = if func_stmt.is_constructor {
@@ -1340,7 +1359,16 @@ where
         let exit_code_var = self.function.variables.insert(ir::Variable::Owned);
         self.push_instruction(closure_span, ir::Instruction::OpenVariable(exit_code_var));
 
-        let mut compiler = self.start_inner_function(FunctionRef::Expression(closure_span));
+        let allow_return_with_arg = match self.func_type {
+            FunctionType::Normal => true,
+            FunctionType::Constructor { .. } => false,
+            FunctionType::TryCatch {
+                allow_return_with_arg,
+                ..
+            } => allow_return_with_arg,
+        };
+
+        let mut compiler = self.start_inner_function(FunctionRef::Expression(closure_span), true);
         let inner_exit_code_var = compiler
             .function
             .variables
@@ -1348,6 +1376,7 @@ where
         compiler.func_type = FunctionType::TryCatch {
             allow_break,
             allow_continue,
+            allow_return_with_arg,
             exit_code: inner_exit_code_var,
         };
         compiler.statement(&try_catch_stmt.try_block)?;
@@ -1415,7 +1444,11 @@ where
 
         self.start_new_block(do_return);
         self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
-        self.do_return(closure_span, Some(ret_or_err))?;
+        if allow_return_with_arg {
+            self.do_return(closure_span, Some(ret_or_err))?;
+        } else {
+            self.do_return(closure_span, None)?;
+        }
 
         self.start_new_block(no_return);
 
@@ -1511,7 +1544,17 @@ where
                 }
                 self.end_current_block(ir::Exit::Return { value: Some(this) });
             }
-            FunctionType::TryCatch { exit_code, .. } => {
+            FunctionType::TryCatch {
+                exit_code,
+                allow_return_with_arg,
+                ..
+            } => {
+                if value.is_some() && !allow_return_with_arg {
+                    return Err(IrGenError {
+                        kind: IrGenErrorKind::CannotReturnValue,
+                        span,
+                    });
+                }
                 let return_code = self.push_instruction(
                     span,
                     ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
@@ -1915,7 +1958,7 @@ where
             ast::Expression::Function(func_expr) => {
                 let allow_constructors = self.settings.allow_constructors;
                 let mut compiler =
-                    self.start_inner_function(FunctionRef::Expression(func_expr.span));
+                    self.start_inner_function(FunctionRef::Expression(func_expr.span), false);
 
                 compiler.declare_parameters(&func_expr.parameters)?;
                 let function = if func_expr.is_constructor {
@@ -2326,25 +2369,57 @@ where
         }
     }
 
-    fn start_inner_function(&mut self, reference: FunctionRef) -> FunctionCompiler<'_, S> {
-        // Right now, we simply don't support closures and constructors being enabled at the same
-        // time.
-        assert!(
-            !(self.settings.allow_constructors && self.settings.closures),
-            "constructors and closures cannot be enabled at the same time, constructor statics cannot be captured by closures"
-        );
-
+    fn start_inner_function(
+        &mut self,
+        reference: FunctionRef,
+        force_closure: bool,
+    ) -> FunctionCompiler<'_, S> {
         let mut compiler =
             FunctionCompiler::new(self.settings, self.interner, reference, self.var_dict);
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
-        if self.settings.closures {
+        if self.settings.closures || force_closure {
             for (name, scope_list) in &self.var_lookup {
                 let &scope_index = scope_list.last().unwrap();
-                if let VarDecl::Normal(var_id) = self.scopes[scope_index].visible[name] {
-                    compiler
-                        .declare_var(name.clone(), ir::Variable::Upper(var_id).into())
-                        .unwrap();
+                match &self.scopes[scope_index].visible[name] {
+                    &VarDecl::Normal(var_id) => {
+                        compiler
+                            .declare_var(name.clone(), ir::Variable::Upper(var_id).into())
+                            .unwrap();
+                    }
+                    VarDecl::ConstructorStatic(field) => {
+                        let FunctionType::Constructor { parent_var, .. } = self.func_type else {
+                            panic!("constructor static var in non-constructor function")
+                        };
+                        let parent = compiler
+                            .function
+                            .variables
+                            .insert(ir::Variable::Upper(parent_var));
+                        compiler
+                            .declare_var(
+                                name.clone(),
+                                VarType::UpperConstructorStatic {
+                                    parent,
+                                    field: field.clone(),
+                                },
+                            )
+                            .unwrap();
+                    }
+                    &VarDecl::UpperConstructorStatic { parent, ref field } => {
+                        let parent = compiler
+                            .function
+                            .variables
+                            .insert(ir::Variable::Upper(parent));
+                        compiler
+                            .declare_var(
+                                name.clone(),
+                                VarType::UpperConstructorStatic {
+                                    parent,
+                                    field: field.clone(),
+                                },
+                            )
+                            .unwrap();
+                    }
                 }
             }
         }
@@ -2438,6 +2513,10 @@ where
                     // This should be checked in the handler of the constructor body.
                     panic!("constructor static should not have the same name")
                 }
+
+                VarDecl::UpperConstructorStatic { .. } => {
+                    // Allow new declarations to shadow any existing upper variables.
+                }
             }
         }
 
@@ -2482,10 +2561,11 @@ where
 
                 VarDecl::Normal(var_id)
             }
-            VarType::ConstructorStatic(field) => {
-                // Permit any name for a constructor static, since they can be used as field names
-                // (which are unrestricted).
-                VarDecl::ConstructorStatic(field)
+            // Permit any name for constructor statics, since they can be used as field names (which
+            // are unrestricted).
+            VarType::ConstructorStatic(field) => VarDecl::ConstructorStatic(field),
+            VarType::UpperConstructorStatic { parent, field } => {
+                VarDecl::UpperConstructorStatic { parent, field }
             }
         };
 
@@ -2532,6 +2612,16 @@ where
                     },
                 )
             }
+            VarDecl::UpperConstructorStatic { parent, field } => {
+                let parent = self.push_instruction(span, ir::Instruction::GetVariable(parent));
+                self.push_instruction(
+                    span,
+                    ir::Instruction::GetFieldConst {
+                        object: parent,
+                        key: Constant::String(field.clone()),
+                    },
+                )
+            }
         }
     }
 
@@ -2545,6 +2635,17 @@ where
                     panic!("constructor static var in non-constructor function")
                 };
 
+                self.push_instruction(
+                    span,
+                    ir::Instruction::SetFieldConst {
+                        object: parent,
+                        key: Constant::String(field),
+                        value,
+                    },
+                );
+            }
+            VarDecl::UpperConstructorStatic { parent, field } => {
+                let parent = self.push_instruction(span, ir::Instruction::GetVariable(parent));
                 self.push_instruction(
                     span,
                     ir::Instruction::SetFieldConst {

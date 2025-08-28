@@ -40,4 +40,28 @@ for (var i = 0; i < 10; ++i) {
 }
 assert(sum == 5);
 
+var val;
+try {
+    val = 4;
+} catch(_) {}
+assert(val == 4);
+
+var Test = function() constructor {
+    static FOO = 2;
+    static BAR = 3;
+
+    // Try-catch blocks are desugared as closures. Since constructors are disallowed in FML, this is
+    // the only way to test the interaction of constructor statics and closures!
+    try {
+        self.result_add = FOO + BAR;
+        try {
+            self.result_mult = FOO * BAR;
+        } catch(e) {}
+    } catch(e) {}
+};
+
+var t = new Test();
+assert(t.result_add == 5);
+assert(t.result_mult == 6);
+
 return true;
