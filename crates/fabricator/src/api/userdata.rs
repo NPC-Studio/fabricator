@@ -128,8 +128,8 @@ where
 {
     fn get_field(
         &self,
-        ctx: vm::Context<'gc>,
         ud: vm::UserData<'gc>,
+        ctx: vm::Context<'gc>,
         key: vm::String<'gc>,
     ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
         let u = ud.downcast::<U>()?;
@@ -143,8 +143,8 @@ where
 
     fn set_field(
         &self,
-        ctx: vm::Context<'gc>,
         ud: vm::UserData<'gc>,
+        ctx: vm::Context<'gc>,
         key: vm::String<'gc>,
         value: vm::Value<'gc>,
     ) -> Result<(), vm::RuntimeError> {
@@ -154,29 +154,6 @@ where
         } else {
             Ok((self.write_custom)(ctx, u, key, value)?)
         }
-    }
-
-    fn get_index(
-        &self,
-        _ctx: vm::Context<'gc>,
-        _ud: vm::UserData<'gc>,
-        _indexes: &[vm::Value<'gc>],
-    ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
-        Err("no index access".into())
-    }
-
-    fn set_index(
-        &self,
-        _ctx: vm::Context<'gc>,
-        _ud: vm::UserData<'gc>,
-        _indexes: &[vm::Value<'gc>],
-        _value: vm::Value<'gc>,
-    ) -> Result<(), vm::RuntimeError> {
-        Err("no index access".into())
-    }
-
-    fn iter(&self, _ctx: vm::Context<'gc>, _ud: vm::UserData<'gc>) -> Result<(), vm::RuntimeError> {
-        Err("no iteration".into())
     }
 }
 

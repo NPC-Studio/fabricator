@@ -12,7 +12,7 @@ use crate::{
     object::Object,
     stack::Stack,
     string::String,
-    thread::thread::{OwnedHeapVar, ClosureFrame},
+    thread::thread::{ClosureFrame, OwnedHeapVar},
     value::{Function, Value},
 };
 
@@ -103,13 +103,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 }
                 .into()
             }),
-            Value::UserData(user_data) => {
-                if let Some(methods) = user_data.methods() {
-                    Ok(methods.get_field(self.ctx, user_data, key)?)
-                } else {
-                    Err(OpError::BadObject { object: obj.into() }.into())
-                }
-            }
+            Value::UserData(user_data) => Ok(user_data.get_field(self.ctx, key)?),
             _ => Err(OpError::BadObject { object: obj.into() }.into()),
         }
     }
@@ -126,11 +120,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 object.set(&self.ctx, key, value);
             }
             Value::UserData(user_data) => {
-                if let Some(methods) = user_data.methods() {
-                    methods.set_field(self.ctx, user_data, key, value)?;
-                } else {
-                    return Err(OpError::BadObject { object: obj.into() }.into());
-                }
+                user_data.set_field(self.ctx, key, value)?;
             }
             _ => {
                 return Err(OpError::BadObject { object: obj.into() }.into());
@@ -179,16 +169,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     })?;
                 Ok(array.get(index))
             }
-            Value::UserData(user_data) => {
-                if let Some(methods) = user_data.methods() {
-                    Ok(methods.get_index(self.ctx, user_data, indexes)?)
-                } else {
-                    Err(OpError::BadArray {
-                        array: target.into(),
-                    }
-                    .into())
-                }
-            }
+            Value::UserData(user_data) => Ok(user_data.get_index(self.ctx, indexes)?),
             _ => Err(OpError::BadArray {
                 array: target.into(),
             }
@@ -239,16 +220,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                 array.set(&self.ctx, index, value);
                 Ok(())
             }
-            Value::UserData(user_data) => {
-                if let Some(methods) = user_data.methods() {
-                    Ok(methods.set_index(self.ctx, user_data, indexes, value)?)
-                } else {
-                    Err(OpError::BadArray {
-                        array: target.into(),
-                    }
-                    .into())
-                }
-            }
+            Value::UserData(user_data) => Ok(user_data.set_index(self.ctx, indexes, value)?),
             _ => Err(OpError::BadArray {
                 array: target.into(),
             }
@@ -557,7 +529,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
         let arg = self.registers[arg as usize];
         self.registers[dest as usize] = arg.negate().ok_or_else(|| OpError::BadUnOp {
-            op: "negate",
+            op: "neg",
             arg: arg.into(),
         })?;
         Ok(())
@@ -569,7 +541,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] = arg
             .bit_negate()
             .ok_or_else(|| OpError::BadUnOp {
-                op: "bit_negate",
+                op: "bit_neg",
                 arg: arg.into(),
             })?
             .into();
@@ -581,7 +553,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let arg = self.registers[arg as usize];
         self.registers[dest as usize] =
             arg.add(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
-                op: "increment",
+                op: "inc",
                 arg: arg.into(),
             })?;
         Ok(())
@@ -592,7 +564,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let arg = self.registers[arg as usize];
         self.registers[dest as usize] =
             arg.sub(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
-                op: "decrement",
+                op: "dec",
                 arg: arg.into(),
             })?;
         Ok(())
@@ -619,7 +591,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
         *dest = left.sub(right).ok_or_else(|| OpError::BadBinOp {
-            op: "subtract",
+            op: "sub",
             left: left.into(),
             right: right.into(),
         })?;
@@ -632,7 +604,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
         *dest = left.mult(right).ok_or_else(|| OpError::BadBinOp {
-            op: "multiply",
+            op: "mult",
             left: left.into(),
             right: right.into(),
         })?;
@@ -645,7 +617,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
         *dest = left.div(right).ok_or_else(|| OpError::BadBinOp {
-            op: "divide",
+            op: "div",
             left: left.into(),
             right: right.into(),
         })?;
@@ -658,7 +630,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right as usize];
         let dest = &mut self.registers[dest as usize];
         *dest = left.rem(right).ok_or_else(|| OpError::BadBinOp {
-            op: "remainder",
+            op: "rem",
             left: left.into(),
             right: right.into(),
         })?;
@@ -673,7 +645,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         *dest = left
             .idiv(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "int_divide",
+                op: "int_div",
                 left: left.into(),
                 right: right.into(),
             })?
@@ -731,7 +703,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] = left
             .less_equal(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "is_less_equal",
+                op: "is_less_eq",
                 left: left.into(),
                 right: right.into(),
             })?
@@ -827,7 +799,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         *dest = left
             .bit_shift_left(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "bit_shift_left",
+                op: "bit_shl",
                 left: left.into(),
                 right: right.into(),
             })?
@@ -848,7 +820,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         *dest = left
             .bit_shift_right(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "bit_shift_right",
+                op: "bit_shr",
                 left: left.into(),
                 right: right.into(),
             })?

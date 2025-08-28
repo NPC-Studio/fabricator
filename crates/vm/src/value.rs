@@ -241,6 +241,7 @@ impl<'gc> Value<'gc> {
             Value::Integer(i) => Some(ctx.intern(&i.to_string())),
             Value::Float(f) => Some(ctx.intern(&f.to_string())),
             Value::String(s) => Some(s),
+            Value::UserData(u) => u.cast_string(ctx),
             _ => None,
         }
     }

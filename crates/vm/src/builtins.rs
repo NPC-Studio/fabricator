@@ -174,13 +174,7 @@ impl<'gc> BuiltIns<'gc> {
                             exec.stack().push_back(object);
                             Ok(())
                         }
-                        Value::UserData(user_data) => {
-                            if let Some(methods) = user_data.methods() {
-                                methods.iter(ctx, user_data)
-                            } else {
-                                Err("userdata not iterable".into())
-                            }
-                        }
+                        Value::UserData(user_data) => user_data.iter(ctx),
                         _ => Err("with loop target must be object or userdata".into()),
                     }
                 })

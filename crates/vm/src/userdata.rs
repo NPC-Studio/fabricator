@@ -18,36 +18,52 @@ use crate::{
 #[error("UserData type mismatch")]
 pub struct BadUserDataType;
 
+#[derive(Debug, Copy, Clone, Error)]
+#[error("UserData does not have methods")]
+pub struct NoMethods;
+
+#[derive(Debug, Copy, Clone, Error)]
+#[error("`UserDataMethods` impl does not have a method for {0}")]
+pub struct MethodUnimplemented(&'static str);
+
 pub trait UserDataMethods<'gc> {
     fn get_field(
         &self,
-        ctx: Context<'gc>,
-        ud: UserData<'gc>,
-        key: String<'gc>,
-    ) -> Result<Value<'gc>, RuntimeError>;
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+        _key: String<'gc>,
+    ) -> Result<Value<'gc>, RuntimeError> {
+        Err(MethodUnimplemented("get_field").into())
+    }
 
     fn set_field(
         &self,
-        ctx: Context<'gc>,
-        ud: UserData<'gc>,
-        key: String<'gc>,
-        value: Value<'gc>,
-    ) -> Result<(), RuntimeError>;
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+        _key: String<'gc>,
+        _value: Value<'gc>,
+    ) -> Result<(), RuntimeError> {
+        Err(MethodUnimplemented("set_field").into())
+    }
 
     fn get_index(
         &self,
-        ctx: Context<'gc>,
-        ud: UserData<'gc>,
-        indexes: &[Value<'gc>],
-    ) -> Result<Value<'gc>, RuntimeError>;
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+        _indexes: &[Value<'gc>],
+    ) -> Result<Value<'gc>, RuntimeError> {
+        Err(MethodUnimplemented("get_index").into())
+    }
 
     fn set_index(
         &self,
-        ctx: Context<'gc>,
-        ud: UserData<'gc>,
-        indexes: &[Value<'gc>],
-        value: Value<'gc>,
-    ) -> Result<(), RuntimeError>;
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+        _indexes: &[Value<'gc>],
+        _value: Value<'gc>,
+    ) -> Result<(), RuntimeError> {
+        Err(MethodUnimplemented("set_index").into())
+    }
 
     /// Return an iterator function and state value for iteration in a `with` loop.
     ///
@@ -61,7 +77,16 @@ pub trait UserDataMethods<'gc> {
     /// the iterator function will no longer be called and no additional results will be yielded. If
     /// the initial call of this method returns an `undefined` state value on the first call, then
     /// this implies an empty result and no iteration will be performed.
-    fn iter(&self, ctx: Context<'gc>, ud: UserData<'gc>) -> Result<(), RuntimeError>;
+    fn iter(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Result<(), RuntimeError> {
+        Err(MethodUnimplemented("iter").into())
+    }
+
+    /// Return the value of this userdata as a string.
+    ///
+    /// This is used when using a userdata as the key of an object.
+    fn cast_string(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<String<'gc>> {
+        None
+    }
 }
 
 /// Meta-data for a `UserData` type.
@@ -226,5 +251,72 @@ impl<'gc> UserData<'gc> {
         methods: Option<Gc<'gc, dyn UserDataMethods<'gc>>>,
     ) {
         barrier::unlock!(self.0.write_metadata(mc), UserDataMeta, methods).set(methods);
+    }
+
+    pub fn get_field(
+        self,
+        ctx: Context<'gc>,
+        key: String<'gc>,
+    ) -> Result<Value<'gc>, RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .get_field(self, ctx, key)
+    }
+
+    pub fn set_field(
+        self,
+        ctx: Context<'gc>,
+        key: String<'gc>,
+        value: Value<'gc>,
+    ) -> Result<(), RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .set_field(self, ctx, key, value)
+    }
+
+    pub fn get_index(
+        self,
+        ctx: Context<'gc>,
+        indexes: &[Value<'gc>],
+    ) -> Result<Value<'gc>, RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .get_index(self, ctx, indexes)
+    }
+
+    pub fn set_index(
+        self,
+        ctx: Context<'gc>,
+        indexes: &[Value<'gc>],
+        value: Value<'gc>,
+    ) -> Result<(), RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .set_index(self, ctx, indexes, value)
+    }
+
+    pub fn cast_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
+        self.0.metadata().methods.get()?.cast_string(self, ctx)
+    }
+
+    pub fn iter(self, ctx: Context<'gc>) -> Result<(), RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .iter(self, ctx)
     }
 }
