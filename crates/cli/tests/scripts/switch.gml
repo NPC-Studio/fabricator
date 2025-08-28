@@ -24,7 +24,7 @@
     switch j {
         case 1:
             c = 1;
-            // break;
+            break;
         case 2:
             c = 2;
             break;
@@ -53,6 +53,27 @@
     }
 
     assert(c == -1);
+}
+
+{
+    var f = function(v) {
+        switch v {
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+                return 7;
+            default:
+                return 13;
+        }
+    }
+
+    assert(f(0) == 13);
+    assert(f(1) == 7);
+    assert(f(2) == 7);
+    assert(f(3) == 7);
+    assert(f(4) == 7);
+    assert(f(5) == 13);
 }
 
 return true;

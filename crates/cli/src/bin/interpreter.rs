@@ -144,7 +144,7 @@ fn main() -> Result<ExitCode, Error> {
                             "",
                             ctx.fetch(&imports),
                             settings,
-                            "line input",
+                            "line-input",
                             &format!("return {line};"),
                         )
                         .or_else(|e| {
@@ -156,7 +156,7 @@ fn main() -> Result<ExitCode, Error> {
                                     "",
                                     ctx.fetch(&imports),
                                     settings,
-                                    "line input",
+                                    "line-input",
                                     &format!("{line};"),
                                 )
                             }

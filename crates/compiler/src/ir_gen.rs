@@ -1145,7 +1145,10 @@ where
         let successor_block = self.new_block();
         self.push_break_target(successor_block);
 
-        for case in &switch_stmt.cases {
+        let mut body_blocks = Vec::new();
+        body_blocks.resize_with(switch_stmt.cases.len(), || self.new_block());
+
+        for (i, case) in switch_stmt.cases.iter().enumerate() {
             let compare = self.expression(&case.compare)?;
             let is_equal = self.push_instruction(
                 case.span,
@@ -1156,9 +1159,8 @@ where
                 },
             );
 
+            let body_block = body_blocks[i];
             let next_block = self.new_block();
-
-            let body_block = self.new_block();
             self.end_current_block(ir::Exit::Branch {
                 cond: is_equal,
                 if_true: body_block,
@@ -1167,7 +1169,16 @@ where
 
             self.start_new_block(body_block);
             self.block(&case.body)?;
-            self.end_current_block(ir::Exit::Jump(successor_block));
+
+            // Handle switch case fall-through, if there is a subsequent case (and there has been no
+            // `break;`), then we jump to its body directly.
+            //
+            // Fall-through to the default case is handled by the jump to `next_block`.
+            if i + 1 < body_blocks.len() {
+                self.end_current_block(ir::Exit::Jump(body_blocks[i + 1]));
+            } else {
+                self.end_current_block(ir::Exit::Jump(next_block));
+            }
 
             self.start_new_block(next_block);
         }
