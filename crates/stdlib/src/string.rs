@@ -6,6 +6,8 @@ use std::{
 
 use fabricator_vm as vm;
 
+use crate::util::resolve_array_range;
+
 pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let string_trim = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (string, trims): (vm::String, Option<Vec<vm::String>>) = exec.stack().consume(ctx)?;
@@ -29,7 +31,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let string_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let string: vm::String = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, string.chars().count() as i64);
+        exec.stack().replace(ctx, string.chars().count() as isize);
         Ok(())
     });
     lib.insert(
@@ -39,7 +41,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let string_byte_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let string: vm::String = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, string.len() as i64);
+        exec.stack().replace(ctx, string.len() as isize);
         Ok(())
     });
     lib.insert(
@@ -54,7 +56,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         if c.is_none() || iter.next().is_some() {
             return Err("`ord` must be given a single character string".into());
         }
-        exec.stack().replace(ctx, c.unwrap() as i64);
+        exec.stack().replace(ctx, c.unwrap() as isize);
         Ok(())
     });
     lib.insert(ctx.intern("ord"), vm::MagicConstant::new_ptr(&ctx, ord));
@@ -138,6 +140,57 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("string_digits"),
         vm::MagicConstant::new_ptr(&ctx, string_digits),
+    );
+
+    let string_pos = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (substr, string): (vm::String, vm::String) = exec.stack().consume(ctx)?;
+        let index = string
+            .find(substr.as_str())
+            .map(|i| i as isize + 1)
+            .unwrap_or(0);
+        exec.stack().replace(ctx, index);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_pos"),
+        vm::MagicConstant::new_ptr(&ctx, string_pos),
+    );
+
+    let string_copy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (string, index, count): (vm::String, usize, usize) = exec.stack().consume(ctx)?;
+        let index = index
+            .checked_sub(1)
+            .ok_or_else(|| format!("index given to `string_copy` is 1-indexed and cannot be 0"))?;
+        exec.stack().replace(
+            ctx,
+            string.chars().skip(index).take(count).collect::<String>(),
+        );
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_copy"),
+        vm::MagicConstant::new_ptr(&ctx, string_copy),
+    );
+
+    let string_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (string, index, count): (vm::String, isize, isize) = exec.stack().consume(ctx)?;
+        let index = index
+            .checked_sub(1)
+            .ok_or_else(|| format!("index given to `string_copy` is 1-indexed and cannot be 0"))?;
+        let (range, _) = resolve_array_range(string.chars().count(), Some(index), Some(count))?;
+        exec.stack().replace(
+            ctx,
+            string
+                .chars()
+                .enumerate()
+                .filter_map(|(i, c)| if range.contains(&i) { None } else { Some(c) })
+                .collect::<String>(),
+        );
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_delete"),
+        vm::MagicConstant::new_ptr(&ctx, string_delete),
     );
 }
 

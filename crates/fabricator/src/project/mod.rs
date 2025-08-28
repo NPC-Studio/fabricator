@@ -205,6 +205,13 @@ pub struct Font {
 }
 
 #[derive(Debug)]
+pub struct Shader {
+    pub name: String,
+    pub fragment_shader: PathBuf,
+    pub vertex_shader: PathBuf,
+}
+
+#[derive(Debug)]
 pub struct TextureGroup {
     pub name: String,
     pub auto_crop: bool,
@@ -222,6 +229,7 @@ pub struct Project {
     pub scripts: HashMap<String, Script>,
     pub extensions: HashMap<String, Extension>,
     pub fonts: HashMap<String, Font>,
+    pub shaders: HashMap<String, Shader>,
     pub room_order: Vec<String>,
 }
 

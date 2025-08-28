@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod collision;
 pub mod drawing;
 pub mod instance;

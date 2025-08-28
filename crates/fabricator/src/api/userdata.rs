@@ -132,7 +132,7 @@ where
         ctx: vm::Context<'gc>,
         key: vm::String<'gc>,
     ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
-        let u = ud.downcast::<U>()?;
+        let u = ud.downcast::<U>().unwrap();
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.read)(ctx, u)?)
         } else {
@@ -148,7 +148,7 @@ where
         key: vm::String<'gc>,
         value: vm::Value<'gc>,
     ) -> Result<(), vm::RuntimeError> {
-        let u = ud.downcast_write::<U>(&ctx)?;
+        let u = ud.downcast_write::<U>(&ctx).unwrap();
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.write)(ctx, u, value)?)
         } else {

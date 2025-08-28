@@ -25,7 +25,11 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         ("mb_any", MouseButtons::all()),
     ] {
         magic
-            .add_constant(&ctx, ctx.intern(name), vm::UserData::new_static(&ctx, val))
+            .add_constant(
+                &ctx,
+                ctx.intern(name),
+                vm::UserData::new_static::<MouseButtons>(&ctx, val),
+            )
             .unwrap();
     }
 

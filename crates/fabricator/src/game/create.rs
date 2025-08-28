@@ -10,8 +10,15 @@ use gc_arena::Gc;
 
 use crate::{
     api::{
-        collision::collision_api, drawing::drawing_api, magic::MagicExt as _, object::object_api,
-        os::os_api, platform::platform_api, room::room_api, stub::stub_api,
+        assets::assets_api,
+        collision::collision_api,
+        drawing::{SpriteUserData, drawing_api},
+        magic::MagicExt as _,
+        object::{ObjectUserData, object_api},
+        os::os_api,
+        platform::platform_api,
+        room::{RoomUserData, room_api},
+        stub::stub_api,
     },
     ffi::load_extension_file,
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
@@ -76,17 +83,21 @@ pub fn create_state(
             CollisionKind::Diamond => (SpriteCollisionKind::Diamond, false),
         };
 
-        let sprite_id = sprites.insert(Sprite {
-            name: sprite_name.clone(),
-            playback_speed: sprite.playback_speed,
-            playback_length: sprite.playback_length,
-            origin: sprite_origin,
-            collision: SpriteCollision {
-                kind: collision_kind,
-                bounds: collision_bounds,
-            },
-            collision_rotates,
-            frames,
+        let sprite_id = sprites.insert_with_id(|id| {
+            let userdata = interpreter.enter(|ctx| ctx.stash(SpriteUserData::new(ctx, id)));
+            Sprite {
+                name: sprite_name.clone(),
+                playback_speed: sprite.playback_speed,
+                playback_length: sprite.playback_length,
+                origin: sprite_origin,
+                collision: SpriteCollision {
+                    kind: collision_kind,
+                    bounds: collision_bounds,
+                },
+                collision_rotates,
+                frames,
+                userdata,
+            }
         });
         sprite_dict.insert(sprite_name.clone(), sprite_id);
     }
@@ -106,10 +117,14 @@ pub fn create_state(
             })
             .transpose()?;
 
-        let object_id = objects.insert(Object {
-            name: object_name.clone(),
-            sprite,
-            persistent: object.persistent,
+        let object_id = objects.insert_with_id(|id| {
+            let userdata = interpreter.enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id)));
+            Object {
+                name: object_name.clone(),
+                sprite,
+                persistent: object.persistent,
+                userdata,
+            }
         });
         object_dict.insert(object_name.clone(), object_id);
     }
@@ -144,10 +159,15 @@ pub fn create_state(
             );
         }
 
-        let room_id = rooms.insert(Room {
-            name: room.name.clone(),
-            size: Vec2::new(room.width, room.height),
-            layers,
+        let room_id = rooms.insert_with_id(|id| {
+            let room_ud = interpreter
+                .enter(|ctx| ctx.stash(RoomUserData::new(ctx, id, ctx.intern(&room.name))));
+            Room {
+                name: room.name.clone(),
+                size: Vec2::new(room.width, room.height),
+                layers,
+                userdata: room_ud,
+            }
         });
 
         room_dict.insert(room.name.clone(), room_id);
@@ -176,6 +196,7 @@ pub fn create_state(
         magic.merge_unique(&object_api(ctx, &config)?)?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
+        magic.merge_unique(&assets_api(ctx, &config)?)?;
 
         for extension in project.extensions.values() {
             for file in &extension.files {

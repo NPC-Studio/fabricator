@@ -1,9 +1,12 @@
 use std::{
-    cell::{Ref, RefCell},
+    cell::{Ref, RefCell, RefMut},
+    ptr::NonNull,
     str,
 };
 
 use fabricator_vm as vm;
+
+pub type PtrUserData = NonNull<u8>;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BufferType {
@@ -64,6 +67,10 @@ impl Buffer {
     pub fn data<'a>(&'a self) -> Ref<'a, [u8]> {
         Ref::map(self.inner.borrow(), |cell| cell.data.as_slice())
     }
+
+    pub fn data_mut<'a>(&'a self) -> RefMut<'a, [u8]> {
+        RefMut::map(self.inner.borrow_mut(), |cell| cell.data.as_mut_slice())
+    }
 }
 
 impl BufferState {
@@ -101,7 +108,7 @@ impl BufferState {
             .map(|i| cursor + i)
             .unwrap_or(self.data.len());
         let slice = &self.data[cursor..end];
-        self.cursor = self.data.len();
+        self.cursor = end;
         slice
     }
 
@@ -251,6 +258,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 buffer.cursor_write(s.as_str().as_bytes())?;
             }
         }
+
         Ok(())
     });
     lib.insert(
@@ -332,5 +340,33 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("buffer_delete"),
         vm::MagicConstant::new_ptr(&ctx, buffer_delete),
+    );
+
+    let buffer_get_address = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let buffer: vm::UserData = exec.stack().consume(ctx)?;
+        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        exec.stack().replace(
+            ctx,
+            vm::UserData::new_static::<PtrUserData>(
+                &ctx,
+                PtrUserData::new(buffer.data.as_mut_ptr()).unwrap(),
+            ),
+        );
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("buffer_get_address"),
+        vm::MagicConstant::new_ptr(&ctx, buffer_get_address),
+    );
+
+    let buffer_get_size = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let buffer: vm::UserData = exec.stack().consume(ctx)?;
+        let buffer = buffer.downcast_static::<Buffer>()?.inner.borrow();
+        exec.stack().replace(ctx, buffer.data.len() as isize);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("buffer_get_size"),
+        vm::MagicConstant::new_ptr(&ctx, buffer_get_size),
     );
 }

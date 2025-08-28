@@ -14,6 +14,20 @@ use crate::{
     state::{Configuration, Instance, InstanceState, ObjectId, State},
 };
 
+pub struct ObjectUserData(ObjectId);
+
+impl ObjectUserData {
+    pub fn new<'gc>(ctx: vm::Context<'gc>, object_id: ObjectId) -> vm::UserData<'gc> {
+        vm::UserData::new_static::<ObjectUserData>(&ctx, ObjectUserData(object_id))
+    }
+
+    pub fn downcast<'gc>(
+        userdata: vm::UserData<'gc>,
+    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
+        userdata.downcast_static::<ObjectUserData>()
+    }
+}
+
 pub fn no_one<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
     #[derive(Collect)]
     #[collect(require_static)]
@@ -64,12 +78,8 @@ pub fn object_api<'gc>(
         .add_constant(&ctx, ctx.intern("all"), all(ctx))
         .unwrap();
 
-    for (object_id, object) in config.objects.iter() {
-        magic.add_constant(
-            &ctx,
-            ctx.intern(&object.name),
-            vm::UserData::new_static(&ctx, object_id),
-        )?;
+    for object in config.objects.values() {
+        magic.add_constant(&ctx, ctx.intern(&object.name), ctx.fetch(&object.userdata))?;
     }
 
     let instance_create_depth = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -81,7 +91,7 @@ pub fn object_api<'gc>(
             Option<vm::Object>,
         ) = exec.stack().consume(ctx)?;
 
-        let object = *object.downcast_static::<ObjectId>()?;
+        let object = ObjectUserData::downcast(object)?;
 
         let (create_script, instance_id, instance_ud) = State::ctx_with_mut(ctx, |state| {
             let properties = vm::Object::new(&ctx);
@@ -97,7 +107,7 @@ pub fn object_api<'gc>(
             }
 
             let instance_id = state.instances.insert_with_id(|instance_id| Instance {
-                object,
+                object: object.0,
                 position: Vec2::new(x, y),
                 rotation: 0.0,
                 depth,
@@ -110,7 +120,7 @@ pub fn object_api<'gc>(
             for (&event, script) in state
                 .scripts
                 .object_events
-                .get(&object)
+                .get(&object.0)
                 .into_iter()
                 .flatten()
             {
@@ -125,7 +135,7 @@ pub fn object_api<'gc>(
                 state
                     .scripts
                     .object_events
-                    .get(&object)
+                    .get(&object.0)
                     .and_then(|evs| evs.get(&ObjectEvent::Create))
                     .cloned(),
                 instance_id,
@@ -138,7 +148,7 @@ pub fn object_api<'gc>(
                 exec.with_this(instance_ud.into())
                     .call_closure(ctx, create_script.create_closure(ctx))
                     .map_err(|e| e.into_extern())
-                    .context("creating an instance in `create_instance_depth`")
+                    .context("error creating an instance in `create_instance_depth`")
             })?;
         }
 

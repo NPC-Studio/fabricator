@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Error};
+use fabricator_stdlib::buffer;
 use fabricator_vm as vm;
 use gc_arena::{Collect, Mutation};
 use libloading::Library;
@@ -76,13 +77,17 @@ impl Pointer {
 impl<'gc> vm::FromValue<'gc> for Pointer {
     fn from_value(_ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
         if let vm::Value::String(s) = value {
-            Ok(Self(s.as_ptr() as *const c_void))
-        } else {
-            Err(vm::TypeError {
-                expected: "string",
-                found: value.type_name(),
-            })
+            return Ok(Self(s.as_ptr() as *const c_void));
+        } else if let vm::Value::UserData(ud) = value {
+            if let Ok(ptr) = ud.downcast_static::<buffer::PtrUserData>() {
+                return Ok(Self(ptr.as_ptr() as *const c_void));
+            }
         }
+
+        Err(vm::TypeError {
+            expected: "pointer type",
+            found: value.type_name(),
+        })
     }
 }
 

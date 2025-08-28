@@ -51,6 +51,13 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
         ctx.intern("fabricator-project"),
     );
 
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "room_get_name",
+        [ctx.intern("the_room").into()],
+    );
+
     create_stub_callback(ctx, &mut magic, "application_surface_enable", []);
     create_stub_callback(ctx, &mut magic, "surface_depth_disable", []);
     create_stub_callback(ctx, &mut magic, "display_set_sleep_margin", []);
@@ -67,8 +74,22 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
     create_stub_callback(ctx, &mut magic, "window_set_fullscreen", []);
     create_stub_callback(ctx, &mut magic, "window_center", []);
     create_stub_callback(ctx, &mut magic, "window_enable_borderless_fullscreen", []);
+    create_stub_callback(ctx, &mut magic, "camera_set_view_pos", []);
+    create_stub_callback(ctx, &mut magic, "camera_set_view_size", []);
+    create_stub_callback(ctx, &mut magic, "shader_get_sampler_index", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "shader_get_uniform", [unit_userdata]);
 
+    create_stub_constant(
+        ctx,
+        &mut magic,
+        "view_camera",
+        vm::Array::from_iter(&ctx, [unit_userdata; 8]),
+    );
     create_stub_constant(ctx, &mut magic, "cmpfunc_always", vm::Value::Undefined);
+
+    for shader in project.shaders.values() {
+        create_stub_constant(ctx, &mut magic, &shader.name, unit_userdata);
+    }
 
     for key in [
         "vk_delete",
@@ -133,16 +154,11 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
         create_stub_constant(ctx, &mut magic, gp_axis, 0);
     }
 
+    create_stub_callback(ctx, &mut magic, "gamepad_is_connected", [false.into()]);
+
     for font in project.fonts.values() {
         create_stub_constant(ctx, &mut magic, &font.name, unit_userdata);
     }
-
-    create_stub_callback(
-        ctx,
-        &mut magic,
-        "room_get_name",
-        [ctx.intern("the_room").into()],
-    );
 
     create_stub_callback(ctx, &mut magic, "layer_get_id", [unit_userdata]);
     create_stub_callback(ctx, &mut magic, "layer_tilemap_get_id", [unit_userdata]);

@@ -35,7 +35,7 @@ pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     magic
         .add_constant(
             &ctx,
-            ctx.intern("os_xboxseriesx"),
+            ctx.intern("os_xboxseriesxs"),
             ctx.intern("xboxseriesx"),
         )
         .unwrap();
@@ -94,8 +94,10 @@ pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
             let path = state.config.data_path.join(file_name.as_str());
             let data = fs::read(path)?;
             let buffer = buffer::Buffer::new(data, buffer::BufferType::Growable, 1);
-            exec.stack()
-                .replace(ctx, vm::UserData::new_static(&ctx, buffer));
+            exec.stack().replace(
+                ctx,
+                vm::UserData::new_static::<buffer::Buffer>(&ctx, buffer),
+            );
             Ok(())
         })?
     });

@@ -4,6 +4,7 @@ pub mod core;
 pub mod json;
 pub mod math;
 pub mod string;
+mod util;
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
@@ -38,8 +39,6 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
             }
         }
 
-        self.registry()
-            .singleton::<Rootable![StdlibSingleton<'_>]>(self)
-            .0
+        self.singleton::<Rootable![StdlibSingleton<'_>]>().0
     }
 }

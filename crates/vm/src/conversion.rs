@@ -62,37 +62,12 @@ impl<'gc> IntoValue<'gc> for f32 {
     }
 }
 
-macro_rules! impl_copy_into {
-    ($($i:ty),* $(,)?) => {
-        $(
-            impl<'a, 'gc> IntoValue<'gc> for &'a $i {
-                fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {
-                    (*self).into_value(ctx)
-                }
-            }
-        )*
-    };
+impl<'gc> IntoValue<'gc> for isize {
+    fn into_value(self, _ctx: Context<'gc>) -> Value<'gc> {
+        const { assert!(isize::BITS <= 64) }
+        i64::try_from(self).unwrap().into()
+    }
 }
-impl_copy_into!(
-    bool,
-    i8,
-    i16,
-    i32,
-    i64,
-    u8,
-    u16,
-    u32,
-    f32,
-    f64,
-    String<'gc>,
-    Object<'gc>,
-    Array<'gc>,
-    Function<'gc>,
-    Closure<'gc>,
-    Callback<'gc>,
-    UserData<'gc>,
-    Value<'gc>,
-);
 
 impl<'gc> IntoValue<'gc> for &'static str {
     fn into_value(self, ctx: Context<'gc>) -> Value<'gc> {

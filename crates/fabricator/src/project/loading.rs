@@ -13,7 +13,8 @@ use serde_json as json;
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
     FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, Object, ObjectEvent, Project, Room,
-    Script, ScriptMode, Sprite, TextureGroup, strip_json_trailing_commas::StripJsonTrailingCommas,
+    Script, ScriptMode, Shader, Sprite, TextureGroup,
+    strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
 pub fn load_project(project_file: &Path) -> Result<Project, Error> {
@@ -51,6 +52,7 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         scripts: HashMap::new(),
         extensions: HashMap::new(),
         fonts: HashMap::new(),
+        shaders: HashMap::new(),
         room_order,
     };
 
@@ -61,6 +63,7 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         Script(Script),
         Extension(Extension),
         Font(Font),
+        Shader(Shader),
         Other,
     }
 
@@ -86,6 +89,9 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
                     LoadedResource::Extension(read_extension(base_path, yy_extension)?)
                 }
                 YyResource::Font(yy_font) => LoadedResource::Font(read_font(base_path, yy_font)?),
+                YyResource::Shader(yy_shader) => {
+                    LoadedResource::Shader(read_shader(base_path, yy_shader)?)
+                }
                 YyResource::Other => LoadedResource::Other,
             };
 
@@ -114,6 +120,9 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
             }
             LoadedResource::Font(font) => {
                 project.fonts.insert(font.name.clone(), font);
+            }
+            LoadedResource::Shader(shader) => {
+                project.shaders.insert(shader.name.clone(), shader);
             }
             LoadedResource::Other => {}
         }
@@ -351,6 +360,11 @@ struct YyFont {
 }
 
 #[derive(Deserialize)]
+struct YyShader {
+    name: String,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyResource {
     #[serde(rename = "GMSprite")]
@@ -365,6 +379,8 @@ enum YyResource {
     Extension(YyExtension),
     #[serde(rename = "GMFont")]
     Font(YyFont),
+    #[serde(rename = "GMShader")]
+    Shader(YyShader),
     #[serde(other)]
     Other,
 }
@@ -632,4 +648,14 @@ fn read_font(base_path: PathBuf, yy_font: YyFont) -> Result<Font, Error> {
     }
 
     Ok(font)
+}
+
+fn read_shader(base_path: PathBuf, yy_shader: YyShader) -> Result<Shader, Error> {
+    let fragment_shader_path = base_path.join(&format!("{}.fsh", yy_shader.name));
+    let vertex_shader_path = base_path.join(&format!("{}.vsh", yy_shader.name));
+    Ok(Shader {
+        name: yy_shader.name,
+        fragment_shader: fragment_shader_path,
+        vertex_shader: vertex_shader_path,
+    })
 }

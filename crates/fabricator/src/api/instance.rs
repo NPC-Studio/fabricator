@@ -10,12 +10,9 @@ use crate::{
 };
 
 pub fn create_instance_ud<'gc>(ctx: vm::Context<'gc>, id: InstanceId) -> vm::UserData<'gc> {
-    let methods = ctx
-        .registry()
-        .singleton::<Rootable![InstanceMethodsSingleton<'_>]>(ctx)
-        .0;
+    let methods = ctx.singleton::<Rootable![InstanceMethodsSingleton<'_>]>().0;
 
-    let ud = vm::UserData::new_static(&ctx, id);
+    let ud = vm::UserData::new_static::<InstanceId>(&ctx, id);
 
     ud.set_methods(&ctx, Some(methods));
     ud

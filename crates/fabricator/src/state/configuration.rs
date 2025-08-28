@@ -7,6 +7,7 @@ use fabricator_collision::{
 };
 use fabricator_math::{Box2, Vec2};
 use fabricator_util::typed_id_map::{IdMap, new_id_type};
+use fabricator_vm as vm;
 
 new_id_type! {
     pub struct TextureId;
@@ -39,6 +40,7 @@ pub struct Room {
     pub name: String,
     pub size: Vec2<u32>,
     pub layers: HashMap<String, Layer>,
+    pub userdata: vm::StashedUserData,
 }
 
 #[derive(Clone)]
@@ -56,6 +58,7 @@ pub struct Object {
     pub name: String,
     pub sprite: Option<SpriteId>,
     pub persistent: bool,
+    pub userdata: vm::StashedUserData,
 }
 
 #[derive(Copy, Clone)]
@@ -72,6 +75,7 @@ pub struct Sprite {
     pub collision: SpriteCollision,
     pub collision_rotates: bool,
     pub frames: Vec<AnimationFrame>,
+    pub userdata: vm::StashedUserData,
 }
 
 #[derive(Debug, Copy, Clone)]

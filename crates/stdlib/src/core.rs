@@ -1,6 +1,12 @@
 use fabricator_vm as vm;
 
 pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
+    // `pointer_null` is not used by fabricator.
+    lib.insert(
+        ctx.intern("pointer_null"),
+        vm::MagicConstant::new_ptr(&ctx, vm::UserData::new_static(&ctx, ())),
+    );
+
     let typeof_ = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         // Return a *roughly* GML compatible set of type names.
         let type_name = match exec.stack().consume(ctx)? {
@@ -41,6 +47,24 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         Ok(())
     });
     lib.insert(ctx.intern("int64"), vm::MagicConstant::new_ptr(&ctx, int64));
+
+    let real = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let arg: vm::Value = exec.stack().consume(ctx)?;
+        let float = if let Some(f) = arg.cast_float() {
+            f
+        } else if let vm::Value::String(f) = arg {
+            f.parse()?
+        } else {
+            return Err(vm::TypeError {
+                expected: "number or string",
+                found: arg.type_name(),
+            }
+            .into());
+        };
+        exec.stack().replace(ctx, float);
+        Ok(())
+    });
+    lib.insert(ctx.intern("real"), vm::MagicConstant::new_ptr(&ctx, real));
 
     let is_numeric = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: vm::Value = exec.stack().consume(ctx)?;
