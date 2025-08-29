@@ -5,6 +5,16 @@ use rand::Rng;
 
 pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
+        ctx.intern("NaN"),
+        vm::MagicConstant::new_ptr(&ctx, f64::NAN),
+    );
+
+    lib.insert(
+        ctx.intern("infinity"),
+        vm::MagicConstant::new_ptr(&ctx, f64::INFINITY),
+    );
+
+    lib.insert(
         ctx.intern("pi"),
         vm::MagicConstant::new_ptr(&ctx, f64::consts::PI),
     );
@@ -58,6 +68,20 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(ctx.intern("floor"), vm::MagicConstant::new_ptr(&ctx, floor));
 
+    let ceil = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let arg: f64 = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, arg.ceil());
+        Ok(())
+    });
+    lib.insert(ctx.intern("ceil"), vm::MagicConstant::new_ptr(&ctx, ceil));
+
+    let sign = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let arg: f64 = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, arg.signum());
+        Ok(())
+    });
+    lib.insert(ctx.intern("sign"), vm::MagicConstant::new_ptr(&ctx, sign));
+
     let min = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let mut min: f64 = exec.stack().from_index(ctx, 0)?;
         for i in 1..exec.stack().len() {
@@ -90,7 +114,7 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let random = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let upper: f64 = exec.stack().consume(ctx)?;
-        if upper <= 0.0 {
+        if upper < 0.0 {
             return Err(format!("`random` upper range {upper} cannot be <= 0.0").into());
         }
         exec.stack()
@@ -100,6 +124,34 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("random"),
         vm::MagicConstant::new_ptr(&ctx, random),
+    );
+
+    let irandom = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let upper: i64 = exec.stack().consume(ctx)?;
+        if upper < 0 {
+            return Err(format!("`irandom` upper range {upper} cannot be <= 0").into());
+        }
+        exec.stack()
+            .replace(ctx, rand::rng().random_range(0..=upper));
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("irandom"),
+        vm::MagicConstant::new_ptr(&ctx, irandom),
+    );
+
+    let random_range = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (lower, upper): (f64, f64) = exec.stack().consume(ctx)?;
+        if upper < lower {
+            return Err(format!("`random_range`: invalid range [{lower}, {upper}]").into());
+        }
+        exec.stack()
+            .replace(ctx, rand::rng().random_range(lower..=upper));
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("random_range"),
+        vm::MagicConstant::new_ptr(&ctx, random_range),
     );
 
     let choose = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -112,5 +164,17 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("choose"),
         vm::MagicConstant::new_ptr(&ctx, choose),
+    );
+
+    let point_in_rectangle = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (px, py, xmin, ymin, xmax, ymax): (f64, f64, f64, f64, f64, f64) =
+            exec.stack().consume(ctx)?;
+        let inside = px >= xmin && px <= xmax && py >= ymin && py <= ymax;
+        exec.stack().replace(ctx, inside);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("point_in_rectangle"),
+        vm::MagicConstant::new_ptr(&ctx, point_in_rectangle),
     );
 }

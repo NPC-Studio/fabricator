@@ -3,7 +3,10 @@ use std::{env, fs};
 use fabricator_stdlib::buffer;
 use fabricator_vm as vm;
 
-use crate::{api::magic::MagicExt as _, state::State};
+use crate::{
+    api::magic::{MagicExt as _, create_magic_ro},
+    state::State,
+};
 
 pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     let mut magic = vm::MagicSet::new();
@@ -78,6 +81,17 @@ pub fn os_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic
         .add_constant(&ctx, ctx.intern("get_timer"), get_timer)
+        .unwrap();
+
+    magic
+        .add(
+            ctx.intern("current_time"),
+            create_magic_ro(&ctx, |ctx| {
+                State::ctx_with(ctx, |state| {
+                    Ok((state.start_instant.elapsed().as_millis() as i64).into())
+                })?
+            }),
+        )
         .unwrap();
 
     let show_error = vm::Callback::from_fn(&ctx, |ctx, mut exec| {

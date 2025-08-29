@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     io::BufReader,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context as _, Error, bail};
@@ -13,7 +14,7 @@ use serde_json as json;
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
     FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, Object, ObjectEvent, Project, Room,
-    Script, ScriptMode, Shader, Sprite, TextureGroup,
+    Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileSet,
     strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
@@ -46,6 +47,7 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         name: yy_project.name,
         base_path: project_file.parent().expect("no base path").to_owned(),
         texture_groups,
+        room_order,
         sprites: HashMap::new(),
         objects: HashMap::new(),
         rooms: HashMap::new(),
@@ -53,7 +55,8 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         extensions: HashMap::new(),
         fonts: HashMap::new(),
         shaders: HashMap::new(),
-        room_order,
+        sounds: HashMap::new(),
+        tile_sets: HashMap::new(),
     };
 
     enum LoadedResource {
@@ -64,6 +67,8 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         Extension(Extension),
         Font(Font),
         Shader(Shader),
+        Sound(Sound),
+        TileSet(TileSet),
         Other,
     }
 
@@ -91,6 +96,12 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
                 YyResource::Font(yy_font) => LoadedResource::Font(read_font(base_path, yy_font)?),
                 YyResource::Shader(yy_shader) => {
                     LoadedResource::Shader(read_shader(base_path, yy_shader)?)
+                }
+                YyResource::Sound(yy_sound) => {
+                    LoadedResource::Sound(read_sound(base_path, yy_sound)?)
+                }
+                YyResource::TileSet(yy_tile_set) => {
+                    LoadedResource::TileSet(read_tile_set(base_path, yy_tile_set)?)
                 }
                 YyResource::Other => LoadedResource::Other,
             };
@@ -123,6 +134,12 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
             }
             LoadedResource::Shader(shader) => {
                 project.shaders.insert(shader.name.clone(), shader);
+            }
+            LoadedResource::Sound(sound) => {
+                project.sounds.insert(sound.name.clone(), sound);
+            }
+            LoadedResource::TileSet(tile_set) => {
+                project.tile_sets.insert(tile_set.name.clone(), tile_set);
             }
             LoadedResource::Other => {}
         }
@@ -229,6 +246,8 @@ struct YyObject {
     persistent: bool,
     #[serde(rename = "spriteId")]
     sprite_id: Option<YyId>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +286,8 @@ struct YyRoom {
     #[serde(rename = "roomSettings")]
     room_settings: YyRoomSettings,
     layers: Vec<YyLayer>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -365,6 +386,21 @@ struct YyShader {
 }
 
 #[derive(Deserialize)]
+struct YySound {
+    name: String,
+    duration: f64,
+    #[serde(rename = "sampleRate")]
+    sample_rate: u32,
+    #[serde(rename = "soundFile")]
+    sound_file: String,
+}
+
+#[derive(Deserialize)]
+struct YyTileSet {
+    name: String,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyResource {
     #[serde(rename = "GMSprite")]
@@ -381,6 +417,10 @@ enum YyResource {
     Font(YyFont),
     #[serde(rename = "GMShader")]
     Shader(YyShader),
+    #[serde(rename = "GMSound")]
+    Sound(YySound),
+    #[serde(rename = "GMTileSet")]
+    TileSet(YyTileSet),
     #[serde(other)]
     Other,
 }
@@ -487,6 +527,7 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
         persistent: yy_object.persistent,
         sprite: yy_object.sprite_id.map(|i| i.name),
         event_scripts,
+        tags: yy_object.tags.into_iter().collect(),
     })
 }
 
@@ -522,6 +563,7 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
         width: yy_room.room_settings.width,
         height: yy_room.room_settings.height,
         layers,
+        tags: yy_room.tags.into_iter().collect(),
     })
 }
 
@@ -657,5 +699,20 @@ fn read_shader(base_path: PathBuf, yy_shader: YyShader) -> Result<Shader, Error>
         name: yy_shader.name,
         fragment_shader: fragment_shader_path,
         vertex_shader: vertex_shader_path,
+    })
+}
+
+fn read_sound(base_path: PathBuf, yy_sound: YySound) -> Result<Sound, Error> {
+    Ok(Sound {
+        name: yy_sound.name,
+        duration: Duration::from_secs_f64(yy_sound.duration),
+        sample_rate: yy_sound.sample_rate,
+        sound_file: base_path.join(&yy_sound.sound_file),
+    })
+}
+
+fn read_tile_set(_base_path: PathBuf, yy_tile_set: YyTileSet) -> Result<TileSet, Error> {
+    Ok(TileSet {
+        name: yy_tile_set.name,
     })
 }

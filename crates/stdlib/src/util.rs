@@ -1,7 +1,50 @@
-use std::ops::Range;
+use std::{
+    ops::{self, Range},
+    ptr::NonNull,
+};
 
 use fabricator_vm as vm;
+use gc_arena::Mutation;
 use thiserror::Error;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Pointer(pub NonNull<u8>);
+
+impl From<NonNull<u8>> for Pointer {
+    fn from(value: NonNull<u8>) -> Self {
+        Self(value)
+    }
+}
+
+impl ops::Deref for Pointer {
+    type Target = NonNull<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Pointer {
+    pub fn new(p: *mut u8) -> Option<Self> {
+        Some(Self(NonNull::new(p)?))
+    }
+
+    pub fn into_userdata<'gc>(self, mc: &Mutation<'gc>) -> vm::UserData<'gc> {
+        vm::UserData::new_static(mc, self)
+    }
+
+    pub fn is_pointer<'gc>(ud: vm::UserData<'gc>) -> bool {
+        ud.is_static::<Pointer>()
+    }
+
+    pub fn downcast<'gc>(ud: vm::UserData<'gc>) -> Result<Pointer, vm::userdata::BadUserDataType> {
+        Ok(*ud.downcast_static::<Pointer>()?)
+    }
+
+    pub fn into_inner(self) -> NonNull<u8> {
+        self.0
+    }
+}
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("index {index} out of range of array with length {array_len}")]

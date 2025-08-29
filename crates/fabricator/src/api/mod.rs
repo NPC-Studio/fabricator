@@ -1,11 +1,13 @@
-pub mod assets;
+pub mod asset;
 pub mod collision;
 pub mod drawing;
+pub mod font;
 pub mod instance;
 pub mod magic;
 pub mod object;
 pub mod os;
 pub mod platform;
 pub mod room;
+pub mod sound;
 pub mod stub;
 pub mod userdata;

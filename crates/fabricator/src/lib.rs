@@ -5,7 +5,7 @@ pub mod project;
 pub mod state;
 
 pub use self::{
-    game::{Game, Render, TexturePage, TexturePageId},
+    game::{Game, Render},
     project::Project,
-    state::{InputState, MouseButtons, TextureId},
+    state::{InputState, MouseButtons, TextureId, TexturePage, TexturePageId},
 };

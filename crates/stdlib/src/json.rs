@@ -36,6 +36,7 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             }
         })
     }
+
     let json_parse = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let json: vm::String = exec.stack().consume(ctx)?;
         let value: serde_json::Value = serde_json::from_str(json.as_str())?;
@@ -46,5 +47,70 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("json_parse"),
         vm::MagicConstant::new_ptr(&ctx, json_parse),
+    );
+
+    fn value_to_json<'gc>(
+        ctx: vm::Context<'gc>,
+        value: vm::Value<'gc>,
+    ) -> Result<serde_json::Value, vm::RuntimeError> {
+        // We use mutable RefCell borrows to guard against recursion here.
+        Ok(match value {
+            vm::Value::Undefined => serde_json::Value::Null,
+            vm::Value::Boolean(b) => serde_json::Value::Bool(b),
+            vm::Value::Integer(i) => serde_json::Value::Number(i.into()),
+            vm::Value::Float(f) => serde_json::Value::Number(
+                serde_json::Number::from_f64(f).ok_or("invalid JSON float value")?,
+            ),
+            vm::Value::String(s) => serde_json::Value::String(s.as_str().to_owned()),
+            vm::Value::Object(obj) => {
+                let mut map = serde_json::Map::new();
+                let borrow = obj
+                    .into_inner()
+                    .try_borrow_mut(&ctx)
+                    .map_err(|_| "cannot convert recursive object to JSON")?;
+                for (&key, &value) in &borrow.map {
+                    map.insert(key.as_str().to_owned(), value_to_json(ctx, value)?);
+                }
+                serde_json::Value::Object(map)
+            }
+            vm::Value::Array(arr) => {
+                let mut array = Vec::new();
+                let borrow = arr
+                    .into_inner()
+                    .try_borrow_mut(&ctx)
+                    .map_err(|_| "cannot convert recursive array to JSON")?;
+                for &value in &*borrow {
+                    array.push(value_to_json(ctx, value)?);
+                }
+                serde_json::Value::Array(array)
+            }
+            vm::Value::UserData(ud) => {
+                if let Some(s) = ud.coerce_string(ctx) {
+                    serde_json::Value::String(s.as_str().to_owned())
+                } else if let Some(i) = ud.coerce_integer(ctx) {
+                    serde_json::Value::Number(i.into())
+                } else if let Some(f) = ud.coerce_float(ctx) {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(f).ok_or("invalid JSON float value")?,
+                    )
+                } else {
+                    return Err(format!("cannot convert userdata to JSON").into());
+                }
+            }
+            vm::Value::Closure(_) | vm::Value::Callback(_) => {
+                return Err(format!("cannot convert {} to JSON", value.type_name()).into());
+            }
+        })
+    }
+
+    let json_stringify = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let value: vm::Value = exec.stack().consume(ctx)?;
+        let json = value_to_json(ctx, value)?;
+        exec.stack().replace(ctx, serde_json::to_string(&json)?);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("json_stringify"),
+        vm::MagicConstant::new_ptr(&ctx, json_stringify),
     );
 }

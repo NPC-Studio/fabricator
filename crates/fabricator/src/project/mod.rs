@@ -2,8 +2,9 @@ mod loading;
 mod strip_json_trailing_commas;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::Error;
@@ -62,22 +63,40 @@ pub struct Sprite {
     pub animation_frames: Vec<AnimationFrame>,
 }
 
+#[derive(Debug)]
+pub struct TextureGroup {
+    pub name: String,
+    pub auto_crop: bool,
+    pub border: u8,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ObjectEvent {
     Create,
+    BeginStep,
     Step,
+    EndStep,
     Draw,
 }
 
 impl ObjectEvent {
     pub fn all() -> impl Iterator<Item = ObjectEvent> {
-        [Self::Create, Self::Step, Self::Draw].into_iter()
+        [
+            Self::Create,
+            Self::BeginStep,
+            Self::Step,
+            Self::EndStep,
+            Self::Draw,
+        ]
+        .into_iter()
     }
 
     pub fn file_stem(self) -> &'static str {
         match self {
             Self::Create => "Create_0",
+            Self::BeginStep => "Step_1",
             Self::Step => "Step_0",
+            Self::EndStep => "Step_2",
             Self::Draw => "Draw_0",
         }
     }
@@ -112,6 +131,7 @@ pub struct Object {
     pub persistent: bool,
     pub sprite: Option<String>,
     pub event_scripts: HashMap<ObjectEvent, EventScript>,
+    pub tags: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -139,6 +159,7 @@ pub struct Room {
     pub width: u32,
     pub height: u32,
     pub layers: HashMap<String, Layer>,
+    pub tags: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -212,10 +233,16 @@ pub struct Shader {
 }
 
 #[derive(Debug)]
-pub struct TextureGroup {
+pub struct Sound {
     pub name: String,
-    pub auto_crop: bool,
-    pub border: u8,
+    pub duration: Duration,
+    pub sample_rate: u32,
+    pub sound_file: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct TileSet {
+    pub name: String,
 }
 
 #[derive(Debug)]
@@ -223,6 +250,7 @@ pub struct Project {
     pub name: String,
     pub base_path: PathBuf,
     pub texture_groups: HashMap<String, TextureGroup>,
+    pub room_order: Vec<String>,
     pub sprites: HashMap<String, Sprite>,
     pub objects: HashMap<String, Object>,
     pub rooms: HashMap<String, Room>,
@@ -230,7 +258,8 @@ pub struct Project {
     pub extensions: HashMap<String, Extension>,
     pub fonts: HashMap<String, Font>,
     pub shaders: HashMap<String, Shader>,
-    pub room_order: Vec<String>,
+    pub sounds: HashMap<String, Sound>,
+    pub tile_sets: HashMap<String, TileSet>,
 }
 
 impl Project {

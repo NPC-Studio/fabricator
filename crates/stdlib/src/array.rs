@@ -102,17 +102,14 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         vm::MagicConstant::new_ptr(&ctx, array_push),
     );
 
-    let array_push = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let array: vm::Array = exec.stack().from_index(ctx, 0)?;
-        for &value in &exec.stack()[1..] {
-            array.push(&ctx, value)
-        }
-        exec.stack().clear();
+    let array_pop = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let array: vm::Array = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, array.pop(&ctx));
         Ok(())
     });
     lib.insert(
-        ctx.intern("array_push"),
-        vm::MagicConstant::new_ptr(&ctx, array_push),
+        ctx.intern("array_pop"),
+        vm::MagicConstant::new_ptr(&ctx, array_pop),
     );
 
     let array_sort = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -352,7 +349,7 @@ fn sort_array<'gc>(
         Ok(())
     }
 
-    let sort_by = if let Some(func) = comparator.to_function() {
+    let sort_by = if let Some(func) = comparator.as_function() {
         SortBy::Custom(func)
     } else if comparator.cast_bool() {
         SortBy::Ascending

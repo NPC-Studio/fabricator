@@ -235,7 +235,8 @@ impl<V> IdMap<V> {
         self.occupancy == 0
     }
 
-    /// All indexes for every `Id` produced by this `IdMap` will be less than the returned `Index`.
+    /// All indexes for every `Id` produced by this `IdMap` will be strictly less than the returned
+    /// `Index`.
     #[inline]
     pub fn index_upper_bound(&self) -> Index {
         // The slots length always fits in `Index` (because `next_free` must always fit in `Index`)

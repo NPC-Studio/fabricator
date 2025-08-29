@@ -5,9 +5,9 @@ use std::{
 };
 
 use gc_arena::{
+    Collect, Gc, Mutation, Rootable,
     arena::Root,
     barrier::{self, Write},
-    Collect, Gc, Mutation, Rootable,
 };
 
 /// A `Gc` pointer to any type `T: Collect + 'gc` which allows safe downcasting.
@@ -72,9 +72,9 @@ where
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Any")
-            .field("data", &Gc::as_ptr(self.0))
             .field("metadata", self.metadata())
             .field("type_id", &(self.type_id()))
+            .field("data", &Gc::as_ptr(self.0))
             .finish()
     }
 }

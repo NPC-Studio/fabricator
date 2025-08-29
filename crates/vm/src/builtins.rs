@@ -174,7 +174,10 @@ impl<'gc> BuiltIns<'gc> {
                             exec.stack().push_back(object);
                             Ok(())
                         }
-                        Value::UserData(user_data) => user_data.iter(ctx),
+                        Value::UserData(user_data) => {
+                            exec.stack().replace(ctx, user_data.iter(ctx)?);
+                            Ok(())
+                        }
                         _ => Err("with loop target must be object or userdata".into()),
                     }
                 })

@@ -77,6 +77,12 @@ impl<'gc> Array<'gc> {
     }
 
     #[inline]
+    pub fn pop(self, mc: &Mutation<'gc>) -> Value<'gc> {
+        let mut this = self.0.borrow_mut(mc);
+        this.pop().unwrap_or_default()
+    }
+
+    #[inline]
     pub fn extend(self, mc: &Mutation<'gc>, values: impl IntoIterator<Item = Value<'gc>>) {
         let mut this = self.0.borrow_mut(mc);
         this.extend(values);

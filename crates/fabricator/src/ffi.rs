@@ -1,16 +1,16 @@
 use std::{
     collections::HashMap,
     env,
-    ffi::{CStr, c_void},
+    ffi::{CStr, CString, c_void},
     marker::PhantomData,
     mem,
     rc::Rc,
 };
 
 use anyhow::{Context, Error};
-use fabricator_stdlib::buffer;
+use fabricator_stdlib::Pointer;
 use fabricator_vm as vm;
-use gc_arena::{Collect, Mutation};
+use gc_arena::{Collect, Gc, Mutation};
 use libloading::Library;
 
 use crate::project::{ExtensionFile, FfiType};
@@ -49,37 +49,49 @@ pub fn load_extension_file<'gc>(
 }
 
 #[repr(transparent)]
-struct Number(f64);
+struct FfiNumber(f64);
 
-impl Number {
+impl FfiNumber {
     const FFI_TYPE: FfiType = FfiType::Number;
 }
 
-impl<'gc> vm::FromValue<'gc> for Number {
+impl<'gc> vm::FromValue<'gc> for FfiNumber {
     fn from_value(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
-        Ok(Self(f64::from_value(ctx, value)?))
+        Ok(FfiNumber(value.coerce_float(ctx).ok_or(vm::TypeError {
+            expected: "value coercible to float",
+            found: value.type_name(),
+        })?))
     }
 }
 
-impl<'gc> vm::IntoValue<'gc> for Number {
+impl<'gc> vm::IntoValue<'gc> for FfiNumber {
     fn into_value(self, ctx: vm::Context<'gc>) -> vm::Value<'gc> {
         self.0.into_value(ctx)
     }
 }
 
 #[repr(transparent)]
-struct Pointer(*const c_void);
+struct FfiPointer(*const c_void);
 
-impl Pointer {
+impl FfiPointer {
     const FFI_TYPE: FfiType = FfiType::Pointer;
 }
 
-impl<'gc> vm::FromValue<'gc> for Pointer {
-    fn from_value(_ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
+impl<'gc> vm::FromValue<'gc> for FfiPointer {
+    fn from_value(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
         if let vm::Value::String(s) = value {
-            return Ok(Self(s.as_ptr() as *const c_void));
+            // Create a `CString` buffer up until the first NUL in the given string. If there isn't
+            // an embedded NUL, this will copy the entire string.
+            let end = s.find('\0').unwrap_or(s.len());
+            let cstring = CString::new(&s.as_str()[0..end]).unwrap();
+            // Place the `CString` into Gc memory. It should be live until the next garbage
+            // collection, which must be after the FFI function returns.
+            let cstring = Gc::new(&ctx, cstring);
+            // We can now pass the FFI function a pointer to a 0-terminated string that will live at
+            // least as long as the function.
+            return Ok(Self(cstring.as_ptr() as *const c_void));
         } else if let vm::Value::UserData(ud) = value {
-            if let Ok(ptr) = ud.downcast_static::<buffer::PtrUserData>() {
+            if let Ok(ptr) = Pointer::downcast(ud) {
                 return Ok(Self(ptr.as_ptr() as *const c_void));
             }
         }
@@ -91,7 +103,7 @@ impl<'gc> vm::FromValue<'gc> for Pointer {
     }
 }
 
-impl<'gc> vm::IntoValue<'gc> for Pointer {
+impl<'gc> vm::IntoValue<'gc> for FfiPointer {
     fn into_value(self, ctx: vm::Context<'gc>) -> vm::Value<'gc> {
         let c_str = unsafe { CStr::from_ptr(self.0 as *const _) };
         ctx.intern(c_str.to_string_lossy().as_ref()).into()
@@ -104,15 +116,15 @@ macro_rules! call_for_arg_type_combinations {
     };
 
     ($macro:ident, ($($arg_name:ident: $arg_type:ty),*), $next:ident $(, $rest:ident)*) => {
-        call_for_arg_type_combinations!($macro, ($($arg_name: $arg_type,)* $next: Pointer) $(,$rest)*);
-        call_for_arg_type_combinations!($macro, ($($arg_name: $arg_type,)* $next: Number) $(,$rest)*);
+        call_for_arg_type_combinations!($macro, ($($arg_name: $arg_type,)* $next: FfiPointer) $(,$rest)*);
+        call_for_arg_type_combinations!($macro, ($($arg_name: $arg_type,)* $next: FfiNumber) $(,$rest)*);
     };
 }
 
 macro_rules! call_for_uniform_arg_types {
     ($macro:ident, ($($arg_name:ident),*)) => {
-        $macro!($($arg_name: Pointer),*);
-        $macro!($($arg_name: Number),*);
+        $macro!($($arg_name: FfiPointer),*);
+        $macro!($($arg_name: FfiNumber),*);
     };
 
     ($macro:ident, ($($arg_name:ident),*), $next:ident $(, $rest:ident)*) => {
@@ -153,14 +165,14 @@ fn get_extension_callback<'gc>(
                         FfiType::Number => {
                             vm::Callback::new(
                                 mc,
-                                FfiFn::<Number, ($($arg_type,)*)>::new(library, symbol)?,
+                                FfiFn::<FfiNumber, ($($arg_type,)*)>::new(library, symbol)?,
                                 vm::Value::Undefined,
                             )
                         }
                         FfiType::Pointer => {
                             vm::Callback::new(
                                 mc,
-                                FfiFn::<Pointer, ($($arg_type,)*)>::new(library, symbol)?,
+                                FfiFn::<FfiPointer, ($($arg_type,)*)>::new(library, symbol)?,
                                 vm::Value::Undefined,
                             )
                         }
@@ -218,8 +230,8 @@ macro_rules! impl_ffi_signature {
 
 macro_rules! impl_ffi_args {
     ($($arg_name:ident: $arg_type:ty),* $(,)?) => {
-        impl_ffi_signature!(Pointer, $($arg_name: $arg_type),*);
-        impl_ffi_signature!(Number, $($arg_name: $arg_type),*);
+        impl_ffi_signature!(FfiPointer, $($arg_name: $arg_type),*);
+        impl_ffi_signature!(FfiNumber, $($arg_name: $arg_type),*);
     }
 }
 

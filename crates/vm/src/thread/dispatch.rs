@@ -144,7 +144,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     }
                     .into());
                 }
-                let Some(index) = indexes[0].cast_string(self.ctx) else {
+                let Some(index) = indexes[0].coerce_string(self.ctx) else {
                     return Err(OpError::BadIndex {
                         target: target.into(),
                         index: indexes[0].into(),
@@ -192,7 +192,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
                     }
                     .into());
                 }
-                let Some(index) = indexes[0].cast_string(self.ctx) else {
+                let Some(index) = indexes[0].coerce_string(self.ctx) else {
                     return Err(OpError::BadIndex {
                         target: target.into(),
                         index: indexes[0].into(),
@@ -384,7 +384,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn get_field(&mut self, dest: RegIdx, object: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
         let key_val = self.registers[key as usize];
-        let Some(key) = key_val.cast_string(self.ctx) else {
+        let Some(key) = key_val.as_string() else {
             return Err(OpError::BadKey {
                 key: key_val.into(),
             }
@@ -398,7 +398,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn set_field(&mut self, object: RegIdx, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
         let key_val = self.registers[key as usize];
-        let Some(key) = key_val.cast_string(self.ctx) else {
+        let Some(key) = key_val.as_string() else {
             return Err(OpError::BadKey {
                 key: key_val.into(),
             }
@@ -857,7 +857,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_resize(&mut self, stack_top: RegIdx) -> Result<(), Self::Error> {
         let stack_top = self.registers[stack_top as usize];
         let stack_top = stack_top
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_top.into(),
@@ -871,7 +871,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let stack_top = self.frame.closure.prototype().constants()[stack_top as usize];
         let stack_top = stack_top
             .to_value()
-            .to_integer()
+            .as_integer()
             .expect("const index is not integer")
             .try_into()
             .map_err(|_| OpError::BadStackIdx {
@@ -885,7 +885,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_get(&mut self, dest: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
         let stack_idx = self.registers[stack_pos as usize];
         let stack_idx = stack_idx
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_idx.into(),
@@ -900,7 +900,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let stack_idx = self.frame.closure.prototype().constants()[stack_pos as usize];
         let stack_idx = stack_idx
             .to_value()
-            .to_integer()
+            .as_integer()
             .expect("const index is not integer")
             .try_into()
             .map_err(|_| OpError::BadStackIdx {
@@ -920,11 +920,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let offset = self.frame.closure.prototype().constants()[offset as usize]
             .to_value()
-            .to_integer()
+            .as_integer()
             .expect("const index is not integer");
         let stack_idx = self.registers[stack_base as usize];
         let stack_idx = stack_idx
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.checked_add(offset))
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdxOffset {
@@ -940,7 +940,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn stack_set(&mut self, source: RegIdx, stack_pos: RegIdx) -> Result<(), Self::Error> {
         let stack_idx = self.registers[stack_pos as usize];
         let stack_idx: usize = stack_idx
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_idx.into(),
@@ -974,7 +974,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let mut stack_bottom: usize = stack_bottom
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_bottom.into(),
@@ -983,6 +983,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
         self.registers[dest as usize] =
             self.do_get_index(self.registers[array as usize], &self.stack[stack_bottom..])?;
+
+        self.stack.resize(stack_bottom);
         Ok(())
     }
 
@@ -995,7 +997,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let mut stack_bottom: usize = stack_bottom
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_bottom.into(),
@@ -1007,6 +1009,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             &self.stack[stack_bottom..],
             self.registers[value as usize],
         )?;
+
+        self.stack.resize(stack_bottom);
         Ok(())
     }
 
@@ -1048,13 +1052,13 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         stack_bottom: RegIdx,
     ) -> Result<ControlFlow<Self::Break>, Self::Error> {
         let func = self.registers[func as usize];
-        let func = func.to_function().ok_or_else(|| OpError::BadCall {
+        let func = func.as_function().ok_or_else(|| OpError::BadCall {
             target: func.type_name(),
         })?;
 
         let stack_bottom = self.registers[stack_bottom as usize];
         let stack_bottom: usize = stack_bottom
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_bottom.into(),
@@ -1073,7 +1077,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error> {
         let stack_bottom = self.registers[stack_bottom as usize];
         let stack_bottom: usize = stack_bottom
-            .to_integer()
+            .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadStackIdx {
                 index: stack_bottom.into(),

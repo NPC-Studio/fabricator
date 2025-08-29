@@ -10,18 +10,27 @@ use fabricator_collision::{
 use fabricator_math::Vec2;
 use fabricator_util::{
     freeze::{AccessError, Freeze, FreezeCell},
-    typed_id_map::{IdMap, new_id_type},
+    typed_id_map::{IdMap, SecondaryMap, new_id_type},
 };
 use fabricator_vm as vm;
 use gc_arena::Gc;
 
 use crate::{
     project::ObjectEvent,
-    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId},
+    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId, TextureId},
 };
 
 new_id_type! {
+    pub struct TexturePageId;
     pub struct InstanceId;
+}
+
+#[derive(Debug)]
+pub struct TexturePage {
+    pub size: Vec2<u32>,
+    pub border: u32,
+    pub textures: SecondaryMap<TextureId, Vec2<u32>>,
+    pub userdata: vm::StashedUserData,
 }
 
 #[derive(Clone)]
@@ -57,6 +66,8 @@ pub struct Scripts {
 
 pub struct Instance {
     pub object: ObjectId,
+    pub active: bool,
+    pub destroyed: bool,
     pub position: Vec2<f64>,
     pub rotation: f64,
     pub depth: i32,
@@ -69,6 +80,8 @@ pub struct Instance {
 pub struct State {
     pub start_instant: Instant,
     pub config: Configuration,
+    pub texture_pages: IdMap<TexturePageId, TexturePage>,
+    pub texture_page_for_texture: SecondaryMap<TextureId, TexturePageId>,
     pub scripts: Scripts,
 
     pub current_room: Option<RoomId>,

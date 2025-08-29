@@ -6,7 +6,7 @@ use fabricator_util::freeze::FreezeMany;
 use fabricator_vm as vm;
 
 use crate::{
-    api::instance::create_instance_ud,
+    api::instance::InstanceUserData,
     project::ObjectEvent,
     state::{DrawingState, InputState, Instance, InstanceState, State},
 };
@@ -54,10 +54,12 @@ pub fn tick_state(
 
                     let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                         object: instance_template.object,
+                        active: true,
+                        destroyed: false,
                         position: instance_template.position,
                         rotation: 0.0,
                         depth: layer.depth,
-                        this: ctx.stash(create_instance_ud(ctx, instance_id)),
+                        this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                         properties: ctx.stash(vm::Object::new(&ctx)),
                         event_closures: HashMap::new(),
                         animation_time: 0.0,
@@ -107,7 +109,11 @@ pub fn tick_state(
         }
     }
 
-    let to_update = state.instances.ids().collect::<Vec<_>>();
+    let to_update = state
+        .instances
+        .iter()
+        .filter_map(|(id, instance)| if instance.active { Some(id) } else { None })
+        .collect::<Vec<_>>();
 
     let instance_bounds = to_update
         .iter()
@@ -126,7 +132,47 @@ pub fn tick_state(
         interpreter.enter(|ctx| -> Result<(), Error> {
             if let Some(step_closure) = state.instances[instance_id]
                 .event_closures
+                .get(&ObjectEvent::BeginStep)
+            {
+                let thread = ctx.fetch(thread);
+                let closure = ctx.fetch(step_closure);
+                let this = ctx.fetch(&state.instances[instance_id].this);
+
+                FreezeMany::new()
+                    .freeze(State::ctx_cell(ctx), state)
+                    .freeze(InputState::ctx_cell(ctx), input_state)
+                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
+                    .in_scope(|| {
+                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
+                    })?;
+            }
+            Ok(())
+        })?;
+
+        interpreter.enter(|ctx| -> Result<(), Error> {
+            if let Some(step_closure) = state.instances[instance_id]
+                .event_closures
                 .get(&ObjectEvent::Step)
+            {
+                let thread = ctx.fetch(thread);
+                let closure = ctx.fetch(step_closure);
+                let this = ctx.fetch(&state.instances[instance_id].this);
+
+                FreezeMany::new()
+                    .freeze(State::ctx_cell(ctx), state)
+                    .freeze(InputState::ctx_cell(ctx), input_state)
+                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
+                    .in_scope(|| {
+                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
+                    })?;
+            }
+            Ok(())
+        })?;
+
+        interpreter.enter(|ctx| -> Result<(), Error> {
+            if let Some(step_closure) = state.instances[instance_id]
+                .event_closures
+                .get(&ObjectEvent::EndStep)
             {
                 let thread = ctx.fetch(thread);
                 let closure = ctx.fetch(step_closure);
@@ -175,6 +221,8 @@ pub fn tick_state(
                 % sprite.playback_length;
         }
     }
+
+    state.instances.retain(|_, instance| !instance.destroyed);
 
     Ok(())
 }

@@ -1,61 +1,14 @@
 use fabricator_vm as vm;
-use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    api::magic::{DuplicateMagicName, MagicExt as _, create_magic_ro, create_magic_rw},
+    api::{
+        magic::{DuplicateMagicName, MagicExt as _, create_magic_ro, create_magic_rw},
+        userdata::NamedIdUserData,
+    },
     state::{Configuration, RoomId, State},
 };
 
-#[derive(Collect)]
-#[collect(no_drop)]
-pub struct RoomUserData<'gc> {
-    #[collect(require_static)]
-    room_id: RoomId,
-    name: vm::String<'gc>,
-}
-
-impl<'gc> RoomUserData<'gc> {
-    pub fn new(ctx: vm::Context<'gc>, room_id: RoomId, name: vm::String<'gc>) -> vm::UserData<'gc> {
-        #[derive(Collect)]
-        #[collect(require_static)]
-        struct RoomMethods;
-
-        impl<'gc> vm::UserDataMethods<'gc> for RoomMethods {
-            fn cast_string(
-                &self,
-                ud: fabricator_vm::UserData<'gc>,
-                _ctx: fabricator_vm::Context<'gc>,
-            ) -> Option<fabricator_vm::String<'gc>> {
-                Some(ud.downcast::<Rootable![RoomUserData<'_>]>().unwrap().name)
-            }
-        }
-
-        #[derive(Collect)]
-        #[collect(no_drop)]
-        struct RoomMethodsSingleton<'gc>(Gc<'gc, dyn vm::UserDataMethods<'gc>>);
-
-        impl<'gc> vm::Singleton<'gc> for RoomMethodsSingleton<'gc> {
-            fn create(ctx: vm::Context<'gc>) -> Self {
-                let methods = Gc::new(&ctx, RoomMethods);
-                RoomMethodsSingleton(gc_arena::unsize!(methods => dyn vm::UserDataMethods<'gc>))
-            }
-        }
-
-        let methods = ctx.singleton::<Rootable![RoomMethodsSingleton<'_>]>().0;
-
-        let userdata =
-            vm::UserData::new::<Rootable![RoomUserData<'_>]>(&ctx, RoomUserData { room_id, name });
-        userdata.set_methods(&ctx, Some(methods));
-
-        userdata
-    }
-
-    pub fn downcast(
-        userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
-        userdata.downcast::<Rootable![RoomUserData<'_>]>()
-    }
-}
+pub type RoomUserData<'gc> = NamedIdUserData<'gc, RoomId>;
 
 pub fn room_api<'gc>(
     ctx: vm::Context<'gc>,
@@ -64,9 +17,9 @@ pub fn room_api<'gc>(
     let mut magic = vm::MagicSet::new();
 
     for room in config.rooms.values() {
-        let room_ud = ctx.fetch(&room.userdata);
-        let room_name = RoomUserData::downcast(room_ud).unwrap().name;
-        magic.add_constant(&ctx, room_name, room_ud)?;
+        let room_id_ud = ctx.fetch(&room.userdata);
+        let room_name = RoomUserData::downcast(room_id_ud).unwrap().name;
+        magic.add_constant(&ctx, room_name, room_id_ud)?;
     }
 
     let room_magic = create_magic_rw(
@@ -80,7 +33,7 @@ pub fn room_api<'gc>(
         |ctx, value| {
             State::ctx_with_mut(ctx, |state| {
                 let room_id = match value {
-                    vm::Value::UserData(userdata) => RoomUserData::downcast(userdata)?.room_id,
+                    vm::Value::UserData(userdata) => RoomUserData::downcast(userdata)?.id,
                     _ => {
                         return Err("cannot set room to non-room value".into());
                     }
@@ -91,6 +44,19 @@ pub fn room_api<'gc>(
         },
     );
     magic.add(ctx.intern("room"), room_magic)?;
+
+    let room_get_name = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let room: vm::UserData = exec.stack().consume(ctx)?;
+        let room_id = RoomUserData::downcast(room)?.id;
+        State::ctx_with_mut(ctx, |state| {
+            exec.stack()
+                .replace(ctx, ctx.intern(&state.config.rooms[room_id].name));
+            Ok(())
+        })?
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("room_get_name"), room_get_name)
+        .unwrap();
 
     let room_width = create_magic_ro(&ctx, |ctx| {
         Ok(State::ctx_with(ctx, |state| {
@@ -105,6 +71,18 @@ pub fn room_api<'gc>(
         })?)
     });
     magic.add(ctx.intern("room_height"), room_height)?;
+
+    magic.add_constant(
+        &ctx,
+        ctx.intern("room_first"),
+        ctx.fetch(&config.rooms[config.first_room].userdata),
+    )?;
+
+    magic.add_constant(
+        &ctx,
+        ctx.intern("room_last"),
+        ctx.fetch(&config.rooms[config.last_room].userdata),
+    )?;
 
     Ok(magic)
 }

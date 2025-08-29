@@ -115,7 +115,23 @@ impl AppState {
                 ),
             );
 
-            let texture_map = game.texture_map();
+            let page_size = page.size;
+
+            struct TextureDesc<'a> {
+                image_path: &'a PathBuf,
+                size: Vec2<u32>,
+            }
+
+            let mut texture_descriptors = SecondaryMap::new();
+            for texture_id in page.textures.ids() {
+                texture_descriptors.insert(
+                    texture_id,
+                    TextureDesc {
+                        image_path: &game.texture(texture_id).image_path,
+                        size: game.texture(texture_id).size,
+                    },
+                );
+            }
 
             let loaded_textures = page
                 .textures
@@ -123,7 +139,7 @@ impl AppState {
                 .collect::<Vec<_>>()
                 .into_par_iter()
                 .map(|(texture_id, &position)| {
-                    let texture_desc = &texture_map[texture_id];
+                    let texture_desc = &texture_descriptors[texture_id];
 
                     let image = image::ImageReader::open(&texture_desc.image_path)
                         .unwrap()
@@ -167,7 +183,7 @@ impl AppState {
                         texture_desc.size.cast::<f32>(),
                         Box2::with_size(position, texture_desc.size)
                             .cast::<f32>()
-                            .scale(Vec2::splat(1.0) / page.size.cast()),
+                            .scale(Vec2::splat(1.0) / page_size.cast()),
                     )
                 })
                 .collect_vec_list()
@@ -288,8 +304,6 @@ impl AppState {
             ));
         }
 
-        let gpu_geometry = GpuGeometry::create(&self.device, &self.geometry);
-
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -313,20 +327,24 @@ impl AppState {
             &[],
         );
 
-        rpass.set_vertex_buffer(0, gpu_geometry.vertex_buffer.slice(..));
-        rpass.set_index_buffer(
-            gpu_geometry.index_buffer.slice(..),
-            gpu_geometry.index_format,
-        );
+        if !self.batches.is_empty() {
+            let gpu_geometry = GpuGeometry::create(&self.device, &self.geometry);
 
-        for (range, page_id) in self.batches.iter().cloned() {
-            rpass.set_bind_group(
-                pipeline::Pipeline::TEXTURE_BIND_GROUP,
-                &self.texture_page_bind_groups[page_id],
-                &[],
+            rpass.set_vertex_buffer(0, gpu_geometry.vertex_buffer.slice(..));
+            rpass.set_index_buffer(
+                gpu_geometry.index_buffer.slice(..),
+                gpu_geometry.index_format,
             );
 
-            rpass.draw_indexed(range, 0, 0..1);
+            for (range, page_id) in self.batches.iter().cloned() {
+                rpass.set_bind_group(
+                    pipeline::Pipeline::TEXTURE_BIND_GROUP,
+                    &self.texture_page_bind_groups[page_id],
+                    &[],
+                );
+
+                rpass.draw_indexed(range, 0, 0..1);
+            }
         }
 
         drop(rpass);

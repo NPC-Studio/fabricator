@@ -1,17 +1,21 @@
 pub mod array;
 pub mod buffer;
 pub mod core;
+pub mod ds_grid;
+pub mod ds_list;
 pub mod json;
 pub mod math;
 pub mod string;
 mod util;
 
+pub use self::util::Pointer;
+
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    array::array_lib, buffer::buffer_lib, core::core_lib, json::json_lib, math::math_lib,
-    string::string_lib,
+    array::array_lib, buffer::buffer_lib, core::core_lib, ds_grid::ds_grid_lib,
+    ds_list::ds_list_lib, json::json_lib, math::math_lib, string::string_lib,
 };
 
 pub trait StdlibContext<'gc> {
@@ -34,6 +38,8 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 array_lib(ctx, &mut stdlib);
                 buffer_lib(ctx, &mut stdlib);
                 json_lib(ctx, &mut stdlib);
+                ds_list_lib(ctx, &mut stdlib);
+                ds_grid_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }

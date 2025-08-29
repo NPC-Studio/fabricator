@@ -11,7 +11,7 @@ use crate::{
     error::RuntimeError,
     interpreter::Context,
     string::String,
-    value::Value,
+    value::{Function, Value},
 };
 
 #[derive(Debug, Copy, Clone, Error)]
@@ -23,7 +23,7 @@ pub struct BadUserDataType;
 pub struct NoMethods;
 
 #[derive(Debug, Copy, Clone, Error)]
-#[error("`UserDataMethods` impl does not have a method for {0}")]
+#[error("`UserDataMethods` impl does not have a {0:?} method")]
 pub struct MethodUnimplemented(&'static str);
 
 pub trait UserDataMethods<'gc> {
@@ -77,15 +77,33 @@ pub trait UserDataMethods<'gc> {
     /// the iterator function will no longer be called and no additional results will be yielded. If
     /// the initial call of this method returns an `undefined` state value on the first call, then
     /// this implies an empty result and no iteration will be performed.
-    fn iter(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Result<(), RuntimeError> {
+    fn iter(
+        &self,
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+    ) -> Result<(Function<'gc>, Value<'gc>), RuntimeError> {
         Err(MethodUnimplemented("iter").into())
     }
 
     /// Return the value of this userdata as a string.
     ///
     /// This is used when using a userdata as the key of an object.
-    fn cast_string(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<String<'gc>> {
+    fn coerce_string(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<String<'gc>> {
         None
+    }
+
+    /// Return the value of this userdata as an integer.
+    ///
+    /// GMS2 usually allows handles to be interpreted as integers.
+    fn coerce_integer(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<i64> {
+        None
+    }
+
+    /// Return the value of this userdata as a float.
+    ///
+    /// By default, this will call [`UserDataMethods::coerce_integer`]
+    fn coerce_float(&self, ud: UserData<'gc>, ctx: Context<'gc>) -> Option<f64> {
+        Some(self.coerce_integer(ud, ctx)? as f64)
     }
 }
 
@@ -307,11 +325,19 @@ impl<'gc> UserData<'gc> {
             .set_index(self, ctx, indexes, value)
     }
 
-    pub fn cast_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
-        self.0.metadata().methods.get()?.cast_string(self, ctx)
+    pub fn coerce_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
+        self.0.metadata().methods.get()?.coerce_string(self, ctx)
     }
 
-    pub fn iter(self, ctx: Context<'gc>) -> Result<(), RuntimeError> {
+    pub fn coerce_integer(self, ctx: Context<'gc>) -> Option<i64> {
+        self.0.metadata().methods.get()?.coerce_integer(self, ctx)
+    }
+
+    pub fn coerce_float(self, ctx: Context<'gc>) -> Option<f64> {
+        self.0.metadata().methods.get()?.coerce_float(self, ctx)
+    }
+
+    pub fn iter(self, ctx: Context<'gc>) -> Result<(Function<'gc>, Value<'gc>), RuntimeError> {
         self.0
             .metadata()
             .methods

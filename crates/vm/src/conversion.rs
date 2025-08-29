@@ -245,8 +245,8 @@ impl_from! {
 }
 
 impl<'gc> FromValue<'gc> for String<'gc> {
-    fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
-        if let Some(s) = value.cast_string(ctx) {
+    fn from_value(_ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        if let Some(s) = value.as_string() {
             Ok(s)
         } else {
             Err(TypeError {

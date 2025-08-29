@@ -18,24 +18,19 @@ pub fn platform_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic.add(ctx.intern("mouse_y"), mouse_y_magic).unwrap();
 
-    for (name, val) in [
-        ("mb_left", MouseButtons::Left),
-        ("mb_middle", MouseButtons::Middle),
-        ("mb_right", MouseButtons::Right),
-        ("mb_any", MouseButtons::all()),
+    for (name, bits) in [
+        ("mb_left", MouseButtons::Left.bits()),
+        ("mb_middle", MouseButtons::Middle.bits()),
+        ("mb_right", MouseButtons::Right.bits()),
+        ("mb_any", MouseButtons::all().bits()),
     ] {
         magic
-            .add_constant(
-                &ctx,
-                ctx.intern(name),
-                vm::UserData::new_static::<MouseButtons>(&ctx, val),
-            )
+            .add_constant(&ctx, ctx.intern(name), bits as i64)
             .unwrap();
     }
 
     let mouse_check_button = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let button: vm::UserData = exec.stack().consume(ctx)?;
-        let button = *button.downcast_static::<MouseButtons>()?;
+        let button = MouseButtons::from_bits_truncate(exec.stack().consume(ctx)?);
         InputState::ctx_with(ctx, |input| {
             exec.stack()
                 .replace(ctx, !(input.mouse_pressed & button).is_empty());

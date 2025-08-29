@@ -2,9 +2,9 @@ use std::env;
 
 use fabricator_vm as vm;
 
-use crate::{api::magic::MagicExt as _, project::Project};
+use crate::api::magic::MagicExt as _;
 
-pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'gc> {
+pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     fn create_stub_constant<'gc>(
         ctx: vm::Context<'gc>,
         magic: &mut vm::MagicSet<'gc>,
@@ -51,33 +51,52 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
         ctx.intern("fabricator-project"),
     );
 
+    create_stub_callback(ctx, &mut magic, "randomize", []);
+    create_stub_callback(ctx, &mut magic, "gc_collect", []);
+    create_stub_callback(ctx, &mut magic, "gc_enable", []);
+    create_stub_callback(ctx, &mut magic, "buffer_save", []);
+    create_stub_callback(ctx, &mut magic, "file_rename", [true.into()]);
+    create_stub_callback(ctx, &mut magic, "directory_exists", [true.into()]);
+    create_stub_callback(ctx, &mut magic, "file_find_first", [ctx.intern("").into()]);
+    create_stub_callback(ctx, &mut magic, "file_find_close", []);
+
+    create_stub_callback(ctx, &mut magic, "application_surface_enable", []);
+    create_stub_callback(ctx, &mut magic, "camera_set_view_pos", []);
+    create_stub_callback(ctx, &mut magic, "camera_set_view_size", []);
+    create_stub_callback(ctx, &mut magic, "display_reset", []);
+    create_stub_callback(ctx, &mut magic, "display_set_sleep_margin", []);
+    create_stub_callback(ctx, &mut magic, "display_get_width", [1366.into()]);
+    create_stub_callback(ctx, &mut magic, "display_get_height", [768.into()]);
+    create_stub_callback(ctx, &mut magic, "gpu_set_zfunc", []);
+    create_stub_callback(ctx, &mut magic, "gpu_set_ztestenable", []);
+    create_stub_callback(ctx, &mut magic, "gpu_set_zwriteenable", []);
+    create_stub_callback(ctx, &mut magic, "shader_get_sampler_index", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "shader_get_uniform", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "shader_set", []);
+    create_stub_callback(ctx, &mut magic, "surface_exists", [true.into()]);
+    create_stub_callback(ctx, &mut magic, "surface_get_width", [1366.into()]);
+    create_stub_callback(ctx, &mut magic, "surface_get_height", [768.into()]);
+    create_stub_callback(ctx, &mut magic, "surface_depth_disable", []);
+    create_stub_callback(ctx, &mut magic, "surface_free", []);
     create_stub_callback(
         ctx,
         &mut magic,
-        "room_get_name",
-        [ctx.intern("the_room").into()],
+        "vertex_create_buffer_from_buffer_ext",
+        [unit_userdata],
     );
-
-    create_stub_callback(ctx, &mut magic, "application_surface_enable", []);
-    create_stub_callback(ctx, &mut magic, "surface_depth_disable", []);
-    create_stub_callback(ctx, &mut magic, "display_set_sleep_margin", []);
-    create_stub_callback(ctx, &mut magic, "gpu_set_zwriteenable", []);
-    create_stub_callback(ctx, &mut magic, "gpu_set_ztestenable", []);
-    create_stub_callback(ctx, &mut magic, "gpu_set_zfunc", []);
-    create_stub_callback(ctx, &mut magic, "vertex_format_begin", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_add_color", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_add_custom", []);
     create_stub_callback(ctx, &mut magic, "vertex_format_add_position_3d", []);
     create_stub_callback(ctx, &mut magic, "vertex_format_add_texcoord", []);
-    create_stub_callback(ctx, &mut magic, "vertex_format_add_color", []);
+    create_stub_callback(ctx, &mut magic, "vertex_format_begin", []);
     create_stub_callback(ctx, &mut magic, "vertex_format_end", [unit_userdata]);
-    create_stub_callback(ctx, &mut magic, "display_reset", []);
-    create_stub_callback(ctx, &mut magic, "window_set_size", []);
-    create_stub_callback(ctx, &mut magic, "window_set_fullscreen", []);
     create_stub_callback(ctx, &mut magic, "window_center", []);
+    create_stub_callback(ctx, &mut magic, "window_has_focus", [true.into()]);
     create_stub_callback(ctx, &mut magic, "window_enable_borderless_fullscreen", []);
-    create_stub_callback(ctx, &mut magic, "camera_set_view_pos", []);
-    create_stub_callback(ctx, &mut magic, "camera_set_view_size", []);
-    create_stub_callback(ctx, &mut magic, "shader_get_sampler_index", [unit_userdata]);
-    create_stub_callback(ctx, &mut magic, "shader_get_uniform", [unit_userdata]);
+    create_stub_callback(ctx, &mut magic, "window_set_fullscreen", []);
+    create_stub_callback(ctx, &mut magic, "window_set_size", []);
+    create_stub_callback(ctx, &mut magic, "display_set_gui_size", []);
+    create_stub_callback(ctx, &mut magic, "texture_prefetch", []);
 
     create_stub_constant(
         ctx,
@@ -85,11 +104,44 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
         "view_camera",
         vm::Array::from_iter(&ctx, [unit_userdata; 8]),
     );
-    create_stub_constant(ctx, &mut magic, "cmpfunc_always", vm::Value::Undefined);
+    create_stub_constant(
+        ctx,
+        &mut magic,
+        "view_visible",
+        vm::Array::from_iter(
+            &ctx,
+            [true, false, false, false, false, false, false, false]
+                .into_iter()
+                .map(|b| b.into()),
+        ),
+    );
 
-    for shader in project.shaders.values() {
-        create_stub_constant(ctx, &mut magic, &shader.name, unit_userdata);
-    }
+    create_stub_constant(ctx, &mut magic, "cmpfunc_always", unit_userdata);
+    create_stub_constant(ctx, &mut magic, "vertex_type_float1", unit_userdata);
+    create_stub_constant(ctx, &mut magic, "vertex_type_float2", unit_userdata);
+    create_stub_constant(ctx, &mut magic, "vertex_type_float3", unit_userdata);
+    create_stub_constant(ctx, &mut magic, "vertex_type_float4", unit_userdata);
+    create_stub_constant(ctx, &mut magic, "vertex_usage_textcoord", unit_userdata);
+
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "sprite_get_uvs",
+        [vm::Array::from_iter(
+            &ctx,
+            [
+                0.into(),
+                0.into(),
+                8.into(),
+                8.into(),
+                0.into(),
+                0.into(),
+                1.0.into(),
+                1.0.into(),
+            ],
+        )
+        .into()],
+    );
 
     for key in [
         "vk_delete",
@@ -156,9 +208,48 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
 
     create_stub_callback(ctx, &mut magic, "gamepad_is_connected", [false.into()]);
 
-    for font in project.fonts.values() {
-        create_stub_constant(ctx, &mut magic, &font.name, unit_userdata);
-    }
+    create_stub_callback(ctx, &mut magic, "draw_set_font", [unit_userdata]);
+
+    let font_get_info = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let data = vm::Object::new(&ctx);
+        let glyphs = vm::Object::new(&ctx);
+        data.set(&ctx, ctx.intern("glyphs"), glyphs);
+        exec.stack().replace(ctx, data);
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("font_get_info"), font_get_info)
+        .unwrap();
+
+    let string_width = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let string: vm::String = exec.stack().consume(ctx)?;
+        let fake_width = string.chars().count() as f64 * 12.0;
+        exec.stack().replace(ctx, fake_width);
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("string_width"), string_width)
+        .unwrap();
+
+    let string_width_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (_string, _line_height, width): (vm::String, f64, f64) = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, width);
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("string_width_ext"), string_width_ext)
+        .unwrap();
+
+    let string_height_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (string, line_height, width): (vm::String, f64, f64) = exec.stack().consume(ctx)?;
+        let fake_width = string.chars().count() as f64 * 12.0;
+        let fake_height = (fake_width / width).ceil() * line_height;
+        exec.stack().replace(ctx, fake_height);
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("string_height_ext"), string_height_ext)
+        .unwrap();
 
     create_stub_callback(ctx, &mut magic, "layer_get_id", [unit_userdata]);
     create_stub_callback(ctx, &mut magic, "layer_tilemap_get_id", [unit_userdata]);
@@ -175,6 +266,49 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>, project: &Project) -> vm::MagicSet<'
     );
 
     create_stub_callback(ctx, &mut magic, "draw_self", []);
+
+    create_stub_callback(ctx, &mut magic, "audio_falloff_set_model", []);
+    create_stub_constant(
+        ctx,
+        &mut magic,
+        "audio_falloff_linear_distance",
+        unit_userdata,
+    );
+    create_stub_callback(ctx, &mut magic, "audio_listener_position", []);
+    create_stub_callback(ctx, &mut magic, "audio_play_sound_ext", []);
+
+    create_stub_callback(ctx, &mut magic, "device_mouse_x_to_gui", [0.0.into()]);
+    create_stub_callback(ctx, &mut magic, "device_mouse_y_to_gui", [0.0.into()]);
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "mouse_check_button_pressed",
+        [false.into()],
+    );
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "mouse_check_button_released",
+        [false.into()],
+    );
+    create_stub_callback(ctx, &mut magic, "mouse_wheel_up", [false.into()]);
+    create_stub_callback(ctx, &mut magic, "mouse_wheel_down", [false.into()]);
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "is_mouse_over_debug_overlay",
+        [false.into()],
+    );
+
+    create_stub_callback(ctx, &mut magic, "keyboard_check", [false.into()]);
+    create_stub_callback(ctx, &mut magic, "keyboard_check_pressed", [false.into()]);
+    create_stub_callback(ctx, &mut magic, "keyboard_check_released", [false.into()]);
+    create_stub_callback(
+        ctx,
+        &mut magic,
+        "is_keyboard_used_debug_overlay",
+        [false.into()],
+    );
 
     magic
 }

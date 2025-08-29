@@ -2,31 +2,19 @@ mod create;
 mod maxrects;
 mod tick;
 
-use std::collections::HashMap;
-
-use anyhow::{Context as _, Error, anyhow, bail};
+use anyhow::Error;
 use fabricator_math::{Affine2, Vec2};
-use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 use crate::{
     project::Project,
-    state::{DrawingState, DrawnSpriteFrame, InputState, State, Texture, TextureId},
+    state::{
+        DrawingState, DrawnSpriteFrame, InputState, State, Texture, TextureId, TexturePage,
+        TexturePageId,
+    },
 };
 
-use self::{create::create_state, maxrects::MaxRects, tick::tick_state};
-
-new_id_type! {
-    pub struct TexturePageId;
-}
-
-#[derive(Debug)]
-pub struct TexturePage {
-    pub size: Vec2<u32>,
-    pub border: u32,
-    pub textures: SecondaryMap<TextureId, Vec2<u32>>,
-}
+use self::{create::create_state, tick::tick_state};
 
 #[derive(Debug)]
 pub struct Quad {
@@ -63,15 +51,10 @@ pub struct Game {
     main_thread: vm::StashedThread,
     state: State,
     drawing_state: DrawingState,
-    texture_pages: IdMap<TexturePageId, TexturePage>,
 }
 
 impl Game {
     pub fn new(project: Project, config: &str) -> Result<Self, Error> {
-        // TODO: Hard coded texture page size normally configured by
-        // 'options/<platform>/options_<platform>.yy'.
-        const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
-
         let mut interpreter = vm::Interpreter::new();
         let main_thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
 
@@ -91,101 +74,16 @@ impl Game {
         }
         log::info!("finished executing all global scripts!");
 
-        let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
-
-        for (texture_id, texture) in state.config.textures.iter() {
-            texture_groups
-                .entry(texture.texture_group.clone())
-                .or_default()
-                .push(texture_id);
-        }
-
-        log::info!("packing textures...");
-        let texture_page_list = texture_groups
-            .into_par_iter()
-            .map(|(group_name, group)| {
-                let project_texture_group = project
-                    .texture_groups
-                    .get(&group_name)
-                    .with_context(|| anyhow!("invalid texture group name {:?}", group_name))?;
-
-                let border = project_texture_group.border as u32;
-
-                let mut to_place = group
-                    .into_iter()
-                    .map(|texture_id| (texture_id, ()))
-                    .collect::<SecondaryMap<_, _>>();
-
-                let mut texture_pages = Vec::new();
-
-                while !to_place.is_empty() {
-                    let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
-
-                    for texture_id in to_place.ids() {
-                        let padded_size =
-                            state.config.textures[texture_id].size + Vec2::splat(border * 2);
-                        if padded_size[0] > TEXTURE_PAGE_SIZE[0]
-                            || padded_size[1] > TEXTURE_PAGE_SIZE[1]
-                        {
-                            bail!(
-                                "texture size {:?} is greater than the texture page size",
-                                padded_size
-                            );
-                        }
-                        packer.add(texture_id, padded_size);
-                    }
-
-                    let mut texture_page = TexturePage {
-                        size: TEXTURE_PAGE_SIZE,
-                        textures: SecondaryMap::new(),
-                        border,
-                    };
-
-                    let prev_place_len = to_place.len();
-                    for packed in packer.pack() {
-                        if let Some(mut position) = packed.placement {
-                            position += Vec2::splat(border);
-                            texture_page.textures.insert(packed.item, position);
-                            to_place.remove(packed.item);
-                        }
-                    }
-
-                    assert!(
-                        to_place.len() < prev_place_len,
-                        "should always add at least a single texture per iteration"
-                    );
-
-                    texture_pages.push(texture_page);
-                }
-
-                log::info!("finished packing textures for group {group_name}");
-
-                Ok(texture_pages)
-            })
-            .collect::<Result<Vec<Vec<_>>, Error>>()?;
-
-        let mut texture_pages = IdMap::<TexturePageId, TexturePage>::new();
-        for texture_page in texture_page_list.into_iter().flatten() {
-            texture_pages.insert(texture_page);
-        }
-
-        log::info!("finished packing all textures!");
-
         Ok(Game {
             interpreter,
             main_thread,
             state,
             drawing_state: DrawingState::default(),
-            texture_pages,
         })
     }
 
     pub fn texture_pages(&self) -> impl Iterator<Item = (TexturePageId, &TexturePage)> + '_ {
-        self.texture_pages.iter()
-    }
-
-    pub fn texture_map(&self) -> &IdMap<TextureId, Texture> {
-        &self.state.config.textures
+        self.state.texture_pages.iter()
     }
 
     pub fn texture(&self, texture_id: TextureId) -> &Texture {
@@ -224,7 +122,7 @@ impl Game {
 
                 let texture = sprite.frames[frame_index].texture;
                 let transform = Affine2::new()
-                    .translate(-sprite.origin)
+                    .translate(-sprite.origin.cast::<f64>())
                     .rotate(instance.rotation)
                     .translate(instance.position)
                     .cast();
@@ -254,7 +152,7 @@ impl Game {
 
                 let texture = sprite.frames[frame_index].texture;
                 let transform = Affine2::new()
-                    .translate(-sprite.origin)
+                    .translate(-sprite.origin.cast::<f64>())
                     .translate(drawn_sprite.position)
                     .cast();
                 let depth = instance.depth;

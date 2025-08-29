@@ -1,4 +1,9 @@
-use std::{collections::HashMap, f64, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    f64,
+    path::PathBuf,
+    time::Duration,
+};
 
 use fabricator_collision::{
     support::{SupportMap, SupportPoint},
@@ -11,6 +16,10 @@ use fabricator_vm as vm;
 
 new_id_type! {
     pub struct TextureId;
+    pub struct FontId;
+    pub struct ShaderId;
+    pub struct SoundId;
+    pub struct TileSetId;
     pub struct ObjectId;
     pub struct SpriteId;
     pub struct InstanceTemplateId;
@@ -21,11 +30,18 @@ pub struct Configuration {
     pub data_path: PathBuf,
     pub tick_rate: f64,
 
-    pub textures: IdMap<TextureId, Texture>,
     pub sprites: IdMap<SpriteId, Sprite>,
+    pub textures: IdMap<TextureId, Texture>,
+    pub fonts: IdMap<FontId, Font>,
+    pub shaders: IdMap<ShaderId, Shader>,
+    pub sounds: IdMap<SoundId, Sound>,
+    pub tile_sets: IdMap<TileSetId, TileSet>,
     pub objects: IdMap<ObjectId, Object>,
+    pub object_dict: HashMap<String, ObjectId>,
     pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
     pub rooms: IdMap<RoomId, Room>,
+    pub first_room: RoomId,
+    pub last_room: RoomId,
 }
 
 #[derive(Debug)]
@@ -35,12 +51,38 @@ pub struct Texture {
     pub size: Vec2<u32>,
 }
 
+#[derive(Debug)]
+pub struct Font {
+    pub name: String,
+    pub userdata: vm::StashedUserData,
+}
+
+#[derive(Debug)]
+pub struct Shader {
+    pub name: String,
+    pub userdata: vm::StashedUserData,
+}
+
+#[derive(Debug)]
+pub struct Sound {
+    pub name: String,
+    pub duration: Duration,
+    pub userdata: vm::StashedUserData,
+}
+
+#[derive(Debug)]
+pub struct TileSet {
+    pub name: String,
+    pub userdata: vm::StashedUserData,
+}
+
 #[derive(Clone)]
 pub struct Room {
     pub name: String,
     pub size: Vec2<u32>,
     pub layers: HashMap<String, Layer>,
     pub userdata: vm::StashedUserData,
+    pub tags: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -59,6 +101,7 @@ pub struct Object {
     pub sprite: Option<SpriteId>,
     pub persistent: bool,
     pub userdata: vm::StashedUserData,
+    pub tags: HashSet<String>,
 }
 
 #[derive(Copy, Clone)]
@@ -71,7 +114,8 @@ pub struct Sprite {
     pub name: String,
     pub playback_speed: f64,
     pub playback_length: f64,
-    pub origin: Vec2<f64>,
+    pub size: Vec2<u32>,
+    pub origin: Vec2<u32>,
     pub collision: SpriteCollision,
     pub collision_rotates: bool,
     pub frames: Vec<AnimationFrame>,

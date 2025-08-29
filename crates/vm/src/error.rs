@@ -88,7 +88,7 @@ impl fmt::Debug for ExternValue {
             ExternValue::Boolean(b) => write!(f, "`{b}`"),
             ExternValue::Integer(i) => write!(f, "`{i}`"),
             ExternValue::Float(n) => write!(f, "`{n}`"),
-            ExternValue::String(s) => write!(f, "{s:?}"),
+            ExternValue::String(s) => write!(f, "`{s:?}`"),
             ExternValue::Object(object) => write!(f, "<object {object}>"),
             ExternValue::Array(array) => write!(f, "<array {array}>"),
             ExternValue::Closure(closure) => {
@@ -111,7 +111,7 @@ impl fmt::Display for ExternValue {
             ExternValue::Boolean(b) => write!(f, "{b}"),
             ExternValue::Integer(i) => write!(f, "{i}"),
             ExternValue::Float(n) => write!(f, "{n}"),
-            ExternValue::String(s) => write!(f, "{s}"),
+            ExternValue::String(s) => write!(f, "{s:?}"),
             ExternValue::Object(object) => {
                 write!(f, "<object {object}>")
             }

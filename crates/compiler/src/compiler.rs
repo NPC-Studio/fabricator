@@ -333,12 +333,14 @@ impl<'gc> Compiler<'gc> {
         }
     }
 
+    /// Returns the index in the compiler output which will contain the main prototype for this
+    /// chunk.
     pub fn add_chunk(
         &mut self,
         settings: CompileSettings,
         chunk_name: impl Into<String>,
         code: &str,
-    ) -> Result<(), CompileError> {
+    ) -> Result<usize, CompileError> {
         let chunk_name = vm::SharedStr::new(chunk_name);
         let line_numbers = LineNumbers::new(code);
 
@@ -351,6 +353,8 @@ impl<'gc> Compiler<'gc> {
                 line_number,
             });
         }
+
+        let index = self.chunks.len();
         self.chunks.push(Chunk {
             name: chunk_name,
             line_numbers,
@@ -358,7 +362,7 @@ impl<'gc> Compiler<'gc> {
             compile_settings: settings,
         });
 
-        Ok(())
+        Ok(index)
     }
 
     pub fn compile(

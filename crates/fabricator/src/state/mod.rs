@@ -13,6 +13,6 @@ pub use self::{
     input::{InputState, InputStateCell, MouseButtons},
     state::{
         Instance, InstanceId, InstanceState, InstanceStateCell, ScriptPrototype, Scripts, State,
-        StateCell,
+        StateCell, TexturePage, TexturePageId,
     },
 };

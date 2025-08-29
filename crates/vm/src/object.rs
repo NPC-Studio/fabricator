@@ -78,6 +78,10 @@ impl<'gc> Object<'gc> {
         self.0.borrow_mut(mc).map.insert(key, value.into())
     }
 
+    pub fn remove(self, mc: &Mutation<'gc>, key: String<'gc>) -> Option<Value<'gc>> {
+        self.0.borrow_mut(mc).map.remove(&key)
+    }
+
     pub fn parent(self) -> Option<Object<'gc>> {
         self.0.borrow().parent
     }

@@ -1,10 +1,14 @@
-use std::{marker::PhantomData, ops};
+use std::{marker::PhantomData, num::NonZero, ops};
 
 pub use crate::id_map::{self, Generation, Index};
 
-#[doc(hidden)]
 pub trait Id {
+    fn index(&self) -> Index;
+    fn generation(&self) -> NonZero<Generation>;
+
+    #[doc(hidden)]
     fn from_id(id: id_map::Id) -> Self;
+    #[doc(hidden)]
     fn into_id(self) -> id_map::Id;
 }
 
@@ -30,6 +34,16 @@ macro_rules! __new_id_type {
         }
 
         impl $crate::typed_id_map::Id for $name {
+            #[inline]
+            fn index(&self) -> $crate::typed_id_map::Index {
+                self.index()
+            }
+
+            #[inline]
+            fn generation(&self) -> ::std::num::NonZero<$crate::typed_id_map::Generation> {
+                self.generation()
+            }
+
             #[inline]
             fn from_id(id: $crate::id_map::Id) -> Self {
                 $name(id)

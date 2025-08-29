@@ -1,31 +1,38 @@
 use std::{collections::HashMap, f64, fs::File, io::Read as _, time::Instant};
 
-use anyhow::{Context as _, Error, anyhow};
+use anyhow::{Context as _, Error, anyhow, bail};
 use fabricator_compiler as compiler;
 use fabricator_math::{Box2, Vec2};
 use fabricator_stdlib::StdlibContext as _;
-use fabricator_util::typed_id_map::IdMap;
+use fabricator_util::typed_id_map::{IdMap, SecondaryMap};
 use fabricator_vm as vm;
 use gc_arena::Gc;
+use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 use crate::{
     api::{
-        assets::assets_api,
+        asset::assets_api,
         collision::collision_api,
-        drawing::{SpriteUserData, drawing_api},
+        drawing::{
+            ShaderUserData, SpriteUserData, TexturePageUserData, TileSetUserData, drawing_api,
+        },
+        font::{FontUserData, font_api},
         magic::MagicExt as _,
         object::{ObjectUserData, object_api},
         os::os_api,
         platform::platform_api,
         room::{RoomUserData, room_api},
+        sound::{SoundUserData, sound_api},
         stub::stub_api,
     },
     ffi::load_extension_file,
+    game::maxrects::MaxRects,
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
     state::{
         AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
         ObjectId, Room, RoomId, ScriptPrototype, Scripts, Sprite, SpriteCollision,
-        SpriteCollisionKind, SpriteId, State, Texture, TextureId,
+        SpriteCollisionKind, SpriteId, State, Texture, TextureId, TexturePage, TexturePageId,
+        configuration::{Font, FontId, Shader, ShaderId, Sound, SoundId, TileSet, TileSetId},
     },
 };
 
@@ -68,13 +75,14 @@ pub fn create_state(
             start_time += animation_frame.length;
         }
 
-        let sprite_origin = Vec2::new(sprite.origin_x, sprite.origin_y).cast::<f64>();
+        let sprite_size = Vec2::new(sprite.width, sprite.height);
+        let sprite_origin = Vec2::new(sprite.origin_x, sprite.origin_y);
 
         let collision_bounds = Box2::<f64>::new(
             Vec2::new(sprite.bbox_left, sprite.bbox_top).cast(),
             Vec2::new(sprite.bbox_right, sprite.bbox_bottom).cast(),
         )
-        .translate(-sprite_origin);
+        .translate(-sprite_origin.cast::<f64>());
 
         let (collision_kind, collision_rotates) = match sprite.collision_kind {
             CollisionKind::Rectangle => (SpriteCollisionKind::Rect, false),
@@ -84,11 +92,13 @@ pub fn create_state(
         };
 
         let sprite_id = sprites.insert_with_id(|id| {
-            let userdata = interpreter.enter(|ctx| ctx.stash(SpriteUserData::new(ctx, id)));
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(SpriteUserData::new(ctx, id, ctx.intern(sprite_name))));
             Sprite {
                 name: sprite_name.clone(),
                 playback_speed: sprite.playback_speed,
                 playback_length: sprite.playback_length,
+                size: sprite_size,
                 origin: sprite_origin,
                 collision: SpriteCollision {
                     kind: collision_kind,
@@ -100,6 +110,55 @@ pub fn create_state(
             }
         });
         sprite_dict.insert(sprite_name.clone(), sprite_id);
+    }
+
+    let mut fonts = IdMap::<FontId, Font>::new();
+    for font in project.fonts.values() {
+        fonts.insert_with_id(|id| {
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(FontUserData::new(ctx, id, ctx.intern(&font.name))));
+            Font {
+                name: font.name.clone(),
+                userdata,
+            }
+        });
+    }
+
+    let mut sounds = IdMap::<SoundId, Sound>::new();
+    for sound in project.sounds.values() {
+        sounds.insert_with_id(|id| {
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(SoundUserData::new(ctx, id, ctx.intern(&sound.name))));
+            Sound {
+                name: sound.name.clone(),
+                duration: sound.duration,
+                userdata,
+            }
+        });
+    }
+
+    let mut shaders = IdMap::<ShaderId, Shader>::new();
+    for shader in project.shaders.values() {
+        shaders.insert_with_id(|id| {
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(ShaderUserData::new(ctx, id, ctx.intern(&shader.name))));
+            Shader {
+                name: shader.name.clone(),
+                userdata,
+            }
+        });
+    }
+
+    let mut tile_sets = IdMap::<TileSetId, TileSet>::new();
+    for tile_set in project.tile_sets.values() {
+        tile_sets.insert_with_id(|id| {
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(TileSetUserData::new(ctx, id, ctx.intern(&tile_set.name))));
+            TileSet {
+                name: tile_set.name.clone(),
+                userdata,
+            }
+        });
     }
 
     let mut objects = IdMap::<ObjectId, Object>::new();
@@ -118,12 +177,14 @@ pub fn create_state(
             .transpose()?;
 
         let object_id = objects.insert_with_id(|id| {
-            let userdata = interpreter.enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id)));
+            let userdata = interpreter
+                .enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id, ctx.intern(&object_name))));
             Object {
                 name: object_name.clone(),
                 sprite,
                 persistent: object.persistent,
                 userdata,
+                tags: object.tags.clone(),
             }
         });
         object_dict.insert(object_name.clone(), object_id);
@@ -167,22 +228,94 @@ pub fn create_state(
                 size: Vec2::new(room.width, room.height),
                 layers,
                 userdata: room_ud,
+                tags: room.tags.clone(),
             }
         });
 
         room_dict.insert(room.name.clone(), room_id);
     }
 
+    let first_room = project.room_order.first().context("no first room")?;
+    let first_room = *room_dict
+        .get(first_room)
+        .with_context(|| "no such room `{first_room:?}`")?;
+    let last_room = project.room_order.last().context("no last room")?;
+    let last_room = *room_dict
+        .get(last_room)
+        .with_context(|| "no such room `{last_room:?}`")?;
+
     let config = Configuration {
         data_path: project.base_path.join("datafiles"),
         tick_rate: TICK_RATE,
-        textures,
         sprites,
+        textures,
+        fonts,
+        sounds,
+        shaders,
+        tile_sets,
         objects,
+        object_dict,
         instance_templates,
         rooms,
+        first_room,
+        last_room,
     };
 
+    let mut texture_pages_res = None;
+    let mut scripts_res = None;
+    rayon::in_place_scope(|scope| {
+        let textures = &config.textures;
+        scope.spawn(|_| {
+            texture_pages_res = Some(compute_texture_pages(project, textures));
+        });
+
+        scripts_res = Some(load_scripts(project, &config, config_name, interpreter));
+    });
+
+    let texture_page_list = texture_pages_res.unwrap()?;
+    let scripts = scripts_res.unwrap()?;
+
+    let mut texture_pages = IdMap::<TexturePageId, TexturePage>::new();
+
+    for page_data in texture_page_list {
+        texture_pages.insert_with_id(|id| {
+            let userdata = interpreter.enter(|ctx| ctx.stash(TexturePageUserData::new(ctx, id)));
+            TexturePage {
+                size: page_data.size,
+                border: page_data.border,
+                textures: page_data.textures,
+                userdata,
+            }
+        });
+    }
+
+    let mut texture_page_for_texture = SecondaryMap::new();
+    for (texture_page_id, texture_page) in texture_pages.iter() {
+        for texture_id in texture_page.textures.ids() {
+            texture_page_for_texture.insert(texture_id, texture_page_id);
+        }
+    }
+
+    Ok(State {
+        start_instant: Instant::now(),
+        config,
+        texture_pages,
+        texture_page_for_texture,
+        scripts,
+        current_room: None,
+        next_room: Some(first_room),
+        persistent_instances: Default::default(),
+        instances: Default::default(),
+        instance_bound_tree: Default::default(),
+    })
+}
+
+fn load_scripts(
+    project: &Project,
+    config: &Configuration,
+    config_name: &str,
+    interpreter: &mut vm::Interpreter,
+) -> Result<Scripts, Error> {
     let scripts = interpreter.enter(|ctx| -> Result<_, Error> {
         let mut object_events = HashMap::<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>::new();
         let mut magic = vm::MagicSet::new();
@@ -192,10 +325,12 @@ pub fn create_state(
         magic.merge_unique(&os_api(ctx))?;
         magic.merge_unique(&platform_api(ctx))?;
         magic.merge_unique(&collision_api(ctx))?;
-        magic.merge_unique(&stub_api(ctx, project))?;
+        magic.merge_unique(&stub_api(ctx))?;
         magic.merge_unique(&object_api(ctx, &config)?)?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
+        magic.merge_unique(&font_api(ctx, &config)?)?;
+        magic.merge_unique(&sound_api(ctx, &config)?)?;
         magic.merge_unique(&assets_api(ctx, &config)?)?;
 
         for extension in project.extensions.values() {
@@ -254,7 +389,7 @@ pub fn create_state(
                     &code_buf,
                 )?;
                 object_events
-                    .entry(object_dict[object_name])
+                    .entry(config.object_dict[object_name])
                     .or_default()
                     .insert(event, ScriptPrototype::new(ctx, proto));
             }
@@ -271,19 +406,98 @@ pub fn create_state(
         })
     })?;
 
-    let first_room = project.room_order.first().context("no first room")?;
-    let first_room = *room_dict
-        .get(first_room)
-        .with_context(|| "no such room `{first_room:?}`")?;
+    Ok(scripts)
+}
 
-    Ok(State {
-        start_instant: Instant::now(),
-        config,
-        scripts,
-        current_room: None,
-        next_room: Some(first_room),
-        persistent_instances: Default::default(),
-        instances: Default::default(),
-        instance_bound_tree: Default::default(),
-    })
+struct TexturePageData {
+    pub size: Vec2<u32>,
+    pub border: u32,
+    pub textures: SecondaryMap<TextureId, Vec2<u32>>,
+}
+
+fn compute_texture_pages(
+    project: &Project,
+    textures: &IdMap<TextureId, Texture>,
+) -> Result<Vec<TexturePageData>, Error> {
+    // TODO: Hard coded texture page size normally configured by
+    // 'options/<platform>/options_<platform>.yy'.
+    const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
+
+    let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
+
+    for (texture_id, texture) in textures.iter() {
+        texture_groups
+            .entry(texture.texture_group.clone())
+            .or_default()
+            .push(texture_id);
+    }
+
+    log::info!("packing textures...");
+    let texture_page_list = texture_groups
+        .into_par_iter()
+        .map(|(group_name, group)| {
+            let project_texture_group = project
+                .texture_groups
+                .get(&group_name)
+                .with_context(|| anyhow!("invalid texture group name {:?}", group_name))?;
+
+            let border = project_texture_group.border as u32;
+
+            let mut to_place = group
+                .into_iter()
+                .map(|texture_id| (texture_id, ()))
+                .collect::<SecondaryMap<_, _>>();
+
+            let mut texture_pages = Vec::new();
+
+            while !to_place.is_empty() {
+                let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
+
+                for texture_id in to_place.ids() {
+                    let padded_size = textures[texture_id].size + Vec2::splat(border * 2);
+                    if padded_size[0] > TEXTURE_PAGE_SIZE[0]
+                        || padded_size[1] > TEXTURE_PAGE_SIZE[1]
+                    {
+                        bail!(
+                            "texture size {:?} is greater than the texture page size",
+                            padded_size
+                        );
+                    }
+                    packer.add(texture_id, padded_size);
+                }
+
+                let mut texture_page = TexturePageData {
+                    size: TEXTURE_PAGE_SIZE,
+                    textures: SecondaryMap::new(),
+                    border,
+                };
+
+                let prev_place_len = to_place.len();
+                for packed in packer.pack() {
+                    if let Some(mut position) = packed.placement {
+                        position += Vec2::splat(border);
+                        texture_page.textures.insert(packed.item, position);
+                        to_place.remove(packed.item);
+                    }
+                }
+
+                assert!(
+                    to_place.len() < prev_place_len,
+                    "should always add at least a single texture per iteration"
+                );
+
+                texture_pages.push(texture_page);
+            }
+
+            log::info!("finished packing textures for group {group_name}");
+
+            Ok(texture_pages)
+        })
+        .collect::<Result<Vec<Vec<_>>, Error>>()?;
+
+    let texture_pages = texture_page_list.into_iter().flatten().collect();
+
+    log::info!("finished packing all textures!");
+
+    Ok(texture_pages)
 }
