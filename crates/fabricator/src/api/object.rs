@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use anyhow::Context as _;
 use fabricator_collision::bound_box_tree::BoundBoxQuery;
 use fabricator_math::{Box2, Vec2};
 use fabricator_vm as vm;
@@ -43,9 +42,9 @@ impl<'gc> ObjectUserData<'gc> {
                     for instance in state.instances.values() {
                         if instance.object == object_id {
                             if found {
-                                return Err(
-                                    "propery access on objects only allowed on singletons".into()
-                                );
+                                return Err(vm::RuntimeError::msg(
+                                    "propery access on objects only allowed on singletons",
+                                ));
                             }
                             found = true;
 
@@ -299,7 +298,6 @@ pub fn object_api<'gc>(
                 exec.with_this(instance_ud.into())
                     .call_closure(ctx, create_script.create_closure(ctx))
                     .map_err(|e| e.into_extern())
-                    .context("error creating an instance in `create_instance_depth`")
             })?;
         }
 
@@ -327,7 +325,9 @@ pub fn object_api<'gc>(
         } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
             State::ctx_with(ctx, |state| state.instances.contains(instance.id))?
         } else {
-            return Err("`instance_exists` expects an object or instance".into());
+            return Err(vm::RuntimeError::msg(
+                "`instance_exists` expects an object or instance",
+            ));
         };
         exec.stack().replace(ctx, found);
         Ok(())
@@ -353,7 +353,9 @@ pub fn object_api<'gc>(
                 }
             })?;
         } else {
-            return Err("`instance_deactivate_object` expects an object or instance".into());
+            return Err(vm::RuntimeError::msg(
+                "`instance_deactivate_object` expects an object or instance",
+            ));
         };
         Ok(())
     });
@@ -369,7 +371,9 @@ pub fn object_api<'gc>(
         let (left, top, width, height, inside): (f64, f64, f64, f64, bool) =
             exec.stack().consume(ctx)?;
         if !inside {
-            return Err("outside instance activation unsupported".into());
+            return Err(vm::RuntimeError::msg(
+                "outside instance activation unsupported",
+            ));
         }
         State::ctx_with_mut(ctx, |state| {
             let mut query = BoundBoxQuery::default();
@@ -414,7 +418,9 @@ pub fn object_api<'gc>(
                 }
             })?;
         } else {
-            return Err("`instance_destroy` expects an object or instance".into());
+            return Err(vm::RuntimeError::msg(
+                "`instance_destroy` expects an object or instance",
+            ));
         };
         Ok(())
     });

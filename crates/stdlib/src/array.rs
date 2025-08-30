@@ -304,7 +304,9 @@ fn sort_array<'gc>(
                 } else if n == 0.0 {
                     cmp::Ordering::Equal
                 } else {
-                    return Err("numeric value returned by comparator is NaN".into());
+                    return Err(vm::RuntimeError::msg(
+                        "numeric value returned by comparator is NaN",
+                    ));
                 }
             }
         })

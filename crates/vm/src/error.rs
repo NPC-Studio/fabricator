@@ -171,7 +171,7 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-impl<E: Into<Box<dyn StdError + Send + Sync + 'static>>> From<E> for RuntimeError {
+impl<E: StdError + Send + Sync + 'static> From<E> for RuntimeError {
     fn from(err: E) -> Self {
         Self::new(err)
     }
@@ -192,8 +192,52 @@ impl AsRef<dyn StdError + Send + Sync + 'static> for RuntimeError {
 }
 
 impl RuntimeError {
-    pub fn new(err: impl Into<Box<dyn StdError + Send + Sync + 'static>>) -> Self {
-        Self(err.into().into())
+    pub fn new(err: impl StdError + Send + Sync + 'static) -> Self {
+        Self(Arc::new(err))
+    }
+
+    pub fn from_boxed(boxed_err: Box<dyn StdError + Send + Sync + 'static>) -> Self {
+        struct BoxErr(Box<dyn StdError + Send + Sync + 'static>);
+
+        impl fmt::Debug for BoxErr {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl fmt::Display for BoxErr {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl StdError for BoxErr {
+            fn source(&self) -> Option<&(dyn StdError + 'static)> {
+                self.0.source()
+            }
+        }
+
+        Self::new(BoxErr(boxed_err.into()))
+    }
+
+    pub fn msg<M: fmt::Display + fmt::Debug + Send + Sync + 'static>(message: M) -> Self {
+        struct MsgErr<M>(M);
+
+        impl<M: fmt::Debug> fmt::Debug for MsgErr<M> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl<M: fmt::Display> fmt::Display for MsgErr<M> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl<M: fmt::Display + fmt::Debug> StdError for MsgErr<M> {}
+
+        Self::new(MsgErr(message))
     }
 }
 
@@ -235,7 +279,7 @@ impl<'gc> From<RuntimeError> for Error<'gc> {
     }
 }
 
-impl<'gc, E: Into<Box<dyn StdError + Send + Sync + 'static>>> From<E> for Error<'gc> {
+impl<'gc, E: StdError + Send + Sync + 'static> From<E> for Error<'gc> {
     fn from(err: E) -> Self {
         Self::Runtime(RuntimeError::new(err))
     }

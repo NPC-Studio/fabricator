@@ -105,7 +105,10 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let clamp = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (val, min, max): (f64, f64, f64) = exec.stack().consume(ctx)?;
         if min > max {
-            return Err(format!("{} > {} in `clamp`", min, max).into());
+            return Err(vm::RuntimeError::msg(format!(
+                "{} > {} in `clamp`",
+                min, max
+            )));
         }
         exec.stack().replace(ctx, val.max(min).min(max));
         Ok(())
@@ -115,7 +118,9 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let random = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let upper: f64 = exec.stack().consume(ctx)?;
         if upper < 0.0 {
-            return Err(format!("`random` upper range {upper} cannot be <= 0.0").into());
+            return Err(vm::RuntimeError::msg(format!(
+                "`random` upper range {upper} cannot be <= 0.0"
+            )));
         }
         exec.stack()
             .replace(ctx, rand::rng().random_range(0.0..=upper));
@@ -129,7 +134,9 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let irandom = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let upper: i64 = exec.stack().consume(ctx)?;
         if upper < 0 {
-            return Err(format!("`irandom` upper range {upper} cannot be <= 0").into());
+            return Err(vm::RuntimeError::msg(format!(
+                "`irandom` upper range {upper} cannot be <= 0"
+            )));
         }
         exec.stack()
             .replace(ctx, rand::rng().random_range(0..=upper));
@@ -143,7 +150,9 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let random_range = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (lower, upper): (f64, f64) = exec.stack().consume(ctx)?;
         if upper < lower {
-            return Err(format!("`random_range`: invalid range [{lower}, {upper}]").into());
+            return Err(vm::RuntimeError::msg(format!(
+                "`random_range`: invalid range [{lower}, {upper}]"
+            )));
         }
         exec.stack()
             .replace(ctx, rand::rng().random_range(lower..=upper));

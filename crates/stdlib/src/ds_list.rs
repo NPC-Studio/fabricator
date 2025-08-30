@@ -37,7 +37,7 @@ impl<'gc> DsList<'gc> {
                 indexes: &[vm::Value<'gc>],
             ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
                 if indexes.len() != 1 {
-                    return Err("expected 1 index for ds_list".into());
+                    return Err(vm::RuntimeError::msg("expected 1 index for ds_list"));
                 }
                 let i: usize = vm::FromValue::from_value(ctx, indexes[0])?;
                 Ok(DsList::downcast(ud)
@@ -57,7 +57,7 @@ impl<'gc> DsList<'gc> {
                 value: vm::Value<'gc>,
             ) -> Result<(), vm::RuntimeError> {
                 if indexes.len() != 1 {
-                    return Err("expected 1 index for ds_list".into());
+                    return Err(vm::RuntimeError::msg("expected 1 index for ds_list"));
                 }
                 let i: usize = vm::FromValue::from_value(ctx, indexes[0])?;
                 let ds_list = DsList::downcast_write(&ctx, ud).unwrap();
@@ -161,11 +161,10 @@ pub fn ds_list_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let ds_list = DsList::downcast_write(&ctx, ds_list)?;
         let mut vec = DsList::borrow_mut(ds_list);
         if index >= vec.len() {
-            return Err(format!(
+            return Err(vm::RuntimeError::msg(format!(
                 "index {index} out of range of ds_list with length {}",
                 vec.len()
-            )
-            .into());
+            )));
         }
         vec.remove(index);
         Ok(())

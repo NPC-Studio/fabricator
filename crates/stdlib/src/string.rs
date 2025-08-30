@@ -54,7 +54,9 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let mut iter = arg.as_str().chars();
         let c = iter.next();
         if c.is_none() || iter.next().is_some() {
-            return Err("`ord` must be given a single character string".into());
+            return Err(vm::RuntimeError::msg(
+                "`ord` must be given a single character string",
+            ));
         }
         exec.stack().replace(ctx, c.unwrap() as isize);
         Ok(())
@@ -108,13 +110,15 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let (string, index): (vm::String, usize) = exec.stack().consume(ctx)?;
         let mut chars = string.chars();
         let index = index.checked_sub(1).ok_or_else(|| {
-            format!("index given to `string_char_at` is 1-indexed and cannot be 0")
+            vm::RuntimeError::msg(format!(
+                "index given to `string_char_at` is 1-indexed and cannot be 0"
+            ))
         })?;
         let c = chars.nth(index).ok_or_else(|| {
-            format!(
+            vm::RuntimeError::msg(format!(
                 "index {index} is out of range in string of length {}",
                 string.chars().count()
-            )
+            ))
         })?;
         exec.stack().replace(ctx, c.to_string());
         Ok(())
@@ -173,7 +177,9 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let string_count = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (substr, string): (vm::String, vm::String) = exec.stack().consume(ctx)?;
         if substr.is_empty() {
-            return Err("substr cannot be empty in `string_count`".into());
+            return Err(vm::RuntimeError::msg(
+                "substr cannot be empty in `string_count`",
+            ));
         }
         let mut string = string.as_str();
         let mut count = 0;
@@ -191,9 +197,11 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let string_copy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (string, index, count): (vm::String, usize, usize) = exec.stack().consume(ctx)?;
-        let index = index
-            .checked_sub(1)
-            .ok_or_else(|| format!("index given to `string_copy` is 1-indexed and cannot be 0"))?;
+        let index = index.checked_sub(1).ok_or_else(|| {
+            vm::RuntimeError::msg(format!(
+                "index given to `string_copy` is 1-indexed and cannot be 0"
+            ))
+        })?;
         exec.stack().replace(
             ctx,
             string.chars().skip(index).take(count).collect::<String>(),
@@ -207,9 +215,11 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let string_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (string, index, count): (vm::String, isize, isize) = exec.stack().consume(ctx)?;
-        let index = index
-            .checked_sub(1)
-            .ok_or_else(|| format!("index given to `string_copy` is 1-indexed and cannot be 0"))?;
+        let index = index.checked_sub(1).ok_or_else(|| {
+            vm::RuntimeError::msg(format!(
+                "index given to `string_copy` is 1-indexed and cannot be 0"
+            ))
+        })?;
         let (range, _) = resolve_array_range(string.chars().count(), Some(index), Some(count))?;
         exec.stack().replace(
             ctx,
@@ -270,7 +280,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                     let pat = patterns
                         .get(i)
                         .as_string()
-                        .ok_or("trim pattern must be a string")?;
+                        .ok_or_else(|| vm::RuntimeError::msg("trim pattern must be a string"))?;
                     let new_res = res.trim_end_matches(pat.as_str());
                     if new_res.len() != res.len() {
                         changed = true;

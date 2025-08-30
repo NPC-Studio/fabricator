@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context as _, Error, bail};
 use fabricator_vm as vm;
 use gc_arena::Gc;
 
@@ -182,17 +181,16 @@ pub fn assets_api<'gc>(
                 if let vm::Value::UserData(ud) = name_or_id {
                     ud
                 } else {
-                    let name = name_or_id.as_string().with_context(|| format!(
+                    let name = name_or_id.as_string().ok_or_else(|| vm::RuntimeError::msg(format!(
                     "`asset_has_tags` expects asset handle or name as first argument, got {}",
                     name_or_id.type_name()
-                ))?;
-                    assets_map
-                        .get(&name)
-                        .copied()
-                        .with_context(|| format!("no such asset named {name}"))?
+                )))?;
+                    assets_map.get(&name).copied().ok_or_else(|| {
+                        vm::RuntimeError::msg(format!("no such asset named {name}"))
+                    })?
                 };
 
-            let has_tags = State::ctx_with(ctx, |state| -> Result<bool, Error> {
+            let has_tags = State::ctx_with(ctx, |state| {
                 let empty_tags = HashSet::new();
 
                 let tags = if let Ok(room) = RoomUserData::downcast(id) {
@@ -210,7 +208,7 @@ pub fn assets_api<'gc>(
                 } else if let Ok(_) = TileSetUserData::downcast(id) {
                     &empty_tags
                 } else {
-                    bail!("userdata is not an asset id");
+                    return Err(vm::RuntimeError::msg("userdata is not an asset id"));
                 };
 
                 match tag_or_tags {
@@ -218,7 +216,10 @@ pub fn assets_api<'gc>(
                     vm::Value::Array(array) => {
                         let mut has_tag = true;
                         for i in 0..array.len() {
-                            let s = array.get(i).as_string().context("tag must be a string")?;
+                            let s = array
+                                .get(i)
+                                .as_string()
+                                .ok_or_else(|| vm::RuntimeError::msg("tag must be a string"))?;
                             if !tags.contains(s.as_str()) {
                                 has_tag = false;
                                 break;
@@ -226,7 +227,11 @@ pub fn assets_api<'gc>(
                         }
                         Ok(has_tag)
                     }
-                    _ => bail!("tags argument must be a string or an array of strings"),
+                    _ => {
+                        return Err(vm::RuntimeError::msg(
+                            "tags argument must be a string or an array of strings",
+                        ));
+                    }
                 }
             })??;
 

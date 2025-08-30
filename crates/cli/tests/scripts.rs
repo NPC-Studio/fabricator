@@ -17,7 +17,7 @@ pub fn testing_stdlib<'gc>(ctx: vm::Context<'gc>) -> Gc<'gc, vm::MagicSet<'gc>> 
         let stack = exec.stack();
         for i in 0..stack.len() {
             if !stack.get(i).cast_bool() {
-                return Err("assert failed".into());
+                return Err(vm::RuntimeError::msg("assert failed"));
             }
         }
         Ok(())

@@ -260,7 +260,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let (obj, key): (vm::Object, vm::Value) = exec.stack().consume(ctx)?;
         let key = key
             .coerce_string(ctx)
-            .ok_or("key not coercible to string")?;
+            .ok_or_else(|| vm::RuntimeError::msg("key not coercible to string"))?;
         obj.remove(&ctx, key);
         Ok(())
     });
@@ -273,7 +273,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let (obj, key): (vm::Object, vm::Value) = exec.stack().consume(ctx)?;
         let key = key
             .coerce_string(ctx)
-            .ok_or("key not coercible to string")?;
+            .ok_or_else(|| vm::RuntimeError::msg("key not coercible to string"))?;
         exec.stack().replace(ctx, obj.get(key).is_some());
         Ok(())
     });

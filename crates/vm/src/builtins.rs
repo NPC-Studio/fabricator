@@ -1,6 +1,7 @@
 use gc_arena::Mutation;
 
 use crate::{
+    RuntimeError,
     callback::Callback,
     closure::Closure,
     interpreter::Context,
@@ -106,7 +107,9 @@ impl<'gc> BuiltIns<'gc> {
                         exec.stack().replace(ctx, func.rebind(&ctx, obj));
                         Ok(())
                     }
-                    _ => Err("self value must be an object, userdata, or undefined".into()),
+                    _ => Err(RuntimeError::msg(
+                        "self value must be an object, userdata, or undefined",
+                    )),
                 }
             }),
 
@@ -178,7 +181,9 @@ impl<'gc> BuiltIns<'gc> {
                             exec.stack().replace(ctx, user_data.iter(ctx)?);
                             Ok(())
                         }
-                        _ => Err("with loop target must be object or userdata".into()),
+                        _ => Err(RuntimeError::msg(
+                            "with loop target must be object or userdata",
+                        )),
                     }
                 })
             },

@@ -1,6 +1,5 @@
 use std::{collections::HashMap, marker::PhantomData};
 
-use anyhow::{Context as _, Error, anyhow};
 use fabricator_util::typed_id_map;
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Mutation, Rootable, arena::Root, barrier};
@@ -14,7 +13,7 @@ pub struct UserDataProperties<U: for<'a> Rootable<'a>> {
             vm::Context<'gc>,
             &Root<'gc, U>,
             vm::String<'gc>,
-        ) -> Result<Option<vm::Value<'gc>>, Error>,
+        ) -> Result<Option<vm::Value<'gc>>, vm::RuntimeError>,
     >,
     write_custom: Box<
         dyn for<'gc> Fn(
@@ -22,18 +21,23 @@ pub struct UserDataProperties<U: for<'a> Rootable<'a>> {
             &Root<'gc, U>,
             vm::String<'gc>,
             vm::Value<'gc>,
-        ) -> Result<(), Error>,
+        ) -> Result<(), vm::RuntimeError>,
     >,
 }
 
 struct Property<U: for<'a> Rootable<'a>> {
-    read: Box<dyn for<'gc> Fn(vm::Context<'gc>, &Root<'gc, U>) -> Result<vm::Value<'gc>, Error>>,
+    read: Box<
+        dyn for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+        ) -> Result<vm::Value<'gc>, vm::RuntimeError>,
+    >,
     write: Box<
         dyn for<'gc> Fn(
             vm::Context<'gc>,
             &barrier::Write<Root<'gc, U>>,
             vm::Value<'gc>,
-        ) -> Result<(), Error>,
+        ) -> Result<(), vm::RuntimeError>,
     >,
 }
 
@@ -41,9 +45,11 @@ impl<U: for<'a> Rootable<'a>> Default for UserDataProperties<U> {
     fn default() -> Self {
         Self {
             properties: Default::default(),
-            read_custom: Box::new(|_, _, name| Err(Error::msg(anyhow!("no such field {}", name)))),
+            read_custom: Box::new(|_, _, name| {
+                Err(vm::RuntimeError::msg(format!("no such field {}", name)))
+            }),
             write_custom: Box::new(|_, _, name, _| {
-                Err(Error::msg(anyhow!("no such field {}", name)))
+                Err(vm::RuntimeError::msg(format!("no such field {}", name)))
             }),
         }
     }
@@ -57,7 +63,10 @@ where
     pub fn add_ro_property(
         &mut self,
         name: impl Into<String>,
-        read: impl for<'gc> Fn(vm::Context<'gc>, &Root<'gc, U>) -> Result<vm::Value<'gc>, Error>
+        read: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+        ) -> Result<vm::Value<'gc>, vm::RuntimeError>
         + 'static,
     ) {
         let name = name.into();
@@ -66,7 +75,7 @@ where
             Property {
                 read: Box::new(read),
                 write: Box::new(move |_, _, _| {
-                    Err(Error::msg(format!(
+                    Err(vm::RuntimeError::msg(format!(
                         "cannot set read only property {name:?}"
                     )))
                 }),
@@ -77,13 +86,16 @@ where
     pub fn add_rw_property(
         &mut self,
         name: impl Into<String>,
-        read: impl for<'gc> Fn(vm::Context<'gc>, &Root<'gc, U>) -> Result<vm::Value<'gc>, Error>
+        read: impl for<'gc> Fn(
+            vm::Context<'gc>,
+            &Root<'gc, U>,
+        ) -> Result<vm::Value<'gc>, vm::RuntimeError>
         + 'static,
         write: impl for<'gc> Fn(
             vm::Context<'gc>,
             &barrier::Write<Root<'gc, U>>,
             vm::Value<'gc>,
-        ) -> Result<(), Error>
+        ) -> Result<(), vm::RuntimeError>
         + 'static,
     ) {
         self.properties.insert(
@@ -101,14 +113,14 @@ where
             vm::Context<'gc>,
             &Root<'gc, U>,
             vm::String<'gc>,
-        ) -> Result<Option<vm::Value<'gc>>, Error>
+        ) -> Result<Option<vm::Value<'gc>>, vm::RuntimeError>
         + 'static,
         write: impl for<'gc> Fn(
             vm::Context<'gc>,
             &Root<'gc, U>,
             vm::String<'gc>,
             vm::Value<'gc>,
-        ) -> Result<(), Error>
+        ) -> Result<(), vm::RuntimeError>
         + 'static,
     ) {
         self.read_custom = Box::new(read);
@@ -135,8 +147,8 @@ where
         if let Some(prop) = self.properties.get(key.as_str()) {
             Ok((prop.read)(ctx, u)?)
         } else {
-            Ok((self.read_custom)(ctx, u, key)?
-                .with_context(|| anyhow!("missing field {}", key))?)
+            (self.read_custom)(ctx, u, key)?
+                .ok_or_else(|| vm::RuntimeError::msg(format!("missing field {:?}", key)))
         }
     }
 
@@ -174,7 +186,8 @@ impl<U: 'static> StaticUserDataProperties<U> {
     pub fn add_ro_property(
         &mut self,
         name: impl Into<String>,
-        read: impl for<'gc> Fn(vm::Context<'gc>, &U) -> Result<vm::Value<'gc>, Error> + 'static,
+        read: impl for<'gc> Fn(vm::Context<'gc>, &U) -> Result<vm::Value<'gc>, vm::RuntimeError>
+        + 'static,
     ) {
         self.properties
             .add_ro_property(name, move |ctx, u| read(ctx, &u.0));
@@ -183,8 +196,10 @@ impl<U: 'static> StaticUserDataProperties<U> {
     pub fn add_rw_property(
         &mut self,
         name: impl Into<String>,
-        read: impl for<'gc> Fn(vm::Context<'gc>, &U) -> Result<vm::Value<'gc>, Error> + 'static,
-        write: impl for<'gc> Fn(vm::Context<'gc>, &U, vm::Value<'gc>) -> Result<(), Error> + 'static,
+        read: impl for<'gc> Fn(vm::Context<'gc>, &U) -> Result<vm::Value<'gc>, vm::RuntimeError>
+        + 'static,
+        write: impl for<'gc> Fn(vm::Context<'gc>, &U, vm::Value<'gc>) -> Result<(), vm::RuntimeError>
+        + 'static,
     ) {
         self.properties.add_rw_property(
             name,
@@ -203,14 +218,14 @@ impl<U: 'static> StaticUserDataProperties<U> {
             vm::Context<'gc>,
             &U,
             vm::String<'gc>,
-        ) -> Result<Option<vm::Value<'gc>>, Error>
+        ) -> Result<Option<vm::Value<'gc>>, vm::RuntimeError>
         + 'static,
         write: impl for<'gc> Fn(
             vm::Context<'gc>,
             &U,
             vm::String<'gc>,
             vm::Value<'gc>,
-        ) -> Result<(), Error>
+        ) -> Result<(), vm::RuntimeError>
         + 'static,
     ) {
         self.properties.enable_custom_properties(

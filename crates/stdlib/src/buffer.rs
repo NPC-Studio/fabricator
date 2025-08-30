@@ -166,11 +166,10 @@ impl BufferState {
         if self.data.len() < write_end {
             match self.buffer_type {
                 BufferType::Fixed => {
-                    return Err(format!(
+                    return Err(vm::RuntimeError::msg(format!(
                         "write to pos {write_end} on buffer of length {}",
                         self.data.len()
-                    )
-                    .into());
+                    )));
                 }
                 BufferType::Growable => {
                     let new_len = write_end.next_multiple_of(self.alignment());
@@ -185,11 +184,10 @@ impl BufferState {
     fn read_at(&self, pos: usize, data: &mut [u8]) -> Result<(), vm::RuntimeError> {
         let read_end = pos + data.len();
         if self.data.len() < read_end {
-            return Err(format!(
+            return Err(vm::RuntimeError::msg(format!(
                 "read to pos {read_end} on buffer of length {}",
                 self.data.len()
-            )
-            .into());
+            )));
         }
         data.copy_from_slice(&self.data[pos..read_end]);
         Ok(())
@@ -252,7 +250,9 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let (size, buf_type, alignment): (usize, vm::UserData, usize) =
             exec.stack().consume(ctx)?;
         if !alignment.is_power_of_two() {
-            return Err(format!("buffer alignment {alignment} is not a power of 2").into());
+            return Err(vm::RuntimeError::msg(format!(
+                "buffer alignment {alignment} is not a power of 2"
+            )));
         }
         let buf_type = *buf_type.downcast_static::<BufferType>()?;
         exec.stack()
@@ -294,9 +294,9 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 // order to make sure that writes and reads can be synchronized, we are interpreting
                 // that here as writing a string which does *not* contain NUL followed by a single
                 // NUL.
-                let s: vm::String = value
-                    .coerce_string(ctx)
-                    .ok_or("`buffer_string` value must be coercible to string")?;
+                let s: vm::String = value.coerce_string(ctx).ok_or_else(|| {
+                    vm::RuntimeError::msg("`buffer_string` value must be coercible to string")
+                })?;
                 if let Some(end) = s.find('\0') {
                     // If the string has an embedded NUL, write the part up to and including the
                     // first NUL.
@@ -313,9 +313,9 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 //
                 // We write the *entire* string here and assume that the string byte length is
                 // separately stored.
-                let s: vm::String = value
-                    .coerce_string(ctx)
-                    .ok_or("`buffer_text` value must be coercible to string")?;
+                let s: vm::String = value.coerce_string(ctx).ok_or_else(|| {
+                    vm::RuntimeError::msg("`buffer_text` value must be coercible to string")
+                })?;
                 buffer.cursor_write(s.as_str().as_bytes())?;
             }
         }
@@ -444,21 +444,19 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let data_width = match data_type.fixed_byte_width() {
             Some(data_width) if data_width.is_multiple_of(buffer.alignment()) => data_width,
             _ => {
-                return Err(format!(
+                return Err(vm::RuntimeError::msg(format!(
                     "data width not a whole multiple of the alignment {}",
                     buffer.alignment()
-                )
-                .into());
+                )));
             }
         };
 
         if !(length - offset).is_multiple_of(data_width) {
-            return Err(format!(
+            return Err(vm::RuntimeError::msg(format!(
                 "requested write length {} not a whole multiple of data width {}",
                 length - offset,
                 data_width,
-            )
-            .into());
+            )));
         }
 
         let mut pos = offset;
@@ -502,9 +500,9 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let buffer_sizeof = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let data_type: vm::UserData = exec.stack().consume(ctx)?;
         let data_type = *data_type.downcast_static::<DataType>()?;
-        let width = data_type
-            .fixed_byte_width()
-            .ok_or_else(|| format!("{data_type:?} does not have a fixed width"))?;
+        let width = data_type.fixed_byte_width().ok_or_else(|| {
+            vm::RuntimeError::msg(format!("{data_type:?} does not have a fixed width"))
+        })?;
         exec.stack().replace(ctx, width as isize);
         Ok(())
     });

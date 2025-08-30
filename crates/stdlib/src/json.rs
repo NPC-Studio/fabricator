@@ -14,7 +14,9 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 } else if let Some(n) = number.as_f64() {
                     vm::Value::Float(n)
                 } else {
-                    return Err(format!("json number {number:?} is not an i64 or f64").into());
+                    return Err(vm::RuntimeError::msg(format!(
+                        "json number {number:?} is not an i64 or f64"
+                    )));
                 }
             }
             serde_json::Value::String(s) => ctx.intern(&s).into(),
@@ -59,15 +61,15 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             vm::Value::Boolean(b) => serde_json::Value::Bool(b),
             vm::Value::Integer(i) => serde_json::Value::Number(i.into()),
             vm::Value::Float(f) => serde_json::Value::Number(
-                serde_json::Number::from_f64(f).ok_or("invalid JSON float value")?,
+                serde_json::Number::from_f64(f)
+                    .ok_or_else(|| vm::RuntimeError::msg("invalid JSON float value"))?,
             ),
             vm::Value::String(s) => serde_json::Value::String(s.as_str().to_owned()),
             vm::Value::Object(obj) => {
                 let mut map = serde_json::Map::new();
-                let borrow = obj
-                    .into_inner()
-                    .try_borrow_mut(&ctx)
-                    .map_err(|_| "cannot convert recursive object to JSON")?;
+                let borrow = obj.into_inner().try_borrow_mut(&ctx).map_err(|_| {
+                    vm::RuntimeError::msg("cannot convert recursive object to JSON")
+                })?;
                 for (&key, &value) in &borrow.map {
                     map.insert(key.as_str().to_owned(), value_to_json(ctx, value)?);
                 }
@@ -78,7 +80,7 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 let borrow = arr
                     .into_inner()
                     .try_borrow_mut(&ctx)
-                    .map_err(|_| "cannot convert recursive array to JSON")?;
+                    .map_err(|_| vm::RuntimeError::msg("cannot convert recursive array to JSON"))?;
                 for &value in &*borrow {
                     array.push(value_to_json(ctx, value)?);
                 }
@@ -91,14 +93,20 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                     serde_json::Value::Number(i.into())
                 } else if let Some(f) = ud.coerce_float(ctx) {
                     serde_json::Value::Number(
-                        serde_json::Number::from_f64(f).ok_or("invalid JSON float value")?,
+                        serde_json::Number::from_f64(f)
+                            .ok_or_else(|| vm::RuntimeError::msg("invalid JSON float value"))?,
                     )
                 } else {
-                    return Err(format!("cannot convert userdata to JSON").into());
+                    return Err(vm::RuntimeError::msg(format!(
+                        "cannot convert userdata to JSON"
+                    )));
                 }
             }
             vm::Value::Closure(_) | vm::Value::Callback(_) => {
-                return Err(format!("cannot convert {} to JSON", value.type_name()).into());
+                return Err(vm::RuntimeError::msg(format!(
+                    "cannot convert {} to JSON",
+                    value.type_name()
+                )));
             }
         })
     }

@@ -49,7 +49,7 @@ impl<'gc> DsGrid<'gc> {
                 indexes: &[vm::Value<'gc>],
             ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
                 if indexes.len() != 2 {
-                    return Err("expected 2 indexes for ds_grid".into());
+                    return Err(vm::RuntimeError::msg("expected 2 indexes for ds_grid"));
                 }
 
                 let x: usize = vm::FromValue::from_value(ctx, indexes[0])?;
@@ -66,7 +66,7 @@ impl<'gc> DsGrid<'gc> {
                 value: vm::Value<'gc>,
             ) -> Result<(), vm::RuntimeError> {
                 if indexes.len() != 2 {
-                    return Err("expected 2 indexes for ds_grid".into());
+                    return Err(vm::RuntimeError::msg("expected 2 indexes for ds_grid"));
                 }
 
                 let x: usize = vm::FromValue::from_value(ctx, indexes[0])?;
@@ -169,15 +169,16 @@ pub fn ds_grid_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let grid = DsGrid::downcast_write(&ctx, grid)?;
 
         if xmin > xmax || ymin > ymax {
-            return Err(format!("grid region [{xmin}, {ymin}, {xmax}, {ymax}] is invalid").into());
+            return Err(vm::RuntimeError::msg(format!(
+                "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is invalid"
+            )));
         }
 
         if xmin >= grid.width || xmax >= grid.width || ymin >= grid.height || ymax >= grid.height {
-            return Err(format!(
+            return Err(vm::RuntimeError::msg(format!(
                 "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is out of range of size {}x{}",
                 grid.width, grid.height
-            )
-            .into());
+            )));
         }
 
         for x in xmin..=xmax {
