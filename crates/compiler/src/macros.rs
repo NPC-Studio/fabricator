@@ -103,7 +103,7 @@ impl<S> MacroSet<S> {
     ///
     /// Each macro is assigned a sequential index for identification starting from zero. Checking
     /// the current macro count can be used to determine which macros are extracted from which calls
-    /// to [`MacroSet::extract_macros`].
+    /// to [`MacroSet::extract`].
     pub fn len(&self) -> usize {
         self.macros.len()
     }
@@ -145,7 +145,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// Extract macros from the given token list and store them.
     ///
     /// This wiill extract all `#macro NAME <TOKENS>` directives from the token list. Macros must
-    /// be the first token following a newline, and the macro <TOKENS> list is interpreted up to
+    /// be the first token following a newline, and the macro TOKENS list is interpreted up to
     /// the following newline or eof. All of the tokens that make up the macro are removed, not
     /// including the trailing newline or eof.
     ///

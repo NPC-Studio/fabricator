@@ -34,7 +34,14 @@ impl<'gc> Callback<'gc> {
     /// If there is a `this` object bound to the callback, then the provided `exec` will be rebound
     /// with it.
     pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), RuntimeError> {
-        self.0.callback_fn.call(ctx, exec.with_this(self.0.this))
+        self.0.callback_fn.call(
+            ctx,
+            if self.0.this.is_undefined() {
+                exec
+            } else {
+                exec.with_this(self.0.this)
+            },
+        )
     }
 
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.
@@ -50,7 +57,7 @@ impl<'gc> Callback<'gc> {
         ))
     }
 
-    /// Returns the currently bound `this` object, if one is set.
+    /// Returns the currently bound `this` object, or `Value::Undefined` if one is not set.
     pub fn this(self) -> Value<'gc> {
         self.0.this
     }
@@ -58,7 +65,7 @@ impl<'gc> Callback<'gc> {
     /// Create a callback from a Rust function.
     ///
     /// The function must be `'static` because Rust closures cannot implement `Collect`. If you need
-    /// to associate GC data with this function, use [`Callback::from_fn_with`].
+    /// to associate GC data with this function, use [`Callback::from_fn_with_root`].
     pub fn from_fn<F>(mc: &Mutation<'gc>, call: F) -> Callback<'gc>
     where
         F: 'static + Fn(Context<'gc>, Execution<'gc, '_>) -> Result<(), RuntimeError>,
@@ -66,7 +73,6 @@ impl<'gc> Callback<'gc> {
         Self::from_fn_with_root(mc, (), move |_, ctx, exec| call(ctx, exec))
     }
 
-    /// Create a callback from a Rust function together with an error context.
     /// Create a callback from a Rust function together with a GC object.
     pub fn from_fn_with_root<R, F>(mc: &Mutation<'gc>, root: R, call: F) -> Callback<'gc>
     where
