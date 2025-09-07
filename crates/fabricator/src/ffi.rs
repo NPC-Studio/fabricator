@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     env,
     ffi::{CStr, CString, c_void},
@@ -10,7 +11,7 @@ use std::{
 use anyhow::{Context, Error};
 use fabricator_stdlib::Pointer;
 use fabricator_vm as vm;
-use gc_arena::{Collect, Gc, Mutation};
+use gc_arena::{Collect, Mutation};
 use libloading::Library;
 
 use crate::project::{ExtensionFile, FfiType};
@@ -70,6 +71,10 @@ impl<'gc> vm::IntoValue<'gc> for FfiNumber {
     }
 }
 
+thread_local! {
+    static NULL_STRING_BUFFER: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
+}
+
 #[repr(transparent)]
 struct FfiPointer(*const c_void);
 
@@ -78,18 +83,17 @@ impl FfiPointer {
 }
 
 impl<'gc> vm::FromValue<'gc> for FfiPointer {
-    fn from_value(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
+    fn from_value(_ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> Result<Self, vm::TypeError> {
         if let vm::Value::String(s) = value {
             // Create a `CString` buffer up until the first NUL in the given string. If there isn't
             // an embedded NUL, this will copy the entire string.
             let end = s.find('\0').unwrap_or(s.len());
             let cstring = CString::new(&s.as_str()[0..end]).unwrap();
-            // Place the `CString` into Gc memory. It should be live until the next garbage
-            // collection, which must be after the FFI function returns.
-            let cstring = Gc::new(&ctx, cstring);
-            // We can now pass the FFI function a pointer to a 0-terminated string that will live at
-            // least as long as the function.
-            return Ok(Self(cstring.as_ptr() as *const c_void));
+            let ptr = cstring.as_ptr() as *const c_void;
+            // Place the `CString` into a temporary list that lasts as long as the function call.
+            NULL_STRING_BUFFER.with(|buffer| buffer.borrow_mut().push(cstring));
+            // We can now pass the FFI function a pointer to a 0-terminated string.
+            return Ok(Self(ptr));
         } else if let vm::Value::UserData(ud) = value {
             if let Ok(ptr) = Pointer::downcast(ud) {
                 return Ok(Self(ptr.as_ptr() as *const c_void));
@@ -222,6 +226,7 @@ macro_rules! impl_ffi_signature {
                 let fn_ptr: extern "C" fn($($arg_type),*) -> $ret_type = unsafe { mem::transmute(self.fn_ptr) };
                 let ret = (fn_ptr)($($arg_name),*);
                 exec.stack().replace(ctx, ret);
+                NULL_STRING_BUFFER.with(|buffer| buffer.borrow_mut().clear());
                 Ok(())
             }
         }
