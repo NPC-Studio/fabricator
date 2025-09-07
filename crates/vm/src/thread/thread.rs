@@ -254,6 +254,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     }
 
     /// Return a new execution context with a stack starting at the new provided bottom value.
+    #[inline]
     pub fn with_stack_bottom(&mut self, stack_bottom: usize) -> Execution<'gc, '_> {
         assert!(self.thread.stack.len() >= self.stack_bottom + stack_bottom);
         Execution {
@@ -266,6 +267,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
 
     /// Return a new execution context with the `this` value set to the one provided, and the
     /// `other` value set as the previous `this` value.
+    #[inline]
     pub fn with_this(&mut self, this: Value<'gc>) -> Execution<'gc, '_> {
         Execution {
             thread: self.thread,
@@ -276,6 +278,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     }
 
     /// Return a new execution context with the `this` and `other` values set to the ones provided.
+    #[inline]
     pub fn with_this_other(&mut self, this: Value<'gc>, other: Value<'gc>) -> Execution<'gc, '_> {
         Execution {
             thread: self.thread,
@@ -286,6 +289,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     }
 
     /// Return a new, unmodified `Execution` which borrows from this one.
+    #[inline]
     pub fn reborrow(&mut self) -> Execution<'gc, '_> {
         Execution {
             thread: self.thread,
@@ -299,6 +303,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     ///
     /// Arguments to the closure will be taken from the stack and returns placed back into the
     /// stack.
+    #[inline]
     pub fn call_closure(
         &mut self,
         ctx: Context<'gc>,
@@ -315,6 +320,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     ///
     /// If the provided `function` is a closure, then any returned `VmError` will be turned into an
     /// `ExternVmError` and placed into a `RuntimeError`.
+    #[inline]
     pub fn call(&mut self, ctx: Context<'gc>, function: Function<'gc>) -> Result<(), RuntimeError> {
         match function {
             Function::Closure(closure) => Ok(self
@@ -335,6 +341,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// depth by 1.
     ///
     /// This will always be at least 1 for the callback currently executing.
+    #[inline]
     pub fn frame_depth(&self) -> usize {
         self.thread.frames.len()
     }
@@ -349,6 +356,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// # Panics
     ///
     /// Panics if given an index that is larger than the return value of [`Execution::frame_depth`].
+    #[inline]
     pub fn upper_frame(&self, index: usize) -> BacktraceFrame<'gc> {
         assert!(index < self.thread.frames.len());
         self.thread.frames[self.thread.frames.len() - 1 - index].backtrace_frame()

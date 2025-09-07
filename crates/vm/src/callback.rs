@@ -33,6 +33,7 @@ impl<'gc> Callback<'gc> {
     ///
     /// If there is a `this` object bound to the callback, then the provided `exec` will be rebound
     /// with it.
+    #[inline]
     pub fn call(self, ctx: Context<'gc>, mut exec: Execution<'gc, '_>) -> Result<(), RuntimeError> {
         self.0.callback_fn.call(
             ctx,
@@ -47,6 +48,7 @@ impl<'gc> Callback<'gc> {
     /// Return a clone of this callback with the embedded `this` value changed to the provided one.
     ///
     /// If `Value::Undefined` is provided, then the bound `this` object will be removed.
+    #[inline]
     pub fn rebind(self, mc: &Mutation<'gc>, this: Value<'gc>) -> Callback<'gc> {
         Self(Gc::new(
             mc,
@@ -58,6 +60,7 @@ impl<'gc> Callback<'gc> {
     }
 
     /// Returns the currently bound `this` object, or `Value::Undefined` if one is not set.
+    #[inline]
     pub fn this(self) -> Value<'gc> {
         self.0.this
     }

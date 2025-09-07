@@ -33,4 +33,3 @@ fabricator-stdlib.path = "crates/stdlib"
 fabricator-util.path = "crates/util"
 fabricator-vm.path = "crates/vm"
 fabricator.path = "crates/fabricator"
-

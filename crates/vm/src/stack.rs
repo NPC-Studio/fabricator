@@ -18,6 +18,7 @@ pub struct Stack<'gc, 'a> {
 }
 
 impl<'gc, 'a> Stack<'gc, 'a> {
+    #[inline]
     pub fn new(values: &'a mut Vec<Value<'gc>>, bottom: usize) -> Self {
         assert!(
             values.len() >= bottom,
@@ -27,10 +28,12 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         Self { values, bottom }
     }
 
+    #[inline]
     pub fn reborrow(&mut self) -> Stack<'gc, '_> {
         self.sub_stack(0)
     }
 
+    #[inline]
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
         assert!(
             self.values.len() - self.bottom >= bottom,
@@ -43,6 +46,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
+    #[inline]
     pub fn get(&self, i: usize) -> Value<'gc> {
         self.values
             .get(self.bottom + i)
@@ -50,14 +54,17 @@ impl<'gc, 'a> Stack<'gc, 'a> {
             .unwrap_or_default()
     }
 
+    #[inline]
     pub fn push_back(&mut self, value: impl Into<Value<'gc>>) {
         self.values.push(value.into());
     }
 
+    #[inline]
     pub fn push_front(&mut self, value: impl Into<Value<'gc>>) {
         self.values.insert(self.bottom, value.into());
     }
 
+    #[inline]
     pub fn pop_back(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
             Some(self.values.pop().unwrap())
@@ -66,6 +73,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
+    #[inline]
     pub fn pop_front(&mut self) -> Option<Value<'gc>> {
         if self.values.len() > self.bottom {
             Some(self.values.remove(self.bottom))
@@ -74,30 +82,37 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.values.len() - self.bottom
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.values.len() == self.bottom
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.values.truncate(self.bottom);
     }
 
+    #[inline]
     pub fn resize(&mut self, size: usize) {
         self.values.resize(self.bottom + size, Value::Undefined);
     }
 
+    #[inline]
     pub fn reserve(&mut self, additional: usize) {
         self.values.reserve(additional);
     }
 
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.values.capacity() - self.bottom
     }
 
+    #[inline]
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<'_, Value<'gc>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(r) => Bound::Included(self.bottom + r),
@@ -112,6 +127,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values.drain((start, end))
     }
 
+    #[inline]
     pub fn from_index<V: FromValue<'gc>>(
         &self,
         ctx: Context<'gc>,
@@ -120,12 +136,14 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         V::from_value(ctx, self.get(i))
     }
 
+    #[inline]
     pub fn into_back(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         for v in v.into_multi_value(ctx) {
             self.values.push(v.into_value(ctx));
         }
     }
 
+    #[inline]
     pub fn into_front(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         let mut c = 0;
         for v in v.into_multi_value(ctx) {
@@ -135,10 +153,12 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.values[self.bottom..].rotate_right(c);
     }
 
+    #[inline]
     pub fn from_back<V: FromValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
         V::from_value(ctx, self.pop_back().unwrap_or_default())
     }
 
+    #[inline]
     pub fn from_front<V: FromMultiValue<'gc>>(
         &mut self,
         ctx: Context<'gc>,
@@ -148,10 +168,12 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         V::from_multi_value(ctx, self.values.extract_if(self.bottom.., |_| true))
     }
 
+    #[inline]
     pub fn consume<V: FromMultiValue<'gc>>(&mut self, ctx: Context<'gc>) -> Result<V, TypeError> {
         V::from_multi_value(ctx, self.drain(..))
     }
 
+    #[inline]
     pub fn replace(&mut self, ctx: Context<'gc>, v: impl IntoMultiValue<'gc>) {
         self.clear();
         self.extend(v.into_multi_value(ctx));
@@ -162,30 +184,35 @@ impl<'gc: 'b, 'a, 'b> IntoIterator for &'b Stack<'gc, 'a> {
     type Item = Value<'gc>;
     type IntoIter = iter::Copied<slice::Iter<'b, Value<'gc>>>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.values[self.bottom..].iter().copied()
     }
 }
 
 impl<'gc, 'a> Extend<Value<'gc>> for Stack<'gc, 'a> {
+    #[inline]
     fn extend<I: IntoIterator<Item = Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc, 'a, 'b> Extend<Value<'gc>> for &'b mut Stack<'gc, 'a> {
+    #[inline]
     fn extend<I: IntoIterator<Item = Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc, 'a> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
+    #[inline]
     fn extend<I: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
 }
 
 impl<'gc: 'b, 'a, 'b, 'c> Extend<&'b Value<'gc>> for &'c mut Stack<'gc, 'a> {
+    #[inline]
     fn extend<I: IntoIterator<Item = &'b Value<'gc>>>(&mut self, iter: I) {
         self.values.extend(iter);
     }
@@ -194,12 +221,14 @@ impl<'gc: 'b, 'a, 'b, 'c> Extend<&'b Value<'gc>> for &'c mut Stack<'gc, 'a> {
 impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc, 'a> {
     type Output = <Vec<Value<'gc>> as Index<I>>::Output;
 
+    #[inline]
     fn index(&self, index: I) -> &Self::Output {
         &self.values[self.bottom..][index]
     }
 }
 
 impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> IndexMut<I> for Stack<'gc, 'a> {
+    #[inline]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         &mut self.values[self.bottom..][index]
     }

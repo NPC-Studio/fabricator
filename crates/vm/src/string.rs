@@ -1,6 +1,5 @@
 use std::{
     borrow::Borrow,
-    collections::HashMap,
     fmt, hash,
     ops::{self, Deref},
     string::String as StdString,
@@ -106,7 +105,7 @@ impl<'gc> Deref for String<'gc> {
 
 pub type StringMap<'gc, V> = FxHashMap<String<'gc>, V>;
 
-struct InternedStringsInner<'gc>(RefLock<HashMap<SharedStr, GcWeak<'gc, SharedStr>>>);
+struct InternedStringsInner<'gc>(RefLock<FxHashMap<SharedStr, GcWeak<'gc, SharedStr>>>);
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
@@ -125,10 +124,7 @@ unsafe impl<'gc> Collect<'gc> for InternedStringsInner<'gc> {
 
 impl<'gc> InternedStrings<'gc> {
     pub(crate) fn new(mc: &Mutation<'gc>) -> Self {
-        Self(Gc::new(
-            mc,
-            InternedStringsInner(RefLock::new(HashMap::new())),
-        ))
+        Self(Gc::new(mc, InternedStringsInner(Default::default())))
     }
 
     pub fn intern(self, mc: &Mutation<'gc>, s: &str) -> String<'gc> {
