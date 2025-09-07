@@ -125,7 +125,7 @@ impl<'gc> Prototype<vm::String<'gc>> {
                 chunk,
                 reference,
                 magic,
-                bytecode,
+                Gc::new(mc, bytecode),
                 constants,
                 prototypes,
                 static_vars.into_boxed_slice(),

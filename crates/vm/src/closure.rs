@@ -91,7 +91,7 @@ pub struct Prototype<'gc> {
     chunk: Chunk<'gc>,
     reference: FunctionRef,
     magic: Gc<'gc, MagicSet<'gc>>,
-    bytecode: ByteCode,
+    bytecode: Gc<'gc, ByteCode>,
     constants: Box<[Constant<'gc>]>,
     prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
     static_vars: Box<[SharedValue<'gc>]>,
@@ -106,7 +106,7 @@ impl<'gc> Prototype<'gc> {
         chunk: Chunk<'gc>,
         reference: FunctionRef,
         magic: Gc<'gc, MagicSet<'gc>>,
-        bytecode: ByteCode,
+        bytecode: Gc<'gc, ByteCode>,
         constants: Box<[Constant<'gc>]>,
         prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
         static_vars: Box<[SharedValue<'gc>]>,
@@ -455,8 +455,8 @@ impl<'gc> Prototype<'gc> {
     }
 
     #[inline]
-    pub fn bytecode(&self) -> &ByteCode {
-        &self.bytecode
+    pub fn bytecode(&self) -> Gc<'gc, ByteCode> {
+        self.bytecode
     }
 
     #[inline]

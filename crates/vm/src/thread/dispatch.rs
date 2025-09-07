@@ -12,7 +12,7 @@ use crate::{
     object::Object,
     stack::Stack,
     string::String,
-    thread::thread::{ClosureFrame, OwnedHeapVar},
+    thread::thread::OwnedHeapVar,
     value::{Function, Value},
 };
 
@@ -67,7 +67,9 @@ pub(super) enum Next<'gc> {
 
 pub(super) struct Dispatch<'gc, 'a> {
     ctx: Context<'gc>,
-    frame: &'a mut ClosureFrame<'gc>,
+    closure: Closure<'gc>,
+    this: &'a mut Value<'gc>,
+    other: &'a mut Value<'gc>,
     // The register slice is fixed size to avoid bounds checks.
     registers: &'a mut [Value<'gc>; 256],
     heap: &'a mut [OwnedHeapVar<'gc>],
@@ -77,14 +79,18 @@ pub(super) struct Dispatch<'gc, 'a> {
 impl<'gc, 'a> Dispatch<'gc, 'a> {
     pub fn new(
         ctx: Context<'gc>,
-        frame: &'a mut ClosureFrame<'gc>,
+        closure: Closure<'gc>,
+        this: &'a mut Value<'gc>,
+        other: &'a mut Value<'gc>,
         registers: &'a mut [Value<'gc>; 256],
         heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
     ) -> Self {
         Self {
             ctx,
-            frame,
+            closure,
+            this,
+            other,
             registers,
             heap,
             stack,
@@ -248,13 +254,13 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
         self.registers[dest as usize] =
-            self.frame.closure.prototype().constants()[constant as usize].to_value();
+            self.closure.prototype().constants()[constant as usize].to_value();
         Ok(())
     }
 
     #[inline]
     fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = match self.frame.closure.heap()[heap as usize] {
+        self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
             HeapVar::Owned(idx) => self.heap[idx as usize].get(),
             HeapVar::Shared(v) => v.get(),
         };
@@ -264,7 +270,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
         let source = self.registers[source as usize];
-        match self.frame.closure.heap()[heap as usize] {
+        match self.closure.heap()[heap as usize] {
             HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
             HeapVar::Shared(v) => v.set(&self.ctx, source),
         };
@@ -273,7 +279,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
-        match self.frame.closure.heap()[heap as usize] {
+        match self.closure.heap()[heap as usize] {
             HeapVar::Owned(idx) => {
                 self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
                 Ok(())
@@ -290,31 +296,31 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.frame.this;
+        self.registers[dest as usize] = *self.this;
         Ok(())
     }
 
     #[inline]
     fn set_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        self.frame.this = self.registers[source as usize];
+        *self.this = self.registers[source as usize];
         Ok(())
     }
 
     #[inline]
     fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.frame.other;
+        self.registers[dest as usize] = *self.other;
         Ok(())
     }
 
     #[inline]
     fn set_other(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        self.frame.other = self.registers[source as usize];
+        *self.other = self.registers[source as usize];
         Ok(())
     }
 
     #[inline]
     fn swap_this_other(&mut self) -> Result<(), Self::Error> {
-        mem::swap(&mut self.frame.this, &mut self.frame.other);
+        mem::swap(self.this, self.other);
         Ok(())
     }
 
@@ -325,7 +331,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         proto: ProtoIdx,
         bind_this: bool,
     ) -> Result<(), Self::Error> {
-        let proto = self.frame.closure.prototype().prototypes()[proto as usize];
+        let proto = self.closure.prototype().prototypes()[proto as usize];
 
         let mut heap = Vec::new();
         for &hd in proto.heap_vars() {
@@ -337,12 +343,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                     heap.push(HeapVar::Shared(proto.static_vars()[idx as usize]))
                 }
                 HeapVarDescriptor::UpValue(idx) => {
-                    heap.push(HeapVar::Shared(
-                        match self.frame.closure.heap()[idx as usize] {
-                            HeapVar::Owned(idx) => self.heap[idx as usize].make_shared(&self.ctx),
-                            HeapVar::Shared(v) => v,
-                        },
-                    ));
+                    heap.push(HeapVar::Shared(match self.closure.heap()[idx as usize] {
+                        HeapVar::Owned(idx) => self.heap[idx as usize].make_shared(&self.ctx),
+                        HeapVar::Shared(v) => v,
+                    }));
                 }
             }
         }
@@ -353,7 +357,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             &self.ctx,
             proto,
             if bind_this {
-                self.frame.this
+                *self.this
             } else {
                 Value::Undefined
             },
@@ -365,7 +369,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn current_closure(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.frame.closure.into();
+        self.registers[dest as usize] = self.closure.into();
         Ok(())
     }
 
@@ -418,7 +422,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         object: RegIdx,
         key: ConstIdx,
     ) -> Result<(), Self::Error> {
-        let Constant::String(key) = self.frame.closure.prototype().constants()[key as usize] else {
+        let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
             panic!("const key is not a string");
         };
         self.registers[dest as usize] = self.do_get_field(self.registers[object as usize], key)?;
@@ -432,7 +436,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         key: ConstIdx,
         value: RegIdx,
     ) -> Result<(), Self::Error> {
-        let Constant::String(key) = self.frame.closure.prototype().constants()[key as usize] else {
+        let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
             panic!("const key is not a string");
         };
         Ok(self.do_set_field(
@@ -475,7 +479,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         self.registers[dest as usize] = self.do_get_index(
             self.registers[array as usize],
-            &[self.frame.closure.prototype().constants()[index as usize].to_value()],
+            &[self.closure.prototype().constants()[index as usize].to_value()],
         )?;
         Ok(())
     }
@@ -489,7 +493,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     ) -> Result<(), Self::Error> {
         self.do_set_index(
             self.registers[array as usize],
-            &[self.frame.closure.prototype().constants()[index as usize].to_value()],
+            &[self.closure.prototype().constants()[index as usize].to_value()],
             self.registers[value as usize],
         )?;
         Ok(())
@@ -868,7 +872,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn stack_resize_const(&mut self, stack_top: ConstIdx) -> Result<(), Self::Error> {
-        let stack_top = self.frame.closure.prototype().constants()[stack_top as usize];
+        let stack_top = self.closure.prototype().constants()[stack_top as usize];
         let stack_top = stack_top
             .to_value()
             .as_integer()
@@ -897,7 +901,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn stack_get_const(&mut self, dest: RegIdx, stack_pos: ConstIdx) -> Result<(), Self::Error> {
-        let stack_idx = self.frame.closure.prototype().constants()[stack_pos as usize];
+        let stack_idx = self.closure.prototype().constants()[stack_pos as usize];
         let stack_idx = stack_idx
             .to_value()
             .as_integer()
@@ -918,7 +922,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         stack_base: RegIdx,
         offset: ConstIdx,
     ) -> Result<(), Self::Error> {
-        let offset = self.frame.closure.prototype().constants()[offset as usize]
+        let offset = self.closure.prototype().constants()[offset as usize]
             .to_value()
             .as_integer()
             .expect("const index is not integer");
@@ -1017,7 +1021,6 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn get_magic(&mut self, dest: RegIdx, magic: MagicIdx) -> Result<(), Self::Error> {
         let magic = self
-            .frame
             .closure
             .prototype()
             .magic()
@@ -1030,7 +1033,6 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn set_magic(&mut self, magic: MagicIdx, source: RegIdx) -> Result<(), Self::Error> {
         let magic = self
-            .frame
             .closure
             .prototype()
             .magic()

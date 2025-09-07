@@ -425,18 +425,6 @@ pub enum ExternBacktraceFrame {
     Callback(RawGc),
 }
 
-#[derive(Collect)]
-#[collect(no_drop)]
-pub(super) struct ClosureFrame<'gc> {
-    pub(super) closure: Closure<'gc>,
-    pub(super) this: Value<'gc>,
-    pub(super) other: Value<'gc>,
-    register_bottom: usize,
-    stack_bottom: usize,
-    heap_bottom: usize,
-    pc: usize,
-}
-
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
 pub(super) enum OwnedHeapVar<'gc> {
@@ -486,6 +474,18 @@ impl<'gc> OwnedHeapVar<'gc> {
 
 #[derive(Collect)]
 #[collect(no_drop)]
+struct ClosureFrame<'gc> {
+    closure: Closure<'gc>,
+    this: Value<'gc>,
+    other: Value<'gc>,
+    register_bottom: usize,
+    stack_bottom: usize,
+    heap_bottom: usize,
+    dispatcher: instructions::Dispatcher<'gc>,
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
 enum Frame<'gc> {
     Closure(ClosureFrame<'gc>),
     Callback(Callback<'gc>),
@@ -494,18 +494,10 @@ enum Frame<'gc> {
 impl<'gc> Frame<'gc> {
     fn backtrace_frame(&self) -> BacktraceFrame<'gc> {
         match self {
-            Frame::Closure(script_frame) => {
-                let closure = script_frame.closure;
-                let instruction = closure
-                    .prototype()
-                    .bytecode()
-                    .instruction_index_for_pc(script_frame.pc)
-                    .unwrap();
-                BacktraceFrame::Closure(ClosureBacktraceFrame {
-                    closure,
-                    instruction,
-                })
-            }
+            Frame::Closure(script_frame) => BacktraceFrame::Closure(ClosureBacktraceFrame {
+                closure: script_frame.closure,
+                instruction: script_frame.dispatcher.instruction_index().unwrap(),
+            }),
             &Frame::Callback(callback) => BacktraceFrame::Callback(callback),
         }
     }
@@ -520,16 +512,25 @@ impl<'gc> ThreadState<'gc> {
         mut initial_other: Value<'gc>,
         initial_stack_bottom: usize,
     ) -> Result<(), VmError<'gc>> {
+        #[inline]
         fn grow_heap<'gc>(
             heap: &mut Vec<OwnedHeapVar<'gc>>,
             heap_bottom: usize,
             closure: Closure<'gc>,
         ) {
-            for hd in closure.heap() {
-                if let &HeapVar::Owned(idx) = hd {
-                    let idx = heap_bottom + idx as usize;
-                    heap.resize_with(idx + 1, || OwnedHeapVar::unique(Value::Undefined));
-                }
+            if let Some(max_idx) = closure
+                .heap()
+                .iter()
+                .filter_map(|h| {
+                    if let &HeapVar::Owned(idx) = h {
+                        Some(heap_bottom + idx as usize)
+                    } else {
+                        None
+                    }
+                })
+                .max()
+            {
+                heap.resize_with(max_idx + 1, || OwnedHeapVar::unique(Value::Undefined));
             }
         }
 
@@ -542,8 +543,7 @@ impl<'gc> ThreadState<'gc> {
 
         self.frames.push({
             let register_bottom = self.registers.len();
-            self.registers
-                .resize(register_bottom + 256, Value::Undefined);
+            // Registers are resized at the beginning of the bytecode dispatch.
 
             let heap_bottom = self.heap.len();
             grow_heap(&mut self.heap, heap_bottom, initial_closure);
@@ -555,7 +555,10 @@ impl<'gc> ThreadState<'gc> {
                 register_bottom,
                 stack_bottom: initial_stack_bottom,
                 heap_bottom,
-                pc: 0,
+                dispatcher: instructions::Dispatcher::new(
+                    initial_closure.prototype().bytecode(),
+                    0,
+                ),
             })
         });
 
@@ -564,10 +567,34 @@ impl<'gc> ThreadState<'gc> {
                 unreachable!()
             };
 
-            let mut dispatcher = instructions::Dispatcher::new(
-                &frame.closure.prototype().as_ref().bytecode(),
-                frame.pc,
-            );
+            // For speed, the slice of registers is always 256 wide to avoid bounds checks, and
+            // we try to resize the vector the absolute *minimal* amount between script calls and
+            // returns.
+            //
+            // On a call, the next frames `register_bottom` value is set to the calling frame's
+            // `register_bottom` value plus the `used_registers` for the calling prototype. At this
+            // time, the register vector is resized to be 256 above the new bottom. After a return,
+            // at the beginning of the next loop (right below), the registers vector is resized to
+            // be 256 above the *previous* `register_bottom`.
+            //
+            // In this way, there is always the expected slice of 256 registers for the top script
+            // frame. Additionally, the amount that the registers vector is resized is minimal:
+            // it is only grown by the `used_registers` value on a call and it is only shrunk by
+            // the `used_registers` value on a return, and the `used_registers` value is usually
+            // small, especially for small functions.
+            //
+            // The sliding register slice for frames will have overlap, so garbage may be left
+            // in the calling frame's register slice when the called frame returns. This will be
+            // important once coroutines are added, so to make sure minimal GC values are kept alive
+            // by a suspended thread, the registers vector should be truncated to the suspending
+            // frame's `register_bottom` plus the `used_registers` value on yield.
+            //
+            // The performance impact of not aggressively truncating and growing the registers
+            // vector (or equivalently just setting the overlapping slice to `Value::Undefined`) is
+            // *incredible* for lots of calls of small functions, so the slight added complexity is
+            // worth it.
+            self.registers
+                .resize(frame.register_bottom + 256, Value::Undefined);
 
             let registers = (&mut self.registers
                 [frame.register_bottom..frame.register_bottom + 256])
@@ -575,10 +602,15 @@ impl<'gc> ThreadState<'gc> {
                 .unwrap();
             let heap = &mut self.heap[frame.heap_bottom..];
             let stack = Stack::new(&mut self.stack, frame.stack_bottom);
-            let ret = dispatcher.dispatch_loop(&mut dispatch::Dispatch::new(
-                ctx, frame, registers, heap, stack,
+            let ret = frame.dispatcher.dispatch_loop(&mut dispatch::Dispatch::new(
+                ctx,
+                frame.closure,
+                &mut frame.this,
+                &mut frame.other,
+                registers,
+                heap,
+                stack,
             ));
-            frame.pc = dispatcher.pc();
 
             let mut error = None;
             match ret {
@@ -589,7 +621,7 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         match function {
                             Function::Closure(closure) => {
-                                assert!(closure.prototype().used_registers() <= 256);
+                                debug_assert!(closure.prototype().used_registers() <= 256);
 
                                 let mut this = frame.this;
                                 let mut other = frame.other;
@@ -598,8 +630,9 @@ impl<'gc> ThreadState<'gc> {
                                     this = closure.this();
                                 }
 
-                                // We only preserve the registers that the prototype claims to use,
-                                // resize registers to be 256 above the registers we are preserving.
+                                // We only need to preserve the registers that the prototype claims
+                                // to use, so resize the registers vec to be 256 above the registers
+                                // we are preserving.
                                 let register_bottom = frame.register_bottom
                                     + frame.closure.prototype().used_registers();
                                 self.registers
@@ -617,7 +650,10 @@ impl<'gc> ThreadState<'gc> {
                                     register_bottom,
                                     stack_bottom,
                                     heap_bottom,
-                                    pc: 0,
+                                    dispatcher: instructions::Dispatcher::new(
+                                        closure.prototype().bytecode(),
+                                        0,
+                                    ),
                                 }));
                             }
                             Function::Callback(callback) => {
@@ -639,10 +675,10 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
                     dispatch::Next::Return { returns_bottom } => {
-                        // Clear the registers and heap values for this frame.
-                        self.registers.truncate(frame.register_bottom);
-                        self.registers
-                            .resize(frame.register_bottom + 256, Value::Undefined);
+                        // The registers vector will be resized at the beginning of the next loop to
+                        // be 256 above the lower frame's `register_bottom`.
+
+                        // Clear the heap values for this frame.
                         self.heap.truncate(frame.heap_bottom);
 
                         // Drain everything on the stack up until the returns.

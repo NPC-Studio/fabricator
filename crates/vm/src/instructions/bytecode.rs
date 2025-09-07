@@ -4,7 +4,7 @@ use std::{
     ops::ControlFlow,
 };
 
-use gc_arena::Collect;
+use gc_arena::{Collect, Gc};
 use thiserror::Error;
 
 use crate::{
@@ -143,19 +143,23 @@ impl ByteCode {
     }
 
     /// Return the count of encoded instructions.
+    #[inline]
     pub fn instruction_len(&self) -> usize {
         self.inst_byte_positions.len()
     }
 
+    #[inline]
     pub fn instruction(&self, inst_index: usize) -> Instruction {
         let pc = self.inst_byte_positions[inst_index];
         unsafe { self.decode_instruction_at(pc) }
     }
 
+    #[inline]
     pub fn span(&self, inst_index: usize) -> Span {
         self.inst_spans[inst_index]
     }
 
+    #[inline]
     pub fn pc_for_instruction_index(&self, inst_index: usize) -> usize {
         self.inst_byte_positions[inst_index]
     }
@@ -231,12 +235,15 @@ impl fmt::Debug for ByteCode {
 /// Highly unsafe internally and relies on `ByteCode` being built correctly for soundness. Since
 /// it is only possible to build `ByteCode` in-memory by validating a sequence of [`Instruction`]s,
 /// this can provide a completely safe interface to highly optimized instruction dispatch.
-pub struct Dispatcher<'a> {
-    bytecode: &'a ByteCode,
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct Dispatcher<'gc> {
+    bytecode: Gc<'gc, ByteCode>,
+    #[collect(require_static)]
     ptr: *const MaybeUninit<u8>,
 }
 
-impl<'a> Dispatcher<'a> {
+impl<'gc> Dispatcher<'gc> {
     /// Construct a new `Dispatcher` for the given bytecode, restoring the given `pc` program
     /// counter.
     ///
@@ -245,8 +252,12 @@ impl<'a> Dispatcher<'a> {
     /// Panics if given a program counter that does not fall on an instruction start point. `0` is
     /// always a valid program counter for the starting instruction.
     #[inline]
-    pub fn new(bytecode: &'a ByteCode, pc: usize) -> Self {
-        assert!(pc == bytecode.bytes.len() || bytecode.instruction_index_for_pc(pc).is_some());
+    pub fn new(bytecode: Gc<'gc, ByteCode>, pc: usize) -> Self {
+        assert!(
+            pc == 0
+                || pc == bytecode.bytes.len()
+                || bytecode.instruction_index_for_pc(pc).is_some()
+        );
         Self {
             bytecode,
             ptr: unsafe { bytecode.bytes.as_ptr().add(pc) },
@@ -254,8 +265,14 @@ impl<'a> Dispatcher<'a> {
     }
 
     #[inline]
-    pub fn bytecode(&self) -> &'a ByteCode {
+    pub fn bytecode(&self) -> Gc<'gc, ByteCode> {
         self.bytecode
+    }
+
+    /// Returns true if this `Dispatcher` has reached the end of the bytecode.
+    #[inline]
+    pub fn at_end(&self) -> bool {
+        self.pc() == self.bytecode.bytes.len()
     }
 
     /// Returns the current program counter.
@@ -269,9 +286,12 @@ impl<'a> Dispatcher<'a> {
         unsafe { self.ptr.offset_from(self.bytecode.bytes.as_ptr()) as usize }
     }
 
-    /// Returns true if this `Dispatcher` has reached the end of bytecode.
-    pub fn at_end(&self) -> bool {
-        self.pc() == self.bytecode.bytes.len()
+    /// Returns the current instruction index.
+    ///
+    /// This will always return `Some` unless the dispatcher has reached the end of the bytecode.
+    #[inline]
+    pub fn instruction_index(&self) -> Option<usize> {
+        self.bytecode.instruction_index_for_pc(self.pc())
     }
 
     /// Dispatch instructions to the given [`Dispatch`] impl.
@@ -279,7 +299,6 @@ impl<'a> Dispatcher<'a> {
     /// # Panics
     ///
     /// Panics if `Self::at_end()` returns true.
-    #[inline]
     pub fn dispatch_loop<D: Dispatch>(&mut self, dispatch: &mut D) -> Result<D::Break, D::Error> {
         assert!(
             self.pc() != self.bytecode.bytes.len(),
