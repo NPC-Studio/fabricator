@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::{
     FromMultiValue, TypeError,
     callback::Callback,
-    closure::{Closure, HeapVar, SharedValue},
+    closure::{Closure, SharedValue},
     debug::LineNumber,
     error::{Error, ExternError, RawGc, RuntimeError},
     instructions,
@@ -512,28 +512,6 @@ impl<'gc> ThreadState<'gc> {
         mut initial_other: Value<'gc>,
         initial_stack_bottom: usize,
     ) -> Result<(), VmError<'gc>> {
-        #[inline]
-        fn grow_heap<'gc>(
-            heap: &mut Vec<OwnedHeapVar<'gc>>,
-            heap_bottom: usize,
-            closure: Closure<'gc>,
-        ) {
-            if let Some(max_idx) = closure
-                .heap()
-                .iter()
-                .filter_map(|h| {
-                    if let &HeapVar::Owned(idx) = h {
-                        Some(heap_bottom + idx as usize)
-                    } else {
-                        None
-                    }
-                })
-                .max()
-            {
-                heap.resize_with(max_idx + 1, || OwnedHeapVar::unique(Value::Undefined));
-            }
-        }
-
         let bottom_frame = self.frames.len();
 
         if !initial_closure.this().is_undefined() {
@@ -546,7 +524,10 @@ impl<'gc> ThreadState<'gc> {
             // Registers are resized at the beginning of the bytecode dispatch.
 
             let heap_bottom = self.heap.len();
-            grow_heap(&mut self.heap, heap_bottom, initial_closure);
+            self.heap.resize_with(
+                heap_bottom + initial_closure.prototype().owned_heap(),
+                || OwnedHeapVar::unique(Value::Undefined),
+            );
 
             Frame::Closure(ClosureFrame {
                 closure: initial_closure,
@@ -621,8 +602,6 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         match function {
                             Function::Closure(closure) => {
-                                debug_assert!(closure.prototype().used_registers() <= 256);
-
                                 let mut this = frame.this;
                                 let mut other = frame.other;
                                 if !closure.this().is_undefined() {
@@ -633,13 +612,17 @@ impl<'gc> ThreadState<'gc> {
                                 // We only need to preserve the registers that the prototype claims
                                 // to use, so resize the registers vec to be 256 above the registers
                                 // we are preserving.
+                                debug_assert!(closure.prototype().used_registers() <= 256);
                                 let register_bottom = frame.register_bottom
                                     + frame.closure.prototype().used_registers();
 
                                 let stack_bottom = frame.stack_bottom + args_bottom;
 
                                 let heap_bottom = self.heap.len();
-                                grow_heap(&mut self.heap, heap_bottom, closure);
+                                self.heap.resize_with(
+                                    heap_bottom + closure.prototype().owned_heap(),
+                                    || OwnedHeapVar::unique(Value::Undefined),
+                                );
 
                                 self.frames.push(Frame::Closure(ClosureFrame {
                                     closure,

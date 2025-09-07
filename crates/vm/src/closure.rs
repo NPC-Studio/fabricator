@@ -65,6 +65,8 @@ pub enum HeapVarDescriptor {
 
 #[derive(Debug, Error)]
 pub enum PrototypeVerificationError {
+    #[error("static index {0} is out of range of the list of static variables")]
+    BadStaticIdx(HeapIdx),
     #[error("inner prototype has an invalid upvalue idx {0}, for prototype {1}")]
     BadUpValueIdx(HeapIdx, usize),
     #[error("register index {0} is not in range of `used_registers` at instruction {1}")]
@@ -97,6 +99,7 @@ pub struct Prototype<'gc> {
     static_vars: Box<[SharedValue<'gc>]>,
     heap_vars: Box<[HeapVarDescriptor]>,
     used_registers: usize,
+    owned_heap: usize,
     constructor_super: Gc<'gc, Lock<Option<Object<'gc>>>>,
 }
 
@@ -113,6 +116,21 @@ impl<'gc> Prototype<'gc> {
         heap_vars: Box<[HeapVarDescriptor]>,
         used_registers: usize,
     ) -> Result<Self, PrototypeVerificationError> {
+        let mut owned_heap = 0;
+        for &heap_var in &heap_vars {
+            match heap_var {
+                HeapVarDescriptor::Owned(idx) => {
+                    owned_heap = owned_heap.max(idx as usize + 1);
+                }
+                HeapVarDescriptor::Static(idx) => {
+                    if idx as usize >= static_vars.len() {
+                        return Err(PrototypeVerificationError::BadStaticIdx(idx));
+                    }
+                }
+                HeapVarDescriptor::UpValue(_) => {}
+            }
+        }
+
         for (inner_proto_idx, inner) in prototypes.iter().enumerate() {
             for &inner_heap_var in &inner.heap_vars {
                 match inner_heap_var {
@@ -430,6 +448,7 @@ impl<'gc> Prototype<'gc> {
             static_vars,
             heap_vars,
             used_registers,
+            owned_heap,
             constructor_super,
         })
     }
@@ -503,6 +522,14 @@ impl<'gc> Prototype<'gc> {
     #[inline]
     pub fn used_registers(&self) -> usize {
         self.used_registers
+    }
+
+    /// Returns the required length for a buffer of owned heap values for this prototype.
+    ///
+    /// This will return 1 + the maximum "slot" used by any `HeapVarDescriptor::Owned` variable.
+    #[inline]
+    pub fn owned_heap(&self) -> usize {
+        self.owned_heap
     }
 
     pub fn has_upvalues(&self) -> bool {
