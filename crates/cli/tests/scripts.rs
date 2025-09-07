@@ -36,7 +36,11 @@ pub fn testing_stdlib<'gc>(ctx: vm::Context<'gc>) -> Gc<'gc, vm::MagicSet<'gc>> 
     Gc::new(&ctx, lib)
 }
 
-fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, Box<dyn Error>> {
+fn run_code(
+    name: &str,
+    code: &str,
+    compile_settings: compiler::CompileSettings,
+) -> Result<bool, Box<dyn Error>> {
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
@@ -44,19 +48,15 @@ fn run_code(name: &str, code: &str, compat: bool) -> Result<bool, Box<dyn Error>
             ctx,
             "default",
             compiler::ImportItems::from_magic(testing_stdlib(ctx)),
-            if compat {
-                compiler::CompileSettings::compat()
-            } else {
-                compiler::CompileSettings::modern()
-            },
+            compile_settings,
             name,
             code,
         )?;
         let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
-        let res = thread.exec(ctx, closure)?;
-        Ok(res.len() == 1 && res[0] == vm::Value::Boolean(true))
+        let res = thread.eval::<vm::Value>(ctx, closure)?;
+        Ok(res == vm::Value::Boolean(true))
     })
 }
 
@@ -73,7 +73,11 @@ fn run_tests(dir: &str) -> bool {
                 match run_code(
                     path.to_string_lossy().as_ref(),
                     &code,
-                    ext.eq_ignore_ascii_case("gml"),
+                    if ext.eq_ignore_ascii_case("gml") {
+                        compiler::CompileSettings::compat()
+                    } else {
+                        compiler::CompileSettings::modern()
+                    },
                 ) {
                     Ok(ret_true) => {
                         if !ret_true {

@@ -1,9 +1,14 @@
-use std::{error::Error as StdError, fmt, ops, sync::Arc};
+mod raw_gc;
+mod runtime_error;
 
-use gc_arena::{Collect, Gc};
+use std::{error::Error as StdError, fmt};
+
+use gc_arena::Collect;
 use thiserror::Error;
 
 use crate::{interpreter::Context, string::SharedStr, userdata::UserData, value::Value};
+
+pub use self::{raw_gc::RawGc, runtime_error::RuntimeError};
 
 /// An error raised directly from FML which contains a `Value`.
 ///
@@ -37,30 +42,6 @@ impl<'gc> ScriptError<'gc> {
         self.into()
     }
 }
-
-/// A raw pointer to a Gc object that can be exported outside of the Gc context.
-///
-/// This is safe to use and construct, but dereferencing the held pointer in any way is wildly
-/// unsafe.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct RawGc(pub *const ());
-
-impl fmt::Display for RawGc {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:p}", self.0)
-    }
-}
-
-impl RawGc {
-    pub fn new<'gc, T>(gc: Gc<'gc, T>) -> Self {
-        Self(Gc::as_ptr(gc) as *const ())
-    }
-}
-
-// SAFETY: The pointer held in `RawGc` needs to be held in error types which must be `Send` and is
-// mostly just informative. If it is dereferenced, it is entirely up to the user to make this sound.
-unsafe impl Send for RawGc {}
-unsafe impl Sync for RawGc {}
 
 /// An external representation of a [`Value`], useful for errors.
 ///
@@ -154,90 +135,6 @@ pub struct ExternScriptError(pub ExternValue);
 impl<'gc> From<ScriptError<'gc>> for ExternScriptError {
     fn from(error: ScriptError<'gc>) -> Self {
         ExternScriptError(error.to_value().into())
-    }
-}
-
-/// A shareable, dynamically typed wrapper around a normal Rust error.
-///
-/// Rust errors can be caught and re-raised through FML which allows for unrestricted sharing, so
-/// this type contains its error inside an `Arc` pointer to allow for this.
-#[derive(Debug, Clone, Collect)]
-#[collect(require_static)]
-pub struct RuntimeError(pub Arc<dyn StdError + Send + Sync + 'static>);
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<E: StdError + Send + Sync + 'static> From<E> for RuntimeError {
-    fn from(err: E) -> Self {
-        Self::new(err)
-    }
-}
-
-impl ops::Deref for RuntimeError {
-    type Target = dyn StdError + Send + Sync + 'static;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<dyn StdError + Send + Sync + 'static> for RuntimeError {
-    fn as_ref(&self) -> &(dyn StdError + Send + Sync + 'static) {
-        self.0.as_ref()
-    }
-}
-
-impl RuntimeError {
-    pub fn new(err: impl StdError + Send + Sync + 'static) -> Self {
-        Self(Arc::new(err))
-    }
-
-    pub fn from_boxed(boxed_err: Box<dyn StdError + Send + Sync + 'static>) -> Self {
-        struct BoxErr(Box<dyn StdError + Send + Sync + 'static>);
-
-        impl fmt::Debug for BoxErr {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl fmt::Display for BoxErr {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl StdError for BoxErr {
-            fn source(&self) -> Option<&(dyn StdError + 'static)> {
-                self.0.source()
-            }
-        }
-
-        Self::new(BoxErr(boxed_err.into()))
-    }
-
-    pub fn msg<M: fmt::Display + fmt::Debug + Send + Sync + 'static>(message: M) -> Self {
-        struct MsgErr<M>(M);
-
-        impl<M: fmt::Debug> fmt::Debug for MsgErr<M> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl<M: fmt::Display> fmt::Display for MsgErr<M> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl<M: fmt::Display + fmt::Debug> StdError for MsgErr<M> {}
-
-        Self::new(MsgErr(message))
     }
 }
 

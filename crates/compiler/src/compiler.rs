@@ -131,17 +131,17 @@ impl vm::debug::ChunkData for SourceChunk {
 
 #[derive(Debug, Error)]
 pub enum IrVerificationError {
-    #[error(transparent)]
+    #[error("{0}")]
     ReferenceVerification(#[from] ReferenceVerificationError),
-    #[error(transparent)]
+    #[error("{0}")]
     ArgumentVerification(#[from] ArgumentVerificationError),
-    #[error(transparent)]
+    #[error("{0}")]
     InstructionVerification(#[from] InstructionVerificationError),
-    #[error(transparent)]
+    #[error("{0}")]
     ShadowVerification(#[from] ShadowVerificationError),
-    #[error(transparent)]
+    #[error("{0}")]
     VariableVerification(#[from] VariableVerificationError),
-    #[error(transparent)]
+    #[error("{0}")]
     ThisScopeVerification(#[from] ThisScopeVerificationError),
 }
 

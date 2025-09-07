@@ -14,7 +14,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProtoGenError {
-    #[error(transparent)]
+    #[error("{0}")]
     ByteCodeEncoding(#[from] instructions::ByteCodeEncodingError),
     #[error("too many registers used")]
     RegisterOverflow,

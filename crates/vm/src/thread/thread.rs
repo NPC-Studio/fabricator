@@ -4,6 +4,7 @@ use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 use thiserror::Error;
 
 use crate::{
+    FromMultiValue, TypeError,
     callback::Callback,
     closure::{Closure, HeapVar, SharedValue},
     debug::LineNumber,
@@ -87,6 +88,14 @@ impl fmt::Display for ExternVmError {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum EvalError {
+    #[error("{0}")]
+    Exec(#[from] ExternVmError),
+    #[error("{0}")]
+    Conversion(#[from] TypeError),
+}
+
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
@@ -126,12 +135,11 @@ impl<'gc> Thread<'gc> {
     }
 
     /// Calls `Thread::exec_with` with `this` and `other` set to `ctx.globals()`.
-    pub fn exec(
-        self,
-        ctx: Context<'gc>,
-        closure: Closure<'gc>,
-    ) -> Result<Vec<Value<'gc>>, ExternVmError> {
-        self.exec_with(ctx, closure, ctx.globals().into(), ctx.globals().into())
+    pub fn exec(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<(), ExternVmError> {
+        self.eval::<()>(ctx, closure).map_err(|e| match e {
+            EvalError::Exec(vm_err) => vm_err,
+            EvalError::Conversion(_) => unreachable!(),
+        })
     }
 
     /// Execute a closure on this `Thread` with the given values of `this` and `other`.
@@ -141,13 +149,38 @@ impl<'gc> Thread<'gc> {
         closure: Closure<'gc>,
         this: Value<'gc>,
         other: Value<'gc>,
-    ) -> Result<Vec<Value<'gc>>, ExternVmError> {
-        self.with_inner(&ctx, |state| {
+    ) -> Result<(), ExternVmError> {
+        self.eval_with::<()>(ctx, closure, this, other)
+            .map_err(|e| match e {
+                EvalError::Exec(vm_err) => vm_err,
+                EvalError::Conversion(_) => unreachable!(),
+            })
+    }
+
+    /// Calls `Thread::eval_with` with `this` and `other` set to `ctx.globals()`.
+    pub fn eval<R: FromMultiValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        closure: Closure<'gc>,
+    ) -> Result<R, EvalError> {
+        self.eval_with(ctx, closure, ctx.globals().into(), ctx.globals().into())
+    }
+
+    /// Execute a closure on this `Thread` with the given values of `this` and `other` and return
+    /// the values returned by the closure.
+    pub fn eval_with<R: FromMultiValue<'gc>>(
+        self,
+        ctx: Context<'gc>,
+        closure: Closure<'gc>,
+        this: Value<'gc>,
+        other: Value<'gc>,
+    ) -> Result<R, EvalError> {
+        self.with_state(&ctx, |state| -> Result<R, EvalError> {
             state
                 .call(ctx, closure, this, other, 0)
                 .map_err(VmError::into_extern)?;
 
-            Ok(state.stack.drain(..).collect())
+            Ok(R::from_multi_value(ctx, state.stack.drain(..))?)
         })
     }
 
@@ -155,7 +188,7 @@ impl<'gc> Thread<'gc> {
     ///
     /// The provided `Execution` will have the `this` and `other` set to `ctx.globals()`.
     pub fn with_exec<R>(self, ctx: Context<'gc>, f: impl FnOnce(Execution<'gc, '_>) -> R) -> R {
-        self.with_inner(&ctx, |state| {
+        self.with_state(&ctx, |state| {
             f(Execution {
                 thread: state,
                 stack_bottom: 0,
@@ -165,7 +198,7 @@ impl<'gc> Thread<'gc> {
         })
     }
 
-    fn with_inner<R>(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut ThreadState<'gc>) -> R) -> R {
+    fn with_state<R>(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut ThreadState<'gc>) -> R) -> R {
         let mut thread = self.0.try_borrow_mut(mc).expect("thread locked");
         assert!(
             thread.frames.is_empty()

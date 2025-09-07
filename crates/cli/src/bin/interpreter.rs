@@ -170,7 +170,7 @@ fn main() -> Result<ExitCode, Error> {
                                     vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
                                 let thread = ctx.fetch(&thread);
-                                match thread.exec(ctx, closure) {
+                                match thread.eval::<vm::Variadic<Vec<vm::Value>>>(ctx, closure) {
                                     Ok(ret) => {
                                         if !ret.is_empty() {
                                             let mut ret_iter = ret.iter().peekable();
