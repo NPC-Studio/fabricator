@@ -572,10 +572,10 @@ impl<'gc> ThreadState<'gc> {
             // returns.
             //
             // On a call, the next frames `register_bottom` value is set to the calling frame's
-            // `register_bottom` value plus the `used_registers` for the calling prototype. At this
-            // time, the register vector is resized to be 256 above the new bottom. After a return,
-            // at the beginning of the next loop (right below), the registers vector is resized to
-            // be 256 above the *previous* `register_bottom`.
+            // `register_bottom` value plus the `used_registers` for the calling prototype. At the
+            // beginning of the next loop (right below), the register vector is resized to be 256
+            // above the new bottom. After a return, the registers vector is resized to be 256 above
+            // the *previous* `register_bottom`.
             //
             // In this way, there is always the expected slice of 256 registers for the top script
             // frame. Additionally, the amount that the registers vector is resized is minimal:
@@ -635,8 +635,6 @@ impl<'gc> ThreadState<'gc> {
                                 // we are preserving.
                                 let register_bottom = frame.register_bottom
                                     + frame.closure.prototype().used_registers();
-                                self.registers
-                                    .resize(register_bottom + 256, Value::Undefined);
 
                                 let stack_bottom = frame.stack_bottom + args_bottom;
 
@@ -678,12 +676,12 @@ impl<'gc> ThreadState<'gc> {
                         // The registers vector will be resized at the beginning of the next loop to
                         // be 256 above the lower frame's `register_bottom`.
 
-                        // Clear the heap values for this frame.
-                        self.heap.truncate(frame.heap_bottom);
-
                         // Drain everything on the stack up until the returns.
                         self.stack
                             .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
+
+                        // Clear the heap values for this frame.
+                        self.heap.truncate(frame.heap_bottom);
 
                         // Pop the returning frame.
                         self.frames.pop().unwrap();
