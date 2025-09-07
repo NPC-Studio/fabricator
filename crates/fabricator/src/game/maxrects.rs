@@ -36,6 +36,7 @@ where
         let MaxRects { size, mut to_place } = self;
         let mut working = (0..to_place.len()).collect::<Vec<_>>();
         let mut free_rects = vec![Box2::with_size(Vec2::zero(), size)];
+        let mut split_free_rects = Vec::new();
 
         loop {
             let mut best_placement = None;
@@ -56,10 +57,7 @@ where
                             long_leftover: max(leftover_horiz, leftover_vert),
                         };
 
-                        if placement
-                            .map(|(_, score)| fit_score < score)
-                            .unwrap_or(true)
-                        {
+                        if placement.is_none_or(|(_, score)| fit_score < score) {
                             placement = Some((free_idx, fit_score));
                         }
                     }
@@ -83,8 +81,6 @@ where
                 let place_idx = working.swap_remove(working_idx);
                 let place_rect = Box2::with_size(min, to_place[place_idx].size);
 
-                // This will also loop over any free rects added during the loop, even though we
-                // know all added free rects added must not intersect the placed rect.
                 let mut free_idx = 0;
                 while free_idx < free_rects.len() {
                     if free_rects[free_idx].intersects(place_rect) {
@@ -92,27 +88,28 @@ where
                         if intersect_free.min[0] < place_rect.min[0] {
                             let mut left = intersect_free;
                             left.max[0] = place_rect.min[0];
-                            free_rects.push(left);
+                            split_free_rects.push(left);
                         }
                         if intersect_free.max[0] > place_rect.max[0] {
                             let mut right = intersect_free;
                             right.min[0] = place_rect.max[0];
-                            free_rects.push(right);
+                            split_free_rects.push(right);
                         }
                         if intersect_free.min[1] < place_rect.min[1] {
                             let mut top = intersect_free;
                             top.max[1] = place_rect.min[1];
-                            free_rects.push(top);
+                            split_free_rects.push(top);
                         }
                         if intersect_free.max[1] > place_rect.max[1] {
                             let mut bottom = intersect_free;
                             bottom.min[1] = place_rect.max[1];
-                            free_rects.push(bottom);
+                            split_free_rects.push(bottom);
                         }
                     } else {
                         free_idx += 1;
                     }
                 }
+                free_rects.extend(split_free_rects.drain(..));
 
                 remove_redundant_rects(&mut free_rects);
 

@@ -489,7 +489,10 @@ fn compute_texture_pages(
                 texture_pages.push(texture_page);
             }
 
-            log::info!("finished packing textures for group {group_name}");
+            log::info!(
+                "finished packing textures for group {group_name} with {} texture pages",
+                texture_pages.len()
+            );
 
             Ok(texture_pages)
         })

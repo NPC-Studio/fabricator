@@ -72,7 +72,7 @@ impl AppState {
             SecondaryMap::<fab::TexturePageId, wgpu::BindGroup>::new();
 
         let parameters_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("UI element parameters buffer"),
+            label: Some("parameters buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             size: mem::size_of::<pipeline::ParametersUniform>() as u64,
             mapped_at_creation: false,
