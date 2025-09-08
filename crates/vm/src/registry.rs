@@ -1,6 +1,7 @@
-use std::{any::TypeId, collections::HashMap};
+use std::any::TypeId;
 
 use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, RefLock, Rootable, arena::Root};
+use rustc_hash::FxHashMap;
 
 use crate::{
     any::Any,
@@ -23,14 +24,14 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons: Gc<'gc, RefLock<HashMap<TypeId, Option<Any<'gc>>>>>,
+    singletons: Gc<'gc, RefLock<FxHashMap<TypeId, Option<Any<'gc>>>>>,
 }
 
 impl<'gc> Registry<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             roots: DynamicRootSet::new(mc),
-            singletons: Gc::new(mc, RefLock::new(HashMap::new())),
+            singletons: Gc::new(mc, Default::default()),
         }
     }
 
