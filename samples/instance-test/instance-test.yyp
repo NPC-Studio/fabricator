@@ -29,9 +29,7 @@
   "IncludedFiles":[],
   "isEcma":false,
   "LibraryEmitters":[],
-  "MetaData":{
-    "IDEVersion":"2024.11.0.179",
-  },
+  "MetaData":{},
   "name":"instance-test",
   "resources":[
     {"id":{"name":"obj_a","path":"objects/obj_a/obj_a.yy",},},

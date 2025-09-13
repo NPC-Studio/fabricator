@@ -29,9 +29,7 @@
   "IncludedFiles":[],
   "isEcma":false,
   "LibraryEmitters":[],
-  "MetaData":{
-    "IDEVersion":"2024.11.0.179",
-  },
+  "MetaData":{},
   "name":"animation-test",
   "resources":[
     {"id":{"name":"obj_square","path":"objects/obj_square/obj_square.yy",},},
