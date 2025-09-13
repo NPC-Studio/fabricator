@@ -15,4 +15,4 @@ pub mod parser;
 pub mod string_interner;
 pub mod tokens;
 
-pub use compiler::{CompileError, CompileSettings, Compiler, ImportItems};
+pub use self::compiler::{CompileError, CompileSettings, Compiler, ImportItems};

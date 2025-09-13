@@ -30,7 +30,11 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     );
 
     let string_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let string: vm::String = exec.stack().consume(ctx)?;
+        let string: vm::Value = exec.stack().consume(ctx)?;
+        let string = string.coerce_string(ctx).ok_or_else(|| vm::TypeError {
+            expected: "value coercible to string",
+            found: string.type_name(),
+        })?;
         exec.stack().replace(ctx, string.chars().count() as isize);
         Ok(())
     });

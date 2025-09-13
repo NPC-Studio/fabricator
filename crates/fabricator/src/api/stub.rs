@@ -50,13 +50,15 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         "game_project_name",
         ctx.intern("fabricator-project"),
     );
-
-    create_stub_callback(ctx, &mut magic, "randomize", []);
     create_stub_callback(ctx, &mut magic, "gc_collect", []);
     create_stub_callback(ctx, &mut magic, "gc_enable", []);
+    create_stub_callback(ctx, &mut magic, "exception_unhandled_handler", []);
+
+    create_stub_callback(ctx, &mut magic, "randomize", []);
     create_stub_callback(ctx, &mut magic, "buffer_save", []);
     create_stub_callback(ctx, &mut magic, "file_rename", [true.into()]);
     create_stub_callback(ctx, &mut magic, "directory_exists", [true.into()]);
+    create_stub_callback(ctx, &mut magic, "directory_destroy", [true.into()]);
     create_stub_callback(ctx, &mut magic, "file_find_first", [ctx.intern("").into()]);
     create_stub_callback(ctx, &mut magic, "file_find_close", []);
 
@@ -78,6 +80,7 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     create_stub_callback(ctx, &mut magic, "surface_get_height", [768.into()]);
     create_stub_callback(ctx, &mut magic, "surface_depth_disable", []);
     create_stub_callback(ctx, &mut magic, "surface_free", []);
+    create_stub_callback(ctx, &mut magic, "surface_resize", []);
     create_stub_callback(
         ctx,
         &mut magic,

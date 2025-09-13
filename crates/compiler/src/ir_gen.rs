@@ -108,10 +108,6 @@ pub struct IrGenSettings {
     /// variables.
     pub allow_constructors: bool,
 
-    /// Allow `function` statements not at the top-level of a script file which do *not* act as
-    /// an export. Instead, they are interpreted as `self.func_name = function(...) { ... }`.
-    pub allow_non_top_level_func_stmt: bool,
-
     /// Allow `try {} catch(e) {}` blocks.
     ///
     /// These desugar to the equivalent of creating an inner closure and calling it with `pcall`.
@@ -128,7 +124,6 @@ impl IrGenSettings {
             block_scoping: true,
             closures: true,
             allow_constructors: false,
-            allow_non_top_level_func_stmt: false,
             allow_try_catch_blocks: false,
         }
     }
@@ -138,7 +133,6 @@ impl IrGenSettings {
             block_scoping: false,
             closures: false,
             allow_constructors: true,
-            allow_non_top_level_func_stmt: true,
             allow_try_catch_blocks: true,
         }
     }
@@ -702,13 +696,6 @@ where
                 span: enum_stmt.span,
             }),
             ast::Statement::Function(func_stmt) => {
-                if !self.settings.allow_non_top_level_func_stmt {
-                    return Err(IrGenError {
-                        kind: IrGenErrorKind::MisplacedExport,
-                        span: func_stmt.span,
-                    });
-                }
-
                 let allow_constructors = self.settings.allow_constructors;
                 let mut compiler = self.start_inner_function(
                     FunctionRef::Named(SharedStr::new(func_stmt.name.as_ref()), func_stmt.span),

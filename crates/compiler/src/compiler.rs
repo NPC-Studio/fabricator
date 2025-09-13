@@ -27,7 +27,7 @@ use crate::{
     },
     code_gen::{Prototype, gen_prototype},
     enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
-    exports::{DuplicateExportError, Export, ExportSet},
+    exports::{DuplicateExportError, Export, ExportSet, ExportSettings},
     ir,
     ir_gen::{FreeVarMode, IrGenError, IrGenSettings, VarDict},
     lexer::{LexError, Lexer},
@@ -76,6 +76,7 @@ pub struct CompileSettings {
     pub parse: ParseSettings,
     pub ir_gen: IrGenSettings,
     pub optimization_passes: u8,
+    pub export_top_level_functions: bool,
 }
 
 impl CompileSettings {
@@ -84,6 +85,7 @@ impl CompileSettings {
             parse: ParseSettings::compat(),
             ir_gen: IrGenSettings::compat(),
             optimization_passes: 2,
+            export_top_level_functions: true,
         }
     }
 
@@ -92,6 +94,7 @@ impl CompileSettings {
             parse: ParseSettings::strict(),
             ir_gen: IrGenSettings::modern(),
             optimization_passes: 2,
+            export_top_level_functions: true,
         }
     }
 
@@ -110,6 +113,11 @@ impl CompileSettings {
 
     pub fn set_optimization_passes(mut self, passes: u8) -> Self {
         self.optimization_passes = passes;
+        self
+    }
+
+    pub fn export_top_level_functions(mut self, export_top_funcs: bool) -> Self {
+        self.export_top_level_functions = export_top_funcs;
         self
     }
 }
@@ -295,7 +303,7 @@ impl<'gc> Compiler<'gc> {
         ctx: vm::Context<'gc>,
         config: impl Into<String>,
         imports: ImportItems<'gc>,
-        settings: CompileSettings,
+        compile_settings: CompileSettings,
         chunk_name: impl Into<String>,
         code: &str,
     ) -> Result<
@@ -307,7 +315,7 @@ impl<'gc> Compiler<'gc> {
         CompileError,
     > {
         let mut this = Self::new(ctx, config, imports);
-        this.add_chunk(settings, chunk_name, code)?;
+        this.add_chunk(compile_settings, chunk_name, code)?;
         let (mut outputs, imports, debug_output) = this.compile()?;
         Ok((outputs.pop().unwrap(), imports, debug_output))
     }
@@ -556,11 +564,16 @@ impl<'gc> Compiler<'gc> {
 
         let stub_magic = vm::MagicConstant::new_ptr(&ctx, vm::Value::Undefined);
 
-        for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
+        for &mut (chunk, ref mut block, settings) in &mut parsed_chunks {
             let prev_exports_len = exports.len();
             export_chunk_indexes.push(prev_exports_len);
 
-            if let Err(err) = exports.extract(block) {
+            if let Err(err) = exports.extract(
+                block,
+                ExportSettings {
+                    export_top_level_functions: settings.export_top_level_functions,
+                },
+            ) {
                 let line_number = chunk.line_number(err.span.start());
                 return Err(CompileError {
                     kind: CompileErrorKind::DuplicateExport(err),

@@ -12,6 +12,22 @@ pub struct DuplicateExportError {
     pub span: Span,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct ExportSettings {
+    /// If `true`, then all top-level functions are interpreted as magic exports and NOT normal
+    /// function statements. Such functions must be completely independent from their surrounding
+    /// script and are compiled as their own chunk.
+    pub export_top_level_functions: bool,
+}
+
+impl Default for ExportSettings {
+    fn default() -> Self {
+        Self {
+            export_top_level_functions: true,
+        }
+    }
+}
+
 pub enum Export<S> {
     Function(ast::FunctionStmt<S>),
     GlobalVar(ast::Ident<S>),
@@ -92,12 +108,15 @@ impl<S: Eq + Hash> ExportSet<S> {
 
 impl<S: Clone + Eq + Hash> ExportSet<S> {
     /// Extract all top-level exports from a block.
-    pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), DuplicateExportError> {
-        let exports = block.statements.extract_if(.., |s| {
-            matches!(
-                s,
-                ast::Statement::Function(_) | ast::Statement::GlobalVar(_)
-            )
+    pub fn extract(
+        &mut self,
+        block: &mut ast::Block<S>,
+        settings: ExportSettings,
+    ) -> Result<(), DuplicateExportError> {
+        let exports = block.statements.extract_if(.., |s| match s {
+            ast::Statement::Function(_) if settings.export_top_level_functions => true,
+            ast::Statement::GlobalVar(_) => true,
+            _ => false,
         });
 
         for stmt in exports {

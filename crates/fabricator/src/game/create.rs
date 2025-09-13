@@ -384,7 +384,8 @@ fn load_scripts(
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Modern => compiler::CompileSettings::modern(),
-                    },
+                    }
+                    .export_top_level_functions(false),
                     name.into_owned(),
                     &code_buf,
                 )?;
