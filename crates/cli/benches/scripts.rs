@@ -32,10 +32,13 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
             interpreter.enter(|ctx| {
                 let thread = ctx.fetch(&thread);
                 let closure = ctx.fetch(&closure);
-                let ret_val = thread
-                    .eval::<vm::Value>(ctx, closure)
-                    .expect("execution error");
-                assert!(ret_val == vm::Value::Boolean(true));
+                thread.with_exec(ctx, |mut exec| {
+                    exec.call_closure(ctx, closure).expect("execution error");
+                    assert!(
+                        exec.stack().get(0) == vm::Value::Boolean(true),
+                        "script did not return `true`"
+                    );
+                });
             });
         });
     });

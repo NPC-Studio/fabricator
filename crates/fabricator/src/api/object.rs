@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use fabricator_collision::bound_box_tree::BoundBoxQuery;
 use fabricator_math::{Box2, Vec2};
 use fabricator_vm as vm;
@@ -241,10 +239,10 @@ pub fn object_api<'gc>(
 
         let object = ObjectUserData::downcast(object)?;
 
-        let (create_script, instance_id, instance_ud) = State::ctx_with_mut(ctx, |state| {
+        let (instance_id, instance_ud, create_script) = State::ctx_with_mut(ctx, |state| {
             let properties = vm::Object::new(&ctx);
             if let Some(set_properties) = set_properties {
-                // We only copy properties from the childmost object, the documentation of GMS2 is
+                // We only copy properties from the topmost object, the documentation of GMS2 is
                 // vague on this point.
                 //
                 // TODO: Actually check the behavior against GMS2
@@ -263,40 +261,24 @@ pub fn object_api<'gc>(
                 depth,
                 this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                 properties: ctx.stash(properties),
-                event_closures: HashMap::new(),
+                event_closures: state.scripts.event_closures(ctx, object.id),
                 animation_time: 0.0,
             });
 
-            for (&event, script) in state
-                .scripts
-                .object_events
-                .get(&object.id)
-                .into_iter()
-                .flatten()
-            {
-                if event != ObjectEvent::Create {
-                    state.instances[instance_id]
-                        .event_closures
-                        .insert(event, ctx.stash(script.create_closure(ctx)));
-                }
-            }
-
             (
-                state
-                    .scripts
-                    .object_events
-                    .get(&object.id)
-                    .and_then(|evs| evs.get(&ObjectEvent::Create))
-                    .cloned(),
                 instance_id,
                 ctx.fetch(&state.instances[instance_id].this),
+                state.instances[instance_id]
+                    .event_closures
+                    .get(&ObjectEvent::Create)
+                    .cloned(),
             )
         })?;
 
         if let Some(create_script) = create_script {
             InstanceState::ctx_cell(ctx).freeze(&InstanceState { instance_id }, || {
-                exec.with_this(instance_ud.into())
-                    .call_closure(ctx, create_script.create_closure(ctx))
+                exec.with_this(instance_ud)
+                    .call_closure(ctx, ctx.fetch(&create_script))
                     .map_err(|e| e.into_extern())
             })?;
         }
@@ -396,32 +378,56 @@ pub fn object_api<'gc>(
 
     let instance_destroy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let object_or_instance: Option<vm::UserData> = exec.stack().consume(ctx)?;
-        let object_or_instance = if let Some(obj_inst) = object_or_instance {
-            obj_inst
-        } else {
-            let instance_id = InstanceState::ctx_with(ctx, |instance| instance.instance_id)?;
-            State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?
-        };
 
-        if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
-            State::ctx_with_mut(ctx, |state| {
-                for instance in state.instances.values_mut() {
-                    if instance.object == object.id {
-                        instance.destroyed = true;
+        let mut to_destroy = Vec::new();
+        State::ctx_with(ctx, |state| {
+            let object_or_instance = if let Some(obj_inst) = object_or_instance {
+                obj_inst
+            } else {
+                let instance_id = InstanceState::ctx_with(ctx, |instance| instance.instance_id)?;
+                ctx.fetch(&state.instances[instance_id].this)
+            };
+
+            if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
+                for (instance_id, instance) in state.instances.iter() {
+                    if instance.object == object.id && !instance.destroyed {
+                        to_destroy.push(instance_id);
                     }
                 }
-            })?;
-        } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
-            State::ctx_with_mut(ctx, |state| {
-                if let Some(instance) = state.instances.get_mut(instance.id) {
-                    instance.destroyed = true;
+            } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
+                if state
+                    .instances
+                    .get(instance.id)
+                    .is_some_and(|i| !i.destroyed)
+                {
+                    to_destroy.push(instance.id);
                 }
-            })?;
-        } else {
-            return Err(vm::RuntimeError::msg(
-                "`instance_destroy` expects an object or instance",
-            ));
-        };
+            } else {
+                return Err(vm::RuntimeError::msg(
+                    "`instance_destroy` expects an object or instance",
+                ));
+            };
+
+            Ok(())
+        })??;
+
+        for instance_id in to_destroy {
+            if let Some(destroy_closure) = State::ctx_with(ctx, |state| {
+                state.instances[instance_id]
+                    .event_closures
+                    .get(&ObjectEvent::Destroy)
+                    .cloned()
+            })? {
+                let instance_ud =
+                    State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
+                exec.with_this(instance_ud)
+                    .call_closure(ctx, ctx.fetch(&destroy_closure))
+                    .map_err(|e| e.into_extern())?;
+                exec.stack().clear();
+            }
+            State::ctx_with_mut(ctx, |state| state.instances[instance_id].destroyed = true)?;
+        }
+
         Ok(())
     });
     magic

@@ -1,0 +1,1 @@
+show_debug_message("obj_room_2 destroy");

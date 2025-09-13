@@ -68,7 +68,7 @@ impl Game {
                 log::debug!("executing script {}", script.identifier(ctx));
                 let thread = ctx.fetch(&main_thread);
                 let closure = script.create_closure(ctx);
-                State::ctx_cell(ctx).freeze(&mut state, || thread.exec(ctx, closure))?;
+                State::ctx_cell(ctx).freeze(&mut state, || thread.run(ctx, closure))?;
                 Ok(())
             })?;
         }

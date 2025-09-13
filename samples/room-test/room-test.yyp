@@ -29,7 +29,9 @@
   "IncludedFiles":[],
   "isEcma":false,
   "LibraryEmitters":[],
-  "MetaData":{},
+  "MetaData":{
+    "IDEVersion":"2024.8.1.171",
+  },
   "name":"room-test",
   "resources":[
     {"id":{"name":"obj_persist","path":"objects/obj_persist/obj_persist.yy",},},

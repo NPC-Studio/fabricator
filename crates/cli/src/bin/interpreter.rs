@@ -47,7 +47,7 @@ fn main() -> Result<ExitCode, Error> {
                 let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
                 let thread = vm::Thread::new(&ctx);
-                Ok(match thread.exec(ctx, closure) {
+                Ok(match thread.run(ctx, closure) {
                     Ok(ret) => {
                         println!("returns: {:?}", ret);
                         ExitCode::SUCCESS
@@ -170,10 +170,13 @@ fn main() -> Result<ExitCode, Error> {
                                     vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
                                 let thread = ctx.fetch(&thread);
-                                match thread.eval::<vm::Variadic<Vec<vm::Value>>>(ctx, closure) {
-                                    Ok(ret) => {
-                                        if !ret.is_empty() {
-                                            let mut ret_iter = ret.iter().peekable();
+                                thread.with_exec(ctx, |mut exec| {
+                                    if let Err(err) = exec.call_closure(ctx, closure) {
+                                        eprintln!("{}", err);
+                                    } else {
+                                        let stack = exec.stack();
+                                        if !stack.is_empty() {
+                                            let mut ret_iter = stack.iter().peekable();
                                             while let Some(r) = ret_iter.next() {
                                                 print!("{}", r);
                                                 if ret_iter.peek().is_some() {
@@ -183,10 +186,7 @@ fn main() -> Result<ExitCode, Error> {
                                             println!();
                                         }
                                     }
-                                    Err(err) => {
-                                        eprintln!("{}", err);
-                                    }
-                                }
+                                });
 
                                 editor.add_history_entry(line)?;
                                 break;

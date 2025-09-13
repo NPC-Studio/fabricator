@@ -45,12 +45,14 @@ pub struct FreezeCell<F: for<'f> Freeze<'f>> {
 }
 
 impl<F: for<'f> Freeze<'f>> Default for FreezeCell<F> {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
+    #[inline]
     pub const fn new() -> FreezeCell<F> {
         FreezeCell {
             cell: RefCell::new(None),
@@ -69,6 +71,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
     ///
     /// Calling this method from a call to [`FreezeCell::with`] or [`FreezeCell::with_mut`] will
     /// panic.
+    #[inline]
     pub fn freeze<'f, R>(&self, v: <F as Freeze<'f>>::Frozen, f: impl FnOnce() -> R) -> R {
         // SAFETY: Safety depends on a few things...
         //
@@ -87,7 +90,11 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
             mem::transmute::<<F as Freeze<'f>>::Frozen, <F as Freeze<'static>>::Frozen>(v)
         };
 
-        let prev = self.cell.replace(Some(next));
+        let prev = self
+            .cell
+            .try_borrow_mut()
+            .expect("`FreezeCell::freeze` cannot be called inside `FreezeCell::with[_mut]`")
+            .replace(next);
 
         struct Guard<'a, F: for<'f> Freeze<'f>> {
             cell: &'a RefCell<Option<<F as Freeze<'static>>::Frozen>>,
@@ -95,6 +102,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
         }
 
         impl<F: for<'f> Freeze<'f>> Drop for Guard<'_, F> {
+            #[inline]
             fn drop(&mut self) {
                 if let Ok(mut cell) = self.cell.try_borrow_mut() {
                     *cell = self.prev.take();
@@ -119,6 +127,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
     }
 
     /// Access the stored value.
+    #[inline]
     pub fn with<R>(
         &self,
         f: impl for<'f> FnOnce(&<F as Freeze<'f>>::Frozen) -> R,
@@ -129,6 +138,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
     }
 
     /// Access the stored value mutably.
+    #[inline]
     pub fn with_mut<R>(
         &self,
         f: impl for<'f> FnOnce(&mut <F as Freeze<'f>>::Frozen) -> R,
@@ -149,6 +159,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
 pub struct FreezeMany<T = ()>(T);
 
 impl FreezeMany<()> {
+    #[inline]
     pub fn new() -> Self {
         FreezeMany(())
     }
@@ -157,6 +168,7 @@ impl FreezeMany<()> {
 impl<T> FreezeMany<T> {
     /// Freeze the given value in the provided [`FreezeCell`] during the call to
     /// [`FreezeMany::in_scope`].
+    #[inline]
     pub fn freeze<'h, 'f, F: for<'a> Freeze<'a>>(
         self,
         cell: &'h FreezeCell<F>,
@@ -169,6 +181,7 @@ impl<T> FreezeMany<T> {
 impl<A: SetFrozen, B: SetFrozen> FreezeMany<(A, B)> {
     /// Freeze every value provided via [`FreezeMany::freeze`] for the duration of the provided
     /// closure.
+    #[inline]
     pub fn in_scope<R>(self, f: impl FnOnce() -> R) -> R {
         self.0.set(f)
     }
@@ -184,6 +197,7 @@ pub struct FreezeOne<'h, 'f, F: for<'a> Freeze<'a>> {
 }
 
 impl<'h, 'f, F: for<'a> Freeze<'a>> SetFrozen for FreezeOne<'h, 'f, F> {
+    #[inline]
     fn set<R>(self, f: impl FnOnce() -> R) -> R {
         let Self { cell, value } = self;
         cell.freeze(value, f)
@@ -191,12 +205,14 @@ impl<'h, 'f, F: for<'a> Freeze<'a>> SetFrozen for FreezeOne<'h, 'f, F> {
 }
 
 impl SetFrozen for () {
+    #[inline]
     fn set<R>(self, f: impl FnOnce() -> R) -> R {
         f()
     }
 }
 
 impl<A: SetFrozen, B: SetFrozen> SetFrozen for (A, B) {
+    #[inline]
     fn set<R>(self, f: impl FnOnce() -> R) -> R {
         let (a, b) = self;
         a.set(move || b.set(f))

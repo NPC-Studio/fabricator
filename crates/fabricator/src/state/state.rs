@@ -64,6 +64,21 @@ pub struct Scripts {
     pub object_events: HashMap<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>,
 }
 
+impl Scripts {
+    pub fn event_closures<'gc>(
+        &self,
+        ctx: vm::Context<'gc>,
+        object_id: ObjectId,
+    ) -> HashMap<ObjectEvent, vm::StashedClosure> {
+        self.object_events
+            .get(&object_id)
+            .into_iter()
+            .flatten()
+            .map(|(&event, proto)| (event, ctx.stash(proto.create_closure(ctx))))
+            .collect()
+    }
+}
+
 pub struct Instance {
     pub object: ObjectId,
     pub active: bool,
@@ -92,10 +107,12 @@ pub struct State {
 }
 
 impl State {
+    #[inline]
     pub fn ctx_cell<'gc>(ctx: vm::Context<'gc>) -> &'gc StateCell {
         &ctx.singleton::<gc_arena::Static<StateCell>>().0
     }
 
+    #[inline]
     pub fn ctx_with<'gc, R>(
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&State) -> R,
@@ -103,6 +120,7 @@ impl State {
         Self::ctx_cell(ctx).with(|state| f(state))
     }
 
+    #[inline]
     pub fn ctx_with_mut<'gc, R>(
         ctx: vm::Context<'gc>,
         f: impl FnOnce(&mut State) -> R,

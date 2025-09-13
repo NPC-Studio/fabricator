@@ -54,6 +54,10 @@ impl<'gc, 'a> Stack<'gc, 'a> {
             .unwrap_or_default()
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = Value<'gc>> {
+        self.into_iter()
+    }
+
     #[inline]
     pub fn push_back(&mut self, value: impl Into<Value<'gc>>) {
         self.values.push(value.into());

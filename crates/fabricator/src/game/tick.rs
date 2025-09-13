@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::Error;
 use fabricator_collision::support_ext::SupportMapExt as _;
 use fabricator_util::freeze::FreezeMany;
@@ -24,9 +22,45 @@ pub fn tick_state(
             &state.config.rooms[next_room].name
         );
 
-        state
+        let destroying_instances = state
             .instances
-            .retain(|_, instance| state.config.objects[instance.object].persistent);
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                if !instance.destroyed && !state.config.objects[instance.object].persistent {
+                    Some(instance_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for instance_id in destroying_instances {
+            interpreter.enter(|ctx| -> Result<_, Error> {
+                let instance = &state.instances[instance_id];
+                if let Some(destroy_closure) = instance.event_closures.get(&ObjectEvent::Destroy)
+                    && !instance.destroyed
+                {
+                    let destroy_closure = ctx.fetch(destroy_closure);
+                    let instance_ud = ctx.fetch(&instance.this);
+                    FreezeMany::new()
+                        .freeze(InputState::ctx_cell(ctx), input_state)
+                        .freeze(State::ctx_cell(ctx), state)
+                        .in_scope(|| {
+                            ctx.fetch(thread).run_with(
+                                ctx,
+                                destroy_closure,
+                                instance_ud,
+                                vm::Value::Undefined,
+                            )
+                        })?;
+                }
+
+                Ok(())
+            })?;
+            state.instances[instance_id].destroyed = true;
+        }
+
+        state.instances.retain(|_, instance| !instance.destroyed);
 
         state.current_room = Some(next_room);
 
@@ -37,7 +71,7 @@ pub fn tick_state(
         {
             for &template_id in &layer.instances {
                 interpreter.enter(|ctx| -> Result<_, Error> {
-                    let instance_template = &state.config.instance_templates[template_id];
+                    let instance_template = state.config.instance_templates[template_id];
 
                     if state.config.objects[instance_template.object].persistent {
                         if state.persistent_instances.contains(&template_id) {
@@ -46,11 +80,6 @@ pub fn tick_state(
 
                         state.persistent_instances.insert(template_id);
                     }
-
-                    log::info!(
-                        "creating object {}",
-                        &state.config.objects[instance_template.object].name
-                    );
 
                     let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                         object: instance_template.object,
@@ -61,45 +90,24 @@ pub fn tick_state(
                         depth: layer.depth,
                         this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                         properties: ctx.stash(vm::Object::new(&ctx)),
-                        event_closures: HashMap::new(),
+                        event_closures: state.scripts.event_closures(ctx, instance_template.object),
                         animation_time: 0.0,
                     });
 
-                    for (&event, script) in state
-                        .scripts
-                        .object_events
-                        .get(&instance_template.object)
-                        .into_iter()
-                        .flatten()
-                    {
-                        if event != ObjectEvent::Create {
-                            state.instances[instance_id]
-                                .event_closures
-                                .insert(event, ctx.stash(script.create_closure(ctx)));
-                        }
-                    }
+                    let instance = &mut state.instances[instance_id];
 
-                    if let Some(create_script) = state
-                        .scripts
-                        .object_events
-                        .get(&instance_template.object)
-                        .and_then(|evs| evs.get(&ObjectEvent::Create))
-                        .cloned()
+                    if let Some(create_closure) = instance.event_closures.get(&ObjectEvent::Create)
                     {
                         let thread = ctx.fetch(thread);
-                        let this = ctx.fetch(&state.instances[instance_id].this);
+                        let this = ctx.fetch(&instance.this);
+                        let closure = ctx.fetch(create_closure);
 
                         FreezeMany::new()
                             .freeze(State::ctx_cell(ctx), state)
                             .freeze(InputState::ctx_cell(ctx), input_state)
                             .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                             .in_scope(|| {
-                                thread.exec_with(
-                                    ctx,
-                                    create_script.create_closure(ctx),
-                                    this.into(),
-                                    vm::Value::Undefined,
-                                )
+                                thread.run_with(ctx, closure, this, vm::Value::Undefined)
                             })?;
                     }
 
@@ -142,9 +150,7 @@ pub fn tick_state(
                     .freeze(State::ctx_cell(ctx), state)
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
-                    .in_scope(|| {
-                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
-                    })?;
+                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
         })?;
@@ -162,9 +168,7 @@ pub fn tick_state(
                     .freeze(State::ctx_cell(ctx), state)
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
-                    .in_scope(|| {
-                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
-                    })?;
+                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
         })?;
@@ -182,9 +186,7 @@ pub fn tick_state(
                     .freeze(State::ctx_cell(ctx), state)
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
-                    .in_scope(|| {
-                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
-                    })?;
+                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
         })?;
@@ -203,9 +205,7 @@ pub fn tick_state(
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .freeze(DrawingState::ctx_cell(ctx), drawing_state)
-                    .in_scope(|| {
-                        thread.exec_with(ctx, closure, this.into(), vm::Value::Undefined)
-                    })?;
+                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
         })?;

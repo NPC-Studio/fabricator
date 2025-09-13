@@ -55,8 +55,11 @@ fn run_code(
         let closure = vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
-        let res = thread.eval::<vm::Value>(ctx, closure)?;
-        Ok(res == vm::Value::Boolean(true))
+        thread.with_exec(ctx, |mut exec| {
+            exec.call_closure(ctx, closure)
+                .map_err(|e| e.into_extern())?;
+            Ok(exec.stack().get(0) == vm::Value::Boolean(true))
+        })
     })
 }
 

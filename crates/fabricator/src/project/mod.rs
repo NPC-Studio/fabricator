@@ -73,6 +73,7 @@ pub struct TextureGroup {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ObjectEvent {
     Create,
+    Destroy,
     BeginStep,
     Step,
     EndStep,
@@ -83,6 +84,7 @@ impl ObjectEvent {
     pub fn all() -> impl Iterator<Item = ObjectEvent> {
         [
             Self::Create,
+            Self::Destroy,
             Self::BeginStep,
             Self::Step,
             Self::EndStep,
@@ -94,6 +96,7 @@ impl ObjectEvent {
     pub fn file_stem(self) -> &'static str {
         match self {
             Self::Create => "Create_0",
+            Self::Destroy => "Destroy_0",
             Self::BeginStep => "Step_1",
             Self::Step => "Step_0",
             Self::EndStep => "Step_2",
@@ -187,7 +190,7 @@ pub struct ExtensionFunction {
 
 #[derive(Debug)]
 pub struct ExtensionFile {
-    /// A list of module alternatives, one per supported platform.
+    /// A list of module file alternatives, one (or sometimes more) per supported platform.
     pub module_paths: Vec<PathBuf>,
     pub functions: Vec<ExtensionFunction>,
 }
