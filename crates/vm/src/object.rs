@@ -1,4 +1,7 @@
-use std::cell::{Ref, RefMut};
+use std::{
+    cell::{Ref, RefMut},
+    hash,
+};
 
 use gc_arena::{Collect, Gc, Mutation, RefLock};
 use thiserror::Error;
@@ -32,6 +35,12 @@ impl<'gc> PartialEq for Object<'gc> {
 }
 
 impl<'gc> Eq for Object<'gc> {}
+
+impl<'gc> hash::Hash for Object<'gc> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        Gc::as_ptr(self.0).hash(state)
+    }
+}
 
 impl<'gc> Object<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, hash};
 
 use gc_arena::{Collect, Gc, Mutation};
 
@@ -131,3 +131,9 @@ impl<'gc> PartialEq for Callback<'gc> {
 }
 
 impl<'gc> Eq for Callback<'gc> {}
+
+impl<'gc> hash::Hash for Callback<'gc> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        Gc::as_ptr(self.0).hash(state)
+    }
+}

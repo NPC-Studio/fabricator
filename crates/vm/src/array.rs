@@ -1,4 +1,7 @@
-use std::cell::{Ref, RefMut};
+use std::{
+    cell::{Ref, RefMut},
+    hash,
+};
 
 use gc_arena::{Collect, Gc, Mutation, RefLock};
 
@@ -17,6 +20,12 @@ impl<'gc> PartialEq for Array<'gc> {
 }
 
 impl<'gc> Eq for Array<'gc> {}
+
+impl<'gc> hash::Hash for Array<'gc> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        Gc::as_ptr(self.0).hash(state)
+    }
+}
 
 impl<'gc> Array<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {

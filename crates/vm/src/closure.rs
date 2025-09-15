@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, hash};
 
 use gc_arena::{Collect, Gc, Lock, Mutation};
 use thiserror::Error;
@@ -582,6 +582,12 @@ impl<'gc> PartialEq for Closure<'gc> {
 }
 
 impl<'gc> Eq for Closure<'gc> {}
+
+impl<'gc> hash::Hash for Closure<'gc> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        Gc::as_ptr(self.0).hash(state)
+    }
+}
 
 impl<'gc> Closure<'gc> {
     /// Create a new top-level closure.

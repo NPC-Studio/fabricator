@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 gc-arena.workspace = true
 rand.workspace = true
+rustc-hash.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

@@ -6,6 +6,6 @@ edition.workspace = true
 [dependencies]
 gc-arena.workspace = true
 thiserror.workspace = true
-rustc-hash = "2.0"
+rustc-hash.workspace = true
 
 fabricator-util.workspace = true
