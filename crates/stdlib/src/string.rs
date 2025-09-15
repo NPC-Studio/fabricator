@@ -1,10 +1,13 @@
 use std::{
-    fmt::Write as _,
+    collections::HashSet,
+    fmt,
     io::{self, Write as _},
     mem,
 };
 
 use fabricator_vm as vm;
+use gc_arena::Gc;
+use thiserror::Error;
 
 use crate::util::resolve_array_range;
 
@@ -30,11 +33,8 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     );
 
     let string_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let string: vm::Value = exec.stack().consume(ctx)?;
-        let string = string.coerce_string(ctx).ok_or_else(|| vm::TypeError {
-            expected: "value coercible to string",
-            found: string.type_name(),
-        })?;
+        let value: vm::Value = exec.stack().consume(ctx)?;
+        let string = value_to_string(ctx, exec.reborrow(), value)?;
         exec.stack().replace(ctx, string.chars().count() as isize);
         Ok(())
     });
@@ -44,7 +44,8 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     );
 
     let string_byte_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let string: vm::String = exec.stack().consume(ctx)?;
+        let value: vm::Value = exec.stack().consume(ctx)?;
+        let string = value_to_string(ctx, exec.reborrow(), value)?;
         exec.stack().replace(ctx, string.len() as isize);
         Ok(())
     });
@@ -74,7 +75,12 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         for part in split_format(&fmt_string) {
             match part {
                 FormatPart::Str(s) => write!(stdout, "{}", s)?,
-                FormatPart::Arg(arg) => write!(stdout, "{}", exec.stack().get(arg + 1))?,
+                FormatPart::Arg(arg) => {
+                    let mut buf = String::new();
+                    let val = exec.stack().get(arg + 1);
+                    print_value(&mut buf, ctx, exec.reborrow(), val)?;
+                    write!(stdout, "{}", buf)?;
+                }
             }
         }
         writeln!(stdout)?;
@@ -94,13 +100,14 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                     match part {
                         FormatPart::Str(s) => out.push_str(s),
                         FormatPart::Arg(arg) => {
-                            write!(&mut out, "{}", exec.stack().get(arg + 1)).unwrap()
+                            let val = exec.stack().get(arg + 1);
+                            print_value(&mut out, ctx, exec.reborrow(), val)?;
                         }
                     }
                 }
                 ctx.intern(&out)
             }
-            other => ctx.intern(&other.to_string()),
+            other => value_to_string(ctx, exec.reborrow(), other)?,
         };
         exec.stack().replace(ctx, out);
         Ok(())
@@ -420,6 +427,155 @@ pub fn split_format<'a>(s: &'a str) -> impl Iterator<Item = FormatPart<'a>> + 'a
     Iter {
         rest: s,
         next_arg: None,
+    }
+}
+
+/// Pretty print any [`vm::Value`].
+pub fn raw_print_value<'gc>(
+    f: &mut dyn fmt::Write,
+    ctx: vm::Context<'gc>,
+    value: vm::Value<'gc>,
+) -> Result<(), fmt::Error> {
+    do_print_value(f, ctx, None, value).map_err(|e| match e {
+        PrintValueError::ToStringError(_) => unreachable!(),
+        PrintValueError::FmtError(fmt_error) => fmt_error,
+    })
+}
+
+/// Pretty print any [`vm::Value`] into a [`vm::String`].
+pub fn raw_value_to_string<'gc>(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> vm::String<'gc> {
+    let mut s = String::new();
+    raw_print_value(&mut s, ctx, value).unwrap();
+    ctx.intern(&s)
+}
+
+#[derive(Debug, Error)]
+pub enum PrintValueError {
+    #[error("{0}")]
+    ToStringError(#[from] vm::RuntimeError),
+    #[error("{0}")]
+    FmtError(#[from] fmt::Error),
+}
+
+/// Pretty print any [`vm::Value`], calling `toString` methods on objects if present.
+///
+/// On return, the stack in the provided `exec` is restored to its initial state.
+pub fn print_value<'gc>(
+    f: &mut dyn fmt::Write,
+    ctx: vm::Context<'gc>,
+    exec: vm::Execution<'gc, '_>,
+    value: vm::Value<'gc>,
+) -> Result<(), PrintValueError> {
+    do_print_value(f, ctx, Some(exec), value)
+}
+
+/// Pretty print any [`vm::Value`] into a [`vm::String`], calling `toString` methods on objects
+/// if present.
+///
+/// On return, the stack in the provided `exec` is restored to its initial state.
+pub fn value_to_string<'gc>(
+    ctx: vm::Context<'gc>,
+    exec: vm::Execution<'gc, '_>,
+    value: vm::Value<'gc>,
+) -> Result<vm::String<'gc>, vm::RuntimeError> {
+    let mut s = String::new();
+    print_value(&mut s, ctx, exec, value).map_err(|e| match e {
+        PrintValueError::ToStringError(err) => err,
+        PrintValueError::FmtError(_) => unreachable!(),
+    })?;
+    Ok(ctx.intern(&s))
+}
+
+fn do_print_value<'gc>(
+    f: &mut dyn fmt::Write,
+    ctx: vm::Context<'gc>,
+    exec: Option<vm::Execution<'gc, '_>>,
+    value: vm::Value<'gc>,
+) -> Result<(), PrintValueError> {
+    fn print_value_inner<'gc>(
+        f: &mut dyn fmt::Write,
+        ctx: vm::Context<'gc>,
+        mut exec: Option<vm::Execution<'gc, '_>>,
+        recursive_check: &mut HashSet<*const ()>,
+        value: vm::Value<'gc>,
+    ) -> Result<(), PrintValueError> {
+        match value {
+            vm::Value::String(s) => Ok(write!(f, "{}", s.as_str())?),
+            vm::Value::Object(object) => {
+                if let Some(exec) = &mut exec
+                    && let Some(to_string) = object.get(ctx.intern("toString"))
+                {
+                    let to_string: vm::Function = vm::FromValue::from_value(ctx, to_string)
+                        .map_err(vm::RuntimeError::from)?;
+                    exec.with_this(object).call(ctx, to_string)?;
+                    let s: vm::String =
+                        exec.stack().consume(ctx).map_err(vm::RuntimeError::from)?;
+                    Ok(write!(f, "{}", s.as_str())?)
+                } else if recursive_check.insert(Gc::as_ptr(object.into_inner()) as *const ()) {
+                    let object = object.borrow();
+                    write!(f, "{{")?;
+                    let mut iter = object.map.iter().map(|(&k, &v)| (k, v)).peekable();
+                    while let Some((key, value)) = iter.next() {
+                        write!(f, " {}: ", key.as_str())?;
+                        print_value_inner(
+                            f,
+                            ctx,
+                            exec.as_mut().map(|e| e.reborrow()),
+                            recursive_check,
+                            value,
+                        )?;
+                        if iter.peek().is_some() {
+                            write!(f, ",")?;
+                        }
+                    }
+                    Ok(write!(f, " }}")?)
+                } else {
+                    Ok(write!(f, "<recursive object>")?)
+                }
+            }
+            vm::Value::Array(array) => {
+                if recursive_check.insert(Gc::as_ptr(array.into_inner()) as *const ()) {
+                    let array = array.borrow();
+                    write!(f, "[")?;
+                    let mut iter = array.iter().copied().peekable();
+                    while let Some(value) = iter.next() {
+                        print_value_inner(
+                            f,
+                            ctx,
+                            exec.as_mut().map(|e| e.reborrow()),
+                            recursive_check,
+                            value,
+                        )?;
+                        if iter.peek().is_some() {
+                            write!(f, ", ")?;
+                        }
+                    }
+                    Ok(write!(f, "]")?)
+                } else {
+                    Ok(write!(f, "<recursive array>")?)
+                }
+            }
+            vm::Value::UserData(user_data) => Ok(match user_data.coerce_string(ctx) {
+                Some(s) => write!(f, "{:?}", s.as_str())?,
+                None => write!(f, "{}", value)?,
+            }),
+            _ => Ok(write!(f, "{}", value)?),
+        }
+    }
+
+    if let Some(mut exec) = exec {
+        let stack_top = exec.stack().len();
+        let r = print_value_inner(
+            f,
+            ctx,
+            Some(exec.with_stack_bottom(stack_top)),
+            &mut HashSet::new(),
+            value,
+        );
+        exec.stack().drain(stack_top..);
+        r
+    } else {
+        print_value_inner(f, ctx, None, &mut HashSet::new(), value)
     }
 }
 

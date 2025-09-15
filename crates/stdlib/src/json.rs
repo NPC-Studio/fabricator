@@ -1,4 +1,7 @@
+use std::collections::HashSet;
+
 use fabricator_vm as vm;
+use gc_arena::Gc;
 
 pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     fn json_to_value<'gc>(
@@ -53,9 +56,9 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     fn value_to_json<'gc>(
         ctx: vm::Context<'gc>,
+        recursive_check: &mut HashSet<*const ()>,
         value: vm::Value<'gc>,
     ) -> Result<serde_json::Value, vm::RuntimeError> {
-        // We use mutable RefCell borrows to guard against recursion here.
         Ok(match value {
             vm::Value::Undefined => serde_json::Value::Null,
             vm::Value::Boolean(b) => serde_json::Value::Bool(b),
@@ -66,23 +69,33 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             ),
             vm::Value::String(s) => serde_json::Value::String(s.as_str().to_owned()),
             vm::Value::Object(obj) => {
+                if !recursive_check.insert(Gc::as_ptr(obj.into_inner()) as *const ()) {
+                    return Err(vm::RuntimeError::msg(
+                        "cannot convert recursive object to JSON",
+                    ))?;
+                }
+
                 let mut map = serde_json::Map::new();
-                let borrow = obj.into_inner().try_borrow_mut(&ctx).map_err(|_| {
-                    vm::RuntimeError::msg("cannot convert recursive object to JSON")
-                })?;
+                let borrow = obj.borrow();
                 for (&key, &value) in &borrow.map {
-                    map.insert(key.as_str().to_owned(), value_to_json(ctx, value)?);
+                    map.insert(
+                        key.as_str().to_owned(),
+                        value_to_json(ctx, recursive_check, value)?,
+                    );
                 }
                 serde_json::Value::Object(map)
             }
             vm::Value::Array(arr) => {
+                if !recursive_check.insert(Gc::as_ptr(arr.into_inner()) as *const ()) {
+                    return Err(vm::RuntimeError::msg(
+                        "cannot convert recursive array to JSON",
+                    ))?;
+                }
+
                 let mut array = Vec::new();
-                let borrow = arr
-                    .into_inner()
-                    .try_borrow_mut(&ctx)
-                    .map_err(|_| vm::RuntimeError::msg("cannot convert recursive array to JSON"))?;
+                let borrow = arr.borrow();
                 for &value in &*borrow {
-                    array.push(value_to_json(ctx, value)?);
+                    array.push(value_to_json(ctx, recursive_check, value)?);
                 }
                 serde_json::Value::Array(array)
             }
@@ -113,7 +126,7 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let json_stringify = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let value: vm::Value = exec.stack().consume(ctx)?;
-        let json = value_to_json(ctx, value)?;
+        let json = value_to_json(ctx, &mut HashSet::new(), value)?;
         exec.stack().replace(ctx, serde_json::to_string(&json)?);
         Ok(())
     });

@@ -7,7 +7,7 @@ use std::{
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
-use crate::util::Pointer;
+use crate::{string::value_to_string, util::Pointer};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BufferType {
@@ -294,9 +294,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 // order to make sure that writes and reads can be synchronized, we are interpreting
                 // that here as writing a string which does *not* contain NUL followed by a single
                 // NUL.
-                let s: vm::String = value.coerce_string(ctx).ok_or_else(|| {
-                    vm::RuntimeError::msg("`buffer_string` value must be coercible to string")
-                })?;
+                let s: vm::String = value_to_string(ctx, exec.reborrow(), value)?;
                 if let Some(end) = s.find('\0') {
                     // If the string has an embedded NUL, write the part up to and including the
                     // first NUL.
@@ -313,9 +311,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 //
                 // We write the *entire* string here and assume that the string byte length is
                 // separately stored.
-                let s: vm::String = value.coerce_string(ctx).ok_or_else(|| {
-                    vm::RuntimeError::msg("`buffer_text` value must be coercible to string")
-                })?;
+                let s: vm::String = value_to_string(ctx, exec.reborrow(), value)?;
                 buffer.cursor_write(s.as_str().as_bytes())?;
             }
         }

@@ -48,10 +48,7 @@ fn main() -> Result<ExitCode, Error> {
 
                 let thread = vm::Thread::new(&ctx);
                 Ok(match thread.run(ctx, closure) {
-                    Ok(ret) => {
-                        println!("returns: {:?}", ret);
-                        ExitCode::SUCCESS
-                    }
+                    Ok(()) => ExitCode::SUCCESS,
                     Err(err) => {
                         println!("error: {}", err);
                         ExitCode::FAILURE
