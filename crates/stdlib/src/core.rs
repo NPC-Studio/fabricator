@@ -200,8 +200,8 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         // `script_execute` is documented as calling the provided function in the *calling context*,
         // even if it is a bound method.
         if !func.this().is_undefined() {
-            // This allocates, to avoid this we could add a feature to call closures and callbacks
-            // while ignoring any bound `this`.
+            // NOTE: This allocates, to avoid this we could add a feature to call closures and
+            // callbacks while ignoring any bound `this`.
             func = func.rebind(&ctx, vm::Value::Undefined);
         }
         exec.call(ctx, func)
@@ -211,17 +211,56 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         vm::MagicConstant::new_ptr(&ctx, script_execute),
     );
 
-    let method_call = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (func, args, offset, count): (vm::Function, vm::Array, Option<isize>, Option<isize>) =
-            exec.stack().consume(ctx)?;
-        let (range, reverse) = resolve_array_range(args.len(), offset, count)?;
-        if reverse {
-            for i in range.rev() {
-                exec.stack().push_back(args.get(i));
+    let script_execute_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (mut func, args, offset, count): (
+            vm::Function,
+            Option<vm::Array>,
+            Option<isize>,
+            Option<isize>,
+        ) = exec.stack().consume(ctx)?;
+        if let Some(args) = args {
+            let (range, reverse) = resolve_array_range(args.len(), offset, count)?;
+            if reverse {
+                for i in range.rev() {
+                    exec.stack().push_back(args.get(i));
+                }
+            } else {
+                for i in range {
+                    exec.stack().push_back(args.get(i));
+                }
             }
-        } else {
-            for i in range {
-                exec.stack().push_back(args.get(i));
+        }
+
+        // `script_execute_ext` is documented as calling the provided function in the *calling
+        // context*, even if it is a bound method.
+        if !func.this().is_undefined() {
+            // NOTE: This allocates, see the implementation of `script_execute`.
+            func = func.rebind(&ctx, vm::Value::Undefined);
+        }
+        exec.call(ctx, func)
+    });
+    lib.insert(
+        ctx.intern("script_execute_ext"),
+        vm::MagicConstant::new_ptr(&ctx, script_execute_ext),
+    );
+
+    let method_call = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (func, args, offset, count): (
+            vm::Function,
+            Option<vm::Array>,
+            Option<isize>,
+            Option<isize>,
+        ) = exec.stack().consume(ctx)?;
+        if let Some(args) = args {
+            let (range, reverse) = resolve_array_range(args.len(), offset, count)?;
+            if reverse {
+                for i in range.rev() {
+                    exec.stack().push_back(args.get(i));
+                }
+            } else {
+                for i in range {
+                    exec.stack().push_back(args.get(i));
+                }
             }
         }
         exec.call(ctx, func)
