@@ -226,12 +226,12 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let string_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (string, index, count): (vm::String, isize, isize) = exec.stack().consume(ctx)?;
-        let index = index.checked_sub(1).ok_or_else(|| {
-            vm::RuntimeError::msg(format!(
-                "index given to `string_copy` is 1-indexed and cannot be 0"
-            ))
-        })?;
-        let (range, _) = resolve_array_range(string.chars().count(), Some(index), Some(count))?;
+        if index == 0 {
+            return Err(vm::RuntimeError::msg(format!(
+                "index given to `string_delete` is 1-indexed and cannot be 0"
+            )));
+        }
+        let (range, _) = resolve_array_range(string.chars().count(), Some(index - 1), Some(count))?;
         exec.stack().replace(
             ctx,
             string
@@ -245,6 +245,20 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("string_delete"),
         vm::MagicConstant::new_ptr(&ctx, string_delete),
+    );
+
+    let string_insert = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (substr, string, index): (vm::String, vm::String, usize) = exec.stack().consume(ctx)?;
+        let index = index.saturating_sub(1).clamp(0, string.len());
+        exec.stack().replace(
+            ctx,
+            format!("{}{}{}", &string[0..index], substr, &string[index..]),
+        );
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("string_insert"),
+        vm::MagicConstant::new_ptr(&ctx, string_insert),
     );
 
     let string_replace = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
