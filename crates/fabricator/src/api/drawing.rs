@@ -43,6 +43,14 @@ pub fn drawing_api<'gc>(
     magic.add_constant(&ctx, ctx.intern("c_white"), 0xffffff)?;
     magic.add_constant(&ctx, ctx.intern("c_black"), 0x0)?;
 
+    let make_color_rgb = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (r, g, b): (u8, u8, u8) = exec.stack().consume(ctx)?;
+        let color = (r as u32) | (g as u32) << 8 | (b as u32) << 16;
+        exec.stack().replace(ctx, color);
+        Ok(())
+    });
+    magic.add_constant(&ctx, ctx.intern("make_color_rgb"), make_color_rgb)?;
+
     let draw_sprite = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (sprite, sub_img, x, y): (vm::UserData, i64, f64, f64) = exec.stack().consume(ctx)?;
         let sprite = SpriteUserData::downcast(sprite)?;
@@ -196,7 +204,7 @@ pub fn drawing_api<'gc>(
         let texture = State::ctx_with(ctx, |state| {
             let texture_id = state.config.sprites[sprite_id].frames[index].texture;
             let texture_page_id = state.texture_page_for_texture[texture_id];
-            ctx.fetch(&state.texture_pages[texture_page_id].userdata);
+            ctx.fetch(&state.texture_pages[texture_page_id].userdata)
         })?;
         exec.stack().replace(ctx, texture);
         Ok(())
