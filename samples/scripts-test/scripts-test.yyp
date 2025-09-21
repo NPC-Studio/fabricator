@@ -29,7 +29,9 @@
   "IncludedFiles":[],
   "isEcma":false,
   "LibraryEmitters":[],
-  "MetaData":{},
+  "MetaData":{
+    "IDEVersion":"2024.8.1.171",
+  },
   "name":"scripts-test",
   "resources":[
     {"id":{"name":"obj_square","path":"objects/obj_square/obj_square.yy",},},

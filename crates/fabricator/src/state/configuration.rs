@@ -40,6 +40,7 @@ pub struct Configuration {
     pub object_dict: HashMap<String, ObjectId>,
     pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
     pub rooms: IdMap<RoomId, Room>,
+    pub room_dict: HashMap<String, RoomId>,
     pub first_room: RoomId,
     pub last_room: RoomId,
 }

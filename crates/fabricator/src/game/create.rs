@@ -257,6 +257,7 @@ pub fn create_state(
         object_dict,
         instance_templates,
         rooms,
+        room_dict,
         first_room,
         last_room,
     };
