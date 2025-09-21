@@ -1216,11 +1216,15 @@ where
         // The iteration protocol is to call the iter init function and expect two returns, the
         // iteration function and an initial state value.
         //
-        // Every time through the loop, if the state value is not `Value::Undefined`, then call the
-        // iteration function with the state as its single parameter.
+        // At the beginning of a loop, the iteration function is called with the current state
+        // value. The iteration function is expected to return the new value for the state value
+        // followed by all of the iteration results for that loop.
         //
-        // The iteration function should return the new value for the state followed by all iter
-        // results.
+        // If the returned state value is `Value::Undefined`, then the loop immediately stops (and
+        // all following return values are ignored).
+        //
+        // The iteration function will always be called at least once, even if the initial state
+        // value is `Value::Undefined`.
 
         let setup_call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
@@ -1264,21 +1268,6 @@ where
         let cur_state =
             self.push_instruction(with_stmt.span, ir::Instruction::GetVariable(state_var));
 
-        let state_is_undef = self.push_instruction(
-            with_stmt.span,
-            ir::Instruction::UnOp {
-                op: ir::UnOp::IsUndefined,
-                source: cur_state,
-            },
-        );
-
-        self.end_current_block(ir::Exit::Branch {
-            cond: state_is_undef,
-            if_true: successor_block,
-            if_false: body_block,
-        });
-        self.start_new_block(body_block);
-
         let iter_call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
             with_stmt.span,
@@ -1297,6 +1286,21 @@ where
             ir::Instruction::FixedReturn(iter_call_scope, 1),
         );
         self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(iter_call_scope));
+
+        let state_is_undef = self.push_instruction(
+            with_stmt.span,
+            ir::Instruction::UnOp {
+                op: ir::UnOp::IsUndefined,
+                source: next_state,
+            },
+        );
+
+        self.end_current_block(ir::Exit::Branch {
+            cond: state_is_undef,
+            if_true: successor_block,
+            if_false: body_block,
+        });
+        self.start_new_block(body_block);
 
         self.push_instruction(
             with_stmt.span,

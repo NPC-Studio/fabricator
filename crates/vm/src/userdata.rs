@@ -65,24 +65,22 @@ pub trait UserDataMethods<'gc> {
         Err(MethodUnimplemented("set_index").into())
     }
 
-    /// Return an iterator function and state value for iteration in a `with` loop.
+    /// If a userdata object is iterable, return an iterator function and state value for iteration
+    /// in a `with` loop.
     ///
     /// Should return two values according to the normal iterator protocol: the iterator function,
     /// and the initial iteration state.
     ///
-    /// Every time through the loop, the iterator function will be called with the state as its
+    /// At the beginning of every loop, the iterator function will be called with the state as its
     /// parameter. The iterator function should return the new state value followed by all iter
     /// results for that iteration (for a `with` loop, there should only be one iteration result,
-    /// which is a `self` value for that iteration). As soon as the state value becomes `undefined`,
-    /// the iterator function will no longer be called and no additional results will be yielded. If
-    /// the initial call of this method returns an `undefined` state value on the first call, then
-    /// this implies an empty result and no iteration will be performed.
-    fn iter(
-        &self,
-        _ud: UserData<'gc>,
-        _ctx: Context<'gc>,
-    ) -> Result<(Function<'gc>, Value<'gc>), RuntimeError> {
-        Err(MethodUnimplemented("iter").into())
+    /// which is a `self` value for that iteration). If the iterator function returns `undefined`
+    /// as the state, iteration immediately halts and all following return values are ignored.
+    ///
+    /// The iterator function will always be called at least once, even if the initial state value
+    /// is `undefined`.
+    fn iter(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<(Function<'gc>, Value<'gc>)> {
+        None
     }
 
     /// Return the value of this userdata as a string.
@@ -325,6 +323,10 @@ impl<'gc> UserData<'gc> {
             .set_index(self, ctx, indexes, value)
     }
 
+    pub fn iter(self, ctx: Context<'gc>) -> Option<(Function<'gc>, Value<'gc>)> {
+        self.0.metadata().methods.get()?.iter(self, ctx)
+    }
+
     pub fn coerce_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {
         self.0.metadata().methods.get()?.coerce_string(self, ctx)
     }
@@ -335,14 +337,5 @@ impl<'gc> UserData<'gc> {
 
     pub fn coerce_float(self, ctx: Context<'gc>) -> Option<f64> {
         self.0.metadata().methods.get()?.coerce_float(self, ctx)
-    }
-
-    pub fn iter(self, ctx: Context<'gc>) -> Result<(Function<'gc>, Value<'gc>), RuntimeError> {
-        self.0
-            .metadata()
-            .methods
-            .get()
-            .ok_or(NoMethods)?
-            .iter(self, ctx)
     }
 }

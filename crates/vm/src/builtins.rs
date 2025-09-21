@@ -7,6 +7,7 @@ use crate::{
     interpreter::Context,
     magic::{MagicConstant, MagicSet},
     object::Object,
+    userdata::UserData,
     value::{Function, Value},
 };
 
@@ -162,23 +163,40 @@ impl<'gc> BuiltIns<'gc> {
             }),
 
             with_loop_iter: {
+                let finished_marker = Value::UserData(UserData::new_static(mc, ()));
+
                 // An iterator function whose state is the single value for iteration.
-                let singleton_iter = Callback::from_fn(mc, |_, mut exec| {
-                    exec.stack().push_front(Value::Undefined);
-                    Ok(())
-                });
+                let singleton_iter = Callback::from_fn_with_root(
+                    mc,
+                    finished_marker,
+                    |&finished_marker, _, mut exec| {
+                        let state: Value = exec.stack().get(0);
+                        exec.stack().clear();
+                        if state != finished_marker {
+                            exec.stack().extend([finished_marker, state]);
+                        }
+                        Ok(())
+                    },
+                );
 
                 Callback::from_fn_with_root(mc, singleton_iter, |&singleton_iter, ctx, mut exec| {
                     let target: Value = exec.stack().consume(ctx)?;
                     match target {
                         Value::Object(object) => {
-                            // Objects are a loop with one iteration of the object.
+                            // Objects are a loop with one iteration over the object itself.
                             exec.stack().push_back(singleton_iter);
                             exec.stack().push_back(object);
                             Ok(())
                         }
                         Value::UserData(user_data) => {
-                            exec.stack().replace(ctx, user_data.iter(ctx)?);
+                            if let Some(pair) = user_data.iter(ctx) {
+                                exec.stack().replace(ctx, pair);
+                            } else {
+                                // Non-iterable userdata are a loop with one iteration over the
+                                // userdata itself.
+                                exec.stack().push_back(singleton_iter);
+                                exec.stack().push_back(user_data);
+                            }
                             Ok(())
                         }
                         _ => Err(RuntimeError::msg(

@@ -120,8 +120,8 @@ pub fn no_one<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
                     &self,
                     _ud: vm::UserData<'gc>,
                     _ctx: vm::Context<'gc>,
-                ) -> Result<(vm::Function<'gc>, vm::Value<'gc>), vm::RuntimeError> {
-                    Ok((self.null_iter.into(), vm::Value::Undefined))
+                ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
+                    Some((self.null_iter.into(), vm::Value::Undefined))
                 }
             }
 
@@ -155,6 +155,16 @@ pub fn all<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
                 instance_iter: vm::Callback<'gc>,
             }
 
+            impl<'gc> vm::UserDataMethods<'gc> for Methods<'gc> {
+                fn iter(
+                    &self,
+                    _ud: vm::UserData<'gc>,
+                    _ctx: vm::Context<'gc>,
+                ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
+                    Some((self.instance_iter.into(), 0.into()))
+                }
+            }
+
             let instance_iter = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
                 let mut idx: u32 = exec.stack().consume(ctx)?;
                 let next_instance = State::ctx_with(ctx, |state| {
@@ -175,17 +185,9 @@ pub fn all<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
                 Ok(())
             });
 
-            impl<'gc> vm::UserDataMethods<'gc> for Methods<'gc> {
-                fn iter(
-                    &self,
-                    _ud: vm::UserData<'gc>,
-                    _ctx: vm::Context<'gc>,
-                ) -> Result<(vm::Function<'gc>, vm::Value<'gc>), vm::RuntimeError> {
-                    Ok((self.instance_iter.into(), 0.into()))
-                }
-            }
-
-            let methods = gc_arena::unsize!(Gc::new(&ctx, Methods { instance_iter }) => dyn vm::UserDataMethods);
+            let methods = gc_arena::unsize!(
+                Gc::new(&ctx, Methods { instance_iter }) => dyn vm::UserDataMethods
+            );
 
             let ud = vm::UserData::new_static(&ctx, All);
             ud.set_methods(&ctx, Some(methods));
