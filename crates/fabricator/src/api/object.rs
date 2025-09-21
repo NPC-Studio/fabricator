@@ -257,7 +257,7 @@ pub fn object_api<'gc>(
             let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                 object: object.id,
                 active: true,
-                destroyed: false,
+                dead: false,
                 position: Vec2::new(x, y),
                 rotation: 0.0,
                 depth,
@@ -392,16 +392,12 @@ pub fn object_api<'gc>(
 
             if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
                 for (instance_id, instance) in state.instances.iter() {
-                    if instance.object == object.id && !instance.destroyed {
+                    if instance.object == object.id && !instance.dead {
                         to_destroy.push(instance_id);
                     }
                 }
             } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
-                if state
-                    .instances
-                    .get(instance.id)
-                    .is_some_and(|i| !i.destroyed)
-                {
+                if state.instances.get(instance.id).is_some_and(|i| !i.dead) {
                     to_destroy.push(instance.id);
                 }
             } else {
@@ -427,7 +423,21 @@ pub fn object_api<'gc>(
                     .map_err(|e| e.into_extern())?;
                 exec.stack().clear();
             }
-            State::ctx_with_mut(ctx, |state| state.instances[instance_id].destroyed = true)?;
+
+            if let Some(clean_up_closure) = State::ctx_with(ctx, |state| {
+                state.instances[instance_id]
+                    .event_closures
+                    .get(&ObjectEvent::CleanUp)
+                    .cloned()
+            })? {
+                let instance_ud =
+                    State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
+                exec.with_this(instance_ud)
+                    .call_closure(ctx, ctx.fetch(&clean_up_closure))
+                    .map_err(|e| e.into_extern())?;
+                exec.stack().clear();
+            }
+            State::ctx_with_mut(ctx, |state| state.instances[instance_id].dead = true)?;
         }
 
         Ok(())

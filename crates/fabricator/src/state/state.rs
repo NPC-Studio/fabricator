@@ -82,7 +82,7 @@ impl Scripts {
 pub struct Instance {
     pub object: ObjectId,
     pub active: bool,
-    pub destroyed: bool,
+    pub dead: bool,
     pub position: Vec2<f64>,
     pub rotation: f64,
     pub depth: i32,

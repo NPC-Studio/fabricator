@@ -74,6 +74,9 @@ pub struct TextureGroup {
 pub enum ObjectEvent {
     Create,
     Destroy,
+    CleanUp,
+    RoomStart,
+    RoomEnd,
     BeginStep,
     Step,
     EndStep,
@@ -85,6 +88,9 @@ impl ObjectEvent {
         [
             Self::Create,
             Self::Destroy,
+            Self::CleanUp,
+            Self::RoomStart,
+            Self::RoomEnd,
             Self::BeginStep,
             Self::Step,
             Self::EndStep,
@@ -97,6 +103,9 @@ impl ObjectEvent {
         match self {
             Self::Create => "Create_0",
             Self::Destroy => "Destroy_0",
+            Self::CleanUp => "CleanUp_0",
+            Self::RoomStart => "Other_4",
+            Self::RoomEnd => "Other_5",
             Self::BeginStep => "Step_1",
             Self::Step => "Step_0",
             Self::EndStep => "Step_2",

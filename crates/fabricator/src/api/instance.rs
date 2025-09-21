@@ -4,7 +4,8 @@ use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    api::userdata::StaticUserDataProperties,
+    api::{magic::MagicExt as _, userdata::StaticUserDataProperties},
+    project::ObjectEvent,
     state::{InstanceId, State},
 };
 
@@ -136,4 +137,125 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
 
         Self(properties.into_methods(&ctx))
     }
+}
+
+pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
+    let mut magic = vm::MagicSet::new();
+
+    #[derive(Debug, Copy, Clone)]
+    enum EventType {
+        Create,
+        Destroy,
+        CleanUp,
+        Step,
+        Other,
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    enum StepEvent {
+        Normal,
+        Begin,
+        End,
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    enum OtherEvent {
+        RoomStart,
+        RoomEnd,
+    }
+
+    for (event_type, name) in [
+        (EventType::Create, "ev_create"),
+        (EventType::Destroy, "ev_destroy"),
+        (EventType::CleanUp, "ev_cleanup"),
+        (EventType::Step, "ev_step"),
+        (EventType::Other, "ev_other"),
+    ] {
+        magic
+            .add_constant(
+                &ctx,
+                ctx.intern(name),
+                vm::UserData::new_static(&ctx, event_type),
+            )
+            .unwrap();
+    }
+
+    for (step_event, name) in [
+        (StepEvent::Normal, "ev_step_normal"),
+        (StepEvent::Begin, "ev_step_begin"),
+        (StepEvent::End, "ev_step_end"),
+    ] {
+        magic
+            .add_constant(
+                &ctx,
+                ctx.intern(name),
+                vm::UserData::new_static(&ctx, step_event),
+            )
+            .unwrap();
+    }
+
+    for (other_event, name) in [
+        (OtherEvent::RoomStart, "ev_room_start"),
+        (OtherEvent::RoomEnd, "ev_room_end"),
+    ] {
+        magic
+            .add_constant(
+                &ctx,
+                ctx.intern(name),
+                vm::UserData::new_static(&ctx, other_event),
+            )
+            .unwrap();
+    }
+
+    let event_perform = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (event_type, sub_event): (vm::UserData, Option<vm::UserData>) =
+            exec.stack().consume(ctx)?;
+
+        let instance_ud: vm::UserData = vm::FromValue::from_value(ctx, exec.this())?;
+        let instance_id = InstanceUserData::downcast(instance_ud)?.id;
+
+        let event = match *event_type.downcast_static::<EventType>()? {
+            EventType::Create => ObjectEvent::Create,
+            EventType::Destroy => ObjectEvent::Destroy,
+            EventType::CleanUp => ObjectEvent::CleanUp,
+            EventType::Step => {
+                match *sub_event
+                    .ok_or_else(|| vm::RuntimeError::msg("expected sub-event for `ev_step`"))?
+                    .downcast_static::<StepEvent>()?
+                {
+                    StepEvent::Normal => ObjectEvent::Step,
+                    StepEvent::Begin => ObjectEvent::BeginStep,
+                    StepEvent::End => ObjectEvent::EndStep,
+                }
+            }
+            EventType::Other => {
+                match *sub_event
+                    .ok_or_else(|| vm::RuntimeError::msg("expected sub-event for `ev_other`"))?
+                    .downcast_static::<OtherEvent>()?
+                {
+                    OtherEvent::RoomStart => ObjectEvent::RoomStart,
+                    OtherEvent::RoomEnd => ObjectEvent::RoomEnd,
+                }
+            }
+        };
+
+        if let Some(closure) = State::ctx_with(ctx, |state| {
+            state.instances[instance_id]
+                .event_closures
+                .get(&event)
+                .cloned()
+        })? {
+            exec.with_this(instance_ud)
+                .call_closure(ctx, ctx.fetch(&closure))
+                .map_err(|e| e.into_extern())?;
+            exec.stack().clear();
+        }
+
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("event_perform"), event_perform)
+        .unwrap();
+
+    magic
 }

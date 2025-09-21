@@ -17,6 +17,7 @@ use crate::{
             ShaderUserData, SpriteUserData, TexturePageUserData, TileSetUserData, drawing_api,
         },
         font::{FontUserData, font_api},
+        instance::instance_api,
         magic::MagicExt as _,
         object::{ObjectUserData, object_api},
         os::os_api,
@@ -328,6 +329,7 @@ fn load_scripts(
         magic.merge_unique(&collision_api(ctx))?;
         magic.merge_unique(&stub_api(ctx))?;
         magic.merge_unique(&object_api(ctx, &config)?)?;
+        magic.merge_unique(&instance_api(ctx))?;
         magic.merge_unique(&room_api(ctx, &config)?)?;
         magic.merge_unique(&drawing_api(ctx, &config)?)?;
         magic.merge_unique(&font_api(ctx, &config)?)?;

@@ -22,11 +22,16 @@ pub fn tick_state(
             &state.config.rooms[next_room].name
         );
 
-        let destroying_instances = state
+        // Only instances that exist at the *beginning* of the switch to the next room will have the
+        // `RoomEnd` event called and be removed from the room (if not persistent). If an instance
+        // is added during any of these events, it will be retained as though it was created at the
+        // start of the next room.
+
+        let room_end_instances = state
             .instances
             .iter()
             .filter_map(|(instance_id, instance)| {
-                if !instance.destroyed && !state.config.objects[instance.object].persistent {
+                if !instance.dead {
                     Some(instance_id)
                 } else {
                     None
@@ -34,13 +39,25 @@ pub fn tick_state(
             })
             .collect::<Vec<_>>();
 
-        for instance_id in destroying_instances {
+        let remove_instances = state
+            .instances
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                if !state.config.objects[instance.object].persistent {
+                    Some(instance_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for instance_id in room_end_instances {
             interpreter.enter(|ctx| -> Result<_, Error> {
                 let instance = &state.instances[instance_id];
-                if let Some(destroy_closure) = instance.event_closures.get(&ObjectEvent::Destroy)
-                    && !instance.destroyed
+                if let Some(room_end_closure) = instance.event_closures.get(&ObjectEvent::RoomEnd)
+                    && !instance.dead
                 {
-                    let destroy_closure = ctx.fetch(destroy_closure);
+                    let room_end_closure = ctx.fetch(room_end_closure);
                     let instance_ud = ctx.fetch(&instance.this);
                     FreezeMany::new()
                         .freeze(InputState::ctx_cell(ctx), input_state)
@@ -48,7 +65,7 @@ pub fn tick_state(
                         .in_scope(|| {
                             ctx.fetch(thread).run_with(
                                 ctx,
-                                destroy_closure,
+                                room_end_closure,
                                 instance_ud,
                                 vm::Value::Undefined,
                             )
@@ -57,10 +74,37 @@ pub fn tick_state(
 
                 Ok(())
             })?;
-            state.instances[instance_id].destroyed = true;
         }
 
-        state.instances.retain(|_, instance| !instance.destroyed);
+        for instance_id in remove_instances {
+            interpreter.enter(|ctx| -> Result<_, Error> {
+                let instance = &state.instances[instance_id];
+
+                if let Some(clean_up_closure) = instance.event_closures.get(&ObjectEvent::CleanUp)
+                    && !instance.dead
+                {
+                    let clean_up_closure = ctx.fetch(clean_up_closure);
+                    let instance_ud = ctx.fetch(&instance.this);
+                    FreezeMany::new()
+                        .freeze(InputState::ctx_cell(ctx), input_state)
+                        .freeze(State::ctx_cell(ctx), state)
+                        .in_scope(|| {
+                            ctx.fetch(thread).run_with(
+                                ctx,
+                                clean_up_closure,
+                                instance_ud,
+                                vm::Value::Undefined,
+                            )
+                        })?;
+                }
+
+                Ok(())
+            })?;
+
+            state.instances[instance_id].dead = true;
+        }
+
+        state.instances.retain(|_, instance| !instance.dead);
 
         state.current_room = Some(next_room);
 
@@ -84,7 +128,7 @@ pub fn tick_state(
                     let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                         object: instance_template.object,
                         active: true,
-                        destroyed: false,
+                        dead: false,
                         position: instance_template.position,
                         rotation: 0.0,
                         depth: layer.depth,
@@ -114,6 +158,44 @@ pub fn tick_state(
                     Ok(())
                 })?;
             }
+        }
+
+        let room_start_instances = state
+            .instances
+            .iter()
+            .filter_map(|(instance_id, instance)| {
+                if !instance.dead {
+                    Some(instance_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for instance_id in room_start_instances {
+            interpreter.enter(|ctx| -> Result<_, Error> {
+                let instance = &state.instances[instance_id];
+                if let Some(room_start_closure) =
+                    instance.event_closures.get(&ObjectEvent::RoomStart)
+                    && !instance.dead
+                {
+                    let room_start_closure = ctx.fetch(room_start_closure);
+                    let instance_ud = ctx.fetch(&instance.this);
+                    FreezeMany::new()
+                        .freeze(InputState::ctx_cell(ctx), input_state)
+                        .freeze(State::ctx_cell(ctx), state)
+                        .in_scope(|| {
+                            ctx.fetch(thread).run_with(
+                                ctx,
+                                room_start_closure,
+                                instance_ud,
+                                vm::Value::Undefined,
+                            )
+                        })?;
+                }
+
+                Ok(())
+            })?;
         }
     }
 
@@ -222,7 +304,7 @@ pub fn tick_state(
         }
     }
 
-    state.instances.retain(|_, instance| !instance.destroyed);
+    state.instances.retain(|_, instance| !instance.dead);
 
     Ok(())
 }
