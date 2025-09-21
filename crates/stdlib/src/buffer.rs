@@ -302,7 +302,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 } else {
                     // If the string does not have an embedded NUL, write the whole string followed
                     // by a NUL.
-                    buffer.cursor_write(s.as_str().as_bytes())?;
+                    buffer.cursor_write(s.as_bytes())?;
                     buffer.cursor_write_unaligned(&[0])?;
                 }
             }
@@ -312,7 +312,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 // We write the *entire* string here and assume that the string byte length is
                 // separately stored.
                 let s: vm::String = value_to_string(ctx, exec.reborrow(), value)?;
-                buffer.cursor_write(s.as_str().as_bytes())?;
+                buffer.cursor_write(s.as_bytes())?;
             }
         }
 

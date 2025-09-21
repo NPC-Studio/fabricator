@@ -12,13 +12,19 @@ use gc_arena::{
 use rustc_hash::FxHashMap;
 
 /// A shared string with 'static lifetime.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Collect)]
+#[derive(Clone, Eq, PartialEq, Hash, Collect)]
 #[collect(require_static)]
 pub struct SharedStr(Arc<str>);
 
 impl fmt::Display for SharedStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.0.as_ref())
+    }
+}
+
+impl fmt::Debug for SharedStr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0.as_ref())
     }
 }
 
@@ -49,7 +55,7 @@ impl Borrow<str> for SharedStr {
     }
 }
 
-#[derive(Debug, Copy, Clone, Collect)]
+#[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct String<'gc>(Gc<'gc, SharedStr>);
 
@@ -70,6 +76,12 @@ impl<'gc> hash::Hash for String<'gc> {
 }
 
 impl<'gc> fmt::Display for String<'gc> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<'gc> fmt::Debug for String<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }

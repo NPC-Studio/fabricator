@@ -7,7 +7,7 @@ use fabricator_compiler::{
     compiler::{CompileErrorKind, Compiler, ImportItems},
     parser::{ParseError, ParseErrorKind},
 };
-use fabricator_stdlib::StdlibContext as _;
+use fabricator_stdlib::{StdlibContext as _, string::debug_value};
 use fabricator_vm as vm;
 
 #[derive(Parser)]
@@ -175,7 +175,7 @@ fn main() -> Result<ExitCode, Error> {
                                         if !stack.is_empty() {
                                             let mut ret_iter = stack.iter().peekable();
                                             while let Some(r) = ret_iter.next() {
-                                                print!("{}", r);
+                                                print!("{:?}", debug_value(ctx, r));
                                                 if ret_iter.peek().is_some() {
                                                     print!("\t");
                                                 }

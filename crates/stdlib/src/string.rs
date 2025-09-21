@@ -290,7 +290,7 @@ pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 for i in 0..patterns.len() {
                     let pat = patterns
                         .get(i)
-                        .as_string()
+                        .coerce_string(ctx)
                         .ok_or_else(|| vm::RuntimeError::msg("trim pattern must be a string"))?;
                     let new_res = res.trim_end_matches(pat.as_str());
                     if new_res.len() != res.len() {
@@ -430,23 +430,31 @@ pub fn split_format<'a>(s: &'a str) -> impl Iterator<Item = FormatPart<'a>> + 'a
     }
 }
 
-/// Pretty print any [`vm::Value`].
+/// Print any [`vm::Value`].
 pub fn raw_print_value<'gc>(
     f: &mut dyn fmt::Write,
     ctx: vm::Context<'gc>,
     value: vm::Value<'gc>,
 ) -> Result<(), fmt::Error> {
-    do_print_value(f, ctx, None, value).map_err(|e| match e {
-        PrintValueError::ToStringError(_) => unreachable!(),
-        PrintValueError::FmtError(fmt_error) => fmt_error,
-    })
+    if let vm::Value::String(s) = value {
+        write!(f, "{}", s)
+    } else {
+        pretty_print_value(f, ctx, None, value).map_err(|e| match e {
+            PrintValueError::ToStringError(_) => unreachable!(),
+            PrintValueError::FmtError(fmt_error) => fmt_error,
+        })
+    }
 }
 
-/// Pretty print any [`vm::Value`] into a [`vm::String`].
+/// Print any [`vm::Value`] into a [`vm::String`].
 pub fn raw_value_to_string<'gc>(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> vm::String<'gc> {
-    let mut s = String::new();
-    raw_print_value(&mut s, ctx, value).unwrap();
-    ctx.intern(&s)
+    if let vm::Value::String(s) = value {
+        s
+    } else {
+        let mut s = String::new();
+        pretty_print_value(&mut s, ctx, None, value).unwrap();
+        ctx.intern(&s)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -457,7 +465,7 @@ pub enum PrintValueError {
     FmtError(#[from] fmt::Error),
 }
 
-/// Pretty print any [`vm::Value`], calling `toString` methods on objects if present.
+/// Print any [`vm::Value`], calling `toString` methods on objects if present.
 ///
 /// On return, the stack in the provided `exec` is restored to its initial state.
 pub fn print_value<'gc>(
@@ -466,11 +474,14 @@ pub fn print_value<'gc>(
     exec: vm::Execution<'gc, '_>,
     value: vm::Value<'gc>,
 ) -> Result<(), PrintValueError> {
-    do_print_value(f, ctx, Some(exec), value)
+    if let vm::Value::String(s) = value {
+        Ok(write!(f, "{}", s)?)
+    } else {
+        pretty_print_value(f, ctx, Some(exec), value)
+    }
 }
 
-/// Pretty print any [`vm::Value`] into a [`vm::String`], calling `toString` methods on objects
-/// if present.
+/// Print any [`vm::Value`] into a [`vm::String`], calling `toString` methods on objects if present.
 ///
 /// On return, the stack in the provided `exec` is restored to its initial state.
 pub fn value_to_string<'gc>(
@@ -478,15 +489,39 @@ pub fn value_to_string<'gc>(
     exec: vm::Execution<'gc, '_>,
     value: vm::Value<'gc>,
 ) -> Result<vm::String<'gc>, vm::RuntimeError> {
-    let mut s = String::new();
-    print_value(&mut s, ctx, exec, value).map_err(|e| match e {
-        PrintValueError::ToStringError(err) => err,
-        PrintValueError::FmtError(_) => unreachable!(),
-    })?;
-    Ok(ctx.intern(&s))
+    if let vm::Value::String(s) = value {
+        Ok(s)
+    } else {
+        let mut s = String::new();
+        pretty_print_value(&mut s, ctx, Some(exec), value).map_err(|e| match e {
+            PrintValueError::ToStringError(err) => err,
+            PrintValueError::FmtError(_) => unreachable!(),
+        })?;
+        Ok(ctx.intern(&s))
+    }
 }
 
-fn do_print_value<'gc>(
+/// Returns a `fmt::Debug` impl that pretty prints any [`vm::Value`].
+pub fn debug_value<'gc>(ctx: vm::Context<'gc>, value: vm::Value<'gc>) -> impl fmt::Debug + 'gc {
+    struct PrettyValue<'gc> {
+        ctx: vm::Context<'gc>,
+        value: vm::Value<'gc>,
+    }
+
+    impl<'gc> fmt::Debug for PrettyValue<'gc> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            pretty_print_value(f, self.ctx, None, self.value).map_err(|e| match e {
+                PrintValueError::ToStringError(_) => unreachable!(),
+                PrintValueError::FmtError(e) => e,
+            })
+        }
+    }
+
+    PrettyValue { ctx, value }
+}
+
+// Print any value in an expression-like format.
+fn pretty_print_value<'gc>(
     f: &mut dyn fmt::Write,
     ctx: vm::Context<'gc>,
     exec: Option<vm::Execution<'gc, '_>>,
@@ -500,7 +535,7 @@ fn do_print_value<'gc>(
         value: vm::Value<'gc>,
     ) -> Result<(), PrintValueError> {
         match value {
-            vm::Value::String(s) => Ok(write!(f, "{}", s.as_str())?),
+            vm::Value::String(s) => Ok(write!(f, "{:?}", s)?),
             vm::Value::Object(object) => {
                 if let Some(exec) = &mut exec
                     && let Some(to_string) = object.get(ctx.intern("toString"))
@@ -510,13 +545,13 @@ fn do_print_value<'gc>(
                     exec.with_this(object).call(ctx, to_string)?;
                     let s: vm::String =
                         exec.stack().consume(ctx).map_err(vm::RuntimeError::from)?;
-                    Ok(write!(f, "{}", s.as_str())?)
+                    Ok(write!(f, "{}", s)?)
                 } else if recursive_check.insert(Gc::as_ptr(object.into_inner()) as *const ()) {
                     let object = object.borrow();
                     write!(f, "{{")?;
                     let mut iter = object.map.iter().map(|(&k, &v)| (k, v)).peekable();
                     while let Some((key, value)) = iter.next() {
-                        write!(f, " {}: ", key.as_str())?;
+                        write!(f, " {}: ", key)?;
                         print_value_inner(
                             f,
                             ctx,
@@ -526,9 +561,11 @@ fn do_print_value<'gc>(
                         )?;
                         if iter.peek().is_some() {
                             write!(f, ",")?;
+                        } else {
+                            write!(f, " ")?;
                         }
                     }
-                    Ok(write!(f, " }}")?)
+                    Ok(write!(f, "}}")?)
                 } else {
                     Ok(write!(f, "<recursive object>")?)
                 }
@@ -556,7 +593,7 @@ fn do_print_value<'gc>(
                 }
             }
             vm::Value::UserData(user_data) => Ok(match user_data.coerce_string(ctx) {
-                Some(s) => write!(f, "{:?}", s.as_str())?,
+                Some(s) => write!(f, "{:?}", s)?,
                 None => write!(f, "{}", value)?,
             }),
             _ => Ok(write!(f, "{}", value)?),
@@ -585,6 +622,10 @@ mod tests {
 
     #[test]
     fn test_split_format() {
+        assert_eq!(
+            &split_format("{0}").collect::<Vec<_>>(),
+            &[FormatPart::Arg(0)]
+        );
         assert_eq!(
             &split_format("{{0}").collect::<Vec<_>>(),
             &[FormatPart::Str("{"), FormatPart::Arg(0)]
