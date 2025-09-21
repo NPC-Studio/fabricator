@@ -1,7 +1,9 @@
-use std::f64;
+use std::{cell::RefCell, f64};
 
 use fabricator_vm as vm;
-use rand::Rng;
+use rand::{Rng, SeedableRng, rngs::SmallRng, seq::SliceRandom as _};
+
+use crate::util::resolve_array_range;
 
 pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
@@ -53,6 +55,13 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         Ok(())
     });
     lib.insert(ctx.intern("sqr"), vm::MagicConstant::new_ptr(&ctx, sqr));
+
+    let power = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (arg, exp): (f64, f64) = exec.stack().consume(ctx)?;
+        exec.stack().replace(ctx, arg.powf(exp));
+        Ok(())
+    });
+    lib.insert(ctx.intern("power"), vm::MagicConstant::new_ptr(&ctx, power));
 
     let round = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: f64 = exec.stack().consume(ctx)?;
@@ -115,6 +124,43 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     });
     lib.insert(ctx.intern("clamp"), vm::MagicConstant::new_ptr(&ctx, clamp));
 
+    struct Rng {
+        rng: RefCell<SmallRng>,
+    }
+
+    impl Default for Rng {
+        fn default() -> Self {
+            Self {
+                rng: RefCell::new(SmallRng::from_os_rng()),
+            }
+        }
+    }
+
+    type RngSingleton = gc_arena::Static<Rng>;
+
+    let randomize = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        // NOTE: GMS2 only generates a u32 and FoM relies on this.
+        let seed: u32 = rand::rng().random();
+        *ctx.singleton::<RngSingleton>().rng.borrow_mut() = SmallRng::seed_from_u64(seed as u64);
+        exec.stack().replace(ctx, seed as i64);
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("randomize"),
+        vm::MagicConstant::new_ptr(&ctx, randomize),
+    );
+
+    let random_set_seed = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let seed: u32 = exec.stack().consume(ctx)?;
+        *ctx.singleton::<RngSingleton>().rng.borrow_mut() = SmallRng::seed_from_u64(seed as u64);
+        exec.stack().clear();
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("random_set_seed"),
+        vm::MagicConstant::new_ptr(&ctx, random_set_seed),
+    );
+
     let random = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let upper: f64 = exec.stack().consume(ctx)?;
         if upper < 0.0 {
@@ -122,8 +168,8 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 "`random` upper range {upper} cannot be <= 0.0"
             )));
         }
-        exec.stack()
-            .replace(ctx, rand::rng().random_range(0.0..=upper));
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        exec.stack().replace(ctx, rng.random_range(0.0..=upper));
         Ok(())
     });
     lib.insert(
@@ -138,8 +184,8 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 "`irandom` upper range {upper} cannot be <= 0"
             )));
         }
-        exec.stack()
-            .replace(ctx, rand::rng().random_range(0..=upper));
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        exec.stack().replace(ctx, rng.random_range(0..=upper));
         Ok(())
     });
     lib.insert(
@@ -154,8 +200,8 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 "`random_range`: invalid range [{lower}, {upper}]"
             )));
         }
-        exec.stack()
-            .replace(ctx, rand::rng().random_range(lower..=upper));
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        exec.stack().replace(ctx, rng.random_range(lower..=upper));
         Ok(())
     });
     lib.insert(
@@ -163,9 +209,26 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         vm::MagicConstant::new_ptr(&ctx, random_range),
     );
 
+    let irandom_range = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (lower, upper): (i64, i64) = exec.stack().consume(ctx)?;
+        if upper < lower {
+            return Err(vm::RuntimeError::msg(format!(
+                "`irandom_range`: invalid range [{lower}, {upper}]"
+            )));
+        }
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        exec.stack().replace(ctx, rng.random_range(lower..=upper));
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("irandom_range"),
+        vm::MagicConstant::new_ptr(&ctx, irandom_range),
+    );
+
     let choose = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let mut stack = exec.stack();
-        let i = rand::rng().random_range(0..stack.len());
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        let i = rng.random_range(0..stack.len());
         let v = stack[i];
         stack.replace(ctx, v);
         Ok(())
@@ -173,6 +236,28 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert(
         ctx.intern("choose"),
         vm::MagicConstant::new_ptr(&ctx, choose),
+    );
+
+    let array_shuffle = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (src, src_index, length): (vm::Array, Option<isize>, Option<isize>) =
+            exec.stack().consume(ctx)?;
+        let (src_range, is_reverse) = resolve_array_range(src.len(), src_index, length)?;
+
+        let mut vals: Vec<_> = if is_reverse {
+            src_range.rev().map(|i| src.get(i)).collect()
+        } else {
+            src_range.map(|i| src.get(i)).collect()
+        };
+
+        let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+        vals.shuffle(&mut rng);
+
+        exec.stack().replace(ctx, vm::Array::from_iter(&ctx, vals));
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("array_shuffle"),
+        vm::MagicConstant::new_ptr(&ctx, array_shuffle),
     );
 
     let point_in_rectangle = vm::Callback::from_fn(&ctx, |ctx, mut exec| {

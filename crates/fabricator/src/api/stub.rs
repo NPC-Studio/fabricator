@@ -54,7 +54,6 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     create_stub_callback(ctx, &mut magic, "gc_enable", []);
     create_stub_callback(ctx, &mut magic, "exception_unhandled_handler", []);
 
-    create_stub_callback(ctx, &mut magic, "randomize", []);
     create_stub_callback(ctx, &mut magic, "buffer_save", []);
     create_stub_callback(ctx, &mut magic, "file_rename", [true.into()]);
     create_stub_callback(ctx, &mut magic, "directory_exists", [true.into()]);

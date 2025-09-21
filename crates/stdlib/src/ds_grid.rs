@@ -193,6 +193,20 @@ pub fn ds_grid_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         vm::MagicConstant::new_ptr(&ctx, ds_grid_set_region),
     );
 
+    let ds_grid_clear = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (grid, value): (vm::UserData, vm::Value) = exec.stack().consume(ctx)?;
+        let grid = DsGrid::downcast_write(&ctx, grid)?;
+        let array = barrier::field!(grid, DsGrid, array).as_deref();
+        for i in 0..array.len() {
+            array[i].unlock().set(value);
+        }
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("ds_grid_clear"),
+        vm::MagicConstant::new_ptr(&ctx, ds_grid_clear),
+    );
+
     let ds_grid_width = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let grid: vm::UserData = exec.stack().consume(ctx)?;
         exec.stack()
