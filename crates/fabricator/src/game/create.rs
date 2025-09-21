@@ -25,6 +25,7 @@ use crate::{
         room::{RoomUserData, room_api},
         sound::{SoundUserData, sound_api},
         stub::stub_api,
+        tile::tiles_api,
     },
     ffi::load_extension_file,
     game::maxrects::MaxRects,
@@ -335,6 +336,7 @@ fn load_scripts(
         magic.merge_unique(&font_api(ctx, &config)?)?;
         magic.merge_unique(&sound_api(ctx, &config)?)?;
         magic.merge_unique(&assets_api(ctx, &config)?)?;
+        magic.merge_unique(&tiles_api(ctx))?;
 
         for extension in project.extensions.values() {
             for file in &extension.files {

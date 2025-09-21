@@ -10,4 +10,5 @@ pub mod platform;
 pub mod room;
 pub mod sound;
 pub mod stub;
+pub mod tile;
 pub mod userdata;
