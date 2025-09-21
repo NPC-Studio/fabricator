@@ -288,7 +288,7 @@ where
 
     pub fn downcast<'gc>(
         userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
         userdata.downcast_static::<IdUserData<I>>()
     }
 }
@@ -370,7 +370,7 @@ where
 
     pub fn downcast(
         userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
         userdata.downcast::<Rootable![NamedIdUserData<'_, I>]>()
     }
 }

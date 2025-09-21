@@ -81,14 +81,16 @@ pub struct TileSet {
 pub struct Room {
     pub name: String,
     pub size: Vec2<u32>,
-    pub layers: HashMap<String, Layer>,
+    pub layers: HashMap<String, LayerTemplate>,
     pub userdata: vm::StashedUserData,
     pub tags: HashSet<String>,
 }
 
 #[derive(Clone)]
-pub struct Layer {
+pub struct LayerTemplate {
+    pub name: String,
     pub depth: i32,
+    pub visible: bool,
     pub instances: Vec<InstanceTemplateId>,
 }
 

@@ -25,7 +25,7 @@ impl InstanceUserData {
 
     pub fn downcast<'gc>(
         userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
         userdata.downcast_static::<InstanceUserData>()
     }
 }

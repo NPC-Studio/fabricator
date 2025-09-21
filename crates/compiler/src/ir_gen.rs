@@ -1204,8 +1204,8 @@ where
     fn with_stmt(&mut self, with_stmt: &ast::LoopStmt<S>) -> Result<(), IrGenError> {
         let target = self.expression(&with_stmt.target)?;
 
-        let state_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(with_stmt.span, ir::Instruction::OpenVariable(state_var));
+        let control_var = self.function.variables.insert(ir::Variable::Owned);
+        self.push_instruction(with_stmt.span, ir::Instruction::OpenVariable(control_var));
 
         let with_loop_iter_name = self.interner.intern(BuiltIns::WITH_LOOP_ITER);
         let with_loop_iter = self.push_instruction(
@@ -1213,17 +1213,17 @@ where
             ir::Instruction::GetMagic(with_loop_iter_name),
         );
 
-        // The iteration protocol is to call the iter init function and expect two returns, the
-        // iteration function and an initial state value.
+        // The iteration protocol is to call the iter init function and expect three returns: an
+        // iterator function, a state value, and a control value.
         //
-        // At the beginning of a loop, the iteration function is called with the current state
-        // value. The iteration function is expected to return the new value for the state value
-        // followed by all of the iteration results for that loop.
+        // At the beginning of a loop, the iteration function is called with the state value and
+        // current control value as parameters. The iteration function is expected to return the
+        // new value for the control value followed by all of the iteration results for that loop.
         //
-        // If the returned state value is `Value::Undefined`, then the loop immediately stops (and
+        // If the returned control value is `Value::Undefined`, then the loop immediately stops (and
         // all following return values are ignored).
         //
-        // The iteration function will always be called at least once, even if the initial state
+        // The iterator function will always be called at least once, even if the initial control
         // value is `Value::Undefined`.
 
         let setup_call_scope = self.function.call_scopes.insert(());
@@ -1240,16 +1240,20 @@ where
             with_stmt.span,
             ir::Instruction::FixedReturn(setup_call_scope, 0),
         );
-        let init_state = self.push_instruction(
+        let state = self.push_instruction(
             with_stmt.span,
             ir::Instruction::FixedReturn(setup_call_scope, 1),
+        );
+        let init_control = self.push_instruction(
+            with_stmt.span,
+            ir::Instruction::FixedReturn(setup_call_scope, 2),
         );
 
         self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(setup_call_scope));
 
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::SetVariable(state_var, init_state),
+            ir::Instruction::SetVariable(control_var, init_control),
         );
 
         let this_scope = self.function.this_scopes.insert(());
@@ -1265,8 +1269,8 @@ where
         self.end_current_block(ir::Exit::Jump(check_block));
         self.start_new_block(check_block);
 
-        let cur_state =
-            self.push_instruction(with_stmt.span, ir::Instruction::GetVariable(state_var));
+        let cur_control =
+            self.push_instruction(with_stmt.span, ir::Instruction::GetVariable(control_var));
 
         let iter_call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
@@ -1274,10 +1278,10 @@ where
             ir::Instruction::OpenCall {
                 scope: iter_call_scope,
                 func: iter_fn,
-                args: vec![cur_state],
+                args: vec![state, cur_control],
             },
         );
-        let next_state = self.push_instruction(
+        let next_control = self.push_instruction(
             with_stmt.span,
             ir::Instruction::FixedReturn(iter_call_scope, 0),
         );
@@ -1287,16 +1291,16 @@ where
         );
         self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(iter_call_scope));
 
-        let state_is_undef = self.push_instruction(
+        let control_is_undef = self.push_instruction(
             with_stmt.span,
             ir::Instruction::UnOp {
                 op: ir::UnOp::IsUndefined,
-                source: next_state,
+                source: next_control,
             },
         );
 
         self.end_current_block(ir::Exit::Branch {
-            cond: state_is_undef,
+            cond: control_is_undef,
             if_true: successor_block,
             if_false: body_block,
         });
@@ -1304,7 +1308,7 @@ where
 
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::SetVariable(state_var, next_state),
+            ir::Instruction::SetVariable(control_var, next_control),
         );
 
         self.push_instruction(
@@ -1324,7 +1328,7 @@ where
         self.pop_continue_target(check_block);
 
         self.push_instruction(with_stmt.span, ir::Instruction::CloseThisScope(this_scope));
-        self.push_instruction(with_stmt.span, ir::Instruction::CloseVariable(state_var));
+        self.push_instruction(with_stmt.span, ir::Instruction::CloseVariable(control_var));
 
         Ok(())
     }

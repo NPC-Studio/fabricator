@@ -1,12 +1,12 @@
 use anyhow::Error;
 use fabricator_collision::support_ext::SupportMapExt as _;
-use fabricator_util::freeze::FreezeMany;
+use fabricator_util::{freeze::FreezeMany, index_containers::IndexSet};
 use fabricator_vm as vm;
 
 use crate::{
     api::instance::InstanceUserData,
     project::ObjectEvent,
-    state::{DrawingState, InputState, Instance, InstanceState, State},
+    state::{DrawingState, InputState, Instance, InstanceState, State, state::Layer},
 };
 
 pub fn tick_state(
@@ -103,8 +103,42 @@ pub fn tick_state(
 
             state.instances[instance_id].dead = true;
         }
-
         state.instances.retain(|_, instance| !instance.dead);
+
+        // Clean up removed instances in the instance maps.
+
+        state
+            .instance_for_template
+            .retain(|_, id| state.instances.contains(*id));
+
+        for set in state.instances_for_object.values_mut() {
+            set.retain(|&id| state.instances.contains(id));
+        }
+        state.instances_for_object.retain(|_, set| !set.is_empty());
+
+        for set in state.instances_for_layer.values_mut() {
+            set.retain(|&id| state.instances.contains(id));
+        }
+        state.instances_for_layer.retain(|_, set| !set.is_empty());
+
+        // Clean up all empty, unnamed layers.
+
+        let mut used_layers = IndexSet::new();
+
+        for &layer_id in state.named_layers.values() {
+            used_layers.insert(layer_id.index() as usize);
+        }
+
+        for layer_id in state.instances_for_layer.ids() {
+            used_layers.insert(layer_id.index() as usize);
+        }
+
+        state
+            .named_layers
+            .retain(|_, layer_id| used_layers.contains(layer_id.index() as usize));
+
+        // Switch to the next room, creating all new instances (other than persistent instances
+        // which already exist).
 
         state.current_room = Some(next_room);
 
@@ -113,16 +147,20 @@ pub fn tick_state(
             .clone()
             .into_values()
         {
+            let layer_id = state.layers.insert(Layer {
+                depth: layer.depth,
+                visible: layer.visible,
+            });
+            state.named_layers.insert(layer.name.clone(), layer_id);
+
             for &template_id in &layer.instances {
                 interpreter.enter(|ctx| -> Result<_, Error> {
                     let instance_template = state.config.instance_templates[template_id];
 
                     if state.config.objects[instance_template.object].persistent {
-                        if state.persistent_instances.contains(&template_id) {
+                        if state.instance_for_template.contains(template_id) {
                             return Ok(());
                         }
-
-                        state.persistent_instances.insert(template_id);
                     }
 
                     let instance_id = state.instances.insert_with_id(|instance_id| Instance {
@@ -131,12 +169,31 @@ pub fn tick_state(
                         dead: false,
                         position: instance_template.position,
                         rotation: 0.0,
-                        depth: layer.depth,
+                        layer: layer_id,
                         this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                         properties: ctx.stash(vm::Object::new(&ctx)),
                         event_closures: state.scripts.event_closures(ctx, instance_template.object),
                         animation_time: 0.0,
                     });
+
+                    assert!(
+                        state
+                            .instance_for_template
+                            .insert(template_id, instance_id)
+                            .is_none()
+                    );
+                    assert!(
+                        state
+                            .instances_for_object
+                            .get_or_insert_default(instance_template.object)
+                            .insert(instance_id)
+                    );
+                    assert!(
+                        state
+                            .instances_for_layer
+                            .get_or_insert_default(layer_id)
+                            .insert(instance_id)
+                    );
 
                     let instance = &mut state.instances[instance_id];
 

@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
-    string::String, userdata::UserData, value::Function, value::Value,
+    string::String, user_data::UserData, value::Function, value::Value,
 };
 
 #[derive(Debug, Clone, Copy, Error)]

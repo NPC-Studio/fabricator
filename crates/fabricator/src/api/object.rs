@@ -9,7 +9,7 @@ use crate::{
         magic::{DuplicateMagicName, MagicExt as _},
     },
     project::ObjectEvent,
-    state::{Configuration, Instance, InstanceState, ObjectId, State},
+    state::{Configuration, Instance, InstanceId, InstanceState, ObjectId, State, state::Layer},
 };
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -22,11 +22,33 @@ pub struct ObjectUserData<'gc> {
 
 impl<'gc> ObjectUserData<'gc> {
     pub fn new(ctx: vm::Context<'gc>, id: ObjectId, name: vm::String<'gc>) -> vm::UserData<'gc> {
-        #[derive(Collect)]
-        #[collect(require_static)]
-        struct Methods;
+        fn singleton_instance(
+            state: &State,
+            object_id: ObjectId,
+        ) -> Result<InstanceId, vm::RuntimeError> {
+            if let Some(set) = state.instances_for_object.get(object_id) {
+                if !set.is_empty() {
+                    if set.len() > 1 {
+                        return Err(vm::RuntimeError::msg(
+                            "propery access on objects only allowed on singletons",
+                        ));
+                    } else {
+                        return Ok(*set.iter().next().unwrap());
+                    }
+                }
+            }
+            Err(vm::RuntimeError::msg(
+                "propery access on object without an instance",
+            ))
+        }
 
-        impl<'gc> vm::UserDataMethods<'gc> for Methods {
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct Methods<'gc> {
+            instance_iter: vm::Callback<'gc>,
+        }
+
+        impl<'gc> vm::UserDataMethods<'gc> for Methods<'gc> {
             fn get_field(
                 &self,
                 ud: vm::UserData<'gc>,
@@ -35,28 +57,11 @@ impl<'gc> ObjectUserData<'gc> {
             ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
                 let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
                 State::ctx_with(ctx, |state| {
-                    let mut found = false;
-                    let mut value = vm::Value::Undefined;
-                    for instance in state.instances.values() {
-                        if instance.object == object_id {
-                            if found {
-                                return Err(vm::RuntimeError::msg(
-                                    "propery access on objects only allowed on singletons",
-                                ));
-                            }
-                            found = true;
-
-                            value = ctx.fetch(&instance.properties).get(key).unwrap_or_default();
-                        }
-                    }
-
-                    if !found {
-                        return Err(vm::RuntimeError::msg(
-                            "propery access on object without an instance",
-                        ));
-                    }
-
-                    Ok(value)
+                    let instance_id = singleton_instance(state, object_id)?;
+                    Ok(ctx
+                        .fetch(&state.instances[instance_id].properties)
+                        .get(key)
+                        .unwrap_or_default())
                 })?
             }
 
@@ -69,26 +74,9 @@ impl<'gc> ObjectUserData<'gc> {
             ) -> Result<(), vm::RuntimeError> {
                 let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
                 State::ctx_with(ctx, |state| {
-                    let mut found = false;
-                    for instance in state.instances.values() {
-                        if instance.object == object_id {
-                            if found {
-                                return Err(vm::RuntimeError::msg(
-                                    "propery access on objects only allowed on singletons",
-                                ));
-                            }
-                            found = true;
-
-                            ctx.fetch(&instance.properties).set(&ctx, key, value);
-                        }
-                    }
-
-                    if !found {
-                        return Err(vm::RuntimeError::msg(
-                            "propery access on object without an instance",
-                        ));
-                    }
-
+                    let instance_id = singleton_instance(state, object_id)?;
+                    ctx.fetch(&state.instances[instance_id].properties)
+                        .set(&ctx, key, value);
                     Ok(())
                 })?
             }
@@ -97,32 +85,33 @@ impl<'gc> ObjectUserData<'gc> {
                 &self,
                 ud: vm::UserData<'gc>,
                 ctx: vm::Context<'gc>,
-            ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
+            ) -> Result<vm::UserDataIter<'gc>, vm::RuntimeError> {
                 let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
 
-                let instance_iter = vm::Callback::from_fn(&ctx, move |ctx, mut exec| {
-                    let mut idx: u32 = exec.stack().consume(ctx)?;
-                    let next_instance = State::ctx_with(ctx, |state| {
-                        while idx < state.instances.index_upper_bound() {
-                            if let Some(id) = state.instances.id_for_index(idx) {
-                                if state.instances[id].object == object_id {
-                                    return Some(ctx.fetch(&state.instances[id].this));
+                let array = State::ctx_with(ctx, |state| {
+                    vm::Array::from_iter(
+                        &ctx,
+                        state
+                            .instances_for_object
+                            .get(object_id)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|&instance_id| {
+                                let instance = &state.instances[instance_id];
+                                if instance.active {
+                                    Some(ctx.fetch(&instance.this).into())
+                                } else {
+                                    None
                                 }
-                            }
-                            idx += 1;
-                        }
-                        None
-                    })?;
+                            }),
+                    )
+                })?;
 
-                    if let Some(next_instance) = next_instance {
-                        exec.stack().replace(ctx, (idx + 1, next_instance))
-                    } else {
-                        exec.stack().clear();
-                    }
-                    Ok(())
-                });
-
-                Some((instance_iter.into(), 0.into()))
+                Ok(vm::UserDataIter::Iter {
+                    iter: self.instance_iter.into(),
+                    state: array.into(),
+                    control: 0.into(),
+                })
             }
 
             fn coerce_string(
@@ -149,7 +138,32 @@ impl<'gc> ObjectUserData<'gc> {
 
         impl<'gc> vm::Singleton<'gc> for MethodsSingleton<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
-                let methods = Gc::new(&ctx, Methods);
+                let instance_iter = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+                    let (array, mut idx): (vm::Array, usize) = exec.stack().consume(ctx)?;
+                    let next_instance =
+                        State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
+                            while idx < array.len() {
+                                let ud: vm::UserData =
+                                    vm::FromValue::from_value(ctx, array.get(idx))?;
+                                let instance = InstanceUserData::downcast(ud)?;
+                                if state.instances.get(instance.id).is_some_and(|i| i.active) {
+                                    idx += 1;
+                                    return Ok(Some(ud));
+                                }
+                                idx += 1;
+                            }
+                            Ok(None)
+                        })??;
+
+                    if let Some(next_instance) = next_instance {
+                        exec.stack().replace(ctx, (idx as isize + 1, next_instance))
+                    } else {
+                        exec.stack().clear();
+                    }
+                    Ok(())
+                });
+
+                let methods = Gc::new(&ctx, Methods { instance_iter });
                 MethodsSingleton(gc_arena::unsize!(methods => dyn vm::UserDataMethods<'gc>))
             }
         }
@@ -164,7 +178,7 @@ impl<'gc> ObjectUserData<'gc> {
 
     pub fn downcast(
         userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
         userdata.downcast::<Rootable![ObjectUserData<'_>]>()
     }
 }
@@ -191,8 +205,12 @@ pub fn no_one<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
                     &self,
                     _ud: vm::UserData<'gc>,
                     _ctx: vm::Context<'gc>,
-                ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
-                    Some((self.null_iter.into(), vm::Value::Undefined))
+                ) -> Result<vm::UserDataIter<'gc>, vm::RuntimeError> {
+                    Ok(vm::UserDataIter::Iter {
+                        iter: self.null_iter.into(),
+                        state: vm::Value::Undefined,
+                        control: vm::Value::Undefined,
+                    })
                 }
             }
 
@@ -230,26 +248,47 @@ pub fn all<'gc>(ctx: vm::Context<'gc>) -> vm::UserData<'gc> {
                 fn iter(
                     &self,
                     _ud: vm::UserData<'gc>,
-                    _ctx: vm::Context<'gc>,
-                ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
-                    Some((self.instance_iter.into(), 0.into()))
+                    ctx: vm::Context<'gc>,
+                ) -> Result<vm::UserDataIter<'gc>, vm::RuntimeError> {
+                    let array = State::ctx_with(ctx, |state| {
+                        vm::Array::from_iter(
+                            &ctx,
+                            state.instances.values().filter_map(|instance| {
+                                if instance.active {
+                                    Some(ctx.fetch(&instance.this).into())
+                                } else {
+                                    None
+                                }
+                            }),
+                        )
+                    })?;
+
+                    Ok(vm::UserDataIter::Iter {
+                        iter: self.instance_iter.into(),
+                        state: array.into(),
+                        control: 0.into(),
+                    })
                 }
             }
 
             let instance_iter = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-                let mut idx: u32 = exec.stack().consume(ctx)?;
-                let next_instance = State::ctx_with(ctx, |state| {
-                    while idx < state.instances.index_upper_bound() {
-                        if let Some(id) = state.instances.id_for_index(idx) {
-                            return Some(ctx.fetch(&state.instances[id].this));
+                let (array, mut idx): (vm::Array, usize) = exec.stack().consume(ctx)?;
+                let next_instance =
+                    State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
+                        while idx < array.len() {
+                            let ud: vm::UserData = vm::FromValue::from_value(ctx, array.get(idx))?;
+                            let instance = InstanceUserData::downcast(ud)?;
+                            if state.instances.get(instance.id).is_some_and(|i| i.active) {
+                                idx += 1;
+                                return Ok(Some(ud));
+                            }
+                            idx += 1;
                         }
-                        idx += 1;
-                    }
-                    None
-                })?;
+                        Ok(None)
+                    })??;
 
                 if let Some(next_instance) = next_instance {
-                    exec.stack().replace(ctx, (idx + 1, next_instance))
+                    exec.stack().replace(ctx, (idx as isize + 1, next_instance))
                 } else {
                     exec.stack().clear();
                 }
@@ -325,18 +364,36 @@ pub fn object_api<'gc>(
                 }
             }
 
+            let layer_id = state.layers.insert(Layer {
+                depth,
+                visible: true,
+            });
+
             let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                 object: object.id,
                 active: true,
                 dead: false,
                 position: Vec2::new(x, y),
                 rotation: 0.0,
-                depth,
+                layer: layer_id,
                 this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                 properties: ctx.stash(properties),
                 event_closures: state.scripts.event_closures(ctx, object.id),
                 animation_time: 0.0,
             });
+
+            assert!(
+                state
+                    .instances_for_object
+                    .get_or_insert_default(object.id)
+                    .insert(instance_id)
+            );
+            assert!(
+                state
+                    .instances_for_layer
+                    .get_or_insert_default(layer_id)
+                    .insert(instance_id)
+            );
 
             (
                 instance_id,
@@ -370,15 +427,19 @@ pub fn object_api<'gc>(
         let object_or_instance: vm::UserData = exec.stack().consume(ctx)?;
         let found = if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
             State::ctx_with(ctx, |state| {
-                for instance in state.instances.values() {
-                    if instance.object == object.id {
-                        return true;
+                if let Some(set) = state.instances_for_object.get(object.id) {
+                    for &instance_id in set {
+                        if state.instances[instance_id].active {
+                            return true;
+                        }
                     }
                 }
                 false
             })?
         } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
-            State::ctx_with(ctx, |state| state.instances.contains(instance.id))?
+            State::ctx_with(ctx, |state| {
+                state.instances.get(instance.id).is_some_and(|i| i.active)
+            })?
         } else {
             return Err(vm::RuntimeError::msg(
                 "`instance_exists` expects an object or instance",
@@ -395,9 +456,9 @@ pub fn object_api<'gc>(
         let object_or_instance: vm::UserData = exec.stack().consume(ctx)?;
         if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
             State::ctx_with_mut(ctx, |state| {
-                for instance in state.instances.values_mut() {
-                    if instance.object == object.id {
-                        instance.active = false;
+                if let Some(set) = state.instances_for_object.get(object.id) {
+                    for &instance_id in set {
+                        state.instances[instance_id].active = false;
                     }
                 }
             })?;
@@ -436,7 +497,9 @@ pub fn object_api<'gc>(
                 &state.instance_bound_tree,
                 Box2::with_size(Vec2::new(left, top), Vec2::new(width, height)),
             ) {
-                state.instances[instance_id].active = true;
+                if let Some(instance) = state.instances.get_mut(instance_id) {
+                    instance.active = true;
+                }
             }
         })?;
         Ok(())
@@ -462,10 +525,12 @@ pub fn object_api<'gc>(
             };
 
             if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
-                for (instance_id, instance) in state.instances.iter() {
-                    if instance.object == object.id && !instance.dead {
-                        to_destroy.push(instance_id);
-                    }
+                if let Some(set) = state.instances_for_object.get(object.id) {
+                    to_destroy.extend(
+                        set.iter()
+                            .copied()
+                            .filter(|&id| state.instances.get(id).is_some_and(|i| !i.dead)),
+                    );
                 }
             } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
                 if state.instances.get(instance.id).is_some_and(|i| !i.dead) {
@@ -508,7 +573,11 @@ pub fn object_api<'gc>(
                     .map_err(|e| e.into_extern())?;
                 exec.stack().clear();
             }
-            State::ctx_with_mut(ctx, |state| state.instances[instance_id].dead = true)?;
+            State::ctx_with_mut(ctx, |state| {
+                let instance = &mut state.instances[instance_id];
+                instance.active = false;
+                instance.dead = true;
+            })?;
         }
 
         Ok(())

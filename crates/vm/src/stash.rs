@@ -7,7 +7,7 @@ use crate::{
     magic::MagicSet,
     object::{Object, ObjectInner},
     thread::{Thread, ThreadInner},
-    userdata::{UserData, UserDataInner, UserDataMethods},
+    user_data::{UserData, UserDataInner, UserDataMethods},
 };
 
 /// A trait for types that can be stashed into a [`DynamicRootSet`].

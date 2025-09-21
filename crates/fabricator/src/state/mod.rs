@@ -5,7 +5,7 @@ pub mod state;
 
 pub use self::{
     configuration::{
-        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
+        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, LayerTemplate, Object,
         ObjectId, Room, RoomId, Sprite, SpriteCollision, SpriteCollisionKind, SpriteId, Texture,
         TextureId,
     },

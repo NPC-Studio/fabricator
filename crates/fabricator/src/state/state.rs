@@ -22,6 +22,7 @@ use crate::{
 
 new_id_type! {
     pub struct TexturePageId;
+    pub struct LayerId;
     pub struct InstanceId;
 }
 
@@ -79,13 +80,18 @@ impl Scripts {
     }
 }
 
+pub struct Layer {
+    pub depth: i32,
+    pub visible: bool,
+}
+
 pub struct Instance {
     pub object: ObjectId,
     pub active: bool,
     pub dead: bool,
     pub position: Vec2<f64>,
     pub rotation: f64,
-    pub depth: i32,
+    pub layer: LayerId,
     pub this: vm::StashedUserData,
     pub properties: vm::StashedObject,
     pub event_closures: HashMap<ObjectEvent, vm::StashedClosure>,
@@ -101,8 +107,14 @@ pub struct State {
 
     pub current_room: Option<RoomId>,
     pub next_room: Option<RoomId>,
-    pub persistent_instances: HashSet<InstanceTemplateId>,
+
+    pub layers: IdMap<LayerId, Layer>,
+    pub named_layers: HashMap<String, LayerId>,
+
     pub instances: IdMap<InstanceId, Instance>,
+    pub instance_for_template: SecondaryMap<InstanceTemplateId, InstanceId>,
+    pub instances_for_object: SecondaryMap<ObjectId, HashSet<InstanceId>>,
+    pub instances_for_layer: SecondaryMap<LayerId, HashSet<InstanceId>>,
     pub instance_bound_tree: BoundBoxTree<f64, InstanceId>,
 }
 

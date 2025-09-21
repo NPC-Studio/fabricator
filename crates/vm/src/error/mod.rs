@@ -6,7 +6,7 @@ use std::{error::Error as StdError, fmt};
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{interpreter::Context, string::SharedStr, userdata::UserData, value::Value};
+use crate::{interpreter::Context, string::SharedStr, user_data::UserData, value::Value};
 
 pub use self::{raw_gc::RawGc, runtime_error::RuntimeError};
 

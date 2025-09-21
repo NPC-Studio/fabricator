@@ -132,14 +132,14 @@ impl<'gc> DsMap<'gc> {
 
     pub fn downcast(
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsMap<'gc>, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc DsMap<'gc>, vm::user_data::BadUserDataType> {
         ud.downcast::<Rootable![DsMap<'_>]>()
     }
 
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsMap<'gc>>, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsMap<'gc>>, vm::user_data::BadUserDataType> {
         ud.downcast_write::<Rootable![DsMap<'_>]>(mc)
     }
 

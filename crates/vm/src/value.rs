@@ -4,7 +4,7 @@ use gc_arena::{Collect, Mutation};
 
 use crate::{
     array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
-    string::String, userdata::UserData,
+    string::String, user_data::UserData,
 };
 
 #[derive(Copy, Clone, Collect)]

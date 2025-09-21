@@ -100,14 +100,14 @@ impl<'gc> DsGrid<'gc> {
 
     pub fn downcast(
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsGrid<'gc>, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc DsGrid<'gc>, vm::user_data::BadUserDataType> {
         ud.downcast::<Rootable![DsGrid<'_>]>()
     }
 
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsGrid<'gc>>, vm::userdata::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsGrid<'gc>>, vm::user_data::BadUserDataType> {
         ud.downcast_write::<Rootable![DsGrid<'_>]>(mc)
     }
 

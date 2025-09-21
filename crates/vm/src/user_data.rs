@@ -26,6 +26,28 @@ pub struct NoMethods;
 #[error("`UserDataMethods` impl does not have a {0:?} method")]
 pub struct MethodUnimplemented(&'static str);
 
+#[derive(Copy, Clone)]
+pub enum UserDataIter<'gc> {
+    // Iterating over this `UserData` with a `with` loop should iterate over the userdata itself
+    // only.
+    Singleton,
+    // Iterating over this `UserData` should yield values according to the iterator protocol.
+    //
+    /// At the beginning of every loop, the `iter` function will be called with the `state` and
+    /// `control` value as its parameters. The `iter` function should return the new `control`
+    /// value followed by all iter results for that iteration. If the iterator function returns
+    /// `undefined` as the `control` value, iteration immediately halts and all following return
+    /// values are ignored.
+    ///
+    /// The `iter` function will always be called at least once, even if the initial `control` value
+    /// is `undefined`.
+    Iter {
+        iter: Function<'gc>,
+        state: Value<'gc>,
+        control: Value<'gc>,
+    },
+}
+
 pub trait UserDataMethods<'gc> {
     fn get_field(
         &self,
@@ -65,22 +87,12 @@ pub trait UserDataMethods<'gc> {
         Err(MethodUnimplemented("set_index").into())
     }
 
-    /// If a userdata object is iterable, return an iterator function and state value for iteration
-    /// in a `with` loop.
-    ///
-    /// Should return two values according to the normal iterator protocol: the iterator function,
-    /// and the initial iteration state.
-    ///
-    /// At the beginning of every loop, the iterator function will be called with the state as its
-    /// parameter. The iterator function should return the new state value followed by all iter
-    /// results for that iteration (for a `with` loop, there should only be one iteration result,
-    /// which is a `self` value for that iteration). If the iterator function returns `undefined`
-    /// as the state, iteration immediately halts and all following return values are ignored.
-    ///
-    /// The iterator function will always be called at least once, even if the initial state value
-    /// is `undefined`.
-    fn iter(&self, _ud: UserData<'gc>, _ctx: Context<'gc>) -> Option<(Function<'gc>, Value<'gc>)> {
-        None
+    fn iter(
+        &self,
+        _ud: UserData<'gc>,
+        _ctx: Context<'gc>,
+    ) -> Result<UserDataIter<'gc>, RuntimeError> {
+        Ok(UserDataIter::Singleton)
     }
 
     /// Return the value of this userdata as a string.
@@ -323,8 +335,13 @@ impl<'gc> UserData<'gc> {
             .set_index(self, ctx, indexes, value)
     }
 
-    pub fn iter(self, ctx: Context<'gc>) -> Option<(Function<'gc>, Value<'gc>)> {
-        self.0.metadata().methods.get()?.iter(self, ctx)
+    pub fn iter(self, ctx: Context<'gc>) -> Result<UserDataIter<'gc>, RuntimeError> {
+        self.0
+            .metadata()
+            .methods
+            .get()
+            .ok_or(NoMethods)?
+            .iter(self, ctx)
     }
 
     pub fn coerce_string(self, ctx: Context<'gc>) -> Option<String<'gc>> {

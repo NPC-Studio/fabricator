@@ -126,7 +126,7 @@ impl Game {
                     .rotate(instance.rotation)
                     .translate(instance.position)
                     .cast();
-                let depth = instance.depth;
+                let depth = self.state.layers[instance.layer].depth;
 
                 render.quads.push(Quad {
                     texture,
@@ -155,7 +155,7 @@ impl Game {
                     .translate(-sprite.origin.cast::<f64>())
                     .translate(drawn_sprite.position)
                     .cast();
-                let depth = instance.depth;
+                let depth = self.state.layers[instance.layer].depth;
 
                 render.quads.push(Quad {
                     texture,

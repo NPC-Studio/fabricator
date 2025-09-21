@@ -31,7 +31,7 @@ use crate::{
     game::maxrects::MaxRects,
     project::{CollisionKind, ObjectEvent, Project, ScriptMode},
     state::{
-        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Layer, Object,
+        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, LayerTemplate, Object,
         ObjectId, Room, RoomId, ScriptPrototype, Scripts, Sprite, SpriteCollision,
         SpriteCollisionKind, SpriteId, State, Texture, TextureId, TexturePage, TexturePageId,
         configuration::{Font, FontId, Shader, ShaderId, Sound, SoundId, TileSet, TileSetId},
@@ -215,8 +215,10 @@ pub fn create_state(
 
             layers.insert(
                 layer_name.clone(),
-                Layer {
+                LayerTemplate {
+                    name: layer.name.clone(),
                     depth: layer.depth,
+                    visible: layer.visible,
                     instances,
                 },
             );
@@ -307,8 +309,12 @@ pub fn create_state(
         scripts,
         current_room: None,
         next_room: Some(first_room),
-        persistent_instances: Default::default(),
+        layers: Default::default(),
+        named_layers: Default::default(),
         instances: Default::default(),
+        instance_for_template: Default::default(),
+        instances_for_object: Default::default(),
+        instances_for_layer: Default::default(),
         instance_bound_tree: Default::default(),
     })
 }

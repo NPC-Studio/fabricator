@@ -15,7 +15,7 @@ pub mod stack;
 pub mod stash;
 pub mod string;
 pub mod thread;
-pub mod userdata;
+pub mod user_data;
 pub mod value;
 
 pub use self::{
@@ -38,6 +38,6 @@ pub use self::{
     },
     string::{InternedStrings, SharedStr, String, StringMap},
     thread::{BacktraceFrame, Execution, ExternVmError, OpError, Thread, VmError},
-    userdata::{UserData, UserDataMeta, UserDataMethods},
+    user_data::{UserData, UserDataIter, UserDataMeta, UserDataMethods},
     value::{Function, Value},
 };

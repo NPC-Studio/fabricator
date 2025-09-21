@@ -37,7 +37,7 @@ impl Pointer {
         ud.is_static::<Pointer>()
     }
 
-    pub fn downcast<'gc>(ud: vm::UserData<'gc>) -> Result<Pointer, vm::userdata::BadUserDataType> {
+    pub fn downcast<'gc>(ud: vm::UserData<'gc>) -> Result<Pointer, vm::user_data::BadUserDataType> {
         Ok(*ud.downcast_static::<Pointer>()?)
     }
 
