@@ -50,8 +50,79 @@ impl<'gc> ObjectUserData<'gc> {
                         }
                     }
 
+                    if !found {
+                        return Err(vm::RuntimeError::msg(
+                            "propery access on object without an instance",
+                        ));
+                    }
+
                     Ok(value)
                 })?
+            }
+
+            fn set_field(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                key: vm::String<'gc>,
+                value: vm::Value<'gc>,
+            ) -> Result<(), vm::RuntimeError> {
+                let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
+                State::ctx_with(ctx, |state| {
+                    let mut found = false;
+                    for instance in state.instances.values() {
+                        if instance.object == object_id {
+                            if found {
+                                return Err(vm::RuntimeError::msg(
+                                    "propery access on objects only allowed on singletons",
+                                ));
+                            }
+                            found = true;
+
+                            ctx.fetch(&instance.properties).set(&ctx, key, value);
+                        }
+                    }
+
+                    if !found {
+                        return Err(vm::RuntimeError::msg(
+                            "propery access on object without an instance",
+                        ));
+                    }
+
+                    Ok(())
+                })?
+            }
+
+            fn iter(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+            ) -> Option<(vm::Function<'gc>, vm::Value<'gc>)> {
+                let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
+
+                let instance_iter = vm::Callback::from_fn(&ctx, move |ctx, mut exec| {
+                    let mut idx: u32 = exec.stack().consume(ctx)?;
+                    let next_instance = State::ctx_with(ctx, |state| {
+                        while idx < state.instances.index_upper_bound() {
+                            if let Some(id) = state.instances.id_for_index(idx) {
+                                if state.instances[id].object == object_id {
+                                    return Some(ctx.fetch(&state.instances[id].this));
+                                }
+                            }
+                            idx += 1;
+                        }
+                        None
+                    })?;
+
+                    if let Some(next_instance) = next_instance {
+                        exec.stack().replace(ctx, (idx + 1, next_instance))
+                    } else {
+                        exec.stack().clear();
+                    }
+                    Ok(())
+                });
+
+                Some((instance_iter.into(), 0.into()))
             }
 
             fn coerce_string(
