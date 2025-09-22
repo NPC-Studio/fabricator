@@ -145,10 +145,13 @@ pub fn tick_state(
         // Clean up all empty layers. Persistent objects may keep their layer alive.
 
         let mut used_layers = IndexSet::new();
-
         for layer_id in state.instances_for_layer.ids() {
             used_layers.insert(layer_id.index() as usize);
         }
+
+        state
+            .layers
+            .retain(|layer_id, _| used_layers.contains(layer_id.index() as usize));
 
         state
             .named_layers

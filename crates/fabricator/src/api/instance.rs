@@ -4,29 +4,37 @@ use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
-    api::{magic::MagicExt as _, userdata::StaticUserDataProperties},
+    api::{layer::find_layer, magic::MagicExt as _},
     project::ObjectEvent,
     state::{EventState, InstanceId, State},
 };
 
 #[derive(Debug, Copy, Clone, Collect)]
-#[collect(require_static)]
-pub struct InstanceUserData {
+#[collect(no_drop)]
+pub struct InstanceUserData<'gc> {
+    #[collect(require_static)]
     pub id: InstanceId,
+    pub name: vm::String<'gc>,
 }
 
-impl InstanceUserData {
-    pub fn new<'gc>(ctx: vm::Context<'gc>, id: InstanceId) -> vm::UserData<'gc> {
+impl<'gc> InstanceUserData<'gc> {
+    pub fn new(ctx: vm::Context<'gc>, id: InstanceId) -> vm::UserData<'gc> {
         let methods = ctx.singleton::<Rootable![InstanceMethodsSingleton<'_>]>().0;
-        let ud = vm::UserData::new_static::<InstanceUserData>(&ctx, InstanceUserData { id });
+        let ud = vm::UserData::new::<Rootable![InstanceUserData<'_>]>(
+            &ctx,
+            InstanceUserData {
+                id,
+                name: ctx.intern(&format!("instance {}:{}", id.index(), id.generation())),
+            },
+        );
         ud.set_methods(&ctx, Some(methods));
         ud
     }
 
-    pub fn downcast<'gc>(
+    pub fn downcast(
         userdata: vm::UserData<'gc>,
     ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
-        userdata.downcast_static::<InstanceUserData>()
+        userdata.downcast::<Rootable![InstanceUserData<'_>]>()
     }
 }
 
@@ -36,106 +44,82 @@ struct InstanceMethodsSingleton<'gc>(Gc<'gc, dyn vm::UserDataMethods<'gc>>);
 
 impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
     fn create(ctx: vm::Context<'gc>) -> Self {
-        let mut properties = StaticUserDataProperties::<InstanceUserData>::default();
-        properties.add_rw_property(
-            "x",
-            |ctx, &instance| {
-                State::ctx_with(ctx, |root| {
-                    let instance = root
+        #[derive(Collect)]
+        #[collect(require_static)]
+        struct Methods;
+
+        impl<'gc> vm::UserDataMethods<'gc> for Methods {
+            fn get_field(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                key: vm::String<'gc>,
+            ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+                let instance = InstanceUserData::downcast(ud).unwrap();
+                State::ctx_with(ctx, |state| {
+                    let instance = state
                         .instances
                         .get(instance.id)
                         .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    Ok(instance.position[0].into())
+
+                    Ok(match key.as_str() {
+                        "id" => ud.into(),
+                        "x" => instance.position[0].into(),
+                        "y" => instance.position[1].into(),
+                        "image_angle" => instance.rotation.to_degrees().into(),
+                        _ => ctx.fetch(&instance.properties).get(key).ok_or_else(|| {
+                            vm::RuntimeError::msg(format!("missing field {key:?}"))
+                        })?,
+                    })
                 })?
-            },
-            |ctx, &instance, val| {
-                State::ctx_with_mut(ctx, |root| {
-                    let instance = root
+            }
+
+            fn set_field(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                key: vm::String<'gc>,
+                value: vm::Value<'gc>,
+            ) -> Result<(), vm::RuntimeError> {
+                let instance = InstanceUserData::downcast(ud).unwrap();
+                State::ctx_with_mut(ctx, |state| {
+                    let instance = state
                         .instances
                         .get_mut(instance.id)
                         .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    instance.position[0] = val
-                        .cast_float()
-                        .ok_or_else(|| vm::RuntimeError::msg("field must be set to number"))?;
+
+                    match key.as_str() {
+                        "id" => return Err(vm::RuntimeError::msg(format!("`id` is read-only"))),
+                        "x" => {
+                            instance.position[0] = vm::FromValue::from_value(ctx, value)?;
+                        }
+                        "y" => {
+                            instance.position[1] = vm::FromValue::from_value(ctx, value)?;
+                        }
+                        "image_angle" => {
+                            let angle_deg: f64 = vm::FromValue::from_value(ctx, value)?;
+                            instance.rotation = -angle_deg.to_radians() % (f64::consts::PI * 2.0);
+                        }
+                        _ => {
+                            ctx.fetch(&instance.properties).set(&ctx, key, value);
+                        }
+                    }
+
                     Ok(())
                 })?
-            },
-        );
+            }
 
-        properties.add_rw_property(
-            "y",
-            |ctx, &instance| {
-                State::ctx_with(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    Ok(instance.position[1].into())
-                })?
-            },
-            |ctx, &instance, val| {
-                State::ctx_with_mut(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get_mut(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    instance.position[1] = val
-                        .cast_float()
-                        .ok_or_else(|| vm::RuntimeError::msg("field must be set to number"))?;
-                    Ok(())
-                })?
-            },
-        );
+            fn coerce_string(
+                &self,
+                ud: vm::UserData<'gc>,
+                _ctx: vm::Context<'gc>,
+            ) -> Option<vm::String<'gc>> {
+                Some(InstanceUserData::downcast(ud).unwrap().name)
+            }
+        }
 
-        properties.add_rw_property(
-            "image_angle",
-            |ctx, &instance| {
-                State::ctx_with(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    Ok((-instance.rotation.to_degrees()).into())
-                })?
-            },
-            |ctx, &instance, val| {
-                State::ctx_with_mut(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get_mut(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    let angle_deg = val
-                        .cast_float()
-                        .ok_or_else(|| vm::RuntimeError::msg("field must be set to number"))?;
-                    instance.rotation = -angle_deg.to_radians() % (f64::consts::PI * 2.0);
-                    Ok(())
-                })?
-            },
-        );
-
-        properties.enable_custom_properties(
-            |ctx, &instance, key| {
-                State::ctx_with(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    Ok(ctx.fetch(&instance.properties).get(key))
-                })?
-            },
-            |ctx, &instance, key, value| {
-                State::ctx_with(ctx, |root| {
-                    let instance = root
-                        .instances
-                        .get(instance.id)
-                        .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
-                    ctx.fetch(&instance.properties).set(&ctx, key, value);
-                    Ok(())
-                })?
-            },
-        );
-
-        Self(properties.into_methods(&ctx))
+        let methods = Gc::new(&ctx, Methods);
+        Self(gc_arena::unsize!(methods => dyn vm::UserDataMethods<'gc>))
     }
 }
 
@@ -295,6 +279,36 @@ pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic
         .add_constant(&ctx, ctx.intern("event_inherited"), event_inherited)
+        .unwrap();
+
+    let instance_deactivate_layer = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let layer_id_or_name: vm::Value = exec.stack().consume(ctx)?;
+        let to_deactivate = State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
+            let layer_id = find_layer(state, layer_id_or_name)?;
+            Ok(state
+                .instances_for_layer
+                .get(layer_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>())
+        })??;
+
+        for instance_id in to_deactivate {
+            State::ctx_with_mut(ctx, |state| {
+                let instance = &mut state.instances[instance_id];
+                instance.active = false;
+            })?;
+        }
+
+        Ok(())
+    });
+    magic
+        .add_constant(
+            &ctx,
+            ctx.intern("instance_deactivate_layer"),
+            instance_deactivate_layer,
+        )
         .unwrap();
 
     magic

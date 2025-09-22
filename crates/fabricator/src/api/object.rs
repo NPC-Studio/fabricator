@@ -57,13 +57,11 @@ impl<'gc> ObjectUserData<'gc> {
                 key: vm::String<'gc>,
             ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
                 let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
-                State::ctx_with(ctx, |state| {
+                let instance_ud = State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
                     let instance_id = singleton_instance(state, object_id)?;
-                    Ok(ctx
-                        .fetch(&state.instances[instance_id].properties)
-                        .get(key)
-                        .unwrap_or_default())
-                })?
+                    Ok(ctx.fetch(&state.instances[instance_id].this))
+                })??;
+                instance_ud.get_field(ctx, key)
             }
 
             fn set_field(
@@ -74,12 +72,11 @@ impl<'gc> ObjectUserData<'gc> {
                 value: vm::Value<'gc>,
             ) -> Result<(), vm::RuntimeError> {
                 let object_id = ud.downcast::<Rootable![ObjectUserData<'_>]>().unwrap().id;
-                State::ctx_with(ctx, |state| {
+                let instance_ud = State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
                     let instance_id = singleton_instance(state, object_id)?;
-                    ctx.fetch(&state.instances[instance_id].properties)
-                        .set(&ctx, key, value);
-                    Ok(())
-                })?
+                    Ok(ctx.fetch(&state.instances[instance_id].this))
+                })??;
+                instance_ud.set_field(ctx, key, value)
             }
 
             fn iter(
@@ -674,6 +671,7 @@ pub fn object_api<'gc>(
                     .map_err(|e| e.into_extern())?;
                 exec.stack().clear();
             }
+
             State::ctx_with_mut(ctx, |state| {
                 let instance = &mut state.instances[instance_id];
                 instance.active = false;

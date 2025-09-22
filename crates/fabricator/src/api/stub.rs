@@ -261,6 +261,8 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         [vm::Array::new(&ctx).into()],
     );
 
+    create_stub_callback(ctx, &mut magic, "tilemap_tileset", []);
+
     create_stub_callback(ctx, &mut magic, "draw_self", []);
 
     create_stub_callback(ctx, &mut magic, "audio_falloff_set_model", []);

@@ -3,6 +3,7 @@ use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
     api::magic::MagicExt as _,
+    project::ObjectEvent,
     state::{Layer, State, state::LayerId},
 };
 
@@ -84,7 +85,14 @@ pub fn find_layer<'gc>(
             .get(name.as_str())
             .copied()
             .ok_or_else(|| vm::RuntimeError::msg(format!("no such layer named {name:?}"))),
-        vm::Value::UserData(ud) => Ok(LayerIdUserData::downcast(ud)?.id),
+        vm::Value::UserData(ud) => {
+            let id = LayerIdUserData::downcast(ud)?.id;
+            if state.layers.contains(id) {
+                Ok(id)
+            } else {
+                Err(vm::RuntimeError::msg("expired layer ID"))
+            }
+        }
         _ => Err(vm::TypeError {
             expected: "userdata or string",
             found: layer_id_or_name.type_name(),
@@ -134,6 +142,29 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         .add_constant(&ctx, ctx.intern("layer_create"), layer_create)
         .unwrap();
 
+    let layer_exists = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let layer_id_or_name: vm::Value = exec.stack().consume(ctx)?;
+        let exists = State::ctx_with(ctx, |state| -> Result<bool, vm::RuntimeError> {
+            match layer_id_or_name {
+                vm::Value::String(name) => Ok(state.named_layers.contains_key(name.as_str())),
+                vm::Value::UserData(ud) => {
+                    Ok(state.layers.contains(LayerIdUserData::downcast(ud)?.id))
+                }
+                _ => Err(vm::TypeError {
+                    expected: "userdata or string",
+                    found: layer_id_or_name.type_name(),
+                }
+                .into()),
+            }
+        })??;
+
+        exec.stack().replace(ctx, exists);
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("layer_exists"), layer_exists)
+        .unwrap();
+
     let layer_get_id = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let name: vm::String = exec.stack().consume(ctx)?;
 
@@ -152,6 +183,23 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic
         .add_constant(&ctx, ctx.intern("layer_get_id"), layer_get_id)
+        .unwrap();
+
+    let layer_get_name = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let layer_id_or_name: vm::Value = exec.stack().consume(ctx)?;
+        let layer_id = State::ctx_with(ctx, |state| find_layer(state, layer_id_or_name))??;
+        exec.stack().replace(
+            ctx,
+            State::ctx_with(ctx, |state| {
+                LayerIdUserData::downcast(ctx.fetch(&state.layers[layer_id].this))
+                    .unwrap()
+                    .name
+            })?,
+        );
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("layer_get_name"), layer_get_name)
         .unwrap();
 
     let layer_get_depth = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -189,6 +237,81 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic
         .add_constant(&ctx, ctx.intern("layer_set_visible"), layer_set_visible)
+        .unwrap();
+
+    let layer_get_all = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        State::ctx_with(ctx, |state| {
+            exec.stack().replace(
+                ctx,
+                vm::Array::from_iter(
+                    &ctx,
+                    state.layers.values().map(|v| ctx.fetch(&v.this).into()),
+                ),
+            );
+        })?;
+        Ok(())
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("layer_get_all"), layer_get_all)
+        .unwrap();
+
+    let layer_destroy_instances = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let layer_id_or_name: vm::Value = exec.stack().consume(ctx)?;
+        let to_destroy = State::ctx_with(ctx, |state| -> Result<_, vm::RuntimeError> {
+            let layer_id = find_layer(state, layer_id_or_name)?;
+            Ok(state
+                .instances_for_layer
+                .get(layer_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>())
+        })??;
+
+        for instance_id in to_destroy {
+            if let Some(destroy_closure) = State::ctx_with(ctx, |state| {
+                state.instances[instance_id]
+                    .event_closures
+                    .get(&ObjectEvent::Destroy)
+                    .cloned()
+            })? {
+                let instance_ud =
+                    State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
+                exec.with_this(instance_ud)
+                    .call_closure(ctx, ctx.fetch(&destroy_closure))
+                    .map_err(|e| e.into_extern())?;
+                exec.stack().clear();
+            }
+
+            if let Some(clean_up_closure) = State::ctx_with(ctx, |state| {
+                state.instances[instance_id]
+                    .event_closures
+                    .get(&ObjectEvent::CleanUp)
+                    .cloned()
+            })? {
+                let instance_ud =
+                    State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
+                exec.with_this(instance_ud)
+                    .call_closure(ctx, ctx.fetch(&clean_up_closure))
+                    .map_err(|e| e.into_extern())?;
+                exec.stack().clear();
+            }
+
+            State::ctx_with_mut(ctx, |state| {
+                let instance = &mut state.instances[instance_id];
+                instance.active = false;
+                instance.dead = true;
+            })?;
+        }
+
+        Ok(())
+    });
+    magic
+        .add_constant(
+            &ctx,
+            ctx.intern("layer_destroy_instances"),
+            layer_destroy_instances,
+        )
         .unwrap();
 
     magic

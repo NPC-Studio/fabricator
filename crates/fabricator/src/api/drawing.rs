@@ -3,8 +3,8 @@ use fabricator_vm as vm;
 
 use crate::{
     api::{
+        id_user_data::{IdUserData, NamedIdUserData},
         magic::{DuplicateMagicName, MagicExt as _},
-        userdata::{IdUserData, NamedIdUserData},
     },
     state::{
         Configuration, DrawingState, DrawnSprite, DrawnSpriteFrame, EventState, SpriteId, State,

@@ -3,7 +3,7 @@ use fabricator_vm as vm;
 use crate::{
     api::{
         magic::{DuplicateMagicName, MagicExt as _, create_magic_ro},
-        userdata::NamedIdUserData,
+        id_user_data::NamedIdUserData,
     },
     state::{Configuration, RoomId, State},
 };
