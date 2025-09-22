@@ -4,6 +4,7 @@ pub mod core;
 pub mod ds_grid;
 pub mod ds_list;
 pub mod ds_map;
+pub mod ds_priority;
 pub mod json;
 pub mod math;
 pub mod string;
@@ -16,7 +17,8 @@ use gc_arena::{Collect, Gc, Rootable};
 
 use crate::{
     array::array_lib, buffer::buffer_lib, core::core_lib, ds_grid::ds_grid_lib,
-    ds_list::ds_list_lib, ds_map::ds_map_lib, json::json_lib, math::math_lib, string::string_lib,
+    ds_list::ds_list_lib, ds_map::ds_map_lib, ds_priority::ds_priority_lib, json::json_lib,
+    math::math_lib, string::string_lib,
 };
 
 pub trait StdlibContext<'gc> {
@@ -42,6 +44,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
                 ds_list_lib(ctx, &mut stdlib);
                 ds_grid_lib(ctx, &mut stdlib);
                 ds_map_lib(ctx, &mut stdlib);
+                ds_priority_lib(ctx, &mut stdlib);
 
                 Self(Gc::new(&ctx, stdlib))
             }

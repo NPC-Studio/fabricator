@@ -71,7 +71,7 @@ impl<'gc> DsList<'gc> {
             }
 
             fn coerce_integer(&self, ud: vm::UserData<'gc>, _ctx: vm::Context<'gc>) -> Option<i64> {
-                Some(ud.downcast_static::<DsList>().unwrap().counter)
+                Some(DsList::downcast(ud).unwrap().counter)
             }
         }
 

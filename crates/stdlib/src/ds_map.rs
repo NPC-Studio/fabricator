@@ -109,7 +109,7 @@ impl<'gc> DsMap<'gc> {
             }
 
             fn coerce_integer(&self, ud: vm::UserData<'gc>, _ctx: vm::Context<'gc>) -> Option<i64> {
-                Some(ud.downcast_static::<DsMap>().unwrap().counter)
+                Some(DsMap::downcast(ud).unwrap().counter)
             }
         }
 

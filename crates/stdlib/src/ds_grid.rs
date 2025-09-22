@@ -77,7 +77,7 @@ impl<'gc> DsGrid<'gc> {
             }
 
             fn coerce_integer(&self, ud: vm::UserData<'gc>, _ctx: vm::Context<'gc>) -> Option<i64> {
-                Some(ud.downcast_static::<DsGrid>().unwrap().counter)
+                Some(DsGrid::downcast(ud).unwrap().counter)
             }
         }
 
