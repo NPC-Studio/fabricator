@@ -1,18 +1,17 @@
 pub mod configuration;
 pub mod drawing;
+pub mod event;
 pub mod input;
 pub mod state;
 
 pub use self::{
     configuration::{
-        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, LayerTemplate, Object,
-        ObjectId, Room, RoomId, Sprite, SpriteCollision, SpriteCollisionKind, SpriteId, Texture,
+        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Object, ObjectId,
+        Room, RoomId, RoomLayer, Sprite, SpriteCollision, SpriteCollisionKind, SpriteId, Texture,
         TextureId,
     },
-    drawing::{DrawingState, DrawingStateCell, DrawnSprite, DrawnSpriteFrame},
-    input::{InputState, InputStateCell, MouseButtons},
-    state::{
-        Instance, InstanceId, InstanceState, InstanceStateCell, ScriptPrototype, Scripts, State,
-        StateCell, TexturePage, TexturePageId,
-    },
+    drawing::{DrawingState, DrawnSprite, DrawnSpriteFrame},
+    event::EventState,
+    input::{InputState, MouseButtons},
+    state::{Instance, InstanceId, Layer, LayerId, Scripts, State, TexturePage, TexturePageId},
 };

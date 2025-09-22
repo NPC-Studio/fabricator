@@ -7,7 +7,7 @@ use crate::{
         userdata::{IdUserData, NamedIdUserData},
     },
     state::{
-        Configuration, DrawingState, DrawnSprite, DrawnSpriteFrame, InstanceState, SpriteId, State,
+        Configuration, DrawingState, DrawnSprite, DrawnSpriteFrame, EventState, SpriteId, State,
         TexturePageId,
         configuration::{ShaderId, TileSetId},
     },
@@ -55,7 +55,7 @@ pub fn drawing_api<'gc>(
         let (sprite, sub_img, x, y): (vm::UserData, i64, f64, f64) = exec.stack().consume(ctx)?;
         let sprite = SpriteUserData::downcast(sprite)?;
 
-        let instance = InstanceState::ctx_with(ctx, |i| i.instance_id)?;
+        let instance = EventState::ctx_with(ctx, |e| e.instance_id)?;
 
         DrawingState::ctx_with_mut(ctx, |drawing_state| {
             drawing_state.drawn_sprites.push(DrawnSprite {

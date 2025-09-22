@@ -6,7 +6,7 @@ use gc_arena::{Collect, Gc, Rootable};
 use crate::{
     api::{magic::MagicExt as _, userdata::StaticUserDataProperties},
     project::ObjectEvent,
-    state::{InstanceId, State},
+    state::{EventState, InstanceId, State},
 };
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -255,6 +255,46 @@ pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
     });
     magic
         .add_constant(&ctx, ctx.intern("event_perform"), event_perform)
+        .unwrap();
+
+    let event_inherited = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        exec.stack().clear();
+
+        let (instance_id, object_id, current_event) = EventState::ctx_with(ctx, |state| {
+            (state.instance_id, state.object_id, state.current_event)
+        })?;
+
+        if let Some((parent_object_id, closure)) = State::ctx_with(ctx, |state| {
+            let parent = state.config.objects[object_id].parent?;
+            Some((
+                parent,
+                state
+                    .scripts
+                    .object_events
+                    .get(&parent)?
+                    .get(&current_event)?
+                    .clone(),
+            ))
+        })? {
+            EventState::ctx_cell(ctx).freeze(
+                &EventState {
+                    instance_id,
+                    object_id: parent_object_id,
+                    current_event,
+                },
+                || {
+                    exec.call_closure(ctx, ctx.fetch(&closure))
+                        .map_err(|e| e.into_extern())?;
+                    exec.stack().clear();
+                    Ok(())
+                },
+            )
+        } else {
+            Ok(())
+        }
+    });
+    magic
+        .add_constant(&ctx, ctx.intern("event_inherited"), event_inherited)
         .unwrap();
 
     magic

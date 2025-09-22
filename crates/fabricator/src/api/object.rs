@@ -6,10 +6,11 @@ use gc_arena::{Collect, Gc, Rootable};
 use crate::{
     api::{
         instance::InstanceUserData,
+        layer::{LayerIdUserData, find_layer},
         magic::{DuplicateMagicName, MagicExt as _},
     },
     project::ObjectEvent,
-    state::{Configuration, Instance, InstanceId, InstanceState, ObjectId, State, state::Layer},
+    state::{Configuration, EventState, Instance, InstanceId, ObjectId, State, state::Layer},
 };
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -364,10 +365,16 @@ pub fn object_api<'gc>(
                 }
             }
 
-            let layer_id = state.layers.insert(Layer {
-                depth,
-                visible: true,
+            let layer_id = state.layers.insert_with_id(|id| {
+                let layer_ud = LayerIdUserData::new(ctx, id, None);
+                Layer {
+                    depth,
+                    visible: true,
+                    this: ctx.stash(layer_ud),
+                }
             });
+
+            let event_closures = state.event_closures(object.id);
 
             let instance_id = state.instances.insert_with_id(|instance_id| Instance {
                 object: object.id,
@@ -378,7 +385,7 @@ pub fn object_api<'gc>(
                 layer: layer_id,
                 this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                 properties: ctx.stash(properties),
-                event_closures: state.scripts.event_closures(ctx, object.id),
+                event_closures,
                 animation_time: 0.0,
             });
 
@@ -406,11 +413,18 @@ pub fn object_api<'gc>(
         })?;
 
         if let Some(create_script) = create_script {
-            InstanceState::ctx_cell(ctx).freeze(&InstanceState { instance_id }, || {
-                exec.with_this(instance_ud)
-                    .call_closure(ctx, ctx.fetch(&create_script))
-                    .map_err(|e| e.into_extern())
-            })?;
+            EventState::ctx_cell(ctx).freeze(
+                &EventState {
+                    instance_id,
+                    object_id: object.id,
+                    current_event: ObjectEvent::Create,
+                },
+                || {
+                    exec.with_this(instance_ud)
+                        .call_closure(ctx, ctx.fetch(&create_script))
+                        .map_err(|e| e.into_extern())
+                },
+            )?;
         }
 
         exec.stack().replace(ctx, instance_ud);
@@ -421,6 +435,93 @@ pub fn object_api<'gc>(
         &ctx,
         ctx.intern("instance_create_depth"),
         instance_create_depth,
+    )?;
+
+    let instance_create_layer = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let (x, y, layer_id_or_name, object, set_properties): (
+            f64,
+            f64,
+            vm::Value,
+            vm::UserData,
+            Option<vm::Object>,
+        ) = exec.stack().consume(ctx)?;
+
+        let object = ObjectUserData::downcast(object)?;
+
+        let (instance_id, instance_ud, create_script) =
+            State::ctx_with_mut(ctx, |state| -> Result<_, vm::RuntimeError> {
+                let layer_id = find_layer(state, layer_id_or_name)?;
+
+                let properties = vm::Object::new(&ctx);
+                if let Some(set_properties) = set_properties {
+                    // We only copy properties from the topmost object, see above.
+                    let set_properties = set_properties.borrow();
+                    for (&key, &value) in &set_properties.map {
+                        properties.set(&ctx, key, value);
+                    }
+                }
+
+                let event_closures = state.event_closures(object.id);
+
+                let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                    object: object.id,
+                    active: true,
+                    dead: false,
+                    position: Vec2::new(x, y),
+                    rotation: 0.0,
+                    layer: layer_id,
+                    this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
+                    properties: ctx.stash(properties),
+                    event_closures,
+                    animation_time: 0.0,
+                });
+
+                assert!(
+                    state
+                        .instances_for_object
+                        .get_or_insert_default(object.id)
+                        .insert(instance_id)
+                );
+                assert!(
+                    state
+                        .instances_for_layer
+                        .get_or_insert_default(layer_id)
+                        .insert(instance_id)
+                );
+
+                Ok((
+                    instance_id,
+                    ctx.fetch(&state.instances[instance_id].this),
+                    state.instances[instance_id]
+                        .event_closures
+                        .get(&ObjectEvent::Create)
+                        .cloned(),
+                ))
+            })??;
+
+        if let Some(create_script) = create_script {
+            EventState::ctx_cell(ctx).freeze(
+                &EventState {
+                    instance_id,
+                    object_id: object.id,
+                    current_event: ObjectEvent::Create,
+                },
+                || {
+                    exec.with_this(instance_ud)
+                        .call_closure(ctx, ctx.fetch(&create_script))
+                        .map_err(|e| e.into_extern())
+                },
+            )?;
+        }
+
+        exec.stack().replace(ctx, instance_ud);
+
+        Ok(())
+    });
+    magic.add_constant(
+        &ctx,
+        ctx.intern("instance_create_layer"),
+        instance_create_layer,
     )?;
 
     let instance_exists = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
@@ -520,7 +621,7 @@ pub fn object_api<'gc>(
             let object_or_instance = if let Some(obj_inst) = object_or_instance {
                 obj_inst
             } else {
-                let instance_id = InstanceState::ctx_with(ctx, |instance| instance.instance_id)?;
+                let instance_id = EventState::ctx_with(ctx, |ev| ev.instance_id)?;
                 ctx.fetch(&state.instances[instance_id].this)
             };
 

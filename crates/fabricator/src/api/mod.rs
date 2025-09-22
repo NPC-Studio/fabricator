@@ -3,6 +3,7 @@ pub mod collision;
 pub mod drawing;
 pub mod font;
 pub mod instance;
+pub mod layer;
 pub mod magic;
 pub mod object;
 pub mod os;

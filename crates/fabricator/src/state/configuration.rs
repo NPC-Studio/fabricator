@@ -81,17 +81,25 @@ pub struct TileSet {
 pub struct Room {
     pub name: String,
     pub size: Vec2<u32>,
-    pub layers: HashMap<String, LayerTemplate>,
+    pub layers: HashMap<String, RoomLayer>,
     pub userdata: vm::StashedUserData,
     pub tags: HashSet<String>,
 }
 
 #[derive(Clone)]
-pub struct LayerTemplate {
+pub struct RoomLayer {
     pub name: String,
     pub depth: i32,
     pub visible: bool,
-    pub instances: Vec<InstanceTemplateId>,
+    pub layer_type: RoomLayerType,
+}
+
+#[derive(Clone)]
+pub enum RoomLayerType {
+    Instances(Vec<InstanceTemplateId>),
+    Assets,
+    Tile,
+    Background,
 }
 
 pub struct AnimationFrame {
@@ -101,6 +109,7 @@ pub struct AnimationFrame {
 
 pub struct Object {
     pub name: String,
+    pub parent: Option<ObjectId>,
     pub sprite: Option<SpriteId>,
     pub persistent: bool,
     pub userdata: vm::StashedUserData,

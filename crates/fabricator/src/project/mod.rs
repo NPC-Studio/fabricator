@@ -139,6 +139,7 @@ pub struct EventScript {
 #[derive(Debug)]
 pub struct Object {
     pub name: String,
+    pub parent_object: Option<String>,
     pub base_path: PathBuf,
     pub persistent: bool,
     pub sprite: Option<String>,
@@ -161,7 +162,15 @@ pub struct Layer {
     pub name: String,
     pub visible: bool,
     pub depth: i32,
-    pub instances: Vec<Instance>,
+    pub layer_type: LayerType,
+}
+
+#[derive(Debug)]
+pub enum LayerType {
+    Instances(Vec<Instance>),
+    Assets,
+    Tile,
+    Background,
 }
 
 #[derive(Debug)]

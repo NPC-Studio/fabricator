@@ -6,7 +6,7 @@ use fabricator_vm as vm;
 
 use crate::{
     api::{magic::MagicExt as _, object},
-    state::{InstanceState, State},
+    state::{EventState, State},
 };
 
 pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
@@ -19,7 +19,7 @@ pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         let line_collision = support_maps::Line([Vec2::new(x1, y1), Vec2::new(x2, y2)]);
         let bounds = line_collision.bound_box();
 
-        let self_instance = InstanceState::ctx_with(ctx, |inst| inst.instance_id).ok();
+        let self_instance = EventState::ctx_with(ctx, |event| event.instance_id).ok();
 
         State::ctx_with(ctx, |state| {
             let mut query = BoundBoxQuery::default();

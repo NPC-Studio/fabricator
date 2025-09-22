@@ -13,8 +13,8 @@ use serde_json as json;
 
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
-    FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, Object, ObjectEvent, Project, Room,
-    Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileSet,
+    FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, LayerType, Object, ObjectEvent,
+    Project, Room, Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileSet,
     strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
@@ -244,6 +244,8 @@ struct YySprite {
 struct YyObject {
     name: String,
     persistent: bool,
+    #[serde(rename = "parentObjectId")]
+    parent_object_id: Option<YyId>,
     #[serde(rename = "spriteId")]
     sprite_id: Option<YyId>,
     #[serde(default)]
@@ -264,12 +266,35 @@ struct YyInstance {
 }
 
 #[derive(Deserialize)]
-struct YyLayer {
-    name: String,
-    depth: i32,
-    visible: bool,
-    #[serde(default)]
-    instances: Vec<YyInstance>,
+#[serde(tag = "resourceType")]
+enum YyLayer {
+    #[serde(rename = "GMRAssetLayer")]
+    Asset {
+        name: String,
+        depth: i32,
+        visible: bool,
+    },
+    #[serde(rename = "GMRInstanceLayer")]
+    Instance {
+        name: String,
+        depth: i32,
+        visible: bool,
+        instances: Vec<YyInstance>,
+    },
+    #[serde(rename = "GMRTileLayer")]
+    Tile {
+        name: String,
+        depth: i32,
+        visible: bool,
+    },
+    #[serde(rename = "GMRBackgroundLayer")]
+    Background {
+        name: String,
+        depth: i32,
+        visible: bool,
+    },
+    #[serde(rename = "GMRLayer")]
+    Layer { layers: Vec<YyLayer> },
 }
 
 #[derive(Deserialize)]
@@ -523,6 +548,7 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
 
     Ok(Object {
         name: yy_object.name,
+        parent_object: yy_object.parent_object_id.map(|i| i.name),
         base_path,
         persistent: yy_object.persistent,
         sprite: yy_object.sprite_id.map(|i| i.name),
@@ -532,29 +558,91 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
 }
 
 fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
-    let mut layers = HashMap::new();
-
-    for yy_layer in yy_room.layers {
-        let mut instances = Vec::new();
-        for yy_instance in yy_layer.instances {
-            instances.push(Instance {
-                object: yy_instance.object_id.name,
-                x: yy_instance.x,
-                y: yy_instance.y,
-                scale_x: yy_instance.scale_x,
-                scale_y: yy_instance.scale_y,
-                rotation: yy_instance.rotation,
-            });
+    fn read_layer(layer_map: &mut HashMap<String, Layer>, yy_layer: YyLayer) {
+        match yy_layer {
+            YyLayer::Asset {
+                name,
+                depth,
+                visible,
+            } => {
+                layer_map.insert(
+                    name.clone(),
+                    Layer {
+                        name,
+                        visible,
+                        depth,
+                        layer_type: LayerType::Assets,
+                    },
+                );
+            }
+            YyLayer::Instance {
+                name,
+                depth,
+                visible,
+                instances: yy_instances,
+            } => {
+                let mut instances = Vec::new();
+                for yy_instance in yy_instances {
+                    instances.push(Instance {
+                        object: yy_instance.object_id.name,
+                        x: yy_instance.x,
+                        y: yy_instance.y,
+                        scale_x: yy_instance.scale_x,
+                        scale_y: yy_instance.scale_y,
+                        rotation: yy_instance.rotation,
+                    });
+                }
+                layer_map.insert(
+                    name.clone(),
+                    Layer {
+                        name,
+                        visible,
+                        depth,
+                        layer_type: LayerType::Instances(instances),
+                    },
+                );
+            }
+            YyLayer::Tile {
+                name,
+                depth,
+                visible,
+            } => {
+                layer_map.insert(
+                    name.clone(),
+                    Layer {
+                        name,
+                        visible,
+                        depth,
+                        layer_type: LayerType::Tile,
+                    },
+                );
+            }
+            YyLayer::Background {
+                name,
+                depth,
+                visible,
+            } => {
+                layer_map.insert(
+                    name.clone(),
+                    Layer {
+                        name,
+                        visible,
+                        depth,
+                        layer_type: LayerType::Background,
+                    },
+                );
+            }
+            YyLayer::Layer { layers } => {
+                for layer in layers {
+                    read_layer(layer_map, layer);
+                }
+            }
         }
+    }
 
-        let layer = Layer {
-            name: yy_layer.name,
-            depth: yy_layer.depth,
-            visible: yy_layer.visible,
-            instances,
-        };
-
-        layers.insert(layer.name.clone(), layer);
+    let mut layers = HashMap::new();
+    for yy_layer in yy_room.layers {
+        read_layer(&mut layers, yy_layer);
     }
 
     Ok(Room {

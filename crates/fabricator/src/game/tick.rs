@@ -4,9 +4,12 @@ use fabricator_util::{freeze::FreezeMany, index_containers::IndexSet};
 use fabricator_vm as vm;
 
 use crate::{
-    api::instance::InstanceUserData,
+    api::{instance::InstanceUserData, layer::LayerIdUserData},
     project::ObjectEvent,
-    state::{DrawingState, InputState, Instance, InstanceState, State, state::Layer},
+    state::{
+        DrawingState, EventState, InputState, Instance, State, configuration::RoomLayerType,
+        state::Layer,
+    },
 };
 
 pub fn tick_state(
@@ -59,9 +62,18 @@ pub fn tick_state(
                 {
                     let room_end_closure = ctx.fetch(room_end_closure);
                     let instance_ud = ctx.fetch(&instance.this);
+                    let object_id = instance.object;
                     FreezeMany::new()
-                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .freeze(State::ctx_cell(ctx), state)
+                        .freeze(
+                            EventState::ctx_cell(ctx),
+                            &EventState {
+                                instance_id,
+                                object_id,
+                                current_event: ObjectEvent::RoomEnd,
+                            },
+                        )
+                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
                             ctx.fetch(thread).run_with(
                                 ctx,
@@ -85,9 +97,18 @@ pub fn tick_state(
                 {
                     let clean_up_closure = ctx.fetch(clean_up_closure);
                     let instance_ud = ctx.fetch(&instance.this);
+                    let object_id = instance.object;
                     FreezeMany::new()
-                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .freeze(State::ctx_cell(ctx), state)
+                        .freeze(
+                            EventState::ctx_cell(ctx),
+                            &EventState {
+                                instance_id,
+                                object_id,
+                                current_event: ObjectEvent::RoomEnd,
+                            },
+                        )
+                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
                             ctx.fetch(thread).run_with(
                                 ctx,
@@ -121,13 +142,9 @@ pub fn tick_state(
         }
         state.instances_for_layer.retain(|_, set| !set.is_empty());
 
-        // Clean up all empty, unnamed layers.
+        // Clean up all empty layers. Persistent objects may keep their layer alive.
 
         let mut used_layers = IndexSet::new();
-
-        for &layer_id in state.named_layers.values() {
-            used_layers.insert(layer_id.index() as usize);
-        }
 
         for layer_id in state.instances_for_layer.ids() {
             used_layers.insert(layer_id.index() as usize);
@@ -137,83 +154,111 @@ pub fn tick_state(
             .named_layers
             .retain(|_, layer_id| used_layers.contains(layer_id.index() as usize));
 
+        // Create all new layers for the next room, reusing the existing layer if there is one with
+        // the same name. This "moves" persistent objects to matching named layers on room change.
+
+        for layer in state.config.rooms[next_room].layers.values() {
+            if let Some(&existing_layer_id) = state.named_layers.get(&layer.name) {
+                let existing_layer = &mut state.layers[existing_layer_id];
+                existing_layer.depth = layer.depth;
+                existing_layer.visible = layer.visible;
+            } else {
+                let layer_id = state.layers.insert_with_id(|id| {
+                    let this = interpreter.enter(|ctx| {
+                        ctx.stash(LayerIdUserData::new(ctx, id, Some(ctx.intern(&layer.name))))
+                    });
+                    Layer {
+                        depth: layer.depth,
+                        visible: layer.visible,
+                        this,
+                    }
+                });
+
+                state.named_layers.insert(layer.name.clone(), layer_id);
+            }
+        }
+
         // Switch to the next room, creating all new instances (other than persistent instances
         // which already exist).
 
         state.current_room = Some(next_room);
 
-        for layer in state.config.rooms[state.current_room.unwrap()]
-            .layers
-            .clone()
-            .into_values()
-        {
-            let layer_id = state.layers.insert(Layer {
-                depth: layer.depth,
-                visible: layer.visible,
-            });
-            state.named_layers.insert(layer.name.clone(), layer_id);
+        for layer in state.config.rooms[next_room].layers.clone().into_values() {
+            let layer_id = state.named_layers[&layer.name];
+            if let RoomLayerType::Instances(template_ids) = &layer.layer_type {
+                for &template_id in template_ids {
+                    interpreter.enter(|ctx| -> Result<_, Error> {
+                        let instance_template = state.config.instance_templates[template_id];
 
-            for &template_id in &layer.instances {
-                interpreter.enter(|ctx| -> Result<_, Error> {
-                    let instance_template = state.config.instance_templates[template_id];
-
-                    if state.config.objects[instance_template.object].persistent {
-                        if state.instance_for_template.contains(template_id) {
-                            return Ok(());
+                        if state.config.objects[instance_template.object].persistent {
+                            if state.instance_for_template.contains(template_id) {
+                                return Ok(());
+                            }
                         }
-                    }
 
-                    let instance_id = state.instances.insert_with_id(|instance_id| Instance {
-                        object: instance_template.object,
-                        active: true,
-                        dead: false,
-                        position: instance_template.position,
-                        rotation: 0.0,
-                        layer: layer_id,
-                        this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
-                        properties: ctx.stash(vm::Object::new(&ctx)),
-                        event_closures: state.scripts.event_closures(ctx, instance_template.object),
-                        animation_time: 0.0,
-                    });
+                        let event_closures = state.event_closures(instance_template.object);
 
-                    assert!(
-                        state
-                            .instance_for_template
-                            .insert(template_id, instance_id)
-                            .is_none()
-                    );
-                    assert!(
-                        state
-                            .instances_for_object
-                            .get_or_insert_default(instance_template.object)
-                            .insert(instance_id)
-                    );
-                    assert!(
-                        state
-                            .instances_for_layer
-                            .get_or_insert_default(layer_id)
-                            .insert(instance_id)
-                    );
+                        let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                            object: instance_template.object,
+                            active: true,
+                            dead: false,
+                            position: instance_template.position,
+                            rotation: 0.0,
+                            layer: layer_id,
+                            this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
+                            properties: ctx.stash(vm::Object::new(&ctx)),
+                            event_closures,
+                            animation_time: 0.0,
+                        });
 
-                    let instance = &mut state.instances[instance_id];
+                        assert!(
+                            state
+                                .instance_for_template
+                                .insert(template_id, instance_id)
+                                .is_none()
+                        );
+                        assert!(
+                            state
+                                .instances_for_object
+                                .get_or_insert_default(instance_template.object)
+                                .insert(instance_id)
+                        );
+                        assert!(
+                            state
+                                .instances_for_layer
+                                .get_or_insert_default(layer_id)
+                                .insert(instance_id)
+                        );
 
-                    if let Some(create_closure) = instance.event_closures.get(&ObjectEvent::Create)
-                    {
-                        let thread = ctx.fetch(thread);
-                        let this = ctx.fetch(&instance.this);
-                        let closure = ctx.fetch(create_closure);
+                        let instance = &mut state.instances[instance_id];
 
-                        FreezeMany::new()
-                            .freeze(State::ctx_cell(ctx), state)
-                            .freeze(InputState::ctx_cell(ctx), input_state)
-                            .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
-                            .in_scope(|| {
-                                thread.run_with(ctx, closure, this, vm::Value::Undefined)
-                            })?;
-                    }
+                        if let Some(create_closure) =
+                            instance.event_closures.get(&ObjectEvent::Create)
+                        {
+                            let thread = ctx.fetch(thread);
+                            let this = ctx.fetch(&instance.this);
+                            let closure = ctx.fetch(create_closure);
+                            let object_id = instance.object;
 
-                    Ok(())
-                })?;
+                            FreezeMany::new()
+                                .freeze(State::ctx_cell(ctx), state)
+                                .freeze(
+                                    EventState::ctx_cell(ctx),
+                                    &EventState {
+                                        instance_id,
+                                        object_id,
+                                        current_event: ObjectEvent::Create,
+                                    },
+                                )
+                                .freeze(InputState::ctx_cell(ctx), input_state)
+                                .in_scope(|| {
+                                    thread.run_with(ctx, closure, this, vm::Value::Undefined)
+                                })?;
+                        }
+
+                        Ok(())
+                    })?;
+                }
             }
         }
 
@@ -238,9 +283,19 @@ pub fn tick_state(
                 {
                     let room_start_closure = ctx.fetch(room_start_closure);
                     let instance_ud = ctx.fetch(&instance.this);
+                    let object_id = instance.object;
+
                     FreezeMany::new()
-                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .freeze(State::ctx_cell(ctx), state)
+                        .freeze(
+                            EventState::ctx_cell(ctx),
+                            &EventState {
+                                instance_id,
+                                object_id,
+                                current_event: ObjectEvent::RoomStart,
+                            },
+                        )
+                        .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
                             ctx.fetch(thread).run_with(
                                 ctx,
@@ -276,6 +331,8 @@ pub fn tick_state(
     state.instance_bound_tree.fextend(instance_bounds);
 
     for &instance_id in &to_update {
+        let object_id = state.instances[instance_id].object;
+
         interpreter.enter(|ctx| -> Result<(), Error> {
             if let Some(step_closure) = state.instances[instance_id]
                 .event_closures
@@ -287,8 +344,15 @@ pub fn tick_state(
 
                 FreezeMany::new()
                     .freeze(State::ctx_cell(ctx), state)
+                    .freeze(
+                        EventState::ctx_cell(ctx),
+                        &EventState {
+                            instance_id,
+                            object_id,
+                            current_event: ObjectEvent::BeginStep,
+                        },
+                    )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
@@ -305,8 +369,15 @@ pub fn tick_state(
 
                 FreezeMany::new()
                     .freeze(State::ctx_cell(ctx), state)
+                    .freeze(
+                        EventState::ctx_cell(ctx),
+                        &EventState {
+                            instance_id,
+                            object_id,
+                            current_event: ObjectEvent::Step,
+                        },
+                    )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
@@ -323,8 +394,15 @@ pub fn tick_state(
 
                 FreezeMany::new()
                     .freeze(State::ctx_cell(ctx), state)
+                    .freeze(
+                        EventState::ctx_cell(ctx),
+                        &EventState {
+                            instance_id,
+                            object_id,
+                            current_event: ObjectEvent::EndStep,
+                        },
+                    )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }
             Ok(())
@@ -341,8 +419,15 @@ pub fn tick_state(
 
                 FreezeMany::new()
                     .freeze(State::ctx_cell(ctx), state)
+                    .freeze(
+                        EventState::ctx_cell(ctx),
+                        &EventState {
+                            instance_id,
+                            object_id,
+                            current_event: ObjectEvent::Draw,
+                        },
+                    )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .freeze(InstanceState::ctx_cell(ctx), &InstanceState { instance_id })
                     .freeze(DrawingState::ctx_cell(ctx), drawing_state)
                     .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
             }

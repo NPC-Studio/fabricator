@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    f64, fmt,
+    f64,
     time::Instant,
 };
 
@@ -13,7 +13,6 @@ use fabricator_util::{
     typed_id_map::{IdMap, SecondaryMap, new_id_type},
 };
 use fabricator_vm as vm;
-use gc_arena::Gc;
 
 use crate::{
     project::ObjectEvent,
@@ -34,55 +33,16 @@ pub struct TexturePage {
     pub userdata: vm::StashedUserData,
 }
 
-#[derive(Clone)]
-pub struct ScriptPrototype {
-    prototype: vm::StashedPrototype,
-}
-
-impl ScriptPrototype {
-    pub fn new<'gc>(
-        ctx: vm::Context<'gc>,
-        prototype: Gc<'gc, vm::Prototype<'gc>>,
-    ) -> ScriptPrototype {
-        assert!(!prototype.has_upvalues());
-        ScriptPrototype {
-            prototype: ctx.stash(prototype),
-        }
-    }
-
-    pub fn identifier<'gc>(&self, ctx: vm::Context<'gc>) -> impl fmt::Display {
-        ctx.fetch(&self.prototype).identifier()
-    }
-
-    pub fn create_closure<'gc>(&self, ctx: vm::Context<'gc>) -> vm::Closure<'gc> {
-        vm::Closure::new(&ctx, ctx.fetch(&self.prototype), vm::Value::Undefined).unwrap()
-    }
-}
-
 pub struct Scripts {
     pub magic: vm::StashedMagicSet,
-    pub scripts: Vec<ScriptPrototype>,
-    pub object_events: HashMap<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>,
-}
-
-impl Scripts {
-    pub fn event_closures<'gc>(
-        &self,
-        ctx: vm::Context<'gc>,
-        object_id: ObjectId,
-    ) -> HashMap<ObjectEvent, vm::StashedClosure> {
-        self.object_events
-            .get(&object_id)
-            .into_iter()
-            .flatten()
-            .map(|(&event, proto)| (event, ctx.stash(proto.create_closure(ctx))))
-            .collect()
-    }
+    pub scripts: Vec<vm::StashedClosure>,
+    pub object_events: HashMap<ObjectId, HashMap<ObjectEvent, vm::StashedClosure>>,
 }
 
 pub struct Layer {
     pub depth: i32,
     pub visible: bool,
+    pub this: vm::StashedUserData,
 }
 
 pub struct Instance {
@@ -165,25 +125,34 @@ impl State {
                 .translate(instance.position),
         )
     }
+
+    pub fn event_closures<'gc>(
+        &self,
+        mut object_id: ObjectId,
+    ) -> HashMap<ObjectEvent, vm::StashedClosure> {
+        let mut event_closures = HashMap::new();
+        loop {
+            for (&event, closure) in self
+                .scripts
+                .object_events
+                .get(&object_id)
+                .into_iter()
+                .flatten()
+            {
+                event_closures
+                    .entry(event)
+                    .or_insert_with(|| closure.clone());
+            }
+
+            if let Some(parent_object_id) = self.config.objects[object_id].parent {
+                object_id = parent_object_id;
+            } else {
+                break;
+            }
+        }
+
+        event_closures
+    }
 }
 
 pub type StateCell = FreezeCell<Freeze![&'freeze mut State]>;
-
-pub struct InstanceState {
-    pub instance_id: InstanceId,
-}
-
-impl InstanceState {
-    pub fn ctx_cell<'gc>(ctx: vm::Context<'gc>) -> &'gc InstanceStateCell {
-        &ctx.singleton::<gc_arena::Static<InstanceStateCell>>().0
-    }
-
-    pub fn ctx_with<'gc, R>(
-        ctx: vm::Context<'gc>,
-        f: impl FnOnce(&InstanceState) -> R,
-    ) -> Result<R, AccessError> {
-        Self::ctx_cell(ctx).with(|state| f(state))
-    }
-}
-
-pub type InstanceStateCell = FreezeCell<Freeze![&'freeze InstanceState]>;

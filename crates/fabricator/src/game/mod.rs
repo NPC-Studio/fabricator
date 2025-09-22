@@ -63,11 +63,11 @@ impl Game {
         log::info!("finished creating new game state!");
 
         log::info!("execuing all global scripts...");
-        for script in state.scripts.scripts.clone() {
+        for closure in state.scripts.scripts.clone() {
             interpreter.enter(|ctx| -> Result<_, Error> {
-                log::debug!("executing script {}", script.identifier(ctx));
+                let closure = ctx.fetch(&closure);
                 let thread = ctx.fetch(&main_thread);
-                let closure = script.create_closure(ctx);
+                log::debug!("executing script {}", closure.prototype().identifier());
                 State::ctx_cell(ctx).freeze(&mut state, || thread.run(ctx, closure))?;
                 Ok(())
             })?;

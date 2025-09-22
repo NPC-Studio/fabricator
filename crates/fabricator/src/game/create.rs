@@ -18,6 +18,7 @@ use crate::{
         },
         font::{FontUserData, font_api},
         instance::instance_api,
+        layer::layers_api,
         magic::MagicExt as _,
         object::{ObjectUserData, object_api},
         os::os_api,
@@ -29,12 +30,14 @@ use crate::{
     },
     ffi::load_extension_file,
     game::maxrects::MaxRects,
-    project::{CollisionKind, ObjectEvent, Project, ScriptMode},
+    project::{CollisionKind, LayerType, ObjectEvent, Project, ScriptMode},
     state::{
-        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, LayerTemplate, Object,
-        ObjectId, Room, RoomId, ScriptPrototype, Scripts, Sprite, SpriteCollision,
-        SpriteCollisionKind, SpriteId, State, Texture, TextureId, TexturePage, TexturePageId,
-        configuration::{Font, FontId, Shader, ShaderId, Sound, SoundId, TileSet, TileSetId},
+        AnimationFrame, Configuration, InstanceTemplate, InstanceTemplateId, Object, ObjectId,
+        Room, RoomId, RoomLayer, Scripts, Sprite, SpriteCollision, SpriteCollisionKind, SpriteId,
+        State, Texture, TextureId, TexturePage, TexturePageId,
+        configuration::{
+            Font, FontId, RoomLayerType, Shader, ShaderId, Sound, SoundId, TileSet, TileSetId,
+        },
     },
 };
 
@@ -183,13 +186,26 @@ pub fn create_state(
                 .enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id, ctx.intern(&object_name))));
             Object {
                 name: object_name.clone(),
+                parent: None,
                 sprite,
                 persistent: object.persistent,
                 userdata,
                 tags: object.tags.clone(),
             }
         });
-        object_dict.insert(object_name.clone(), object_id);
+        if object_dict.insert(object_name.clone(), object_id).is_some() {
+            bail!("duplicate object named {object_name:?}");
+        };
+    }
+
+    for (object_name, object) in &project.objects {
+        let object_id = object_dict[object_name];
+        if let Some(parent_name) = &object.parent_object {
+            let &parent_object_id = object_dict
+                .get(parent_name)
+                .with_context(|| anyhow!("no such parent object named {:?}", parent_name))?;
+            objects[object_id].parent = Some(parent_object_id);
+        }
     }
 
     let mut rooms = IdMap::<RoomId, Room>::new();
@@ -201,25 +217,34 @@ pub fn create_state(
         let mut layers = HashMap::new();
 
         for (layer_name, layer) in &room.layers {
-            let mut instances = Vec::new();
+            let layer_type = match &layer.layer_type {
+                LayerType::Instances(instances) => {
+                    let mut template_ids = Vec::new();
 
-            for instance in &layer.instances {
-                let template_id = instance_templates.insert(InstanceTemplate {
-                    object: *object_dict
-                        .get(&instance.object)
-                        .with_context(|| anyhow!("missing object named {:?}", instance.object))?,
-                    position: Vec2::new(instance.x, instance.y),
-                });
-                instances.push(template_id);
-            }
+                    for instance in instances {
+                        let template_id = instance_templates.insert(InstanceTemplate {
+                            object: *object_dict.get(&instance.object).with_context(|| {
+                                anyhow!("missing object named {:?}", instance.object)
+                            })?,
+                            position: Vec2::new(instance.x, instance.y),
+                        });
+                        template_ids.push(template_id);
+                    }
+
+                    RoomLayerType::Instances(template_ids)
+                }
+                LayerType::Assets => RoomLayerType::Assets,
+                LayerType::Tile => RoomLayerType::Tile,
+                LayerType::Background => RoomLayerType::Background,
+            };
 
             layers.insert(
                 layer_name.clone(),
-                LayerTemplate {
+                RoomLayer {
                     name: layer.name.clone(),
                     depth: layer.depth,
                     visible: layer.visible,
-                    instances,
+                    layer_type,
                 },
             );
         }
@@ -326,7 +351,8 @@ fn load_scripts(
     interpreter: &mut vm::Interpreter,
 ) -> Result<Scripts, Error> {
     let scripts = interpreter.enter(|ctx| -> Result<_, Error> {
-        let mut object_events = HashMap::<ObjectId, HashMap<ObjectEvent, ScriptPrototype>>::new();
+        let mut object_events =
+            HashMap::<ObjectId, HashMap<ObjectEvent, vm::StashedClosure>>::new();
         let mut magic = vm::MagicSet::new();
 
         magic.merge_unique(&ctx.stdlib())?;
@@ -343,6 +369,7 @@ fn load_scripts(
         magic.merge_unique(&sound_api(ctx, &config)?)?;
         magic.merge_unique(&assets_api(ctx, &config)?)?;
         magic.merge_unique(&tiles_api(ctx))?;
+        magic.merge_unique(&layers_api(ctx))?;
 
         for extension in project.extensions.values() {
             for file in &extension.files {
@@ -403,7 +430,10 @@ fn load_scripts(
                 object_events
                     .entry(config.object_dict[object_name])
                     .or_default()
-                    .insert(event, ScriptPrototype::new(ctx, proto));
+                    .insert(
+                        event,
+                        ctx.stash(vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap()),
+                    );
             }
         }
         log::info!("finished compiling all object scripts!");
@@ -412,7 +442,9 @@ fn load_scripts(
             magic: ctx.stash(magic),
             scripts: scripts
                 .into_iter()
-                .map(|proto| ScriptPrototype::new(ctx, proto))
+                .map(|proto| {
+                    ctx.stash(vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap())
+                })
                 .collect(),
             object_events,
         })

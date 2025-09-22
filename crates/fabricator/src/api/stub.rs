@@ -253,13 +253,7 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         .add_constant(&ctx, ctx.intern("string_height_ext"), string_height_ext)
         .unwrap();
 
-    create_stub_callback(ctx, &mut magic, "layer_get_id", [unit_userdata]);
     create_stub_callback(ctx, &mut magic, "layer_tilemap_get_id", [unit_userdata]);
-    create_stub_callback(ctx, &mut magic, "layer_get_depth", [0.into()]);
-    create_stub_callback(ctx, &mut magic, "layer_depth", []);
-    create_stub_callback(ctx, &mut magic, "layer_set_visible", []);
-    create_stub_callback(ctx, &mut magic, "layer_create", [unit_userdata]);
-    create_stub_callback(ctx, &mut magic, "layer_destroy", []);
     create_stub_callback(
         ctx,
         &mut magic,
@@ -277,6 +271,7 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         unit_userdata,
     );
     create_stub_callback(ctx, &mut magic, "audio_listener_position", []);
+    create_stub_callback(ctx, &mut magic, "audio_listener_orientation", []);
     create_stub_callback(ctx, &mut magic, "audio_play_sound_ext", []);
 
     create_stub_callback(ctx, &mut magic, "device_mouse_x_to_gui", [0.0.into()]);
