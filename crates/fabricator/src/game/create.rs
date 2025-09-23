@@ -1,13 +1,21 @@
-use std::{collections::HashMap, f64, fs::File, io::Read as _, time::Instant};
+use std::{
+    collections::{HashMap, hash_map},
+    f64,
+    fs::{self, File},
+    io::{self, Read as _},
+    time::Instant,
+};
 
-use anyhow::{Context as _, Error, anyhow, bail};
+use anyhow::{Context as _, Error, anyhow, bail, ensure};
 use fabricator_compiler as compiler;
 use fabricator_math::{Box2, Vec2};
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_util::typed_id_map::{IdMap, SecondaryMap};
 use fabricator_vm as vm;
 use gc_arena::Gc;
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
+use image::GenericImageView as _;
+use rayon::iter::{IntoParallelIterator as _, IntoParallelRefIterator, ParallelIterator as _};
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     api::{
@@ -50,21 +58,51 @@ pub fn create_state(
     const TICK_RATE: f64 = 60.0;
 
     let mut sprites = IdMap::<SpriteId, Sprite>::new();
-    let mut textures = IdMap::<TextureId, Texture>::new();
-
     let mut sprite_dict = HashMap::<String, SpriteId>::new();
+
+    let mut textures = IdMap::<TextureId, Texture>::new();
+    let mut textures_for_hash = HashMap::new();
+
+    let sprite_frame_meta = read_sprite_frame_meta(project)?;
 
     for (sprite_name, sprite) in &project.sprites {
         let size = Vec2::new(sprite.width, sprite.height);
+        let sprite_frame_meta = &sprite_frame_meta[sprite_name.as_str()];
 
         let mut frame_dict = HashMap::new();
         for frame in sprite.frames.values() {
-            let texture_id = textures.insert(Texture {
-                texture_group: sprite.texture_group.clone(),
-                image_path: frame.image_path.clone(),
-                size,
-            });
-            frame_dict.insert(frame.name.clone(), texture_id);
+            let frame_meta = &sprite_frame_meta[frame.name.as_str()];
+            ensure!(
+                Vec2::new(frame_meta.image_width, frame_meta.image_height) == size,
+                "frame size does not match sprite size for frame {:?}",
+                frame.name
+            );
+
+            // Deduplicate frame textures, if we have already created a texture for an existing
+            // frame with the same content hash, re-use its texture.
+            match textures_for_hash.entry(frame_meta.unique_hash) {
+                hash_map::Entry::Occupied(occupied) => {
+                    frame_dict.insert(frame.name.clone(), *occupied.get());
+                }
+                hash_map::Entry::Vacant(vacant) => {
+                    let texture_id = textures.insert(Texture {
+                        texture_group: sprite.texture_group.clone(),
+                        image_path: frame.image_path.clone(),
+                        size,
+                        cropped_size: Vec2::new(
+                            frame_meta.cropped_image_width,
+                            frame_meta.cropped_image_height,
+                        ),
+                        cropped_offset: Vec2::new(
+                            frame_meta.cropped_image_xoffset,
+                            frame_meta.cropped_image_yoffset,
+                        ),
+                    });
+
+                    vacant.insert(texture_id);
+                    frame_dict.insert(frame.name.clone(), texture_id);
+                }
+            }
         }
 
         let mut frames = Vec::new();
@@ -313,6 +351,8 @@ pub fn create_state(
             TexturePage {
                 size: page_data.size,
                 border: page_data.border,
+                group_name: page_data.group_name,
+                group_number: page_data.group_number,
                 textures: page_data.textures,
                 userdata,
             }
@@ -342,6 +382,112 @@ pub fn create_state(
         instances_for_layer: Default::default(),
         instance_bound_tree: Default::default(),
     })
+}
+
+struct FrameMeta {
+    pub unique_hash: u128,
+
+    pub image_width: u32,
+    pub image_height: u32,
+
+    pub cropped_image_xoffset: u32,
+    pub cropped_image_yoffset: u32,
+    pub cropped_image_width: u32,
+    pub cropped_image_height: u32,
+}
+
+type SpriteFrameMeta<'a> = HashMap<&'a str, FrameMeta>;
+
+fn read_sprite_frame_meta(
+    project: &Project,
+) -> Result<HashMap<&'_ str, SpriteFrameMeta<'_>>, Error> {
+    project
+        .sprites
+        .par_iter()
+        .map(|(sprite_name, sprite)| {
+            let texture_group = project
+                .texture_groups
+                .get(&sprite.texture_group)
+                .with_context(|| anyhow!("invalid texture group {:?}", sprite.texture_group))?;
+
+            let mut sprite_meta = SpriteFrameMeta::new();
+            for (frame_name, frame) in &sprite.frames {
+                let image_buf = fs::read(&frame.image_path)?;
+
+                // NOTE: We are deduplicating frames by the hash of their *file contents*, which is
+                // possibly too pessimistic.
+                let unique_hash =
+                    u128::from_le_bytes(Sha256::digest(&image_buf)[0..16].try_into().unwrap());
+
+                let reader = io::Cursor::new(&image_buf);
+                let image = if let Ok(fmt) = image::ImageFormat::from_path(&frame.image_path) {
+                    image::ImageReader::with_format(reader, fmt)
+                } else {
+                    image::ImageReader::new(reader).with_guessed_format()?
+                }
+                .decode()?;
+
+                let image_width = image.width();
+                let image_height = image.height();
+
+                let mut crop_left = 0;
+                let mut crop_top = 0;
+                let mut crop_right = image_width;
+                let mut crop_bottom = image_height;
+
+                if texture_group.auto_crop {
+                    let is_not_translucent = |x: u32, y: u32| image.get_pixel(x, y).0[3] != 0;
+
+                    while crop_left < image_width {
+                        if (0..image_height).any(|y| is_not_translucent(crop_left, y)) {
+                            break;
+                        }
+
+                        crop_left += 1;
+                    }
+
+                    while crop_top < image_height {
+                        if (crop_left..image_width).any(|x| is_not_translucent(x, crop_top)) {
+                            break;
+                        }
+
+                        crop_top += 1;
+                    }
+
+                    while crop_right > crop_left {
+                        if (crop_top..image_height).any(|y| is_not_translucent(crop_right - 1, y)) {
+                            break;
+                        }
+
+                        crop_right -= 1;
+                    }
+
+                    while crop_bottom > crop_top {
+                        if (crop_left..crop_right).any(|x| is_not_translucent(x, crop_bottom - 1)) {
+                            break;
+                        }
+
+                        crop_bottom -= 1;
+                    }
+                }
+
+                sprite_meta.insert(
+                    frame_name.as_str(),
+                    FrameMeta {
+                        unique_hash,
+                        image_width,
+                        image_height,
+                        cropped_image_xoffset: crop_left,
+                        cropped_image_yoffset: crop_top,
+                        cropped_image_width: crop_right - crop_left,
+                        cropped_image_height: crop_bottom - crop_top,
+                    },
+                );
+            }
+
+            Ok((sprite_name.as_str(), sprite_meta))
+        })
+        .collect()
 }
 
 fn load_scripts(
@@ -456,6 +602,8 @@ fn load_scripts(
 struct TexturePageData {
     pub size: Vec2<u32>,
     pub border: u32,
+    pub group_name: String,
+    pub group_number: usize,
     pub textures: SecondaryMap<TextureId, Vec2<u32>>,
 }
 
@@ -466,6 +614,11 @@ fn compute_texture_pages(
     // TODO: Hard coded texture page size normally configured by
     // 'options/<platform>/options_<platform>.yy'.
     const TEXTURE_PAGE_SIZE: Vec2<u32> = Vec2::new(2048, 2048);
+
+    // Treat images as being sized in blocks of `GRANULARITY` width and height. The larger the
+    // number, the coarser and faster the image placement.
+    const GRANULARITY: u32 = 8;
+    assert!(TEXTURE_PAGE_SIZE[0] % GRANULARITY == 0 && TEXTURE_PAGE_SIZE[1] % GRANULARITY == 0);
 
     let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
 
@@ -480,12 +633,7 @@ fn compute_texture_pages(
     let texture_page_list = texture_groups
         .into_par_iter()
         .map(|(group_name, group)| {
-            let project_texture_group = project
-                .texture_groups
-                .get(&group_name)
-                .with_context(|| anyhow!("invalid texture group name {:?}", group_name))?;
-
-            let border = project_texture_group.border as u32;
+            let border = project.texture_groups[&group_name].border as u32;
 
             let mut to_place = group
                 .into_iter()
@@ -495,10 +643,10 @@ fn compute_texture_pages(
             let mut texture_pages = Vec::new();
 
             while !to_place.is_empty() {
-                let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE);
+                let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE / GRANULARITY);
 
                 for texture_id in to_place.ids() {
-                    let padded_size = textures[texture_id].size + Vec2::splat(border * 2);
+                    let padded_size = textures[texture_id].cropped_size + Vec2::splat(border * 2);
                     if padded_size[0] > TEXTURE_PAGE_SIZE[0]
                         || padded_size[1] > TEXTURE_PAGE_SIZE[1]
                     {
@@ -507,19 +655,21 @@ fn compute_texture_pages(
                             padded_size
                         );
                     }
-                    packer.add(texture_id, padded_size);
+                    packer.add(texture_id, padded_size.map(|v| v.div_ceil(GRANULARITY)));
                 }
 
                 let mut texture_page = TexturePageData {
                     size: TEXTURE_PAGE_SIZE,
-                    textures: SecondaryMap::new(),
                     border,
+                    group_name: group_name.clone(),
+                    group_number: texture_pages.len(),
+                    textures: SecondaryMap::new(),
                 };
 
                 let prev_place_len = to_place.len();
                 for packed in packer.pack() {
                     if let Some(mut position) = packed.placement {
-                        position += Vec2::splat(border);
+                        position = position * GRANULARITY + Vec2::splat(border);
                         texture_page.textures.insert(packed.item, position);
                         to_place.remove(packed.item);
                     }

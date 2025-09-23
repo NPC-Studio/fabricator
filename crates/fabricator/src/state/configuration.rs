@@ -50,6 +50,8 @@ pub struct Texture {
     pub texture_group: String,
     pub image_path: PathBuf,
     pub size: Vec2<u32>,
+    pub cropped_size: Vec2<u32>,
+    pub cropped_offset: Vec2<u32>,
 }
 
 #[derive(Debug)]

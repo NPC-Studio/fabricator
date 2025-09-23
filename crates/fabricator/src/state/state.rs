@@ -29,6 +29,8 @@ new_id_type! {
 pub struct TexturePage {
     pub size: Vec2<u32>,
     pub border: u32,
+    pub group_name: String,
+    pub group_number: usize,
     pub textures: SecondaryMap<TextureId, Vec2<u32>>,
     pub userdata: vm::StashedUserData,
 }

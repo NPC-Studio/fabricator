@@ -22,6 +22,13 @@ use winit::{
     window::{Window, WindowId},
 };
 
+struct TextureEntry {
+    page_id: fab::TexturePageId,
+    crop_size: Vec2<f32>,
+    crop_offset: Vec2<f32>,
+    texture_coords: Box2<f32>,
+}
+
 struct AppState {
     window: Arc<Window>,
     device: wgpu::Device,
@@ -38,7 +45,7 @@ struct AppState {
     texture_page_bind_groups: SecondaryMap<fab::TexturePageId, wgpu::BindGroup>,
     parameters_buffer: wgpu::Buffer,
     parameters_bind_group: wgpu::BindGroup,
-    textures: SecondaryMap<fab::TextureId, (fab::TexturePageId, Vec2<f32>, Box2<f32>)>,
+    textures: SecondaryMap<fab::TextureId, TextureEntry>,
     geometry: Geometry<pipeline::Vertex, u32>,
     batches: Vec<(Range<u32>, fab::TexturePageId)>,
     last_render: Instant,
@@ -81,13 +88,13 @@ impl AppState {
         let parameters_bind_group = pipeline
             .create_parameters_bind_group(&device, parameters_buffer.as_entire_buffer_binding());
 
-        let mut textures =
-            SecondaryMap::<fab::TextureId, (fab::TexturePageId, Vec2<f32>, Box2<f32>)>::new();
+        let mut textures = SecondaryMap::<fab::TextureId, TextureEntry>::new();
 
         log::info!("loading textures...");
         for (page_id, page) in game.texture_pages() {
+            let texture_name = format!("{}-{}", page.group_name, page.group_number);
             let page_texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("page texture"),
+                label: Some(&texture_name),
                 size: wgpu::Extent3d {
                     width: page.size[0],
                     height: page.size[1],
@@ -119,16 +126,19 @@ impl AppState {
 
             struct TextureDesc<'a> {
                 image_path: &'a PathBuf,
-                size: Vec2<u32>,
+                crop_size: Vec2<u32>,
+                crop_offset: Vec2<u32>,
             }
 
             let mut texture_descriptors = SecondaryMap::new();
             for texture_id in page.textures.ids() {
+                let texture = game.texture(texture_id);
                 texture_descriptors.insert(
                     texture_id,
                     TextureDesc {
-                        image_path: &game.texture(texture_id).image_path,
-                        size: game.texture(texture_id).size,
+                        image_path: &texture.image_path,
+                        crop_size: texture.cropped_size,
+                        crop_offset: texture.cropped_offset,
                     },
                 );
             }
@@ -139,19 +149,19 @@ impl AppState {
                 .collect::<Vec<_>>()
                 .into_par_iter()
                 .map(|(texture_id, &position)| {
-                    let texture_desc = &texture_descriptors[texture_id];
+                    let TextureDesc {
+                        image_path,
+                        crop_size,
+                        crop_offset,
+                    } = texture_descriptors[texture_id];
 
-                    let image = image::ImageReader::open(&texture_desc.image_path)
+                    let image = image::ImageReader::open(image_path)
                         .unwrap()
                         .decode()
                         .unwrap()
+                        .crop(crop_offset[0], crop_offset[1], crop_size[0], crop_size[1])
                         .into_rgba8()
                         .into_flat_samples();
-
-                    assert_eq!(
-                        texture_desc.size,
-                        Vec2::new(image.layout.width, image.layout.height)
-                    );
 
                     queue.write_texture(
                         wgpu::TexelCopyTextureInfo {
@@ -171,27 +181,30 @@ impl AppState {
                             rows_per_image: None,
                         },
                         wgpu::Extent3d {
-                            width: texture_desc.size[0],
-                            height: texture_desc.size[1],
+                            width: crop_size[0],
+                            height: crop_size[1],
                             depth_or_array_layers: 1,
                         },
                     );
 
                     (
                         texture_id,
-                        page_id,
-                        texture_desc.size.cast::<f32>(),
-                        Box2::with_size(position, texture_desc.size)
-                            .cast::<f32>()
-                            .scale(Vec2::splat(1.0) / page_size.cast()),
+                        TextureEntry {
+                            page_id,
+                            crop_size: crop_size.cast::<f32>(),
+                            crop_offset: crop_offset.cast::<f32>(),
+                            texture_coords: Box2::with_size(position, crop_size)
+                                .cast::<f32>()
+                                .scale(Vec2::splat(1.0) / page_size.cast()),
+                        },
                     )
                 })
                 .collect_vec_list()
                 .into_iter()
                 .flatten();
 
-            for (texture_id, page_id, texture_size, texture_box) in loaded_textures {
-                textures.insert(texture_id, (page_id, texture_size, texture_box));
+            for (texture_id, entry) in loaded_textures {
+                textures.insert(texture_id, entry);
             }
         }
         log::info!("finished loading textures!");
@@ -288,19 +301,20 @@ impl AppState {
         for quad in &self.render.quads {
             let index_start = self.geometry.indices.len();
 
-            let (texture_page_id, tex_size, tex_coords) = self.textures[quad.texture];
+            let texture = &self.textures[quad.texture];
             let vertexes = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]].map(|[x, y]| {
                 pipeline::Vertex::new(
-                    quad.transform
-                        .transform_point(Box2::with_size(Vec2::zero(), tex_size).eval([x, y])),
-                    tex_coords.eval([x, y]),
+                    quad.transform.transform_point(
+                        Box2::with_size(texture.crop_offset, texture.crop_size).eval([x, y]),
+                    ),
+                    texture.texture_coords.eval([x, y]),
                 )
             });
             self.geometry.draw_quad(vertexes);
 
             self.batches.push((
                 cast::cast(index_start)..cast::cast(self.geometry.indices.len()),
-                texture_page_id,
+                texture.page_id,
             ));
         }
 
@@ -309,6 +323,7 @@ impl AppState {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &texture_view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

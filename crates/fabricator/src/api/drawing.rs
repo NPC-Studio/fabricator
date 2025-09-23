@@ -117,9 +117,9 @@ pub fn drawing_api<'gc>(
                 let texture = &state.config.textures[frame.texture];
                 let texture_page_id = state.texture_page_for_texture[frame.texture];
                 let texture_page = &state.texture_pages[texture_page_id];
-                let pos = texture_page.textures[frame.texture];
-                frame_obj.set(&ctx, ctx.intern("x"), pos[0] as i64);
-                frame_obj.set(&ctx, ctx.intern("y"), pos[1] as i64);
+                let page_position = texture_page.textures[frame.texture];
+                frame_obj.set(&ctx, ctx.intern("x"), page_position[0] as i64);
+                frame_obj.set(&ctx, ctx.intern("y"), page_position[1] as i64);
                 frame_obj.set(&ctx, ctx.intern("w"), texture.size[0] as i64);
                 frame_obj.set(&ctx, ctx.intern("h"), texture.size[1] as i64);
                 frame_obj.set(
@@ -127,8 +127,26 @@ pub fn drawing_api<'gc>(
                     ctx.intern("texture"),
                     ctx.fetch(&state.texture_pages[texture_page_id].userdata),
                 );
-                frame_obj.set(&ctx, ctx.intern("x_offset"), 0);
-                frame_obj.set(&ctx, ctx.intern("y_offset"), 0);
+                frame_obj.set(
+                    &ctx,
+                    ctx.intern("crop_width"),
+                    texture.cropped_size[0] as i64,
+                );
+                frame_obj.set(
+                    &ctx,
+                    ctx.intern("crop_height"),
+                    texture.cropped_size[1] as i64,
+                );
+                frame_obj.set(
+                    &ctx,
+                    ctx.intern("x_offset"),
+                    texture.cropped_offset[0] as i64,
+                );
+                frame_obj.set(
+                    &ctx,
+                    ctx.intern("y_offset"),
+                    texture.cropped_offset[1] as i64,
+                );
                 frames.push(&ctx, frame_obj);
             }
 

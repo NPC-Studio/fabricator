@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 bitflags.workspace = true
 gc-arena.workspace = true
+image.workspace = true
 libloading = "0.8"
 log.workspace = true
 num.workspace = true
@@ -14,6 +15,7 @@ rand.workspace = true
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
 
 fabricator-collision.workspace = true

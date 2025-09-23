@@ -454,6 +454,7 @@ fn read_sprite(base_path: PathBuf, yy_sprite: YySprite) -> Result<Sprite, Error>
     let mut frames = HashMap::new();
     for frame in yy_sprite.frames {
         let image_path = base_path.join(format!("{}.png", &frame.name));
+
         frames.insert(
             frame.name.clone(),
             Frame {
