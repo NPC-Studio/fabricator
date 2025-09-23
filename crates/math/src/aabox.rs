@@ -12,18 +12,21 @@ pub type Box2<T> = AABox<T, 2>;
 pub type Box3<T> = AABox<T, 3>;
 
 impl<T, const N: usize> AABox<T, N> {
+    #[must_use]
     pub const fn new(min: Vector<T, N>, max: Vector<T, N>) -> Self {
         Self { min, max }
     }
 }
 
 impl<T: num::Zero, const N: usize> AABox<T, N> {
+    #[must_use]
     pub fn zero() -> Self {
         Self::new(Vector::zero(), Vector::zero())
     }
 }
 
 impl<T: Copy, const N: usize> AABox<T, N> {
+    #[must_use]
     pub fn corners(self) -> impl Iterator<Item = Vector<T, N>> {
         AABox::<u8, N>::new(Vector::splat(0), Vector::splat(2))
             .iter(array::from_fn(|i| i))
@@ -41,6 +44,7 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: ops::Add<Output = T> + Copy,
 {
+    #[must_use]
     pub fn with_size(min: Vector<T, N>, size: Vector<T, N>) -> Self {
         Self {
             min,
@@ -48,6 +52,7 @@ where
         }
     }
 
+    #[must_use]
     pub fn translate(self, offset: Vector<T, N>) -> Self {
         Self {
             min: self.min + offset,
@@ -61,6 +66,7 @@ where
     T: PartialOrd,
 {
     /// Points are considered "contained" by the `AABox` if, along every dimension, min <= c < max.
+    #[must_use]
     pub fn contains(&self, p: Vector<T, N>) -> bool {
         for i in 0..N {
             if !(p[i] >= self.min[i] && p[i] < self.max[i]) {
@@ -72,6 +78,7 @@ where
 
     /// The given `AABox` is considered "contained" if along every dimension, `other.min >= self.min
     /// && other.max <= self.max`.
+    #[must_use]
     pub fn contains_box(&self, other: Self) -> bool {
         for i in 0..N {
             if !(self.min[i] <= other.min[i] && self.max[i] >= other.max[i]) {
@@ -83,6 +90,7 @@ where
 
     /// Two `AABox`es are considered intersecting if there is any point which is contained in both
     /// boxes.
+    #[must_use]
     pub fn intersects(&self, other: Self) -> bool {
         for i in 0..N {
             if !(self.min[i] < other.max[i]) || !(self.max[i] > other.min[i]) {
@@ -94,6 +102,7 @@ where
 
     /// Returns true if along any axis, the minimum value for this axis is not strictly less than
     /// the maximum value.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         for i in 0..N {
             if !(self.min[i] < self.max[i]) {
@@ -108,6 +117,7 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: PartialOrd + Copy,
 {
+    #[must_use]
     pub fn constrain(&self, p: Vector<T, N>) -> Vector<T, N> {
         p.zip(self.min, |a, b| if a < b { b } else { a })
             .zip(self.max, |a, b| if a > b { b } else { a })
@@ -118,12 +128,14 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: Ord,
 {
+    #[must_use]
     pub fn union(self, other: Self) -> Self {
         let min = self.min.zip(other.min, |a, b| a.min(b));
         let max = self.max.zip(other.max, |a, b| a.max(b));
         Self { min, max }
     }
 
+    #[must_use]
     pub fn intersection(self, other: Self) -> Self {
         let min = self.min.zip(other.min, |a, b| a.max(b));
         let max = self.max.zip(other.max, |a, b| a.min(b));
@@ -135,6 +147,7 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: Ord + Copy,
 {
+    #[must_use]
     pub fn from_points(mut i: impl Iterator<Item = Vector<T, N>>) -> Option<Self> {
         let first = i.next()?;
         Some(i.fold(Self::new(first, first), |a, b| a.union(Self::new(b, b))))
@@ -145,18 +158,21 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: num::Float,
 {
+    #[must_use]
     pub fn funion(self, other: Self) -> Self {
         let min = self.min.zip(other.min, |a, b| a.min(b));
         let max = self.max.zip(other.max, |a, b| a.max(b));
         Self { min, max }
     }
 
+    #[must_use]
     pub fn fintersection(self, other: Self) -> Self {
         let min = self.min.zip(other.min, |a, b| a.max(b));
         let max = self.max.zip(other.max, |a, b| a.min(b));
         Self { min, max }
     }
 
+    #[must_use]
     pub fn from_fpoints(mut i: impl Iterator<Item = Vector<T, N>>) -> Option<Self> {
         let first = i.next()?;
         Some(i.fold(Self::new(first, first), |a, b| a.funion(Self::new(b, b))))
@@ -167,6 +183,7 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: num::Integer + Copy,
 {
+    #[must_use]
     pub fn iter<const D: usize>(self, dims: [usize; D]) -> impl Iterator<Item = [T; D]> {
         struct Iter<T, const D: usize>
         where
@@ -214,6 +231,7 @@ where
 
     /// Iterates over each point inside an integral AABox, the iteration order is that lower
     /// dimensions change more frequently than higher ones.
+    #[must_use]
     pub fn iter_points(self) -> impl Iterator<Item = Vector<T, N>> {
         let mut indices: [usize; N] = array::from_fn(|i| i);
         indices.reverse();
@@ -225,6 +243,7 @@ where
 }
 
 impl<T: num::Float, const N: usize> AABox<T, N> {
+    #[must_use]
     pub fn with_center(center: Vector<T, N>, size: Vector<T, N>) -> Self {
         let half_size = size / T::from(2).unwrap();
         Self {
@@ -233,12 +252,14 @@ impl<T: num::Float, const N: usize> AABox<T, N> {
         }
     }
 
+    #[must_use]
     pub fn scale(mut self, scale: Vector<T, N>) -> Self {
         self.min = self.min * scale;
         self.max = self.max * scale;
         self
     }
 
+    #[must_use]
     pub fn round_out(self) -> Self {
         Self {
             min: self.min.map(T::floor),
@@ -246,11 +267,13 @@ impl<T: num::Float, const N: usize> AABox<T, N> {
         }
     }
 
+    #[must_use]
     pub fn center(&self) -> Vector<T, N> {
         let half = T::one() / T::from(2).unwrap();
         self.min * half + self.max * half
     }
 
+    #[must_use]
     pub fn eval(self, axes: [T; N]) -> Vector<T, N> {
         Vector::from_fn(|i| self.min[i] * (T::one() - axes[i]) + self.max[i] * axes[i])
     }
@@ -260,6 +283,7 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: ops::Sub<Output = T>,
 {
+    #[must_use]
     pub fn size(self) -> Vector<T, N> {
         self.max - self.min
     }
@@ -269,12 +293,14 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: ops::Sub<Output = T> + Copy,
 {
+    #[must_use]
     pub fn dim_size(&self, i: usize) -> T {
         self.max[i] - self.min[i]
     }
 }
 
 impl<T: num::NumCast, const N: usize> AABox<T, N> {
+    #[must_use]
     pub fn cast<U: num::NumCast>(self) -> AABox<U, N> {
         AABox {
             min: self.min.cast(),
@@ -282,6 +308,7 @@ impl<T: num::NumCast, const N: usize> AABox<T, N> {
         }
     }
 
+    #[must_use]
     pub fn try_cast<U: num::NumCast>(self) -> Option<AABox<U, N>> {
         Some(AABox {
             min: self.min.try_cast()?,

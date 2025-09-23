@@ -24,6 +24,7 @@ impl<T, const N: usize> Affine<T, N>
 where
     T: num::Zero + num::One,
 {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             matrix: Matrix::identity(),
@@ -33,6 +34,7 @@ where
 }
 
 impl<T: num::NumCast, const N: usize> Affine<T, N> {
+    #[must_use]
     pub fn cast<U: num::NumCast>(self) -> Affine<U, N> {
         Affine {
             matrix: self.matrix.cast(),
@@ -40,6 +42,7 @@ impl<T: num::NumCast, const N: usize> Affine<T, N> {
         }
     }
 
+    #[must_use]
     pub fn try_cast<U: num::NumCast>(self) -> Option<Affine<U, N>> {
         Some(Affine {
             matrix: self.matrix.try_cast()?,
@@ -49,6 +52,7 @@ impl<T: num::NumCast, const N: usize> Affine<T, N> {
 }
 
 impl<T: num::Num + Copy, const N: usize> Affine<T, N> {
+    #[must_use]
     pub fn then(self, other: Affine<T, N>) -> Self {
         Self {
             matrix: other.matrix * self.matrix,
@@ -56,6 +60,7 @@ impl<T: num::Num + Copy, const N: usize> Affine<T, N> {
         }
     }
 
+    #[must_use]
     pub fn translate(self, translation: Vector<T, N>) -> Self {
         self.then(Affine {
             matrix: Matrix::identity(),
@@ -63,6 +68,7 @@ impl<T: num::Num + Copy, const N: usize> Affine<T, N> {
         })
     }
 
+    #[must_use]
     pub fn scale(self, scale: Vector<T, N>) -> Self {
         self.then(Affine {
             matrix: Matrix::from_diagonal(scale),
@@ -75,6 +81,7 @@ impl<T> Affine2<T>
 where
     T: num::Zero + num::One,
 {
+    #[must_use]
     pub fn into_mat3(self) -> Mat3<T> {
         let [c1, c2] = self.matrix.into_cols();
         Mat3::from_cols([
@@ -86,6 +93,7 @@ where
 }
 
 impl<T: num::Float> Affine2<T> {
+    #[must_use]
     pub fn rotate(&self, angle: T) -> Self {
         let (sina, cosa) = angle.sin_cos();
         self.then(Self {
@@ -94,6 +102,7 @@ impl<T: num::Float> Affine2<T> {
         })
     }
 
+    #[must_use]
     pub fn inverse(&self) -> Self {
         let matrix = self.matrix.inverse();
         let translation = -(matrix * self.translation);
@@ -103,10 +112,12 @@ impl<T: num::Float> Affine2<T> {
         }
     }
 
+    #[must_use]
     pub fn transform_point(&self, p: Vec2<T>) -> Vec2<T> {
         self.matrix * p + self.translation
     }
 
+    #[must_use]
     pub fn transform_vector(&self, v: Vec2<T>) -> Vec2<T> {
         self.matrix * v
     }

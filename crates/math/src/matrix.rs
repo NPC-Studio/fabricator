@@ -90,30 +90,37 @@ where
 }
 
 impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
+    #[must_use]
     pub const fn from_cols(cols: [Vector<T, R>; C]) -> Self {
         Self(cols)
     }
 
+    #[must_use]
     pub fn into_cols(self) -> [Vector<T, R>; C] {
         self.0
     }
 
+    #[must_use]
     pub const fn as_cols(&self) -> &[Vector<T, R>; C] {
         &self.0
     }
 
+    #[must_use]
     pub fn iter_cols(&self) -> slice::Iter<'_, Vector<T, R>> {
         self.0.iter()
     }
 
+    #[must_use]
     pub fn from_array(arr: [[T; R]; C]) -> Self {
         Self(arr.map(Vector::from_array))
     }
 
+    #[must_use]
     pub fn into_array(self) -> [[T; R]; C] {
         self.0.map(|v| v.into_array())
     }
 
+    #[must_use]
     pub fn to_array(&self) -> [[T; R]; C]
     where
         T: Copy,
@@ -121,14 +128,17 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
         self.into_array()
     }
 
+    #[must_use]
     pub fn from_fn(f: impl Fn(usize, usize) -> T) -> Self {
         Self::from_array(array::from_fn(|c| array::from_fn(|r| f(c, r))))
     }
 
+    #[must_use]
     pub fn map<U>(self, f: impl Fn(T) -> U) -> Matrix<U, R, C> {
         Matrix(self.0.map(|c| c.map(&f)))
     }
 
+    #[must_use]
     pub fn try_map<U>(self, f: impl Fn(T) -> Option<U>) -> Option<Matrix<U, R, C>> {
         let a: [Option<Vector<U, R>>; C] = self.0.map(|v| v.try_map(&f));
         if a.iter().any(Option::is_none) {
@@ -138,6 +148,7 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
         }
     }
 
+    #[must_use]
     pub fn transpose(self) -> Matrix<T, C, R> {
         let mut m = self.map(|v| Some(v));
         let mut n = Matrix::from_fn(|_, _| None);
@@ -151,16 +162,19 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
 }
 
 impl<T: num::NumCast, const R: usize, const C: usize> Matrix<T, R, C> {
+    #[must_use]
     pub fn cast<U: num::NumCast>(self) -> Matrix<U, R, C> {
         self.map(cast::cast)
     }
 
+    #[must_use]
     pub fn try_cast<U: num::NumCast>(self) -> Option<Matrix<U, R, C>> {
         self.try_map(cast::try_cast)
     }
 }
 
 impl<T: num::Zero, const N: usize> Matrix<T, N, N> {
+    #[must_use]
     pub fn from_diagonal(diagonal: Vector<T, N>) -> Self {
         let mut m = Matrix::from_fn(|_, _| T::zero());
         for (i, s) in diagonal.into_array().into_iter().enumerate() {
@@ -171,16 +185,19 @@ impl<T: num::Zero, const N: usize> Matrix<T, N, N> {
 }
 
 impl<T: num::Zero + num::One, const N: usize> Matrix<T, N, N> {
+    #[must_use]
     pub fn identity() -> Self {
         Self::from_diagonal(Vector::one())
     }
 }
 
 impl<T: num::Float> Mat2<T> {
+    #[must_use]
     pub fn determinant(&self) -> T {
         self[0][0] * self[1][1] - self[0][1] * self[1][0]
     }
 
+    #[must_use]
     pub fn inverse(&self) -> Self {
         let inv_determinant = self.determinant().recip();
         Self::from_cols([
@@ -191,10 +208,12 @@ impl<T: num::Float> Mat2<T> {
 }
 
 impl<T: num::Float> Mat3<T> {
+    #[must_use]
     pub fn determinant(&self) -> T {
         self[2].dot(self[0].cross(self[1]))
     }
 
+    #[must_use]
     pub fn inverse(&self) -> Self {
         let a = self[1].cross(self[2]);
         let b = self[2].cross(self[0]);
