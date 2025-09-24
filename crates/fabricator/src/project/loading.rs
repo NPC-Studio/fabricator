@@ -2,11 +2,12 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
     io::BufReader,
+    iter,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use anyhow::{Context as _, Error, bail};
+use anyhow::{Context as _, Error, bail, ensure};
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use serde::Deserialize;
 use serde_json as json;
@@ -14,7 +15,7 @@ use serde_json as json;
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
     FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, LayerType, Object, ObjectEvent,
-    Project, Room, Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileSet,
+    Project, Room, Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileLayerData, TileSet,
     strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
@@ -72,43 +73,46 @@ pub fn load_project(project_file: &Path) -> Result<Project, Error> {
         Other,
     }
 
+    let load_resource = |resource_path: &Path| -> Result<LoadedResource, Error> {
+        let base_path = resource_path.parent().expect("no base path").to_owned();
+
+        let resource = match load_yy(resource_path)? {
+            YyResource::Sprite(yy_sprite) => {
+                LoadedResource::Sprite(read_sprite(base_path, yy_sprite)?)
+            }
+            YyResource::Object(yy_object) => {
+                LoadedResource::Object(read_object(base_path, yy_object)?)
+            }
+            YyResource::Room(yy_room) => LoadedResource::Room(read_room(base_path, yy_room)?),
+            YyResource::Script(yy_script) => {
+                LoadedResource::Script(read_script(base_path, yy_script)?)
+            }
+            YyResource::Extension(yy_extension) => {
+                LoadedResource::Extension(read_extension(base_path, yy_extension)?)
+            }
+            YyResource::Font(yy_font) => LoadedResource::Font(read_font(base_path, yy_font)?),
+            YyResource::Shader(yy_shader) => {
+                LoadedResource::Shader(read_shader(base_path, yy_shader)?)
+            }
+            YyResource::Sound(yy_sound) => LoadedResource::Sound(read_sound(base_path, yy_sound)?),
+            YyResource::TileSet(yy_tile_set) => {
+                LoadedResource::TileSet(read_tile_set(base_path, yy_tile_set)?)
+            }
+            YyResource::Other => LoadedResource::Other,
+        };
+
+        log::debug!("loaded resource at {resource_path:?}");
+
+        Ok(resource)
+    };
+
     let loaded_resources = yy_project
         .resources
         .into_par_iter()
-        .map(|resource| -> Result<LoadedResource, Error> {
+        .map(|resource| {
             let resource_path = project.base_path.join(&resource.id.path);
-            let base_path = resource_path.parent().expect("no base path").to_owned();
-
-            let resource = match load_yy(&resource_path)? {
-                YyResource::Sprite(yy_sprite) => {
-                    LoadedResource::Sprite(read_sprite(base_path, yy_sprite)?)
-                }
-                YyResource::Object(yy_object) => {
-                    LoadedResource::Object(read_object(base_path, yy_object)?)
-                }
-                YyResource::Room(yy_room) => LoadedResource::Room(read_room(base_path, yy_room)?),
-                YyResource::Script(yy_script) => {
-                    LoadedResource::Script(read_script(base_path, yy_script)?)
-                }
-                YyResource::Extension(yy_extension) => {
-                    LoadedResource::Extension(read_extension(base_path, yy_extension)?)
-                }
-                YyResource::Font(yy_font) => LoadedResource::Font(read_font(base_path, yy_font)?),
-                YyResource::Shader(yy_shader) => {
-                    LoadedResource::Shader(read_shader(base_path, yy_shader)?)
-                }
-                YyResource::Sound(yy_sound) => {
-                    LoadedResource::Sound(read_sound(base_path, yy_sound)?)
-                }
-                YyResource::TileSet(yy_tile_set) => {
-                    LoadedResource::TileSet(read_tile_set(base_path, yy_tile_set)?)
-                }
-                YyResource::Other => LoadedResource::Other,
-            };
-
-            log::debug!("loaded resource at {resource_path:?}");
-
-            Ok(resource)
+            load_resource(&resource_path)
+                .with_context(|| format!("error loading resource {:?}", resource_path))
         })
         .collect::<Result<Vec<_>, Error>>()?;
 
@@ -266,6 +270,20 @@ struct YyInstance {
 }
 
 #[derive(Deserialize)]
+struct YyLayerTiles {
+    #[serde(rename = "SerialiseWidth")]
+    serialize_width: u32,
+    #[serde(rename = "SerialiseHeight")]
+    serialize_height: u32,
+    #[serde(rename = "TileSerialiseData", default)]
+    serialize_data: Option<Vec<i32>>,
+    #[serde(rename = "TileCompressedData", default)]
+    compressed_data: Option<Vec<i32>>,
+    #[serde(rename = "TileDataFormat", default)]
+    data_format: Option<u32>,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "resourceType")]
 enum YyLayer {
     #[serde(rename = "GMRAssetLayer")]
@@ -286,6 +304,13 @@ enum YyLayer {
         name: String,
         depth: i32,
         visible: bool,
+        #[serde(rename = "gridX")]
+        grid_x: u32,
+        #[serde(rename = "gridY")]
+        grid_y: u32,
+        tiles: YyLayerTiles,
+        #[serde(rename = "tilesetId")]
+        tile_set_id: Option<YyId>,
     },
     #[serde(rename = "GMRBackgroundLayer")]
     Background {
@@ -423,6 +448,26 @@ struct YySound {
 #[derive(Deserialize)]
 struct YyTileSet {
     name: String,
+    #[serde(rename = "spriteId")]
+    sprite_id: YyId,
+
+    #[serde(rename = "tileWidth")]
+    tile_width: u32,
+    #[serde(rename = "tileHeight")]
+    tile_height: u32,
+    #[serde(rename = "tilehsep")]
+    tile_hsep: u32,
+    #[serde(rename = "tilevsep")]
+    tile_vsep: u32,
+    #[serde(rename = "tilexoff")]
+    tile_xoff: u32,
+    #[serde(rename = "tileyoff")]
+    tile_yoff: u32,
+    tile_count: u32,
+
+    out_columns: u32,
+    out_tilehborder: u32,
+    out_tilevborder: u32,
 }
 
 #[derive(Deserialize)]
@@ -559,7 +604,98 @@ fn read_object(base_path: PathBuf, yy_object: YyObject) -> Result<Object, Error>
 }
 
 fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
-    fn read_layer(layer_map: &mut HashMap<String, Layer>, yy_layer: YyLayer) {
+    fn decode_tile_data(
+        &YyLayerTiles {
+            serialize_width,
+            serialize_height,
+            ref serialize_data,
+            ref compressed_data,
+            data_format,
+        }: &YyLayerTiles,
+    ) -> Result<Vec<Option<u32>>, Error> {
+        let mut out = Vec::new();
+
+        ensure!(
+            serialize_data.is_some() && compressed_data.is_none()
+                || serialize_data.is_none() && compressed_data.is_some(),
+            "exactly one of `TileSerialiseData` or `TileCompressedData` is expected"
+        );
+
+        if let Some(serialize_data) = serialize_data {
+            assert!(compressed_data.is_none());
+            ensure!(
+                serialize_data.is_empty(),
+                "`TileSerialisedData` unsupported"
+            );
+        } else {
+            let Some(compressed_data) = compressed_data else {
+                unreachable!();
+            };
+
+            if let Some(data_format) = data_format {
+                ensure!(
+                    data_format == 1,
+                    "unrecognized tile data format {data_format}"
+                );
+            } else {
+                bail!("`data_format` required for compressed tile data");
+            }
+
+            fn get_value(value: i32) -> Result<Option<u32>, Error> {
+                Ok(if value == i32::MIN {
+                    None
+                } else {
+                    ensure!(
+                        value >= 0,
+                        "tile data value {value} is expected to be positive"
+                    );
+                    Some(value as u32)
+                })
+            }
+
+            let mut read_index = 0;
+            while compressed_data.len() > read_index {
+                let length = compressed_data[read_index];
+                read_index += 1;
+
+                if length < 0 {
+                    // This chunk is a run-length encoding of a block of single tiles
+                    let run_length = -length as usize;
+
+                    ensure!(
+                        compressed_data.len() > read_index,
+                        "run-length block must have a value"
+                    );
+
+                    let value = get_value(compressed_data[read_index])?;
+                    out.extend(iter::repeat_n(value, run_length));
+                    read_index += 1;
+                } else {
+                    // This chunk is a set of individual tile values.
+                    let literal_length = length as usize;
+
+                    ensure!(
+                        compressed_data.len() >= read_index + literal_length,
+                        "literal block does not have {literal_length} values following"
+                    );
+
+                    for i in 0..literal_length {
+                        out.push(get_value(compressed_data[read_index + i])?);
+                    }
+                    read_index += literal_length;
+                }
+            }
+
+            ensure!(
+                out.len() == serialize_width as usize * serialize_height as usize,
+                "tile data does not fit expected dimensions {serialize_width}x{serialize_height}"
+            );
+        }
+
+        Ok(out)
+    }
+
+    fn read_layer(layer_map: &mut HashMap<String, Layer>, yy_layer: YyLayer) -> Result<(), Error> {
         match yy_layer {
             YyLayer::Asset {
                 name,
@@ -607,6 +743,10 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
                 name,
                 depth,
                 visible,
+                grid_x,
+                grid_y,
+                tiles,
+                tile_set_id,
             } => {
                 layer_map.insert(
                     name.clone(),
@@ -614,7 +754,14 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
                         name,
                         visible,
                         depth,
-                        layer_type: LayerType::Tile,
+                        layer_type: LayerType::Tile(TileLayerData {
+                            tile_set: tile_set_id.map(|id| id.name),
+                            grid_x_size: grid_x,
+                            grid_y_size: grid_y,
+                            grid_width: tiles.serialize_width,
+                            grid_height: tiles.serialize_height,
+                            tile_grid: decode_tile_data(&tiles)?,
+                        }),
                     },
                 );
             }
@@ -635,15 +782,17 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
             }
             YyLayer::Layer { layers } => {
                 for layer in layers {
-                    read_layer(layer_map, layer);
+                    read_layer(layer_map, layer)?;
                 }
             }
         }
+
+        Ok(())
     }
 
     let mut layers = HashMap::new();
     for yy_layer in yy_room.layers {
-        read_layer(&mut layers, yy_layer);
+        read_layer(&mut layers, yy_layer)?;
     }
 
     Ok(Room {
@@ -784,6 +933,7 @@ fn read_font(base_path: PathBuf, yy_font: YyFont) -> Result<Font, Error> {
 fn read_shader(base_path: PathBuf, yy_shader: YyShader) -> Result<Shader, Error> {
     let fragment_shader_path = base_path.join(&format!("{}.fsh", yy_shader.name));
     let vertex_shader_path = base_path.join(&format!("{}.vsh", yy_shader.name));
+
     Ok(Shader {
         name: yy_shader.name,
         fragment_shader: fragment_shader_path,
@@ -800,8 +950,21 @@ fn read_sound(base_path: PathBuf, yy_sound: YySound) -> Result<Sound, Error> {
     })
 }
 
-fn read_tile_set(_base_path: PathBuf, yy_tile_set: YyTileSet) -> Result<TileSet, Error> {
+fn read_tile_set(base_path: PathBuf, yy_tile_set: YyTileSet) -> Result<TileSet, Error> {
+    let output_image = base_path.join("output_tileset.png").to_owned();
     Ok(TileSet {
         name: yy_tile_set.name,
+        sprite: yy_tile_set.sprite_id.name,
+        tile_width: yy_tile_set.tile_width,
+        tile_height: yy_tile_set.tile_height,
+        tile_horiz_separation: yy_tile_set.tile_hsep,
+        tile_vert_separation: yy_tile_set.tile_vsep,
+        tile_x_offset: yy_tile_set.tile_xoff,
+        tile_y_offset: yy_tile_set.tile_yoff,
+        tile_count: yy_tile_set.tile_count,
+        output_image,
+        output_columns: yy_tile_set.out_columns,
+        output_tile_horiz_border: yy_tile_set.out_tilehborder,
+        output_tile_vert_border: yy_tile_set.out_tilevborder,
     })
 }

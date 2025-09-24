@@ -110,10 +110,10 @@ impl<N: num::Float> TriangleProjection<N> {
         // The point lies inside the triangle. We don't return barycentric coordinates here, but
         // they can be calculated with
         //
-        // let denom = _1 / (va + vb + vc);
+        // let denom = one / (va + vb + vc);
         // let v = vb * denom;
         // let w = vc * denom;
-        // let barycentric = [_1 - v - w, v, w];
+        // let barycentric = [one - v - w, v, w];
 
         Self::Triangle
     }

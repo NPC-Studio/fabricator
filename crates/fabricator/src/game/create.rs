@@ -272,7 +272,7 @@ pub fn create_state(
                     RoomLayerType::Instances(template_ids)
                 }
                 LayerType::Assets => RoomLayerType::Assets,
-                LayerType::Tile => RoomLayerType::Tile,
+                LayerType::Tile(_) => RoomLayerType::Tile,
                 LayerType::Background => RoomLayerType::Background,
             };
 

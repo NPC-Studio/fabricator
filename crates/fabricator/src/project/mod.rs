@@ -169,8 +169,18 @@ pub struct Layer {
 pub enum LayerType {
     Instances(Vec<Instance>),
     Assets,
-    Tile,
+    Tile(TileLayerData),
     Background,
+}
+
+#[derive(Debug)]
+pub struct TileLayerData {
+    pub tile_set: Option<String>,
+    pub grid_x_size: u32,
+    pub grid_y_size: u32,
+    pub grid_width: u32,
+    pub grid_height: u32,
+    pub tile_grid: Vec<Option<u32>>,
 }
 
 #[derive(Debug)]
@@ -264,6 +274,20 @@ pub struct Sound {
 #[derive(Debug)]
 pub struct TileSet {
     pub name: String,
+    pub sprite: String,
+
+    pub tile_width: u32,
+    pub tile_height: u32,
+    pub tile_horiz_separation: u32,
+    pub tile_vert_separation: u32,
+    pub tile_x_offset: u32,
+    pub tile_y_offset: u32,
+    pub tile_count: u32,
+
+    pub output_image: PathBuf,
+    pub output_columns: u32,
+    pub output_tile_horiz_border: u32,
+    pub output_tile_vert_border: u32,
 }
 
 #[derive(Debug)]
