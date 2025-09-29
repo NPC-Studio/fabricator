@@ -36,6 +36,7 @@ pub struct Configuration {
     pub shaders: IdMap<ShaderId, Shader>,
     pub sounds: IdMap<SoundId, Sound>,
     pub tile_sets: IdMap<TileSetId, TileSet>,
+    pub tile_set_dict: HashMap<String, TileSetId>,
     pub objects: IdMap<ObjectId, Object>,
     pub object_dict: HashMap<String, ObjectId>,
     pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
@@ -76,10 +77,10 @@ pub struct Sound {
 #[derive(Debug)]
 pub struct TileSet {
     pub name: String,
+    pub tile_count: u32,
     pub userdata: vm::StashedUserData,
 }
 
-#[derive(Clone)]
 pub struct Room {
     pub name: String,
     pub size: Vec2<u32>,
@@ -100,8 +101,16 @@ pub struct RoomLayer {
 pub enum RoomLayerType {
     Instances(Vec<InstanceTemplateId>),
     Assets,
-    Tile,
+    Tile(RoomTileLayer),
     Background,
+}
+
+#[derive(Clone)]
+pub struct RoomTileLayer {
+    pub position: Vec2<f64>,
+    pub tile_set: Option<TileSetId>,
+    pub grid_dimensions: Vec2<u32>,
+    pub grid: Vec<Option<u32>>,
 }
 
 pub struct AnimationFrame {

@@ -44,7 +44,8 @@ use crate::{
         Room, RoomId, RoomLayer, Scripts, Sprite, SpriteCollision, SpriteCollisionKind, SpriteId,
         State, Texture, TextureId, TexturePage, TexturePageId,
         configuration::{
-            Font, FontId, RoomLayerType, Shader, ShaderId, Sound, SoundId, TileSet, TileSetId,
+            Font, FontId, RoomLayerType, RoomTileLayer, Shader, ShaderId, Sound, SoundId, TileSet,
+            TileSetId,
         },
     },
 };
@@ -193,15 +194,25 @@ pub fn create_state(
     }
 
     let mut tile_sets = IdMap::<TileSetId, TileSet>::new();
-    for tile_set in project.tile_sets.values() {
-        tile_sets.insert_with_id(|id| {
+    let mut tile_set_dict = HashMap::<String, TileSetId>::new();
+
+    for (tile_set_name, tile_set) in &project.tile_sets {
+        let tile_set_id = tile_sets.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(TileSetUserData::new(ctx, id, ctx.intern(&tile_set.name))));
             TileSet {
                 name: tile_set.name.clone(),
+                tile_count: tile_set.tile_count,
                 userdata,
             }
         });
+
+        if tile_set_dict
+            .insert(tile_set_name.clone(), tile_set_id)
+            .is_some()
+        {
+            bail!("duplicate tile set named {tile_set_name:?}");
+        };
     }
 
     let mut objects = IdMap::<ObjectId, Object>::new();
@@ -262,7 +273,7 @@ pub fn create_state(
                     for instance in instances {
                         let template_id = instance_templates.insert(InstanceTemplate {
                             object: *object_dict.get(&instance.object).with_context(|| {
-                                anyhow!("missing object named {:?}", instance.object)
+                                format!("missing object named {:?}", instance.object)
                             })?,
                             position: Vec2::new(instance.x, instance.y),
                         });
@@ -272,7 +283,23 @@ pub fn create_state(
                     RoomLayerType::Instances(template_ids)
                 }
                 LayerType::Assets => RoomLayerType::Assets,
-                LayerType::Tile(_) => RoomLayerType::Tile,
+                LayerType::Tile(tile_layer) => {
+                    let tile_set = match &tile_layer.tile_set {
+                        Some(tile_set_name) => {
+                            Some(*tile_set_dict.get(tile_set_name).with_context(|| {
+                                format!("missing tile set named {tile_set_name:?}")
+                            })?)
+                        }
+                        None => None,
+                    };
+                    let room_tile_layer = RoomTileLayer {
+                        position: Vec2::new(tile_layer.x, tile_layer.y),
+                        tile_set: tile_set,
+                        grid_dimensions: Vec2::new(tile_layer.grid_width, tile_layer.grid_height),
+                        grid: tile_layer.tile_grid.clone(),
+                    };
+                    RoomLayerType::Tile(room_tile_layer)
+                }
                 LayerType::Background => RoomLayerType::Background,
             };
 
@@ -320,6 +347,7 @@ pub fn create_state(
         sounds,
         shaders,
         tile_sets,
+        tile_set_dict,
         objects,
         object_dict,
         instance_templates,

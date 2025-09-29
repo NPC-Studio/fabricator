@@ -2,8 +2,8 @@ use fabricator_vm as vm;
 
 use crate::{
     api::{
-        magic::{DuplicateMagicName, MagicExt as _},
         id_user_data::NamedIdUserData,
+        magic::{DuplicateMagicName, MagicExt as _},
     },
     state::{
         Configuration, State,

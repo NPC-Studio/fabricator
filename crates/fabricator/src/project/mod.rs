@@ -169,15 +169,17 @@ pub struct Layer {
 pub enum LayerType {
     Instances(Vec<Instance>),
     Assets,
-    Tile(TileLayerData),
+    Tile(TileLayer),
     Background,
 }
 
 #[derive(Debug)]
-pub struct TileLayerData {
+pub struct TileLayer {
+    pub x: f64,
+    pub y: f64,
     pub tile_set: Option<String>,
-    pub grid_x_size: u32,
-    pub grid_y_size: u32,
+    pub cell_width: u32,
+    pub cell_height: u32,
     pub grid_width: u32,
     pub grid_height: u32,
     pub tile_grid: Vec<Option<u32>>,

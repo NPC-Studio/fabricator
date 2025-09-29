@@ -15,7 +15,7 @@ use serde_json as json;
 use crate::project::{
     AnimationFrame, CollisionKind, EventScript, Extension, ExtensionFile, ExtensionFunction,
     FfiType, Font, Frame, Glyph, Instance, KerningPair, Layer, LayerType, Object, ObjectEvent,
-    Project, Room, Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileLayerData, TileSet,
+    Project, Room, Script, ScriptMode, Shader, Sound, Sprite, TextureGroup, TileLayer, TileSet,
     strip_json_trailing_commas::StripJsonTrailingCommas,
 };
 
@@ -304,6 +304,8 @@ enum YyLayer {
         name: String,
         depth: i32,
         visible: bool,
+        x: f64,
+        y: f64,
         #[serde(rename = "gridX")]
         grid_x: u32,
         #[serde(rename = "gridY")]
@@ -743,6 +745,8 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
                 name,
                 depth,
                 visible,
+                x,
+                y,
                 grid_x,
                 grid_y,
                 tiles,
@@ -754,10 +758,12 @@ fn read_room(base_path: PathBuf, yy_room: YyRoom) -> Result<Room, Error> {
                         name,
                         visible,
                         depth,
-                        layer_type: LayerType::Tile(TileLayerData {
+                        layer_type: LayerType::Tile(TileLayer {
+                            x,
+                            y,
                             tile_set: tile_set_id.map(|id| id.name),
-                            grid_x_size: grid_x,
-                            grid_y_size: grid_y,
+                            cell_width: grid_x,
+                            cell_height: grid_y,
                             grid_width: tiles.serialize_width,
                             grid_height: tiles.serialize_height,
                             tile_grid: decode_tile_data(&tiles)?,
