@@ -11,18 +11,21 @@ use gc_arena::Collect;
 pub struct RuntimeError(pub Arc<RuntimeErrorInner>);
 
 impl fmt::Debug for RuntimeError {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self.0, f)
     }
 }
 
 impl fmt::Display for RuntimeError {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&**self.0, f)
     }
 }
 
 impl<E: StdError + Send + Sync + 'static> From<E> for RuntimeError {
+    #[inline]
     fn from(err: E) -> Self {
         Self::new(err)
     }
@@ -31,12 +34,14 @@ impl<E: StdError + Send + Sync + 'static> From<E> for RuntimeError {
 impl ops::Deref for RuntimeError {
     type Target = dyn StdError + Send + Sync + 'static;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &**self.0
     }
 }
 
 impl AsRef<dyn StdError + Send + Sync + 'static> for RuntimeError {
+    #[inline]
     fn as_ref(&self) -> &(dyn StdError + Send + Sync + 'static) {
         &**self.0
     }
@@ -111,6 +116,16 @@ impl RuntimeError {
 
         Self::new(MsgErr(message))
     }
+
+    #[inline]
+    pub fn is<T: StdError + Send + Sync + 'static>(&self) -> bool {
+        self.as_ref().is::<T>()
+    }
+
+    #[inline]
+    pub fn downcast_ref<T: StdError + Send + Sync + 'static>(&self) -> Option<&T> {
+        self.as_ref().downcast_ref()
+    }
 }
 
 /// Performance is extremely sensitive to the size of `RuntimeError`, so we represent it as a single
@@ -122,12 +137,14 @@ pub struct RuntimeErrorInner {
 impl ops::Deref for RuntimeErrorInner {
     type Target = dyn StdError + Send + Sync + 'static;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         self.as_ref()
     }
 }
 
 impl AsRef<dyn StdError + Send + Sync + 'static> for RuntimeErrorInner {
+    #[inline]
     fn as_ref(&self) -> &(dyn StdError + Send + Sync + 'static) {
         unsafe { &*(self.error_ref)(ptr::from_ref(self)) }
     }

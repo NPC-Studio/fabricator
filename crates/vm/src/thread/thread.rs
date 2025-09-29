@@ -1,7 +1,6 @@
-use std::fmt;
+use std::{error::Error as StdError, fmt};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
-use thiserror::Error;
 
 use crate::{
     callback::Callback,
@@ -56,16 +55,38 @@ impl<'gc> VmError<'gc> {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub struct ExternVmError {
-    #[source]
     pub error: ExternError,
     pub backtrace: Vec<ExternBacktraceFrame>,
 }
 
+impl StdError for ExternVmError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.error.source()
+    }
+}
+
 impl fmt::Display for ExternVmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}", self.error)?;
+        match &self.error {
+            ExternError::Script(script_error) => writeln!(f, "script error: {script_error}")?,
+            ExternError::Runtime(runtime_error) => {
+                // Try not to print huge stacks of stack traces, check to see if the causal error
+                // is an `ExternVmError` and walk the chain until we get something that is not
+                // `ExternVmError`.
+                let mut runtime_error = runtime_error;
+                while let Some(extern_error) = runtime_error.downcast_ref::<ExternVmError>() {
+                    if let ExternError::Runtime(rte) = &extern_error.error {
+                        runtime_error = rte;
+                    } else {
+                        break;
+                    }
+                }
+                writeln!(f, "runtime error: {runtime_error}")?;
+            }
+        }
+
         write!(f, "VM backtrace:")?;
         for (i, frame) in self.backtrace.iter().rev().enumerate() {
             writeln!(f)?;

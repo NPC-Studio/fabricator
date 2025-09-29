@@ -19,7 +19,7 @@ pub struct ScriptError<'gc>(pub Value<'gc>);
 
 impl<'gc> fmt::Display for ScriptError<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -129,7 +129,7 @@ impl<'gc> From<Value<'gc>> for ExternValue {
 
 /// A [`ScriptError`] that is not bound to the GC context and holds an [`ExternValue`].
 #[derive(Debug, Clone, Error)]
-#[error("{0}")]
+#[error("{0:?}")]
 pub struct ExternScriptError(pub ExternValue);
 
 impl<'gc> From<ScriptError<'gc>> for ExternScriptError {
@@ -152,8 +152,8 @@ pub enum Error<'gc> {
 impl<'gc> fmt::Display for Error<'gc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Script(err) => write!(f, "script error: {err:#}"),
-            Error::Runtime(err) => write!(f, "runtime error: {err:#}"),
+            Error::Script(err) => write!(f, "script error: {err}"),
+            Error::Runtime(err) => write!(f, "runtime error: {err}"),
         }
     }
 }
@@ -224,28 +224,12 @@ impl<'gc> Error<'gc> {
 }
 
 /// An [`enum@Error`] that is not bound to the GC context.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum ExternError {
-    Script(ExternScriptError),
-    Runtime(RuntimeError),
-}
-
-impl fmt::Display for ExternError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExternError::Script(err) => write!(f, "script error: {err}"),
-            ExternError::Runtime(err) => write!(f, "runtime error: {err}"),
-        }
-    }
-}
-
-impl StdError for ExternError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            ExternError::Script(err) => Some(err),
-            ExternError::Runtime(err) => Some(err.as_ref()),
-        }
-    }
+    #[error("script error: {0}")]
+    Script(#[source] ExternScriptError),
+    #[error("runtime error: {0}")]
+    Runtime(#[source] RuntimeError),
 }
 
 impl From<ExternScriptError> for ExternError {
