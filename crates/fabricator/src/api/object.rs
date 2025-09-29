@@ -365,22 +365,23 @@ pub fn object_api<'gc>(
             let layer_id = state.layers.insert_with_id(|id| {
                 let layer_ud = LayerIdUserData::new(ctx, id, None);
                 Layer {
+                    this: ctx.stash(layer_ud),
                     depth,
                     visible: true,
-                    this: ctx.stash(layer_ud),
+                    tile_map: None,
                 }
             });
 
             let event_closures = state.event_closures(object.id);
 
             let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                 object: object.id,
                 active: true,
                 dead: false,
                 position: Vec2::new(x, y),
                 rotation: 0.0,
                 layer: layer_id,
-                this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                 properties: ctx.stash(properties),
                 event_closures,
                 animation_time: 0.0,
@@ -461,13 +462,13 @@ pub fn object_api<'gc>(
                 let event_closures = state.event_closures(object.id);
 
                 let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                    this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                     object: object.id,
                     active: true,
                     dead: false,
                     position: Vec2::new(x, y),
                     rotation: 0.0,
                     layer: layer_id,
-                    this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                     properties: ctx.stash(properties),
                     event_closures,
                     animation_time: 0.0,

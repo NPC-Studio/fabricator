@@ -253,15 +253,12 @@ pub fn stub_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         .add_constant(&ctx, ctx.intern("string_height_ext"), string_height_ext)
         .unwrap();
 
-    create_stub_callback(ctx, &mut magic, "layer_tilemap_get_id", [unit_userdata]);
     create_stub_callback(
         ctx,
         &mut magic,
         "layer_get_all_elements",
         [vm::Array::new(&ctx).into()],
     );
-
-    create_stub_callback(ctx, &mut magic, "tilemap_tileset", []);
 
     create_stub_callback(ctx, &mut magic, "draw_self", []);
 

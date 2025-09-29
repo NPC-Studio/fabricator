@@ -16,12 +16,13 @@ use fabricator_vm as vm;
 
 use crate::{
     project::ObjectEvent,
-    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId},
+    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId, TileSetId},
 };
 
 new_id_type! {
     pub struct LayerId;
     pub struct InstanceId;
+    pub struct TileMapId;
 }
 
 pub struct Scripts {
@@ -30,19 +31,28 @@ pub struct Scripts {
 }
 
 pub struct Layer {
+    pub this: vm::StashedUserData,
     pub depth: i32,
     pub visible: bool,
+    pub tile_map: Option<TileMapId>,
+}
+
+pub struct TileMap {
     pub this: vm::StashedUserData,
+    pub position: Vec2<f64>,
+    pub tile_set: Option<TileSetId>,
+    pub grid_dimensions: Vec2<u32>,
+    pub grid: Vec<Option<u32>>,
 }
 
 pub struct Instance {
+    pub this: vm::StashedUserData,
     pub object: ObjectId,
     pub active: bool,
     pub dead: bool,
     pub position: Vec2<f64>,
     pub rotation: f64,
     pub layer: LayerId,
-    pub this: vm::StashedUserData,
     pub properties: vm::StashedObject,
     pub event_closures: HashMap<ObjectEvent, vm::StashedClosure>,
     pub animation_time: f64,
@@ -58,6 +68,8 @@ pub struct State {
 
     pub layers: IdMap<LayerId, Layer>,
     pub named_layers: HashMap<String, LayerId>,
+
+    pub tile_maps: IdMap<TileMapId, TileMap>,
 
     pub instances: IdMap<InstanceId, Instance>,
     pub instance_for_template: SecondaryMap<InstanceTemplateId, InstanceId>,

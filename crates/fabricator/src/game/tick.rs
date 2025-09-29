@@ -4,11 +4,12 @@ use fabricator_util::{freeze::FreezeMany, index_containers::IndexSet};
 use fabricator_vm as vm;
 
 use crate::{
-    api::{instance::InstanceUserData, layer::LayerIdUserData},
+    api::{instance::InstanceUserData, layer::LayerIdUserData, tile::TileMapUserData},
     project::ObjectEvent,
     state::{
-        DrawingState, EventState, InputState, Instance, State, configuration::RoomLayerType,
-        state::Layer,
+        DrawingState, EventState, InputState, Instance, State,
+        configuration::RoomLayerType,
+        state::{Layer, TileMap},
     },
 };
 
@@ -157,6 +158,19 @@ pub fn tick_state(
             .named_layers
             .retain(|_, layer_id| used_layers.contains(layer_id.index() as usize));
 
+        // Clean up all orphaned tile maps.
+
+        let mut used_tile_maps = IndexSet::new();
+        for layer in state.layers.values() {
+            if let Some(tile_map_id) = layer.tile_map {
+                used_tile_maps.insert(tile_map_id.index() as usize);
+            }
+        }
+
+        state
+            .tile_maps
+            .retain(|tile_map_id, _| used_tile_maps.contains(tile_map_id.index() as usize));
+
         // Create all new layers for the next room, reusing the existing layer if there is one with
         // the same name. This "moves" persistent objects to matching named layers on room change.
 
@@ -166,14 +180,27 @@ pub fn tick_state(
                 existing_layer.depth = layer.depth;
                 existing_layer.visible = layer.visible;
             } else {
+                let tile_map = if let RoomLayerType::Tile(tile_layer) = &layer.layer_type {
+                    Some(state.tile_maps.insert_with_id(|id| TileMap {
+                        this: interpreter.enter(|ctx| ctx.stash(TileMapUserData::new(ctx, id))),
+                        position: tile_layer.position,
+                        tile_set: tile_layer.tile_set,
+                        grid_dimensions: tile_layer.grid_dimensions,
+                        grid: tile_layer.grid.clone(),
+                    }))
+                } else {
+                    None
+                };
+
                 let layer_id = state.layers.insert_with_id(|id| {
                     let this = interpreter.enter(|ctx| {
                         ctx.stash(LayerIdUserData::new(ctx, id, Some(ctx.intern(&layer.name))))
                     });
                     Layer {
+                        this,
                         depth: layer.depth,
                         visible: layer.visible,
-                        this,
+                        tile_map,
                     }
                 });
 
@@ -203,13 +230,13 @@ pub fn tick_state(
                         let event_closures = state.event_closures(instance_template.object);
 
                         let instance_id = state.instances.insert_with_id(|instance_id| Instance {
+                            this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                             object: instance_template.object,
                             active: true,
                             dead: false,
                             position: instance_template.position,
                             rotation: 0.0,
                             layer: layer_id,
-                            this: ctx.stash(InstanceUserData::new(ctx, instance_id)),
                             properties: ctx.stash(vm::Object::new(&ctx)),
                             event_closures,
                             animation_time: 0.0,

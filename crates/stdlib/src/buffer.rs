@@ -89,11 +89,7 @@ impl Buffer {
         struct BufferMethods;
 
         impl<'gc> vm::UserDataMethods<'gc> for BufferMethods {
-            fn coerce_integer(
-                &self,
-                ud: fabricator_vm::UserData<'gc>,
-                _ctx: fabricator_vm::Context<'gc>,
-            ) -> Option<i64> {
+            fn coerce_integer(&self, ud: vm::UserData<'gc>, _ctx: vm::Context<'gc>) -> Option<i64> {
                 Some(ud.downcast_static::<Buffer>().unwrap().counter)
             }
         }

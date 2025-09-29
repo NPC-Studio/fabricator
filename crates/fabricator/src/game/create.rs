@@ -405,6 +405,7 @@ pub fn create_state(
         next_room: Some(first_room),
         layers: Default::default(),
         named_layers: Default::default(),
+        tile_maps: Default::default(),
         instances: Default::default(),
         instance_for_template: Default::default(),
         instances_for_object: Default::default(),

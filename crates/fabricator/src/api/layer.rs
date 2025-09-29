@@ -120,9 +120,10 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
             let layer_id = state.layers.insert_with_id(|id| {
                 let layer_ud = LayerIdUserData::new(ctx, id, name);
                 Layer {
+                    this: ctx.stash(layer_ud),
                     depth,
                     visible: true,
-                    this: ctx.stash(layer_ud),
+                    tile_map: None,
                 }
             });
 
