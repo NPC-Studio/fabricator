@@ -16,27 +16,15 @@ use fabricator_vm as vm;
 
 use crate::{
     project::ObjectEvent,
-    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId, TextureId},
+    state::configuration::{Configuration, InstanceTemplateId, ObjectId, RoomId},
 };
 
 new_id_type! {
-    pub struct TexturePageId;
     pub struct LayerId;
     pub struct InstanceId;
 }
 
-#[derive(Debug)]
-pub struct TexturePage {
-    pub size: Vec2<u32>,
-    pub border: u32,
-    pub group_name: String,
-    pub group_number: usize,
-    pub textures: SecondaryMap<TextureId, Vec2<u32>>,
-    pub userdata: vm::StashedUserData,
-}
-
 pub struct Scripts {
-    pub magic: vm::StashedMagicSet,
     pub scripts: Vec<vm::StashedClosure>,
     pub object_events: HashMap<ObjectId, HashMap<ObjectEvent, vm::StashedClosure>>,
 }
@@ -63,8 +51,6 @@ pub struct Instance {
 pub struct State {
     pub start_instant: Instant,
     pub config: Configuration,
-    pub texture_pages: IdMap<TexturePageId, TexturePage>,
-    pub texture_page_for_texture: SecondaryMap<TextureId, TexturePageId>,
     pub scripts: Scripts,
 
     pub current_room: Option<RoomId>,

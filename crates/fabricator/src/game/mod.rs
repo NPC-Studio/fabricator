@@ -83,7 +83,11 @@ impl Game {
     }
 
     pub fn texture_pages(&self) -> impl Iterator<Item = (TexturePageId, &TexturePage)> + '_ {
-        self.state.texture_pages.iter()
+        self.state
+            .config
+            .texture_pages
+            .iter()
+            .map(|(page_id, page)| (page_id, page.as_ref()))
     }
 
     pub fn texture(&self, texture_id: TextureId) -> &Texture {

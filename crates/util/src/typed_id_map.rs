@@ -165,6 +165,14 @@ impl<I: Id, V> IdMap<I, V> {
     pub fn retain(&mut self, mut f: impl FnMut(I, &mut V) -> bool) {
         self.map.retain(move |id, val| f(I::from_id(id), val))
     }
+
+    #[inline]
+    pub fn map_value<V2>(self, f: impl FnMut(V) -> V2) -> IdMap<I, V2> {
+        IdMap {
+            map: self.map.map_value(f),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<I: Id, V> ops::Index<I> for IdMap<I, V> {

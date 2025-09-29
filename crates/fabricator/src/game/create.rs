@@ -3,6 +3,7 @@ use std::{
     f64,
     fs::{self, File},
     io::{self, Read as _},
+    rc::Rc,
     time::Instant,
 };
 
@@ -58,10 +59,10 @@ pub fn create_state(
     // TODO: Hard coded tick rate, normally configured by 'options/main/options_main.yy'.
     const TICK_RATE: f64 = 60.0;
 
-    let mut sprites = IdMap::<SpriteId, Sprite>::new();
+    let mut sprites = IdMap::<SpriteId, Rc<Sprite>>::new();
     let mut sprite_dict = HashMap::<String, SpriteId>::new();
 
-    let mut textures = IdMap::<TextureId, Texture>::new();
+    let mut textures = IdMap::<TextureId, Rc<Texture>>::new();
     let mut textures_for_hash = HashMap::new();
 
     let sprite_frame_meta = read_sprite_frame_meta(project)?;
@@ -86,7 +87,7 @@ pub fn create_state(
                     frame_dict.insert(frame.name.clone(), *occupied.get());
                 }
                 hash_map::Entry::Vacant(vacant) => {
-                    let texture_id = textures.insert(Texture {
+                    let texture_id = textures.insert(Rc::new(Texture {
                         texture_group: sprite.texture_group.clone(),
                         image_path: frame.image_path.clone(),
                         size,
@@ -98,7 +99,7 @@ pub fn create_state(
                             frame_meta.cropped_image_xoffset,
                             frame_meta.cropped_image_yoffset,
                         ),
-                    });
+                    }));
 
                     vacant.insert(texture_id);
                     frame_dict.insert(frame.name.clone(), texture_id);
@@ -138,7 +139,7 @@ pub fn create_state(
         let sprite_id = sprites.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(SpriteUserData::new(ctx, id, ctx.intern(sprite_name))));
-            Sprite {
+            Rc::new(Sprite {
                 name: sprite_name.clone(),
                 playback_speed: sprite.playback_speed,
                 playback_length: sprite.playback_length,
@@ -151,60 +152,60 @@ pub fn create_state(
                 collision_rotates,
                 frames,
                 userdata,
-            }
+            })
         });
         sprite_dict.insert(sprite_name.clone(), sprite_id);
     }
 
-    let mut fonts = IdMap::<FontId, Font>::new();
+    let mut fonts = IdMap::<FontId, Rc<Font>>::new();
     for font in project.fonts.values() {
         fonts.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(FontUserData::new(ctx, id, ctx.intern(&font.name))));
-            Font {
+            Rc::new(Font {
                 name: font.name.clone(),
                 userdata,
-            }
+            })
         });
     }
 
-    let mut sounds = IdMap::<SoundId, Sound>::new();
+    let mut sounds = IdMap::<SoundId, Rc<Sound>>::new();
     for sound in project.sounds.values() {
         sounds.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(SoundUserData::new(ctx, id, ctx.intern(&sound.name))));
-            Sound {
+            Rc::new(Sound {
                 name: sound.name.clone(),
                 duration: sound.duration,
                 userdata,
-            }
+            })
         });
     }
 
-    let mut shaders = IdMap::<ShaderId, Shader>::new();
+    let mut shaders = IdMap::<ShaderId, Rc<Shader>>::new();
     for shader in project.shaders.values() {
         shaders.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(ShaderUserData::new(ctx, id, ctx.intern(&shader.name))));
-            Shader {
+            Rc::new(Shader {
                 name: shader.name.clone(),
                 userdata,
-            }
+            })
         });
     }
 
-    let mut tile_sets = IdMap::<TileSetId, TileSet>::new();
+    let mut tile_sets = IdMap::<TileSetId, Rc<TileSet>>::new();
     let mut tile_set_dict = HashMap::<String, TileSetId>::new();
 
     for (tile_set_name, tile_set) in &project.tile_sets {
         let tile_set_id = tile_sets.insert_with_id(|id| {
             let userdata = interpreter
                 .enter(|ctx| ctx.stash(TileSetUserData::new(ctx, id, ctx.intern(&tile_set.name))));
-            TileSet {
+            Rc::new(TileSet {
                 name: tile_set.name.clone(),
                 tile_count: tile_set.tile_count,
                 userdata,
-            }
+            })
         });
 
         if tile_set_dict
@@ -257,7 +258,9 @@ pub fn create_state(
         }
     }
 
-    let mut rooms = IdMap::<RoomId, Room>::new();
+    let objects = objects.map_value(Rc::new);
+
+    let mut rooms = IdMap::<RoomId, Rc<Room>>::new();
     let mut room_dict = HashMap::<String, RoomId>::new();
 
     let mut instance_templates = IdMap::<InstanceTemplateId, InstanceTemplate>::new();
@@ -317,13 +320,13 @@ pub fn create_state(
         let room_id = rooms.insert_with_id(|id| {
             let room_ud = interpreter
                 .enter(|ctx| ctx.stash(RoomUserData::new(ctx, id, ctx.intern(&room.name))));
-            Room {
+            Rc::new(Room {
                 name: room.name.clone(),
                 size: Vec2::new(room.width, room.height),
                 layers,
                 userdata: room_ud,
                 tags: room.tags.clone(),
-            }
+            })
         });
 
         room_dict.insert(room.name.clone(), room_id);
@@ -338,11 +341,46 @@ pub fn create_state(
         .get(last_room)
         .with_context(|| "no such room `{last_room:?}`")?;
 
+    let texture_placements = textures
+        .iter()
+        .map(|(texture_id, texture)| TexturePlacement {
+            texture_id,
+            size: texture.cropped_size,
+            group_name: &texture.texture_group,
+        })
+        .collect::<Vec<_>>();
+    let texture_page_list = compute_texture_pages(project, texture_placements)?;
+
+    let mut texture_pages = IdMap::<TexturePageId, Rc<TexturePage>>::new();
+
+    for page_data in texture_page_list {
+        texture_pages.insert_with_id(|id| {
+            let userdata = interpreter.enter(|ctx| ctx.stash(TexturePageUserData::new(ctx, id)));
+            Rc::new(TexturePage {
+                size: page_data.size,
+                border: page_data.border,
+                group_name: page_data.group_name,
+                group_number: page_data.group_number,
+                textures: page_data.textures,
+                userdata,
+            })
+        });
+    }
+
+    let mut texture_page_for_texture = SecondaryMap::new();
+    for (texture_page_id, texture_page) in texture_pages.iter() {
+        for texture_id in texture_page.textures.ids() {
+            texture_page_for_texture.insert(texture_id, texture_page_id);
+        }
+    }
+
     let config = Configuration {
         data_path: project.base_path.join("datafiles"),
         tick_rate: TICK_RATE,
         sprites,
         textures,
+        texture_pages,
+        texture_page_for_texture,
         fonts,
         sounds,
         shaders,
@@ -357,48 +395,11 @@ pub fn create_state(
         last_room,
     };
 
-    let mut texture_pages_res = None;
-    let mut scripts_res = None;
-    rayon::in_place_scope(|scope| {
-        let textures = &config.textures;
-        scope.spawn(|_| {
-            texture_pages_res = Some(compute_texture_pages(project, textures));
-        });
-
-        scripts_res = Some(load_scripts(project, &config, config_name, interpreter));
-    });
-
-    let texture_page_list = texture_pages_res.unwrap()?;
-    let scripts = scripts_res.unwrap()?;
-
-    let mut texture_pages = IdMap::<TexturePageId, TexturePage>::new();
-
-    for page_data in texture_page_list {
-        texture_pages.insert_with_id(|id| {
-            let userdata = interpreter.enter(|ctx| ctx.stash(TexturePageUserData::new(ctx, id)));
-            TexturePage {
-                size: page_data.size,
-                border: page_data.border,
-                group_name: page_data.group_name,
-                group_number: page_data.group_number,
-                textures: page_data.textures,
-                userdata,
-            }
-        });
-    }
-
-    let mut texture_page_for_texture = SecondaryMap::new();
-    for (texture_page_id, texture_page) in texture_pages.iter() {
-        for texture_id in texture_page.textures.ids() {
-            texture_page_for_texture.insert(texture_id, texture_page_id);
-        }
-    }
+    let scripts = load_scripts(project, &config, config_name, interpreter)?;
 
     Ok(State {
         start_instant: Instant::now(),
         config,
-        texture_pages,
-        texture_page_for_texture,
         scripts,
         current_room: None,
         next_room: Some(first_room),
@@ -613,7 +614,6 @@ fn load_scripts(
         log::info!("finished compiling all object scripts!");
 
         Ok(Scripts {
-            magic: ctx.stash(magic),
             scripts: scripts
                 .into_iter()
                 .map(|proto| {
@@ -627,6 +627,12 @@ fn load_scripts(
     Ok(scripts)
 }
 
+struct TexturePlacement<'a> {
+    texture_id: TextureId,
+    size: Vec2<u32>,
+    group_name: &'a str,
+}
+
 struct TexturePageData {
     pub size: Vec2<u32>,
     pub border: u32,
@@ -635,9 +641,9 @@ struct TexturePageData {
     pub textures: SecondaryMap<TextureId, Vec2<u32>>,
 }
 
-fn compute_texture_pages(
+fn compute_texture_pages<'a>(
     project: &Project,
-    textures: &IdMap<TextureId, Texture>,
+    textures: impl IntoIterator<Item = TexturePlacement<'a>>,
 ) -> Result<Vec<TexturePageData>, Error> {
     // TODO: Hard coded texture page size normally configured by
     // 'options/<platform>/options_<platform>.yy'.
@@ -648,33 +654,28 @@ fn compute_texture_pages(
     const GRANULARITY: u32 = 8;
     assert!(TEXTURE_PAGE_SIZE[0] % GRANULARITY == 0 && TEXTURE_PAGE_SIZE[1] % GRANULARITY == 0);
 
-    let mut texture_groups = HashMap::<String, Vec<TextureId>>::new();
-
-    for (texture_id, texture) in textures.iter() {
+    let mut texture_groups = HashMap::<&str, Vec<(TextureId, Vec2<u32>)>>::new();
+    for tp in textures {
         texture_groups
-            .entry(texture.texture_group.clone())
+            .entry(tp.group_name)
             .or_default()
-            .push(texture_id);
+            .push((tp.texture_id, tp.size));
     }
 
     log::info!("packing textures...");
     let texture_page_list = texture_groups
         .into_par_iter()
         .map(|(group_name, group)| {
-            let border = project.texture_groups[&group_name].border as u32;
+            let border = project.texture_groups[group_name].border as u32;
 
-            let mut to_place = group
-                .into_iter()
-                .map(|texture_id| (texture_id, ()))
-                .collect::<SecondaryMap<_, _>>();
-
+            let mut to_place = group.into_iter().collect::<SecondaryMap<_, _>>();
             let mut texture_pages = Vec::new();
 
             while !to_place.is_empty() {
                 let mut packer = MaxRects::new(TEXTURE_PAGE_SIZE / GRANULARITY);
 
-                for texture_id in to_place.ids() {
-                    let padded_size = textures[texture_id].cropped_size + Vec2::splat(border * 2);
+                for (texture_id, &size) in to_place.iter() {
+                    let padded_size = size + Vec2::splat(border * 2);
                     if padded_size[0] > TEXTURE_PAGE_SIZE[0]
                         || padded_size[1] > TEXTURE_PAGE_SIZE[1]
                     {
@@ -689,7 +690,7 @@ fn compute_texture_pages(
                 let mut texture_page = TexturePageData {
                     size: TEXTURE_PAGE_SIZE,
                     border,
-                    group_name: group_name.clone(),
+                    group_name: group_name.to_owned(),
                     group_number: texture_pages.len(),
                     textures: SecondaryMap::new(),
                 };

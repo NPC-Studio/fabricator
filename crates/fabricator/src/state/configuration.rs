@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     f64,
     path::PathBuf,
+    rc::Rc,
     time::Duration,
 };
 
@@ -11,11 +12,12 @@ use fabricator_collision::{
     support_maps,
 };
 use fabricator_math::{Box2, Vec2};
-use fabricator_util::typed_id_map::{IdMap, new_id_type};
+use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
 use fabricator_vm as vm;
 
 new_id_type! {
     pub struct TextureId;
+    pub struct TexturePageId;
     pub struct FontId;
     pub struct ShaderId;
     pub struct SoundId;
@@ -30,23 +32,24 @@ pub struct Configuration {
     pub data_path: PathBuf,
     pub tick_rate: f64,
 
-    pub sprites: IdMap<SpriteId, Sprite>,
-    pub textures: IdMap<TextureId, Texture>,
-    pub fonts: IdMap<FontId, Font>,
-    pub shaders: IdMap<ShaderId, Shader>,
-    pub sounds: IdMap<SoundId, Sound>,
-    pub tile_sets: IdMap<TileSetId, TileSet>,
+    pub sprites: IdMap<SpriteId, Rc<Sprite>>,
+    pub textures: IdMap<TextureId, Rc<Texture>>,
+    pub texture_pages: IdMap<TexturePageId, Rc<TexturePage>>,
+    pub texture_page_for_texture: SecondaryMap<TextureId, TexturePageId>,
+    pub fonts: IdMap<FontId, Rc<Font>>,
+    pub shaders: IdMap<ShaderId, Rc<Shader>>,
+    pub sounds: IdMap<SoundId, Rc<Sound>>,
+    pub tile_sets: IdMap<TileSetId, Rc<TileSet>>,
     pub tile_set_dict: HashMap<String, TileSetId>,
-    pub objects: IdMap<ObjectId, Object>,
+    pub objects: IdMap<ObjectId, Rc<Object>>,
     pub object_dict: HashMap<String, ObjectId>,
     pub instance_templates: IdMap<InstanceTemplateId, InstanceTemplate>,
-    pub rooms: IdMap<RoomId, Room>,
+    pub rooms: IdMap<RoomId, Rc<Room>>,
     pub room_dict: HashMap<String, RoomId>,
     pub first_room: RoomId,
     pub last_room: RoomId,
 }
 
-#[derive(Debug)]
 pub struct Texture {
     pub texture_group: String,
     pub image_path: PathBuf,
@@ -55,26 +58,31 @@ pub struct Texture {
     pub cropped_offset: Vec2<u32>,
 }
 
-#[derive(Debug)]
+pub struct TexturePage {
+    pub size: Vec2<u32>,
+    pub border: u32,
+    pub group_name: String,
+    pub group_number: usize,
+    pub textures: SecondaryMap<TextureId, Vec2<u32>>,
+    pub userdata: vm::StashedUserData,
+}
+
 pub struct Font {
     pub name: String,
     pub userdata: vm::StashedUserData,
 }
 
-#[derive(Debug)]
 pub struct Shader {
     pub name: String,
     pub userdata: vm::StashedUserData,
 }
 
-#[derive(Debug)]
 pub struct Sound {
     pub name: String,
     pub duration: Duration,
     pub userdata: vm::StashedUserData,
 }
 
-#[derive(Debug)]
 pub struct TileSet {
     pub name: String,
     pub tile_count: u32,
@@ -89,7 +97,6 @@ pub struct Room {
     pub tags: HashSet<String>,
 }
 
-#[derive(Clone)]
 pub struct RoomLayer {
     pub name: String,
     pub depth: i32,
@@ -97,7 +104,6 @@ pub struct RoomLayer {
     pub layer_type: RoomLayerType,
 }
 
-#[derive(Clone)]
 pub enum RoomLayerType {
     Instances(Vec<InstanceTemplateId>),
     Assets,
@@ -105,7 +111,6 @@ pub enum RoomLayerType {
     Background,
 }
 
-#[derive(Clone)]
 pub struct RoomTileLayer {
     pub position: Vec2<f64>,
     pub tile_set: Option<TileSetId>,

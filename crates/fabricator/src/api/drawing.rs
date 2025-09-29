@@ -115,8 +115,8 @@ pub fn drawing_api<'gc>(
 
                 let frame_obj = vm::Object::new(&ctx);
                 let texture = &state.config.textures[frame.texture];
-                let texture_page_id = state.texture_page_for_texture[frame.texture];
-                let texture_page = &state.texture_pages[texture_page_id];
+                let texture_page_id = state.config.texture_page_for_texture[frame.texture];
+                let texture_page = &state.config.texture_pages[texture_page_id];
                 let page_position = texture_page.textures[frame.texture];
                 frame_obj.set(&ctx, ctx.intern("x"), page_position[0] as i64);
                 frame_obj.set(&ctx, ctx.intern("y"), page_position[1] as i64);
@@ -125,7 +125,7 @@ pub fn drawing_api<'gc>(
                 frame_obj.set(
                     &ctx,
                     ctx.intern("texture"),
-                    ctx.fetch(&state.texture_pages[texture_page_id].userdata),
+                    ctx.fetch(&state.config.texture_pages[texture_page_id].userdata),
                 );
                 frame_obj.set(
                     &ctx,
@@ -221,8 +221,8 @@ pub fn drawing_api<'gc>(
         let sprite_id = SpriteUserData::downcast(sprite)?.id;
         let texture = State::ctx_with(ctx, |state| {
             let texture_id = state.config.sprites[sprite_id].frames[index].texture;
-            let texture_page_id = state.texture_page_for_texture[texture_id];
-            ctx.fetch(&state.texture_pages[texture_page_id].userdata)
+            let texture_page_id = state.config.texture_page_for_texture[texture_id];
+            ctx.fetch(&state.config.texture_pages[texture_page_id].userdata)
         })?;
         exec.stack().replace(ctx, texture);
         Ok(())
@@ -234,7 +234,7 @@ pub fn drawing_api<'gc>(
         let texture_page_id = TexturePageUserData::downcast(texture_page)?.id;
         State::ctx_with(ctx, |state| {
             exec.stack()
-                .replace(ctx, state.texture_pages[texture_page_id].size[0]);
+                .replace(ctx, state.config.texture_pages[texture_page_id].size[0]);
         })?;
         Ok(())
     });
@@ -249,7 +249,7 @@ pub fn drawing_api<'gc>(
         let texture_page_id = TexturePageUserData::downcast(texture_page)?.id;
         State::ctx_with(ctx, |state| {
             exec.stack()
-                .replace(ctx, state.texture_pages[texture_page_id].size[1]);
+                .replace(ctx, state.config.texture_pages[texture_page_id].size[1]);
         })?;
         Ok(())
     });

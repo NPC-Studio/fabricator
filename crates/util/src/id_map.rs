@@ -59,6 +59,15 @@ impl<T> Slot<T> {
     }
 }
 
+impl<V> Drop for Slot<V> {
+    fn drop(&mut self) {
+        if !self.is_vacant() {
+            // SAFETY: We just checked that the slot is occupied
+            unsafe { ManuallyDrop::drop(&mut self.u.value) };
+        }
+    }
+}
+
 impl<T: Clone> Clone for Slot<T> {
     fn clone(&self) -> Self {
         if self.is_vacant() {
@@ -313,13 +322,48 @@ impl<V> IdMap<V> {
             }
         }
     }
-}
 
-impl<V> Drop for Slot<V> {
-    fn drop(&mut self) {
-        if !self.is_vacant() {
-            // SAFETY: We just checked that the slot is occupied
-            unsafe { ManuallyDrop::drop(&mut self.u.value) };
+    /// Convert an `IdMap` of one value type into another while preserving IDs.
+    pub fn map_value<V2>(self, mut f: impl FnMut(V) -> V2) -> IdMap<V2> {
+        let slots = self
+            .slots
+            .into_iter()
+            .map(|slot| {
+                if slot.is_vacant() {
+                    Slot {
+                        u: SlotUnion {
+                            next_free: unsafe { slot.u.next_free },
+                        },
+                        generation: slot.generation,
+                    }
+                } else {
+                    let generation = slot.generation;
+
+                    // SAFETY: We just checked that the slot was occupied, and we ensure that it is
+                    // vacant before being dropped.
+                    let value = unsafe {
+                        let mut slot = slot;
+                        let slot_union = mem::replace(&mut slot.u, SlotUnion { next_free: 0 });
+                        slot.generation = 0;
+                        assert!(slot.is_vacant());
+                        ManuallyDrop::into_inner(slot_union.value)
+                    };
+
+                    let new_value = f(value);
+                    Slot {
+                        u: SlotUnion {
+                            value: ManuallyDrop::new(new_value),
+                        },
+                        generation,
+                    }
+                }
+            })
+            .collect();
+
+        IdMap {
+            slots,
+            next_free: self.next_free,
+            occupancy: self.occupancy,
         }
     }
 }

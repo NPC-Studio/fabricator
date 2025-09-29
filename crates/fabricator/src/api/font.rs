@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use fabricator_vm as vm;
 
 use crate::{
@@ -41,10 +43,10 @@ pub fn font_api<'gc>(
             let id = state.config.fonts.insert_with_id(|id| {
                 let name = format!("dynamic_font_{}", id.index());
                 let vm_name = ctx.intern(&name);
-                Font {
+                Rc::new(Font {
                     name: format!("dynamic_font_{}", id.index()),
                     userdata: ctx.stash(FontUserData::new(ctx, id, vm_name)),
-                }
+                })
             });
             exec.stack()
                 .replace(ctx, ctx.fetch(&state.config.fonts[id].userdata));

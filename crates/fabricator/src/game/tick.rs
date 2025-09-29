@@ -185,8 +185,9 @@ pub fn tick_state(
         // which already exist).
 
         state.current_room = Some(next_room);
+        let next_room_data = state.config.rooms[next_room].clone();
 
-        for layer in state.config.rooms[next_room].layers.clone().into_values() {
+        for layer in next_room_data.layers.values() {
             let layer_id = state.named_layers[&layer.name];
             if let RoomLayerType::Instances(template_ids) = &layer.layer_type {
                 for &template_id in template_ids {
