@@ -48,13 +48,13 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
         #[collect(require_static)]
         struct Methods;
 
-        impl<'gc> vm::UserDataMethods<'gc> for Methods {
-            fn get_field(
+        impl Methods {
+            fn do_get_field<'gc>(
                 &self,
                 ud: vm::UserData<'gc>,
                 ctx: vm::Context<'gc>,
                 key: vm::String<'gc>,
-            ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+            ) -> Result<Option<vm::Value<'gc>>, vm::RuntimeError> {
                 let instance = InstanceUserData::downcast(ud).unwrap();
                 State::ctx_with(ctx, |state| {
                     let instance = state
@@ -63,15 +63,29 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                         .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
 
                     Ok(match key.as_str() {
-                        "id" => ud.into(),
-                        "x" => instance.position[0].into(),
-                        "y" => instance.position[1].into(),
-                        "image_angle" => instance.rotation.to_degrees().into(),
-                        _ => ctx.fetch(&instance.properties).get(key).ok_or_else(|| {
-                            vm::RuntimeError::msg(format!("missing field {key:?}"))
-                        })?,
+                        "id" => Some(ud.into()),
+                        "object_index" => Some(
+                            ctx.fetch(&state.config.objects[instance.object].userdata)
+                                .into(),
+                        ),
+                        "x" => Some(instance.position[0].into()),
+                        "y" => Some(instance.position[1].into()),
+                        "image_angle" => Some(instance.rotation.to_degrees().into()),
+                        _ => ctx.fetch(&instance.properties).get(key),
                     })
                 })?
+            }
+        }
+
+        impl<'gc> vm::UserDataMethods<'gc> for Methods {
+            fn get_field(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                key: vm::String<'gc>,
+            ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+                self.do_get_field(ud, ctx, key)?
+                    .ok_or_else(|| vm::RuntimeError::msg(format!("missing field {key:?}")))
             }
 
             fn set_field(
@@ -89,24 +103,58 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                         .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
 
                     match key.as_str() {
-                        "id" => return Err(vm::RuntimeError::msg(format!("`id` is read-only"))),
+                        "id" => Err(vm::RuntimeError::msg(format!("`id` is read-only"))),
+                        "object_index" => Err(vm::RuntimeError::msg(format!(
+                            "`object_index` is read-only"
+                        ))),
                         "x" => {
                             instance.position[0] = vm::FromValue::from_value(ctx, value)?;
+                            Ok(())
                         }
                         "y" => {
                             instance.position[1] = vm::FromValue::from_value(ctx, value)?;
+                            Ok(())
                         }
                         "image_angle" => {
                             let angle_deg: f64 = vm::FromValue::from_value(ctx, value)?;
                             instance.rotation = -angle_deg.to_radians() % (f64::consts::PI * 2.0);
+                            Ok(())
                         }
                         _ => {
                             ctx.fetch(&instance.properties).set(&ctx, key, value);
+                            Ok(())
                         }
                     }
-
-                    Ok(())
                 })?
+            }
+
+            fn get_index(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                indexes: &[vm::Value<'gc>],
+            ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+                if indexes.len() != 1 {
+                    return Err(vm::RuntimeError::msg("object userdata expects 1 index"));
+                }
+                let key = vm::FromValue::from_value(ctx, indexes[0])?;
+
+                Ok(self.do_get_field(ud, ctx, key)?.unwrap_or_default())
+            }
+
+            fn set_index(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                indexes: &[vm::Value<'gc>],
+                value: vm::Value<'gc>,
+            ) -> Result<(), vm::RuntimeError> {
+                if indexes.len() != 1 {
+                    return Err(vm::RuntimeError::msg("object userdata expects 1 index"));
+                }
+                let key = vm::FromValue::from_value(ctx, indexes[0])?;
+
+                self.set_field(ud, ctx, key, value)
             }
 
             fn coerce_string(

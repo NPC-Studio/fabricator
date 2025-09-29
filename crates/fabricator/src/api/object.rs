@@ -79,6 +79,35 @@ impl<'gc> ObjectUserData<'gc> {
                 instance_ud.set_field(ctx, key, value)
             }
 
+            fn get_index(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                indexes: &[vm::Value<'gc>],
+            ) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+                if indexes.len() != 1 {
+                    return Err(vm::RuntimeError::msg("object userdata expects 1 index"));
+                }
+                let key = vm::FromValue::from_value(ctx, indexes[0])?;
+
+                self.get_field(ud, ctx, key)
+            }
+
+            fn set_index(
+                &self,
+                ud: vm::UserData<'gc>,
+                ctx: vm::Context<'gc>,
+                indexes: &[vm::Value<'gc>],
+                value: vm::Value<'gc>,
+            ) -> Result<(), vm::RuntimeError> {
+                if indexes.len() != 1 {
+                    return Err(vm::RuntimeError::msg("object userdata expects 1 index"));
+                }
+                let key = vm::FromValue::from_value(ctx, indexes[0])?;
+
+                self.set_field(ud, ctx, key, value)
+            }
+
             fn iter(
                 &self,
                 ud: vm::UserData<'gc>,
