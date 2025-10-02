@@ -9,7 +9,7 @@ complex project, but is explicitly NOT aiming for perfect compatibility.
 
 Includes a working Parser, Compiler, and VM for GML that compiles GML faster than GameMaker's VM
 mode and runs code faster than GameMaker's YYC mode. A new (in-development) FML language mode can be
-freely mixed with GML and allows for modern features such as lexical scoping and closures.
+freely mixed with GML and allows for modern features such as block scoping and closures.
 
 Provides an extremely rich FFI to Rust to replace GameMaker dll extensions.
 
