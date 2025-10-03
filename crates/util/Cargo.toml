@@ -3,5 +3,8 @@ name = "fabricator-util"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+clippy.should_implement_trait = "allow"
+
 [dependencies]
 thiserror.workspace = true
