@@ -955,7 +955,7 @@ where
             TokenKind::Integer(i) => {
                 let s = i.as_ref().replace('_', "");
                 self.next();
-                match i64::from_str_radix(&s, 10) {
+                match s.parse::<i64>() {
                     Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
                     Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,
@@ -968,7 +968,7 @@ where
                 assert!(s[0..2].eq_ignore_ascii_case("0x"));
                 let s = &s[2..].replace('_', "");
                 self.next();
-                match i64::from_str_radix(&s, 16) {
+                match i64::from_str_radix(s, 16) {
                     Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
                     Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,
@@ -981,7 +981,7 @@ where
                 assert!(s[0..1].eq_ignore_ascii_case("$"));
                 let s = &s[1..].replace('_', "");
                 self.next();
-                match i64::from_str_radix(&s, 16) {
+                match i64::from_str_radix(s, 16) {
                     Ok(i) => Ok(ast::Expression::Constant(Constant::Integer(i), tok_span)),
                     Err(_) => Err(ParseError {
                         kind: ParseErrorKind::BadNumber,

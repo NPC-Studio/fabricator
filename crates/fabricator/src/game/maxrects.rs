@@ -109,7 +109,7 @@ where
                         free_idx += 1;
                     }
                 }
-                free_rects.extend(split_free_rects.drain(..));
+                free_rects.append(&mut split_free_rects);
 
                 remove_redundant_rects(&mut free_rects);
 

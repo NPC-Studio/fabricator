@@ -44,11 +44,11 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     for block_id in dominators.topological_order() {
         let block = &ir.blocks[block_id];
         for &inst_id in &block.instructions {
-            if let &ir::Instruction::SetVariable(var_id, _) = &ir.instructions[inst_id] {
-                if !skip_vars.contains(&var_id) {
-                    let blocks = assigning_blocks.get_or_insert_default(var_id);
-                    blocks.insert(block_id);
-                }
+            if let &ir::Instruction::SetVariable(var_id, _) = &ir.instructions[inst_id]
+                && !skip_vars.contains(&var_id)
+            {
+                let blocks = assigning_blocks.get_or_insert_default(var_id);
+                blocks.insert(block_id);
             }
         }
     }

@@ -160,12 +160,13 @@ impl<N: Node> Dominators<N> {
 
         let mut dominance_tree = IndexMap::new();
         for index in 0..post_order.len() {
-            if let Some(&idom) = dominators.get(index) {
-                if idom != index {
-                    dominance_tree
-                        .get_or_insert_with(idom, IndexSet::new)
-                        .insert(index);
-                }
+            if let Some(&idom) = dominators.get(index)
+                && idom != index
+            {
+                
+                dominance_tree
+                    .get_or_insert_with(idom, IndexSet::new)
+                    .insert(index);
             }
         }
 

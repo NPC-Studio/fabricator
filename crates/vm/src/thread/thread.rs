@@ -208,7 +208,7 @@ impl<'gc> Thread<'gc> {
             }
         }
 
-        let guard = DropGuard(&mut *thread);
+        let guard = DropGuard(&mut thread);
         f(guard.0)
     }
 }
@@ -681,8 +681,7 @@ impl<'gc> ThreadState<'gc> {
                 return Err(VmError {
                     error: err,
                     backtrace,
-                }
-                .into());
+                });
             }
         }
     }

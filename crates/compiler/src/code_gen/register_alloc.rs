@@ -203,33 +203,27 @@ impl RegisterAllocation {
                             // the coalescing variable to any shadow variable does not prevent them
                             // from sharing the same register.
 
-                            if let Some(incoming) = other_shadow_range.incoming_range {
-                                if other_upsilon_reach
+                            if let Some(incoming) = other_shadow_range.incoming_range
+                                && other_upsilon_reach
                                     .live_upsilons
                                     .iter()
                                     .copied()
                                     .any(upsilon_source_conflict)
-                                {
-                                    if inst_range.interferes(
-                                        InterferenceRange::from_shadow_incoming(incoming),
-                                    ) {
-                                        return true;
-                                    }
-                                }
+                                && inst_range
+                                    .interferes(InterferenceRange::from_shadow_incoming(incoming))
+                            {
+                                return true;
                             }
 
-                            if let Some(outgoing) = other_shadow_range.outgoing_range {
-                                if other_upsilon_reach.outgoing_reach[&block_id]
+                            if let Some(outgoing) = other_shadow_range.outgoing_range
+                                && other_upsilon_reach.outgoing_reach[&block_id]
                                     .iter()
                                     .copied()
                                     .any(upsilon_source_conflict)
-                                {
-                                    if inst_range.interferes(
-                                        InterferenceRange::from_shadow_outgoing(outgoing),
-                                    ) {
-                                        return true;
-                                    }
-                                }
+                                && inst_range
+                                    .interferes(InterferenceRange::from_shadow_outgoing(outgoing))
+                            {
+                                return true;
                             }
                         }
 
@@ -245,12 +239,11 @@ impl RegisterAllocation {
 
                             if let Some(coalesced_inst_range) = instruction_liveness
                                 .live_range_in_block(block_id, coalesced_inst_id)
-                            {
-                                if inst_range.interferes(InterferenceRange::from_instruction_range(
+                                && inst_range.interferes(InterferenceRange::from_instruction_range(
                                     coalesced_inst_range,
-                                )) {
-                                    return true;
-                                }
+                                ))
+                            {
+                                return true;
                             }
                         }
 
@@ -259,12 +252,11 @@ impl RegisterAllocation {
                         for &coalescing_inst_id in &coalescing_instructions {
                             if let Some(coalescing_inst_range) = instruction_liveness
                                 .live_range_in_block(block_id, coalescing_inst_id)
-                            {
-                                if inst_range.interferes(InterferenceRange::from_instruction_range(
+                                && inst_range.interferes(InterferenceRange::from_instruction_range(
                                     coalescing_inst_range,
-                                )) {
-                                    return true;
-                                }
+                                ))
+                            {
+                                return true;
                             }
                         }
                     }
@@ -326,7 +318,7 @@ impl RegisterAllocation {
         for &block_id in &block_order {
             let block = &ir.blocks[block_id];
 
-            let mut live_in_registers = globally_used_registers.clone();
+            let mut live_in_registers = globally_used_registers;
 
             let mut inst_life_starts = IndexMap::new();
             let mut inst_life_ends = IndexMap::new();

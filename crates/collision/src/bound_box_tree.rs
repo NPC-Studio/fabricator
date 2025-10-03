@@ -283,37 +283,29 @@ where
                     if node.left != INVALID_NODE {
                         self.stack.push((node.left, lower_depth));
                     }
-                    if node.right != INVALID_NODE {
-                        if self.query.limit_by_xmin(&node.bounds.min[0]) {
-                            self.stack.push((node.right, lower_depth));
-                        }
+                    if node.right != INVALID_NODE && self.query.limit_by_xmin(&node.bounds.min[0]) {
+                        self.stack.push((node.right, lower_depth));
                     }
                 }
                 1 => {
                     if node.left != INVALID_NODE {
                         self.stack.push((node.left, lower_depth));
                     }
-                    if node.right != INVALID_NODE {
-                        if self.query.limit_by_ymin(&node.bounds.min[1]) {
-                            self.stack.push((node.right, lower_depth));
-                        }
+                    if node.right != INVALID_NODE && self.query.limit_by_ymin(&node.bounds.min[1]) {
+                        self.stack.push((node.right, lower_depth));
                     }
                 }
                 2 => {
-                    if node.left != INVALID_NODE {
-                        if self.query.limit_by_xmax(&node.bounds.max[0]) {
-                            self.stack.push((node.left, lower_depth));
-                        }
+                    if node.left != INVALID_NODE && self.query.limit_by_xmax(&node.bounds.max[0]) {
+                        self.stack.push((node.left, lower_depth));
                     }
                     if node.right != INVALID_NODE {
                         self.stack.push((node.right, lower_depth));
                     }
                 }
                 3 => {
-                    if node.left != INVALID_NODE {
-                        if self.query.limit_by_ymax(&node.bounds.max[1]) {
-                            self.stack.push((node.left, lower_depth));
-                        }
+                    if node.left != INVALID_NODE && self.query.limit_by_ymax(&node.bounds.max[1]) {
+                        self.stack.push((node.left, lower_depth));
                     }
                     if node.right != INVALID_NODE {
                         self.stack.push((node.right, lower_depth));

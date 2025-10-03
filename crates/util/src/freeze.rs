@@ -156,6 +156,7 @@ impl<F: for<'f> Freeze<'f>> FreezeCell<F> {
 ///
 /// This can be used to avoid the rightward drift that results from making several individual nested
 /// calls to [`FreezeCell::freeze`], but is otherwise identical.
+#[derive(Default)]
 pub struct FreezeMany<T = ()>(T);
 
 impl FreezeMany<()> {

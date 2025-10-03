@@ -110,9 +110,7 @@ pub fn json_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                             .ok_or_else(|| vm::RuntimeError::msg("invalid JSON float value"))?,
                     )
                 } else {
-                    return Err(vm::RuntimeError::msg(format!(
-                        "cannot convert userdata to JSON"
-                    )));
+                    return Err(vm::RuntimeError::msg("cannot convert userdata to JSON"));
                 }
             }
             vm::Value::Closure(_) | vm::Value::Callback(_) => {

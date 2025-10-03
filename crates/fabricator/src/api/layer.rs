@@ -108,13 +108,13 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         let (depth, name): (i32, Option<vm::String>) = exec.stack().consume(ctx)?;
 
         let layer_ud = State::ctx_with_mut(ctx, |state| {
-            if let Some(name) = name {
-                if state.named_layers.contains_key(name.as_str()) {
-                    return Err(vm::RuntimeError::msg(format!(
-                        "duplicate layer named {:?}",
-                        name
-                    )));
-                }
+            if let Some(name) = name
+                && state.named_layers.contains_key(name.as_str())
+            {
+                return Err(vm::RuntimeError::msg(format!(
+                    "duplicate layer named {:?}",
+                    name
+                )));
             }
 
             let layer_id = state.layers.insert_with_id(|id| {

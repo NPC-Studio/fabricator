@@ -233,7 +233,7 @@ pub fn create_state(
 
         let object_id = objects.insert_with_id(|id| {
             let userdata = interpreter
-                .enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id, ctx.intern(&object_name))));
+                .enter(|ctx| ctx.stash(ObjectUserData::new(ctx, id, ctx.intern(object_name))));
             Object {
                 name: object_name.clone(),
                 parent: None,
@@ -297,7 +297,7 @@ pub fn create_state(
                     };
                     let room_tile_layer = RoomTileLayer {
                         position: Vec2::new(tile_layer.x, tile_layer.y),
-                        tile_set: tile_set,
+                        tile_set,
                         grid_dimensions: Vec2::new(tile_layer.grid_width, tile_layer.grid_height),
                         grid: tile_layer.tile_grid.clone(),
                     };
@@ -537,13 +537,13 @@ fn load_scripts(
         magic.merge_unique(&platform_api(ctx))?;
         magic.merge_unique(&collision_api(ctx))?;
         magic.merge_unique(&stub_api(ctx))?;
-        magic.merge_unique(&object_api(ctx, &config)?)?;
+        magic.merge_unique(&object_api(ctx, config)?)?;
         magic.merge_unique(&instance_api(ctx))?;
-        magic.merge_unique(&room_api(ctx, &config)?)?;
-        magic.merge_unique(&drawing_api(ctx, &config)?)?;
-        magic.merge_unique(&font_api(ctx, &config)?)?;
-        magic.merge_unique(&sound_api(ctx, &config)?)?;
-        magic.merge_unique(&assets_api(ctx, &config)?)?;
+        magic.merge_unique(&room_api(ctx, config)?)?;
+        magic.merge_unique(&drawing_api(ctx, config)?)?;
+        magic.merge_unique(&font_api(ctx, config)?)?;
+        magic.merge_unique(&sound_api(ctx, config)?)?;
+        magic.merge_unique(&assets_api(ctx, config)?)?;
         magic.merge_unique(&tiles_api(ctx))?;
         magic.merge_unique(&layers_api(ctx))?;
 
@@ -653,7 +653,10 @@ fn compute_texture_pages<'a>(
     // Treat images as being sized in blocks of `GRANULARITY` width and height. The larger the
     // number, the coarser and faster the image placement.
     const GRANULARITY: u32 = 8;
-    assert!(TEXTURE_PAGE_SIZE[0] % GRANULARITY == 0 && TEXTURE_PAGE_SIZE[1] % GRANULARITY == 0);
+    assert!(
+        TEXTURE_PAGE_SIZE[0].is_multiple_of(GRANULARITY)
+            && TEXTURE_PAGE_SIZE[1].is_multiple_of(GRANULARITY)
+    );
 
     let mut texture_groups = HashMap::<&str, Vec<(TextureId, Vec2<u32>)>>::new();
     for tp in textures {

@@ -189,8 +189,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     }
 
     while let Some(work) = worklist.pop() {
-        let live_block;
-        match work {
+        let live_block = match work {
             Work::Instruction(inst_id) => {
                 match &ir.instructions[inst_id] {
                     &ir::Instruction::Phi(shadow_var) => {
@@ -210,7 +209,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                     }
                 }
 
-                live_block = inst_blocks[inst_id];
+                inst_blocks[inst_id]
             }
             Work::Branch(block_id) => {
                 // The `cond` parameter of `Exit::Branch` is only live if there is a live
@@ -228,9 +227,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                     }
                 }
 
-                live_block = block_id;
+                block_id
             }
-        }
+        };
 
         // All blocks in the post-dominance-frontier of this block must have branch which this block
         // is control-flow dependent on.

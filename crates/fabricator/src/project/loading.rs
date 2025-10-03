@@ -359,9 +359,9 @@ enum YyFfiType {
     Number,
 }
 
-impl Into<FfiType> for YyFfiType {
-    fn into(self) -> FfiType {
-        match self {
+impl From<YyFfiType> for FfiType {
+    fn from(yy_ffi: YyFfiType) -> FfiType {
+        match yy_ffi {
             YyFfiType::String => FfiType::Pointer,
             YyFfiType::Number => FfiType::Number,
         }
@@ -895,7 +895,7 @@ fn read_extension(base_path: PathBuf, yy_extension: YyExtension) -> Result<Exten
 }
 
 fn read_font(base_path: PathBuf, yy_font: YyFont) -> Result<Font, Error> {
-    let font_image_path = base_path.join(&format!("{}.png", yy_font.name));
+    let font_image_path = base_path.join(format!("{}.png", yy_font.name));
     let mut font = Font {
         name: yy_font.name,
         font_name: yy_font.font_name,
@@ -937,8 +937,8 @@ fn read_font(base_path: PathBuf, yy_font: YyFont) -> Result<Font, Error> {
 }
 
 fn read_shader(base_path: PathBuf, yy_shader: YyShader) -> Result<Shader, Error> {
-    let fragment_shader_path = base_path.join(&format!("{}.fsh", yy_shader.name));
-    let vertex_shader_path = base_path.join(&format!("{}.vsh", yy_shader.name));
+    let fragment_shader_path = base_path.join(format!("{}.fsh", yy_shader.name));
+    let vertex_shader_path = base_path.join(format!("{}.vsh", yy_shader.name));
 
     Ok(Shader {
         name: yy_shader.name,

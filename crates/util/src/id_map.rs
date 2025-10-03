@@ -55,7 +55,7 @@ struct Slot<T> {
 impl<T> Slot<T> {
     fn is_vacant(&self) -> bool {
         // Even generations mean the slot is vacant, odd generations mean it is occupied.
-        self.generation % 2 == 0
+        self.generation.is_multiple_of(2)
     }
 }
 
@@ -315,10 +315,10 @@ impl<V> IdMap<V> {
 
     pub fn retain(&mut self, mut f: impl FnMut(Id, &mut V) -> bool) {
         for index in 0..self.index_upper_bound() {
-            if let Some(id) = self.id_for_index(index) {
-                if !f(id, self.get_mut(id).unwrap()) {
-                    self.remove(id);
-                }
+            if let Some(id) = self.id_for_index(index)
+                && !f(id, self.get_mut(id).unwrap())
+            {
+                self.remove(id);
             }
         }
     }
@@ -648,10 +648,10 @@ impl<V> SecondaryMap<V> {
 
     pub fn retain(&mut self, mut f: impl FnMut(Id, &mut V) -> bool) {
         for index in 0..self.index_upper_bound() {
-            if let Some(id) = self.id_for_index(index) {
-                if !f(id, self.get_mut(id).unwrap()) {
-                    self.remove(id);
-                }
+            if let Some(id) = self.id_for_index(index)
+                && !f(id, self.get_mut(id).unwrap())
+            {
+                self.remove(id);
             }
         }
     }

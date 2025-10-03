@@ -545,30 +545,28 @@ where
         }
 
         let mut has_exp = false;
-        if !is_hex {
-            if let Some(exp_begin) = self.peek(0) {
-                if (is_hex && exp_begin.eq_ignore_ascii_case(&'p'))
-                    || (!is_hex && exp_begin.eq_ignore_ascii_case(&'e'))
-                {
-                    self.string_buffer.push(exp_begin);
-                    has_exp = true;
+        if !is_hex
+            && let Some(exp_begin) = self.peek(0)
+            && ((is_hex && exp_begin.eq_ignore_ascii_case(&'p'))
+                || (!is_hex && exp_begin.eq_ignore_ascii_case(&'e')))
+        {
+            self.string_buffer.push(exp_begin);
+            has_exp = true;
+            self.advance(1);
+
+            if let Some(sign) = self.peek(0)
+                && (sign == '+' || sign == '-')
+            {
+                self.string_buffer.push(sign);
+                self.advance(1);
+            }
+
+            while let Some(c) = self.peek(0) {
+                if c.is_ascii_digit() {
+                    self.string_buffer.push(c);
                     self.advance(1);
-
-                    if let Some(sign) = self.peek(0) {
-                        if sign == '+' || sign == '-' {
-                            self.string_buffer.push(sign);
-                            self.advance(1);
-                        }
-                    }
-
-                    while let Some(c) = self.peek(0) {
-                        if c.is_ascii_digit() {
-                            self.string_buffer.push(c);
-                            self.advance(1);
-                        } else {
-                            break;
-                        }
-                    }
+                } else {
+                    break;
                 }
             }
         }

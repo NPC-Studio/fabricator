@@ -127,10 +127,10 @@ impl<S> EnumSetBuilder<S> {
 
 impl<S: Eq + Hash> EnumSetBuilder<S> {
     /// Find a enum index by its name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    pub fn find<Q>(&self, name: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.dict.get(name).copied()
     }
@@ -140,13 +140,13 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
     /// Extract all top-level enum statements from a block.
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
         for stmt in &block.statements {
-            if let ast::Statement::Enum(enum_stmt) = stmt {
-                if let Some(&index) = self.dict.get(&enum_stmt.name.inner) {
-                    return Err(EnumError {
-                        kind: EnumErrorKind::DuplicateEnum(index),
-                        span: enum_stmt.span,
-                    });
-                }
+            if let ast::Statement::Enum(enum_stmt) = stmt
+                && let Some(&index) = self.dict.get(&enum_stmt.name.inner)
+            {
+                return Err(EnumError {
+                    kind: EnumErrorKind::DuplicateEnum(index),
+                    span: enum_stmt.span,
+                });
             }
         }
 
@@ -269,24 +269,14 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                             &mut self,
                             expr: &ast::Expression<S>,
                         ) -> ControlFlow<Self::Break> {
-                            match expr {
-                                ast::Expression::Field(field_expr) => {
-                                    if let ast::Expression::Ident(ident) = &*field_expr.base {
-                                        if let Some(&ref_enum_index) =
-                                            self.parent.dict.get(&ident.inner)
-                                        {
-                                            if let Some(&ref_variant_index) = self.parent.enums
-                                                [ref_enum_index]
-                                                .dict
-                                                .get(&field_expr.field.inner)
-                                            {
-                                                self.dependencies
-                                                    .push((ref_enum_index, ref_variant_index));
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
+                            if let ast::Expression::Field(field_expr) = expr
+                                && let ast::Expression::Ident(ident) = &*field_expr.base
+                                && let Some(&ref_enum_index) = self.parent.dict.get(&ident.inner)
+                                && let Some(&ref_variant_index) = self.parent.enums[ref_enum_index]
+                                    .dict
+                                    .get(&field_expr.field.inner)
+                            {
+                                self.dependencies.push((ref_enum_index, ref_variant_index));
                             }
 
                             expr.walk(self)
@@ -367,20 +357,14 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                             &mut self,
                             expr: &mut ast::Expression<S>,
                         ) -> ControlFlow<Self::Break> {
-                            match expr {
-                                ast::Expression::Field(field_expr) => {
-                                    if let ast::Expression::Ident(ident) = &*field_expr.base {
-                                        if let Some(val) =
-                                            (self.0)(&ident.inner, &field_expr.field.inner)
-                                        {
-                                            *expr = ast::Expression::Constant(
-                                                Constant::Integer(val),
-                                                field_expr.span,
-                                            );
-                                        }
-                                    }
-                                }
-                                _ => {}
+                            if let ast::Expression::Field(field_expr) = expr
+                                && let ast::Expression::Ident(ident) = &*field_expr.base
+                                && let Some(val) = (self.0)(&ident.inner, &field_expr.field.inner)
+                            {
+                                *expr = ast::Expression::Constant(
+                                    Constant::Integer(val),
+                                    field_expr.span,
+                                );
                             }
 
                             expr.walk_mut(self)
@@ -503,10 +487,10 @@ impl<S> EnumSet<S> {
 
 impl<S: Eq + Hash> EnumSet<S> {
     /// Find a enum index by its name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    pub fn find<Q>(&self, name: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.dict.get(name).copied()
     }
@@ -535,23 +519,23 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                         }
                     }
                     ast::Expression::Field(field_expr) => {
-                        if let ast::Expression::Ident(ident) = &*field_expr.base {
-                            if let Some(&enum_index) = self.0.dict.get(ident) {
-                                if let Some(&var_index) =
-                                    self.0.enums[enum_index].dict.get(&field_expr.field)
-                                {
-                                    let val = self.0.enums[enum_index].variants[var_index].value;
-                                    *expr = ast::Expression::Constant(
-                                        Constant::Integer(val),
-                                        field_expr.span,
-                                    );
-                                } else {
-                                    return ControlFlow::Break(EnumEvaluationError {
-                                        kind: EnumEvaluationErrorKind::BadVariant,
-                                        enum_index,
-                                        span: expr.span(),
-                                    });
-                                }
+                        if let ast::Expression::Ident(ident) = &*field_expr.base
+                            && let Some(&enum_index) = self.0.dict.get(ident)
+                        {
+                            if let Some(&var_index) =
+                                self.0.enums[enum_index].dict.get(&field_expr.field)
+                            {
+                                let val = self.0.enums[enum_index].variants[var_index].value;
+                                *expr = ast::Expression::Constant(
+                                    Constant::Integer(val),
+                                    field_expr.span,
+                                );
+                            } else {
+                                return ControlFlow::Break(EnumEvaluationError {
+                                    kind: EnumEvaluationErrorKind::BadVariant,
+                                    enum_index,
+                                    span: expr.span(),
+                                });
                             }
                         }
                     }

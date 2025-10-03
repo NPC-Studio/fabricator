@@ -143,14 +143,14 @@ impl<'gc> InternedStrings<'gc> {
         // SAFETY: If a new string is added, we call an appropriate write barrier.
         let mut strings = unsafe { self.0.0.unlock_unchecked() }.borrow_mut();
 
-        if let Some(shared) = strings.get(s) {
-            if let Some(string) = shared.upgrade(mc) {
-                return String(string);
-            }
+        if let Some(shared) = strings.get(s)
+            && let Some(string) = shared.upgrade(mc)
+        {
+            return String(string);
         }
 
         let shared = SharedStr::new(s);
-        let string = Gc::new(&mc, shared.clone());
+        let string = Gc::new(mc, shared.clone());
         let weak_string = Gc::downgrade(string);
 
         // SAFETY: We are adopting a new weak child, so we need an appropriate barrier.

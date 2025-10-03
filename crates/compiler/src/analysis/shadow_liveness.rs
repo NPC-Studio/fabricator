@@ -261,10 +261,10 @@ impl ShadowLiveness {
         for (block_id, block) in ir.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst = &mut ir.instructions[inst_id];
-                if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst {
-                    if !self.is_live_upsilon(shadow_var, block_id, inst_index) {
-                        *inst = ir::Instruction::NoOp;
-                    }
+                if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst
+                    && !self.is_live_upsilon(shadow_var, block_id, inst_index)
+                {
+                    *inst = ir::Instruction::NoOp;
                 }
             }
         }

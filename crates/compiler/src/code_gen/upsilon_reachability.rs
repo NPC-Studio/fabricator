@@ -32,10 +32,10 @@ pub fn compute_upsilon_reachability<S>(
                 phi_block = Some(block_id);
             }
 
-            if let Some(outgoing) = liveness.outgoing_range {
-                if let Some(upsilon) = outgoing.start {
-                    live_upsilons.push(ir::InstLocation::new(block_id, upsilon));
-                }
+            if let Some(outgoing) = liveness.outgoing_range
+                && let Some(upsilon) = outgoing.start
+            {
+                live_upsilons.push(ir::InstLocation::new(block_id, upsilon));
             }
         }
 

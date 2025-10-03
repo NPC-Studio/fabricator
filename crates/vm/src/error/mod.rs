@@ -194,10 +194,10 @@ impl<'gc> Error<'gc> {
     /// If the given value is *any other* kind of script value, then this will return a
     /// [`ScriptError`] instead.
     pub fn from_value(value: Value<'gc>) -> Self {
-        if let Value::UserData(ud) = value {
-            if let Ok(err) = ud.downcast_static::<RuntimeError>() {
-                return Error::Runtime(err.clone());
-            }
+        if let Value::UserData(ud) = value
+            && let Ok(err) = ud.downcast_static::<RuntimeError>()
+        {
+            return Error::Runtime(err.clone());
         }
 
         Error::Script(value.into())

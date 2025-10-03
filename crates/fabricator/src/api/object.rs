@@ -27,15 +27,15 @@ impl<'gc> ObjectUserData<'gc> {
             state: &State,
             object_id: ObjectId,
         ) -> Result<InstanceId, vm::RuntimeError> {
-            if let Some(set) = state.instances_for_object.get(object_id) {
-                if !set.is_empty() {
-                    if set.len() > 1 {
-                        return Err(vm::RuntimeError::msg(
-                            "propery access on objects only allowed on singletons",
-                        ));
-                    } else {
-                        return Ok(*set.iter().next().unwrap());
-                    }
+            if let Some(set) = state.instances_for_object.get(object_id)
+                && !set.is_empty()
+            {
+                if set.len() > 1 {
+                    return Err(vm::RuntimeError::msg(
+                        "propery access on objects only allowed on singletons",
+                    ));
+                } else {
+                    return Ok(*set.iter().next().unwrap());
                 }
             }
             Err(vm::RuntimeError::msg(

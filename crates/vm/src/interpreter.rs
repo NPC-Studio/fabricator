@@ -79,6 +79,7 @@ impl Default for Interpreter {
 }
 
 impl Interpreter {
+    #[expect(clippy::redundant_closure)]
     pub fn new() -> Self {
         Self {
             arena: Arena::<Rootable![State<'_>]>::new(|mc| State::new(mc)),

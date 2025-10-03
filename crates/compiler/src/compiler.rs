@@ -268,12 +268,12 @@ impl vm::Fetchable for StashedImportItems {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> ImportItems<'gc> {
         ImportItems {
-            macros: self.macros.as_ref().map(|macros| roots.fetch(&macros)),
-            enums: self.enums.as_ref().map(|enums| roots.fetch(&enums)),
+            macros: self.macros.as_ref().map(|macros| roots.fetch(macros)),
+            enums: self.enums.as_ref().map(|enums| roots.fetch(enums)),
             global_vars: self
                 .global_vars
                 .as_ref()
-                .map(|globals| roots.fetch(&globals)),
+                .map(|globals| roots.fetch(globals)),
             magic: self.magic.fetch(roots),
         }
     }
@@ -603,7 +603,7 @@ impl<'gc> Compiler<'gc> {
 
                 match export {
                     Export::Function(_) => {
-                        let index = magic.insert(export_name.clone(), stub_magic).0;
+                        let index = magic.insert(*export_name, stub_magic).0;
                         export_magic_indexes.insert(i, index);
                     }
                     Export::GlobalVar(ident) => {
@@ -736,7 +736,7 @@ struct CompilerVarDict<'gc, 'a> {
 
 impl<'gc, 'a> VarDict<vm::String<'gc>> for CompilerVarDict<'gc, 'a> {
     fn permit_declaration(&self, name: &vm::String<'gc>) -> bool {
-        !self.enums.find(name).is_some()
+        self.enums.find(name).is_none()
     }
 
     fn free_var_mode(&self, ident: &vm::String<'gc>) -> FreeVarMode {
@@ -766,7 +766,7 @@ fn optimize_and_generate_proto<'gc>(
     if let Err(err) = verify_ir(ir) {
         panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
     }
-    match gen_prototype(&ir, |n| magic.find(*n)) {
+    match gen_prototype(ir, |n| magic.find(*n)) {
         Ok(proto) => proto,
         Err(err) => {
             panic!("Internal Codegen Error: {err}\nIR: {ir:?}");

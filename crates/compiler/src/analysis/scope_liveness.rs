@@ -66,13 +66,11 @@ impl ScopeLiveness {
                 if close_loc.index < open_loc.index {
                     return Err(ScopeLivenessError::CloseNotDominated(close_loc));
                 }
-            } else {
-                if !block_dominance
-                    .dominates(open_loc.block_id, close_loc.block_id)
-                    .unwrap()
-                {
-                    return Err(ScopeLivenessError::CloseNotDominated(close_loc));
-                }
+            } else if !block_dominance
+                .dominates(open_loc.block_id, close_loc.block_id)
+                .unwrap()
+            {
+                return Err(ScopeLivenessError::CloseNotDominated(close_loc));
             }
 
             match close_for_block.entry(close_loc.block_id) {
@@ -114,10 +112,8 @@ impl ScopeLiveness {
                     range_end = Some(close_index);
                 }
 
-                if range_end.is_none() {
-                    if block.exit.exits_function() {
-                        range_end = Some(block.instructions.len());
-                    }
+                if range_end.is_none() && block.exit.exits_function() {
+                    range_end = Some(block.instructions.len());
                 }
 
                 assert!(

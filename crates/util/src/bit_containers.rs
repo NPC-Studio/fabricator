@@ -37,19 +37,10 @@ impl BitSlice for [u8] {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BitVec {
     bits: Vec<u8>,
     len: usize,
-}
-
-impl Default for BitVec {
-    fn default() -> Self {
-        Self {
-            bits: Vec::new(),
-            len: 0,
-        }
-    }
 }
 
 impl BitVec {

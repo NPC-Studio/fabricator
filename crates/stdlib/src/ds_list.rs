@@ -115,6 +115,12 @@ impl<'gc> DsList<'gc> {
     }
 }
 
+impl<'gc> Default for DsList<'gc> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn ds_list_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let ds_list_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         exec.stack().replace(ctx, DsList::new().into_userdata(ctx));

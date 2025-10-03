@@ -436,61 +436,61 @@ impl<S> Instruction<S> {
     }
 
     pub fn has_value(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Instruction::Copy(..)
-            | Instruction::Undefined
-            | Instruction::Boolean(..)
-            | Instruction::Constant(..)
-            | Instruction::Closure { .. }
-            | Instruction::GetVariable(..)
-            | Instruction::GetMagic(..)
-            | Instruction::Globals
-            | Instruction::This
-            | Instruction::Other
-            | Instruction::CurrentClosure
-            | Instruction::NewObject
-            | Instruction::NewArray
-            | Instruction::FixedArgument(..)
-            | Instruction::ArgumentCount
-            | Instruction::Argument(..)
-            | Instruction::GetField { .. }
-            | Instruction::GetFieldConst { .. }
-            | Instruction::GetIndex { .. }
-            | Instruction::GetIndexConst { .. }
-            | Instruction::Phi(..)
-            | Instruction::UnOp { .. }
-            | Instruction::BinOp { .. }
-            | Instruction::FixedReturn(..) => true,
-            _ => false,
-        }
+                | Instruction::Undefined
+                | Instruction::Boolean(..)
+                | Instruction::Constant(..)
+                | Instruction::Closure { .. }
+                | Instruction::GetVariable(..)
+                | Instruction::GetMagic(..)
+                | Instruction::Globals
+                | Instruction::This
+                | Instruction::Other
+                | Instruction::CurrentClosure
+                | Instruction::NewObject
+                | Instruction::NewArray
+                | Instruction::FixedArgument(..)
+                | Instruction::ArgumentCount
+                | Instruction::Argument(..)
+                | Instruction::GetField { .. }
+                | Instruction::GetFieldConst { .. }
+                | Instruction::GetIndex { .. }
+                | Instruction::GetIndexConst { .. }
+                | Instruction::Phi(..)
+                | Instruction::UnOp { .. }
+                | Instruction::BinOp { .. }
+                | Instruction::FixedReturn(..)
+        )
     }
 
     pub fn has_effect(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Instruction::OpenVariable(..)
-            | Instruction::SetVariable { .. }
-            | Instruction::CloseVariable(..)
-            | Instruction::GetMagic(..)
-            | Instruction::SetMagic(..)
-            | Instruction::OpenThisScope(..)
-            | Instruction::SetThis(..)
-            | Instruction::CloseThisScope(..)
-            | Instruction::Argument(..)
-            | Instruction::GetField { .. }
-            | Instruction::SetField { .. }
-            | Instruction::GetFieldConst { .. }
-            | Instruction::SetFieldConst { .. }
-            | Instruction::GetIndex { .. }
-            | Instruction::SetIndex { .. }
-            | Instruction::GetIndexConst { .. }
-            | Instruction::SetIndexConst { .. }
-            | Instruction::Upsilon(..)
-            | Instruction::UnOp { .. }
-            | Instruction::BinOp { .. }
-            | Instruction::OpenCall { .. }
-            | Instruction::CloseCall(..) => true,
-            _ => false,
-        }
+                | Instruction::SetVariable { .. }
+                | Instruction::CloseVariable(..)
+                | Instruction::GetMagic(..)
+                | Instruction::SetMagic(..)
+                | Instruction::OpenThisScope(..)
+                | Instruction::SetThis(..)
+                | Instruction::CloseThisScope(..)
+                | Instruction::Argument(..)
+                | Instruction::GetField { .. }
+                | Instruction::SetField { .. }
+                | Instruction::GetFieldConst { .. }
+                | Instruction::SetFieldConst { .. }
+                | Instruction::GetIndex { .. }
+                | Instruction::SetIndex { .. }
+                | Instruction::GetIndexConst { .. }
+                | Instruction::SetIndexConst { .. }
+                | Instruction::Upsilon(..)
+                | Instruction::UnOp { .. }
+                | Instruction::BinOp { .. }
+                | Instruction::OpenCall { .. }
+                | Instruction::CloseCall(..),
+        )
     }
 }
 

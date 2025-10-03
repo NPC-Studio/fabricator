@@ -108,6 +108,12 @@ impl<'gc> DsPriority<'gc> {
     }
 }
 
+impl<'gc> Default for DsPriority<'gc> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn ds_priority_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let ds_priority_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         exec.stack()

@@ -299,8 +299,8 @@ impl<'gc, T: FromValue<'gc>, const N: usize> FromValue<'gc> for [T; N] {
     fn from_value(ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
         if let Value::Array(array) = value {
             let mut res: [Option<T>; N] = array::from_fn(|_| None);
-            for i in 0..N {
-                res[i] = Some(T::from_value(ctx, array.get(i))?);
+            for (i, res) in res.iter_mut().enumerate() {
+                *res = Some(T::from_value(ctx, array.get(i))?);
             }
             Ok(res.map(|r| r.unwrap()))
         } else {
@@ -461,8 +461,9 @@ impl<'gc, I: FromValue<'gc>, const N: usize> FromMultiValue<'gc> for Variadic<[I
         mut values: impl Iterator<Item = Value<'gc>>,
     ) -> Result<Self, TypeError> {
         let mut res: [Option<I>; N] = array::from_fn(|_| None);
-        for i in 0..N {
-            res[i] = Some(I::from_value(
+
+        for res in res.iter_mut() {
+            *res = Some(I::from_value(
                 ctx,
                 values.next().unwrap_or(Value::Undefined),
             )?);

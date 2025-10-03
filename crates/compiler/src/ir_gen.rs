@@ -185,12 +185,12 @@ impl IrGenSettings {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ClosureBindMode {
     /// Closures bind the ambient `this` and `other`.
-    BindDefault,
+    Default,
     /// For any created closures, open a temporary "this" scope to bind the given `this` object for
     /// that constructor only. This is used inside struct literals.
-    BindNewThis(ir::InstId),
+    NewThis(ir::InstId),
     /// Make all closures unbound. This is the default in static initializers.
-    BindNothing,
+    Nothing,
 }
 
 struct FunctionCompiler<'a, S> {
@@ -586,50 +586,47 @@ where
         self.push_instruction(body.span, ir::Instruction::SetThis(super_scope, our_super));
 
         // All function expressions within static initializers are *unbound*.
-        self.push_closure_bind_mode(ClosureBindMode::BindNothing);
+        self.push_closure_bind_mode(ClosureBindMode::Nothing);
 
         let mut static_names = HashSet::new();
 
         for stmt in &body.statements {
-            match stmt {
-                ast::Statement::Static(decls) => {
-                    for (decl_name, decl_value) in &decls.vars {
-                        if !static_names.insert(decl_name) {
-                            return Err(IrGenError {
-                                kind: IrGenErrorKind::ConstructorStaticNotUnique,
-                                span: decls.span,
-                            });
-                        }
-
-                        let key = self.push_instruction(
-                            decls.span,
-                            ir::Instruction::Constant(Constant::String(decl_name.inner.clone())),
-                        );
-                        let value = self.expression(decl_value.as_ref().ok_or(IrGenError {
-                            kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+            if let ast::Statement::Static(decls) = stmt {
+                for (decl_name, decl_value) in &decls.vars {
+                    if !static_names.insert(decl_name) {
+                        return Err(IrGenError {
+                            kind: IrGenErrorKind::ConstructorStaticNotUnique,
                             span: decls.span,
-                        })?)?;
-
-                        self.push_instruction(
-                            decls.span,
-                            ir::Instruction::SetField {
-                                object: our_super,
-                                key,
-                                value,
-                            },
-                        );
-
-                        self.declare_var(
-                            decl_name.clone(),
-                            VarType::ConstructorStatic(decl_name.inner.clone()),
-                        )?;
+                        });
                     }
+
+                    let key = self.push_instruction(
+                        decls.span,
+                        ir::Instruction::Constant(Constant::String(decl_name.inner.clone())),
+                    );
+                    let value = self.expression(decl_value.as_ref().ok_or(IrGenError {
+                        kind: IrGenErrorKind::ConstructorStaticNotInitialized,
+                        span: decls.span,
+                    })?)?;
+
+                    self.push_instruction(
+                        decls.span,
+                        ir::Instruction::SetField {
+                            object: our_super,
+                            key,
+                            value,
+                        },
+                    );
+
+                    self.declare_var(
+                        decl_name.clone(),
+                        VarType::ConstructorStatic(decl_name.inner.clone()),
+                    )?;
                 }
-                _ => {}
             }
         }
 
-        self.pop_closure_bind_mode(ClosureBindMode::BindNothing);
+        self.pop_closure_bind_mode(ClosureBindMode::Nothing);
 
         self.push_instruction(body.span, ir::Instruction::CloseThisScope(super_scope));
 
@@ -1654,7 +1651,7 @@ where
                         ast::Field::Value(name, value) => {
                             // Within a struct literal, closures always bind `this` to the struct
                             // currently being created.
-                            self.push_closure_bind_mode(ClosureBindMode::BindNewThis(object));
+                            self.push_closure_bind_mode(ClosureBindMode::NewThis(object));
 
                             let value = self.expression(value)?;
                             self.push_instruction(
@@ -1666,7 +1663,7 @@ where
                                 },
                             );
 
-                            self.pop_closure_bind_mode(ClosureBindMode::BindNewThis(object));
+                            self.pop_closure_bind_mode(ClosureBindMode::NewThis(object));
                         }
                         ast::Field::Init(name) => {
                             let value = self.ident_expr(name);
@@ -2429,28 +2426,28 @@ where
     }
 
     fn pop_scope(&mut self) {
-        if self.settings.block_scoping {
-            if let Some(popped_scope) = self.scopes.pop() {
-                // Close every variable in the popped scope.
-                for var_id in popped_scope.to_close {
-                    self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
-                }
+        if self.settings.block_scoping
+            && let Some(popped_scope) = self.scopes.pop()
+        {
+            // Close every variable in the popped scope.
+            for var_id in popped_scope.to_close {
+                self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
+            }
 
-                // Remove visible variables in the popped scope from the var lookup map.
-                for (vname, _) in popped_scope.visible {
-                    let hash_map::Entry::Occupied(mut entry) = self.var_lookup.entry(vname) else {
-                        unreachable!();
-                    };
+            // Remove visible variables in the popped scope from the var lookup map.
+            for (vname, _) in popped_scope.visible {
+                let hash_map::Entry::Occupied(mut entry) = self.var_lookup.entry(vname) else {
+                    unreachable!();
+                };
 
-                    let scope_index = entry.get_mut().pop().unwrap();
-                    // The var lookup map should contain every visible variable in this scope.
-                    assert!(scope_index == self.scopes.len());
+                let scope_index = entry.get_mut().pop().unwrap();
+                // The var lookup map should contain every visible variable in this scope.
+                assert!(scope_index == self.scopes.len());
 
-                    // Just remove the variable entry entirely if there are no variables with this
-                    // name visible.
-                    if entry.get().is_empty() {
-                        entry.remove();
-                    }
+                // Just remove the variable entry entirely if there are no variables with this
+                // name visible.
+                if entry.get().is_empty() {
+                    entry.remove();
                 }
             }
         }
@@ -2725,16 +2722,16 @@ where
             .closure_bind_mode
             .last()
             .copied()
-            .unwrap_or(ClosureBindMode::BindDefault)
+            .unwrap_or(ClosureBindMode::Default)
         {
-            ClosureBindMode::BindDefault => self.push_instruction(
+            ClosureBindMode::Default => self.push_instruction(
                 span,
                 ir::Instruction::Closure {
                     func: func_id,
                     bind_this: true,
                 },
             ),
-            ClosureBindMode::BindNewThis(this) => {
+            ClosureBindMode::NewThis(this) => {
                 let this_scope = self.function.this_scopes.insert(());
                 self.push_instruction(span, ir::Instruction::OpenThisScope(this_scope));
                 self.push_instruction(span, ir::Instruction::SetThis(this_scope, this));
@@ -2748,7 +2745,7 @@ where
                 self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
                 closure
             }
-            ClosureBindMode::BindNothing => self.push_instruction(
+            ClosureBindMode::Nothing => self.push_instruction(
                 span,
                 ir::Instruction::Closure {
                     func: func_id,

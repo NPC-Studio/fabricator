@@ -221,10 +221,10 @@ pub fn tick_state(
                     interpreter.enter(|ctx| -> Result<_, Error> {
                         let instance_template = state.config.instance_templates[template_id];
 
-                        if state.config.objects[instance_template.object].persistent {
-                            if state.instance_for_template.contains(template_id) {
-                                return Ok(());
-                            }
+                        if state.config.objects[instance_template.object].persistent
+                            && state.instance_for_template.contains(template_id)
+                        {
+                            return Ok(());
                         }
 
                         let event_closures = state.event_closures(instance_template.object);

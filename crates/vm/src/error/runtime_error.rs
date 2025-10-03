@@ -94,7 +94,7 @@ impl RuntimeError {
             }
         }
 
-        Self::new(BoxErr(boxed_err.into()))
+        Self::new(BoxErr(boxed_err))
     }
 
     pub fn msg<M: fmt::Display + fmt::Debug + Send + Sync + 'static>(message: M) -> Self {

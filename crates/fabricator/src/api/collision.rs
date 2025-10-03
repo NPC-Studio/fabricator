@@ -28,10 +28,8 @@ pub fn collision_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                     continue;
                 };
 
-                if notme {
-                    if self_instance == Some(instance_id) {
-                        continue;
-                    }
+                if notme && self_instance == Some(instance_id) {
+                    continue;
                 }
 
                 if let Some(collision) = state.instance_collision(instance_id) {

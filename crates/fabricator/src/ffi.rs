@@ -94,10 +94,10 @@ impl<'gc> vm::FromValue<'gc> for FfiPointer {
             NULL_STRING_BUFFER.with(|buffer| buffer.borrow_mut().push(cstring));
             // We can now pass the FFI function a pointer to a 0-terminated string.
             return Ok(Self(ptr));
-        } else if let vm::Value::UserData(ud) = value {
-            if let Ok(ptr) = Pointer::downcast(ud) {
-                return Ok(Self(ptr.as_ptr() as *const c_void));
-            }
+        } else if let vm::Value::UserData(ud) = value
+            && let Ok(ptr) = Pointer::downcast(ud)
+        {
+            return Ok(Self(ptr.as_ptr() as *const c_void));
         }
 
         Err(vm::TypeError {

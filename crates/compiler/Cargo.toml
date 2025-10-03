@@ -3,6 +3,9 @@ name = "fabricator-compiler"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 arrayvec.workspace = true
 either.workspace = true

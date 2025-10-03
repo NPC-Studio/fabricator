@@ -47,7 +47,7 @@ impl<'gc> From<Callback<'gc>> for Function<'gc> {
 /// There are three levels of conversion methods provided on `Value` to convert them to concrete
 /// types.
 ///   1) `as_xxx` conversions are perfect conversions that return exact values, there is one per
-///       variant type (including `is_undefined`).
+///      variant type (including `is_undefined`).
 ///   2) `cast_xxx` conversions are generally reasonable conversions to do implicitly. They include
 ///      things that match normal GML semantics like evaluating value truthiness, casting bools to
 ///      numbers, and casting between numeric types.
@@ -167,6 +167,7 @@ impl<'gc> From<Function<'gc>> for Value<'gc> {
     }
 }
 
+#[expect(clippy::should_implement_trait)]
 impl<'gc> Value<'gc> {
     pub fn type_name(self) -> &'static str {
         match self {

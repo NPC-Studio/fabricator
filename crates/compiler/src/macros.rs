@@ -63,10 +63,10 @@ impl<S> Default for ConfigurationSet<S> {
 }
 
 impl<S: Eq + Hash> ConfigurationSet<S> {
-    pub fn index_for_config<Q: ?Sized>(&self, config: &Q) -> Option<usize>
+    pub fn index_for_config<Q>(&self, config: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.for_config.get(config).copied().or(self.default)
     }
@@ -120,20 +120,20 @@ impl<S> MacroSet<S> {
 
 impl<S: Eq + Hash> MacroSet<S> {
     /// Find the configuration set for a macro by name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<&ConfigurationSet<S>>
+    pub fn find<Q>(&self, name: &Q) -> Option<&ConfigurationSet<S>>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.macro_dict.get(name)
     }
 
     /// Find a macro index for a specific configuration by macro name.
-    pub fn find_config<Q1: ?Sized, Q2: ?Sized>(&self, config: &Q1, name: &Q2) -> Option<usize>
+    pub fn find_config<Q1, Q2>(&self, config: &Q1, name: &Q2) -> Option<usize>
     where
         S: Borrow<Q1> + Borrow<Q2>,
-        Q1: Hash + Eq,
-        Q2: Hash + Eq,
+        Q1: Hash + Eq + ?Sized,
+        Q2: Hash + Eq + ?Sized,
     {
         self.macro_dict
             .get(name)
@@ -281,10 +281,10 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// falling back to the default. If only the default configuration is desired, macro
     /// configuration cannot be the empty string, so providing the empty string here will always
     /// result in the default configuration.
-    pub fn resolve<Q: ?Sized>(self, config: &Q) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
+    pub fn resolve<Q>(self, config: &Q) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.resolve_with_skip_recursive(config, |_| true)
     }
@@ -294,14 +294,14 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// For any token in a macro that matches another macro, if the `recursively_expand` callback
     /// returns false this token will *not* be recursively expanded. GMS2 skips such recursive
     /// expansion for builtin function names.
-    pub fn resolve_with_skip_recursive<Q: ?Sized>(
+    pub fn resolve_with_skip_recursive<Q>(
         self,
         config: &Q,
         recursively_expand: impl Fn(&S) -> bool,
     ) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         // Determine a proper macro evaluation order.
         //
@@ -338,32 +338,31 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
             let mut has_unevaluated_dependency = false;
             for token in &macro_.tokens {
-                if let TokenKind::Identifier(ident) = &token.kind {
-                    if let Some(ind) = self
+                if let TokenKind::Identifier(ident) = &token.kind
+                    && let Some(ind) = self
                         .macro_dict
                         .get(ident)
                         .and_then(|c| c.index_for_config(config))
-                    {
-                        if recursively_expand(ident) && !evaluated_macros.contains(ind) {
-                            if !has_unevaluated_dependency {
-                                has_unevaluated_dependency = true;
+                    && recursively_expand(ident)
+                    && !evaluated_macros.contains(ind)
+                {
+                    if !has_unevaluated_dependency {
+                        has_unevaluated_dependency = true;
 
-                                // We need to evaluate dependencies before this macro, so mark the
-                                // macro as in-progress. If we get here a *second* time without
-                                // the macro becoming evaluated, then we must have a recursive
-                                // dependency.
-                                if !evaluating_macros.insert(macro_index) {
-                                    return Err(RecursiveMacro(macro_index));
-                                }
-
-                                // We must push the evaluating macro *before* all of its
-                                // dependencies.
-                                eval_stack.push(macro_index);
-                            }
-
-                            eval_stack.push(ind);
+                        // We need to evaluate dependencies before this macro, so mark the
+                        // macro as in-progress. If we get here a *second* time without
+                        // the macro becoming evaluated, then we must have a recursive
+                        // dependency.
+                        if !evaluating_macros.insert(macro_index) {
+                            return Err(RecursiveMacro(macro_index));
                         }
+
+                        // We must push the evaluating macro *before* all of its
+                        // dependencies.
+                        eval_stack.push(macro_index);
                     }
+
+                    eval_stack.push(ind);
                 }
             }
 
@@ -383,21 +382,11 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             let macro_ = &self.macros[macro_index];
             for token in &macro_.tokens {
                 let ind = match &token.kind {
-                    TokenKind::Identifier(ident) => {
-                        if let Some(index) = self
-                            .macro_dict
-                            .get(ident)
-                            .and_then(|c| c.index_for_config(config))
-                        {
-                            if recursively_expand(ident) {
-                                Some(index)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    }
+                    TokenKind::Identifier(ident) => self
+                        .macro_dict
+                        .get(ident)
+                        .and_then(|c| c.index_for_config(config))
+                        .filter(|_| recursively_expand(ident)),
                     _ => None,
                 };
 
@@ -467,10 +456,10 @@ impl<S> ResolvedMacroSet<S> {
 
 impl<S: Eq + Hash> ResolvedMacroSet<S> {
     /// Find the index for a macro by name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    pub fn find<Q>(&self, name: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.macro_dict.get(name).copied()
     }

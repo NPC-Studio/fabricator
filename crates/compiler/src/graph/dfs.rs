@@ -56,7 +56,10 @@ pub fn depth_first_search_with<S, N, I>(
         state,
         start,
         move |s, n| Ok::<_, ()>(pre(s, n)),
-        move |s, n| Ok(post(s, n)),
+        move |s, n| {
+            post(s, n);
+            Ok(())
+        },
     )
     .unwrap()
 }
@@ -168,7 +171,7 @@ mod tests {
             |i| post.push(i),
         );
 
-        assert!(pre == &[1, 2, 4, 3]);
-        assert!(post == &[4, 2, 3, 1]);
+        assert_eq!(pre, &[1, 2, 4, 3]);
+        assert_eq!(post, &[4, 2, 3, 1]);
     }
 }

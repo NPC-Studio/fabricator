@@ -197,15 +197,12 @@ pub fn assets_api<'gc>(
                     &state.config.rooms[room.id].tags
                 } else if let Ok(object) = ObjectUserData::downcast(id) {
                     &state.config.objects[object.id].tags
-                } else if let Ok(_) = SpriteUserData::downcast(id) {
-                    &empty_tags
-                } else if let Ok(_) = FontUserData::downcast(id) {
-                    &empty_tags
-                } else if let Ok(_) = ShaderUserData::downcast(id) {
-                    &empty_tags
-                } else if let Ok(_) = SoundUserData::downcast(id) {
-                    &empty_tags
-                } else if let Ok(_) = TileSetUserData::downcast(id) {
+                } else if SpriteUserData::downcast(id).is_ok()
+                    || FontUserData::downcast(id).is_ok()
+                    || ShaderUserData::downcast(id).is_ok()
+                    || SoundUserData::downcast(id).is_ok()
+                    || TileSetUserData::downcast(id).is_ok()
+                {
                     &empty_tags
                 } else {
                     return Err(vm::RuntimeError::msg("userdata is not an asset id"));
@@ -227,11 +224,9 @@ pub fn assets_api<'gc>(
                         }
                         Ok(has_tag)
                     }
-                    _ => {
-                        return Err(vm::RuntimeError::msg(
-                            "tags argument must be a string or an array of strings",
-                        ));
-                    }
+                    _ => Err(vm::RuntimeError::msg(
+                        "tags argument must be a string or an array of strings",
+                    )),
                 }
             })??;
 

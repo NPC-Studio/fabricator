@@ -26,7 +26,6 @@ impl<T: num::Zero, const N: usize> AABox<T, N> {
 }
 
 impl<T: Copy, const N: usize> AABox<T, N> {
-    #[must_use]
     pub fn corners(self) -> impl Iterator<Item = Vector<T, N>> {
         AABox::<u8, N>::new(Vector::splat(0), Vector::splat(2))
             .iter(array::from_fn(|i| i))
@@ -183,7 +182,6 @@ impl<T, const N: usize> AABox<T, N>
 where
     T: num::Integer + Copy,
 {
-    #[must_use]
     pub fn iter<const D: usize>(self, dims: [usize; D]) -> impl Iterator<Item = [T; D]> {
         struct Iter<T, const D: usize>
         where
@@ -231,7 +229,6 @@ where
 
     /// Iterates over each point inside an integral AABox, the iteration order is that lower
     /// dimensions change more frequently than higher ones.
-    #[must_use]
     pub fn iter_points(self) -> impl Iterator<Item = Vector<T, N>> {
         let mut indices: [usize; N] = array::from_fn(|i| i);
         indices.reverse();

@@ -134,7 +134,7 @@ impl BufferState {
 
     fn cursor_write_unaligned(&mut self, data: &[u8]) -> Result<(), vm::RuntimeError> {
         self.write_at(self.cursor, data)?;
-        self.cursor = self.cursor + data.len();
+        self.cursor += data.len();
         Ok(())
     }
 
@@ -195,8 +195,7 @@ impl BufferState {
             .position(|&b| b == 0)
             .map(|i| pos + i)
             .unwrap_or(self.data.len());
-        let slice = &self.data[pos..end];
-        slice
+        &self.data[pos..end]
     }
 }
 

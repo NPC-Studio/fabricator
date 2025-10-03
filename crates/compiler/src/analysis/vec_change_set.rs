@@ -143,8 +143,8 @@ mod tests {
 
         array_changes.apply(&mut array);
 
-        for i in 0..10 {
-            assert_eq!(array[i], i);
+        for (i, value) in array.iter().enumerate() {
+            assert_eq!(i, *value);
         }
     }
 
@@ -165,14 +165,7 @@ mod tests {
 
     #[test]
     fn test_vec_change_set_insert_append_remove() {
-        let mut array = Vec::new();
-
-        array.push(1);
-        array.push(2);
-        array.push(3);
-        array.push(6);
-        array.push(7);
-        array.push(8);
+        let mut array = vec![1, 2, 3, 6, 7, 8];
 
         let mut array_changes = VecChangeSet::new();
 
@@ -189,21 +182,15 @@ mod tests {
 
         array_changes.apply(&mut array);
 
-        for i in 0..10 {
-            assert_eq!(array[i], i);
+        assert_eq!(array.len(), 10);
+        for (i, value) in array.iter().enumerate() {
+            assert_eq!(i, *value);
         }
     }
 
     #[test]
     fn test_vec_change_set_remove() {
-        let mut array = Vec::new();
-
-        array.push(0);
-        array.push(0);
-        array.push(1);
-        array.push(1);
-        array.push(2);
-        array.push(2);
+        let mut array = vec![0, 0, 1, 1, 2, 2];
 
         let mut array_changes = VecChangeSet::new();
 
@@ -213,8 +200,9 @@ mod tests {
 
         array_changes.apply(&mut array);
 
-        for i in 0..3 {
-            assert_eq!(array[i], i);
+        assert_eq!(array.len(), 3);
+        for (i, value) in array.iter().enumerate() {
+            assert_eq!(i, *value);
         }
     }
 

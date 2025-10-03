@@ -126,7 +126,7 @@ impl State {
         )
     }
 
-    pub fn event_closures<'gc>(
+    pub fn event_closures(
         &self,
         mut object_id: ObjectId,
     ) -> HashMap<ObjectEvent, vm::StashedClosure> {

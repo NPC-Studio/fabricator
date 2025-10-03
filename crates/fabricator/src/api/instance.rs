@@ -103,10 +103,8 @@ impl<'gc> vm::Singleton<'gc> for InstanceMethodsSingleton<'gc> {
                         .ok_or_else(|| vm::RuntimeError::msg("expired instance"))?;
 
                     match key.as_str() {
-                        "id" => Err(vm::RuntimeError::msg(format!("`id` is read-only"))),
-                        "object_index" => Err(vm::RuntimeError::msg(format!(
-                            "`object_index` is read-only"
-                        ))),
+                        "id" => Err(vm::RuntimeError::msg("`id` is read-only")),
+                        "object_index" => Err(vm::RuntimeError::msg("`object_index` is read-only")),
                         "x" => {
                             instance.position[0] = vm::FromValue::from_value(ctx, value)?;
                             Ok(())

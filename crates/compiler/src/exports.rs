@@ -97,10 +97,10 @@ impl<S> ExportSet<S> {
 
 impl<S: Eq + Hash> ExportSet<S> {
     /// Find an export index by its name.
-    pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
+    pub fn find<Q>(&self, name: &Q) -> Option<usize>
     where
         S: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         self.dict.get(name).copied()
     }

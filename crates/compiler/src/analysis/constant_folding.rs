@@ -105,10 +105,10 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                         _ => None,
                     } {
                         new_inst = Some(ir::Instruction::UnOp { op: un_op, source });
-                    } else if op == ir::BinOp::NullCoalesce {
-                        if left_const.is_some_and(Constant::is_undefined) {
-                            new_inst = Some(ir::Instruction::Copy(right));
-                        }
+                    } else if op == ir::BinOp::NullCoalesce
+                        && left_const.is_some_and(Constant::is_undefined)
+                    {
+                        new_inst = Some(ir::Instruction::Copy(right));
                     }
                 }
                 ir::Instruction::GetField { object, key } => {
@@ -129,13 +129,13 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                     }
                 }
                 ir::Instruction::GetIndex { array, indexes } => {
-                    if indexes.len() == 1 {
-                        if let Some(index) = get_constant(indexes[0]) {
-                            new_inst = Some(ir::Instruction::GetIndexConst {
-                                array,
-                                index: index.clone(),
-                            })
-                        }
+                    if indexes.len() == 1
+                        && let Some(index) = get_constant(indexes[0])
+                    {
+                        new_inst = Some(ir::Instruction::GetIndexConst {
+                            array,
+                            index: index.clone(),
+                        })
                     }
                 }
                 ir::Instruction::SetIndex {
@@ -143,14 +143,14 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                     indexes,
                     value,
                 } => {
-                    if indexes.len() == 1 {
-                        if let Some(index) = get_constant(indexes[0]) {
-                            new_inst = Some(ir::Instruction::SetIndexConst {
-                                array,
-                                index: index.clone(),
-                                value,
-                            })
-                        }
+                    if indexes.len() == 1
+                        && let Some(index) = get_constant(indexes[0])
+                    {
+                        new_inst = Some(ir::Instruction::SetIndexConst {
+                            array,
+                            index: index.clone(),
+                            value,
+                        })
                     }
                 }
                 _ => {}

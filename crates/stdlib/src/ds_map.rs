@@ -155,6 +155,12 @@ impl<'gc> DsMap<'gc> {
     }
 }
 
+impl<'gc> Default for DsMap<'gc> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn ds_map_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let ds_map_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         exec.stack().replace(ctx, DsMap::new().into_userdata(ctx));

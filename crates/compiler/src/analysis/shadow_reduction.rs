@@ -31,10 +31,10 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
                 }
             }
 
-            if let Some(outgoing) = range.outgoing_range {
-                if let Some(start) = outgoing.start {
-                    upsilons.push(block.instructions[start]);
-                }
+            if let Some(outgoing) = range.outgoing_range
+                && let Some(start) = outgoing.start
+            {
+                upsilons.push(block.instructions[start]);
             }
         }
 
