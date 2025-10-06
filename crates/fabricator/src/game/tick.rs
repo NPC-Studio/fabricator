@@ -388,6 +388,10 @@ pub fn tick_state(
             }
             Ok(())
         })?;
+    }
+
+    for &instance_id in &to_update {
+        let object_id = state.instances[instance_id].object;
 
         interpreter.enter(|ctx| -> Result<(), Error> {
             if let Some(step_closure) = state.instances[instance_id]
@@ -413,6 +417,10 @@ pub fn tick_state(
             }
             Ok(())
         })?;
+    }
+
+    for &instance_id in &to_update {
+        let object_id = state.instances[instance_id].object;
 
         interpreter.enter(|ctx| -> Result<(), Error> {
             if let Some(step_closure) = state.instances[instance_id]
@@ -438,6 +446,10 @@ pub fn tick_state(
             }
             Ok(())
         })?;
+    }
+
+    for &instance_id in &to_update {
+        let object_id = state.instances[instance_id].object;
 
         interpreter.enter(|ctx| -> Result<(), Error> {
             if let Some(draw_closure) = state.instances[instance_id]
