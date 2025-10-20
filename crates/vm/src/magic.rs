@@ -4,6 +4,7 @@ use gc_arena::{Collect, Gc, Mutation, barrier};
 use thiserror::Error;
 
 use crate::{
+    builtins::BuiltIns,
     error::RuntimeError,
     interpreter::Context,
     string::{String, StringMap},
@@ -97,6 +98,12 @@ impl<'gc> fmt::Debug for MagicSet<'gc> {
 impl<'gc> MagicSet<'gc> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn builtins(ctx: Context<'gc>) -> Self {
+        let mut magic = Self::new();
+        BuiltIns::singleton(ctx).insert_builtins(ctx, &mut magic);
+        magic
     }
 
     pub fn is_empty(&self) -> bool {

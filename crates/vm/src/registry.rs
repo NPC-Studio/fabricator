@@ -60,7 +60,7 @@ impl<'gc> Registry<'gc> {
         // Insert a marker `None` value to guard against recursive dependencies.
         self.singletons.borrow_mut(&ctx).insert(type_id, None);
 
-        // Don't hold the singletons lock during creation to allow singletons do depend on each
+        // Don't hold the singletons lock during creation to allow singletons to depend on each
         // other.
         let v = Root::<'gc, S>::create(ctx);
 

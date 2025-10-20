@@ -33,7 +33,7 @@ impl<'gc> StdlibContext<'gc> for vm::Context<'gc> {
 
         impl<'gc> vm::Singleton<'gc> for StdlibSingleton<'gc> {
             fn create(ctx: vm::Context<'gc>) -> Self {
-                let mut stdlib = vm::BuiltIns::new(&ctx).magic_set(ctx);
+                let mut stdlib = vm::MagicSet::builtins(ctx);
 
                 core_lib(ctx, &mut stdlib);
                 string_lib(ctx, &mut stdlib);

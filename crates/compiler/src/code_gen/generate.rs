@@ -860,7 +860,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 if_true,
                 if_false,
             } => {
-                // If we are the next block in output order, we don't need to add a jump.
+                // If we are jumping to the next block in output order, we don't need to add a jump.
+
                 if block_order_indexes[&if_true] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), if_true));
                     vm_instructions.push((

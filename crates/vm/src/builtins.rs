@@ -1,4 +1,4 @@
-use gc_arena::Mutation;
+use gc_arena::{Collect, Mutation, Rootable};
 
 use crate::{
     RuntimeError,
@@ -7,13 +7,16 @@ use crate::{
     interpreter::Context,
     magic::{MagicConstant, MagicSet},
     object::Object,
+    registry::Singleton,
     user_data::UserDataIter,
     value::{Function, Value},
 };
 
-/// FML functions for core VM functionality.
+/// FML values for core VM functionality.
 ///
 /// Can be assumed to be present in any FML environment, and may be required for compilation.
+#[derive(Collect)]
+#[collect(no_drop)]
 pub struct BuiltIns<'gc> {
     /// Rebind the implicit `this` on a callback or closure.
     ///
@@ -98,7 +101,7 @@ impl<'gc> BuiltIns<'gc> {
     pub const GET_CONSTRUCTOR_SUPER: &'static str = "__get_constructor_super";
     pub const WITH_LOOP_ITER: &'static str = "__with_loop_iter";
 
-    pub fn new(mc: &Mutation<'gc>) -> Self {
+    fn new(mc: &Mutation<'gc>) -> Self {
         Self {
             method: Callback::from_fn(mc, |ctx, mut exec| {
                 let (obj, func): (Value, Function) = exec.stack().consume(ctx)?;
@@ -214,47 +217,53 @@ impl<'gc> BuiltIns<'gc> {
         }
     }
 
-    /// Create a `MagicSet` with each builtin function.
+    pub fn singleton(ctx: Context<'gc>) -> &'gc BuiltIns<'gc> {
+        ctx.singleton::<Rootable![BuiltIns<'_>]>()
+    }
+
+    /// Insert all builtins into a `MagicSet`.
     ///
     /// All magic names are string constants available in [`BuiltIns`].
-    pub fn magic_set(&self, ctx: Context<'gc>) -> MagicSet<'gc> {
-        let mut magic = MagicSet::new();
-
-        magic.insert(
+    pub fn insert_builtins(&self, ctx: Context<'gc>, magic_set: &mut MagicSet<'gc>) {
+        magic_set.insert(
             ctx.intern(Self::METHOD),
             MagicConstant::new_ptr(&ctx, self.method),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::PCALL),
             MagicConstant::new_ptr(&ctx, self.pcall),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::GET_SUPER),
             MagicConstant::new_ptr(&ctx, self.get_super),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::SET_SUPER),
             MagicConstant::new_ptr(&ctx, self.set_super),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::INIT_CONSTRUCTOR_SUPER),
             MagicConstant::new_ptr(&ctx, self.init_constructor_super),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::GET_CONSTRUCTOR_SUPER),
             MagicConstant::new_ptr(&ctx, self.get_constructor_super),
         );
 
-        magic.insert(
+        magic_set.insert(
             ctx.intern(Self::WITH_LOOP_ITER),
             MagicConstant::new_ptr(&ctx, self.with_loop_iter),
         );
+    }
+}
 
-        magic
+impl<'gc> Singleton<'gc> for BuiltIns<'gc> {
+    fn create(ctx: Context<'gc>) -> Self {
+        BuiltIns::new(&ctx)
     }
 }
