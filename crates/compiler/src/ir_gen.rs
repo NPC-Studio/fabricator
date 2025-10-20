@@ -267,7 +267,7 @@ enum VarType<S> {
     /// This variable is a constructor static and is inside the `parent` object of a constructor
     /// under the stored field name.
     ConstructorStatic(S),
-    /// This variable references a captures constructor static in a closure.
+    /// This variable references a captured constructor static in a closure.
     UpperConstructorStatic { parent: ir::VarId, field: S },
 }
 
@@ -2580,10 +2580,36 @@ where
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
         if self.settings.closures || force_closure {
+            let mut upper_constructor_parents = HashMap::new();
+
+            // Takes a `VarId` in this function and returns an upvar in the inner function.
+            //
+            // Used to reference constructor parents in the outer function without duplicate
+            // declarations.
+            let mut make_constructor_parent_upvar =
+                |compiler: &mut FunctionCompiler<S>, parent_var: ir::VarId, field: &S| {
+                    let parent = match upper_constructor_parents.entry(parent_var) {
+                        hash_map::Entry::Occupied(occupied) => *occupied.get(),
+                        hash_map::Entry::Vacant(vacant) => {
+                            let parent_var = compiler
+                                .function
+                                .variables
+                                .insert(ir::Variable::Upper(parent_var));
+                            *vacant.insert(parent_var)
+                        }
+                    };
+
+                    VarType::UpperConstructorStatic {
+                        parent,
+                        field: field.clone(),
+                    }
+                };
+
             for (name, scope_list) in &self.var_lookup {
                 let &scope_index = scope_list.last().unwrap();
                 match &self.scopes[scope_index].visible[name] {
                     &VarDecl::Normal(var_id) => {
+                        // Named variables should not be duplicated
                         compiler
                             .declare_var(name.clone(), ir::Variable::Upper(var_id).into())
                             .unwrap();
@@ -2592,34 +2618,14 @@ where
                         let FunctionType::Constructor { parent_var, .. } = self.func_type else {
                             panic!("constructor static var in non-constructor function")
                         };
-                        let parent = compiler
-                            .function
-                            .variables
-                            .insert(ir::Variable::Upper(parent_var));
-                        compiler
-                            .declare_var(
-                                name.clone(),
-                                VarType::UpperConstructorStatic {
-                                    parent,
-                                    field: field.clone(),
-                                },
-                            )
-                            .unwrap();
+
+                        let var_type =
+                            make_constructor_parent_upvar(&mut compiler, parent_var, field);
+                        compiler.declare_var(name.clone(), var_type).unwrap();
                     }
                     &VarDecl::UpperConstructorStatic { parent, ref field } => {
-                        let parent = compiler
-                            .function
-                            .variables
-                            .insert(ir::Variable::Upper(parent));
-                        compiler
-                            .declare_var(
-                                name.clone(),
-                                VarType::UpperConstructorStatic {
-                                    parent,
-                                    field: field.clone(),
-                                },
-                            )
-                            .unwrap();
+                        let var_type = make_constructor_parent_upvar(&mut compiler, parent, field);
+                        compiler.declare_var(name.clone(), var_type).unwrap();
                     }
                 }
             }

@@ -13,6 +13,7 @@ pub mod variable_liveness;
 pub mod vec_change_set;
 pub mod verify_arguments;
 pub mod verify_references;
+pub mod verify_upvars;
 
 use crate::{graph, ir};
 

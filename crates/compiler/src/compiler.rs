@@ -24,6 +24,7 @@ use crate::{
         variable_liveness::{VariableLiveness, VariableVerificationError},
         verify_arguments::{ArgumentVerificationError, verify_arguments},
         verify_references::{ReferenceVerificationError, verify_references},
+        verify_upvars::{UpVarVerificationError, verify_no_root_upvars, verify_upvars},
     },
     code_gen::{Prototype, gen_prototype},
     enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
@@ -144,6 +145,8 @@ pub enum IrVerificationError {
     #[error("{0}")]
     ArgumentVerification(#[from] ArgumentVerificationError),
     #[error("{0}")]
+    UpVarVerification(#[from] UpVarVerificationError),
+    #[error("{0}")]
     InstructionVerification(#[from] InstructionVerificationError),
     #[error("{0}")]
     ShadowVerification(#[from] ShadowVerificationError),
@@ -155,16 +158,25 @@ pub enum IrVerificationError {
 
 /// Verify that IR is well-formed.
 pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationError> {
-    verify_references(ir)?;
-    verify_arguments(ir)?;
-    InstructionLiveness::compute(ir)?;
-    ShadowLiveness::compute(ir)?;
-    VariableLiveness::compute(ir)?;
-    ThisScopeLiveness::compute(ir)?;
+    fn inner_verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationError> {
+        verify_references(ir)?;
+        verify_arguments(ir)?;
+        verify_upvars(ir)?;
+        InstructionLiveness::compute(ir)?;
+        ShadowLiveness::compute(ir)?;
+        VariableLiveness::compute(ir)?;
+        ThisScopeLiveness::compute(ir)?;
 
-    for func in ir.functions.values() {
-        verify_ir(func)?;
+        for func in ir.functions.values() {
+            inner_verify_ir(func)?;
+        }
+
+        Ok(())
     }
+
+    verify_no_root_upvars(ir)?;
+    inner_verify_ir(ir)?;
+
     Ok(())
 }
 
