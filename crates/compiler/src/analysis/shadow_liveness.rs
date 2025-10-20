@@ -99,7 +99,7 @@ impl ShadowLiveness {
     /// post-dominated by another `Upsilon` instruction closer to the `Phi` that they write to, or
     /// there is no path in the CFG from the `Upsilon` to the `Phi` it writes to.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, ShadowVerificationError> {
-        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.successors());
+        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
         // Collect the location of all `Upsilon` instructions per block in ascending instruction
         // position order.
@@ -112,7 +112,7 @@ impl ShadowLiveness {
         for &block_id in &post_order {
             let upsilon_map = upsilon_instructions.get_mut(block_id).unwrap();
             for (inst_index, &inst_id) in ir.blocks[block_id].instructions.iter().enumerate() {
-                if let &ir::Instruction::Upsilon(shadow_var, _) = &ir.instructions[inst_id] {
+                if let ir::InstructionKind::Upsilon(shadow_var, _) = ir.instructions[inst_id].kind {
                     let upsilon_list = upsilon_map.entry(shadow_var).or_default();
                     upsilon_list.push(inst_index);
                 }
@@ -129,7 +129,7 @@ impl ShadowLiveness {
 
         for &block_id in &post_order {
             for (inst_index, &inst_id) in ir.blocks[block_id].instructions.iter().enumerate() {
-                if let &ir::Instruction::Phi(shadow_var) = &ir.instructions[inst_id] {
+                if let ir::InstructionKind::Phi(shadow_var) = ir.instructions[inst_id].kind {
                     if shadow_vars.insert(shadow_var, ()).is_some() {
                         return Err(ShadowVerificationError::ShadowReused);
                     }
@@ -190,7 +190,7 @@ impl ShadowLiveness {
                 let block_live_out = live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
-                for succ in ir.blocks[block_id].exit.successors() {
+                for succ in ir.blocks[block_id].exit.kind.successors() {
                     for &shadow_var in &live_in[succ] {
                         changed |= block_live_out.insert(shadow_var);
                     }
@@ -261,9 +261,9 @@ impl ShadowLiveness {
         for (block_id, block) in ir.blocks.iter() {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst = &mut ir.instructions[inst_id];
-                if let &ir::Instruction::Upsilon(shadow_var, _) = &*inst {
+                if let ir::InstructionKind::Upsilon(shadow_var, _) = inst.kind {
                     if !self.is_live_upsilon(shadow_var, block_id, inst_index) {
-                        *inst = ir::Instruction::NoOp;
+                        inst.kind = ir::InstructionKind::NoOp;
                     }
                 }
             }

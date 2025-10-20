@@ -115,7 +115,7 @@ impl ScopeLiveness {
                 }
 
                 if range_end.is_none() {
-                    if block.exit.exits_function() {
+                    if block.exit.kind.exits_function() {
                         range_end = Some(block.instructions.len());
                     }
                 }
@@ -134,7 +134,7 @@ impl ScopeLiveness {
 
                 if range_end.is_some() {
                     Ok(None.into_iter().flatten())
-                } else if let Some(indeterminate_block) = block.exit.successors().find(|&b| {
+                } else if let Some(indeterminate_block) = block.exit.kind.successors().find(|&b| {
                     b == open_loc.block_id
                         || !block_dominance.dominates(open_loc.block_id, b).unwrap()
                 }) {
@@ -142,7 +142,7 @@ impl ScopeLiveness {
                     // strictly dominate without passing through close.
                     Err(ScopeLivenessError::IndeterminateState(indeterminate_block))
                 } else {
-                    Ok(Some(block.exit.successors()).into_iter().flatten())
+                    Ok(Some(block.exit.kind.successors()).into_iter().flatten())
                 }
             },
             |_| Ok(()),
@@ -172,7 +172,7 @@ impl ScopeLiveness {
                 live_ranges.get(&block_id).is_none_or(|b| b.end.is_some());
 
             if outgoing_edges_are_dead {
-                for successor_block_id in block.exit.successors() {
+                for successor_block_id in block.exit.kind.successors() {
                     // Blocks with a live range and no open instruction have live incoming edges.
                     let live_incoming_edge = successor_block_id != open_loc.block_id
                         && live_ranges.contains_key(&successor_block_id);

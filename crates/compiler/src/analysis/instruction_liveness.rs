@@ -54,7 +54,8 @@ impl InstructionLiveness {
     ///   2) Every instruction and branch source is dominated by its definition.
     ///   3) No instruction source is of type `Void`.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, InstructionVerificationError> {
-        let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
+        let dominators =
+            Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
         let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
             ir.blocks.ids().map(|id| (id, HashSet::new())).collect();
@@ -74,16 +75,16 @@ impl InstructionLiveness {
 
                 let inst = &ir.instructions[inst_id];
 
-                if inst.has_value() {
+                if inst.kind.has_value() {
                     block_definitions.insert(inst_id);
                 }
 
-                for source_inst_id in inst.sources() {
+                for source_inst_id in inst.kind.sources() {
                     block_uses.insert(source_inst_id);
                 }
             }
 
-            for source_inst_id in block.exit.sources() {
+            for source_inst_id in block.exit.kind.sources() {
                 block_uses.insert(source_inst_id);
             }
         }
@@ -92,8 +93,8 @@ impl InstructionLiveness {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst = &ir.instructions[inst_id];
 
-                for source_inst in inst.sources() {
-                    if !ir.instructions[source_inst].has_value() {
+                for source_inst in inst.kind.sources() {
+                    if !ir.instructions[source_inst].kind.has_value() {
                         return Err(InstructionVerificationError::SourceIsVoid);
                     }
 
@@ -111,7 +112,7 @@ impl InstructionLiveness {
                 }
             }
 
-            for inst_id in block.exit.sources() {
+            for inst_id in block.exit.kind.sources() {
                 let (cond_block, _) = inst_positions[inst_id];
                 // If a block is not reachable, there cannot be a a dominance error.
                 if dominators.dominates(cond_block, block_id) == Some(false) {
@@ -127,7 +128,7 @@ impl InstructionLiveness {
         // I can't find the original source for this algorithm, but it is in lecture notes here:
         // https://www.cs.mcgill.ca/~cs520/2021/slides/16-liveness.pdf
 
-        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.successors());
+        let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
         let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
             post_order.iter().map(|&id| (id, HashSet::new())).collect();
@@ -141,7 +142,7 @@ impl InstructionLiveness {
                 let block_live_out = live_out.get_mut(block_id).unwrap();
 
                 // Every variable that is live in in a successor must be live out in this block.
-                for succ in ir.blocks[block_id].exit.successors() {
+                for succ in ir.blocks[block_id].exit.kind.successors() {
                     for &inst_id in &live_in[succ] {
                         changed |= block_live_out.insert(inst_id);
                     }
@@ -191,16 +192,16 @@ impl InstructionLiveness {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst = &ir.instructions[inst_id];
 
-                if inst.has_value() {
+                if inst.kind.has_value() {
                     mark_use(inst_id, inst_index);
                 }
 
-                for source_inst_id in inst.sources() {
+                for source_inst_id in inst.kind.sources() {
                     mark_use(source_inst_id, inst_index);
                 }
             }
 
-            for inst_id in block.exit.sources() {
+            for inst_id in block.exit.kind.sources() {
                 mark_use(inst_id, block.instructions.len());
             }
 

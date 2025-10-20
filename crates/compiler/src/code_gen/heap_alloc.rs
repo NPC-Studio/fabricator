@@ -56,7 +56,8 @@ impl<S: Clone> HeapAllocation<S> {
 
         let mut assigned_indexes = SecondaryMap::<ir::VarId, HeapIdx>::new();
 
-        let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.successors());
+        let block_order =
+            topological_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
         for &block_id in &block_order {
             let block = &ir.blocks[block_id];

@@ -46,7 +46,7 @@ pub enum ReferenceVerificationError {
 /// Checks all blocks, does not consider block reachability.
 pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerificationError> {
     for (block_id, block) in ir.blocks.iter() {
-        for succ in block.exit.successors() {
+        for succ in block.exit.kind.successors() {
             if !ir.blocks.contains(block_id) {
                 return Err(ReferenceVerificationError::BadSuccessor {
                     bad: succ,
@@ -65,7 +65,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                         inst_location,
                     })?;
 
-            for source in inst.sources() {
+            for source in inst.kind.sources() {
                 if !ir.instructions.contains(source) {
                     return Err(ReferenceVerificationError::BadSource {
                         bad: source,
@@ -74,11 +74,11 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                 }
             }
 
-            match *inst {
-                ir::Instruction::OpenVariable(var_id)
-                | ir::Instruction::GetVariable(var_id)
-                | ir::Instruction::SetVariable(var_id, _)
-                | ir::Instruction::CloseVariable(var_id) => {
+            match inst.kind {
+                ir::InstructionKind::OpenVariable(var_id)
+                | ir::InstructionKind::GetVariable(var_id)
+                | ir::InstructionKind::SetVariable(var_id, _)
+                | ir::InstructionKind::CloseVariable(var_id) => {
                     if !ir.variables.contains(var_id) {
                         return Err(ReferenceVerificationError::BadVariable {
                             bad: var_id,
@@ -87,7 +87,8 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     }
                 }
 
-                ir::Instruction::Phi(shadow_var) | ir::Instruction::Upsilon(shadow_var, _) => {
+                ir::InstructionKind::Phi(shadow_var)
+                | ir::InstructionKind::Upsilon(shadow_var, _) => {
                     if !ir.shadow_vars.contains(shadow_var) {
                         return Err(ReferenceVerificationError::BadShadowVar {
                             bad: shadow_var,
@@ -96,9 +97,9 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     }
                 }
 
-                ir::Instruction::OpenThisScope(scope)
-                | ir::Instruction::SetThis(scope, _)
-                | ir::Instruction::CloseThisScope(scope) => {
+                ir::InstructionKind::OpenThisScope(scope)
+                | ir::InstructionKind::SetThis(scope, _)
+                | ir::InstructionKind::CloseThisScope(scope) => {
                     if !ir.this_scopes.contains(scope) {
                         return Err(ReferenceVerificationError::BadThisScope {
                             bad: scope,
@@ -107,7 +108,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     }
                 }
 
-                ir::Instruction::Closure { func, .. } => {
+                ir::InstructionKind::Closure { func, .. } => {
                     if !ir.functions.contains(func) {
                         return Err(ReferenceVerificationError::BadFunction {
                             bad: func,

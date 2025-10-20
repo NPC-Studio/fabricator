@@ -81,7 +81,8 @@ where
         ir: &ir::Function<S>,
         scope_inst_type: impl Fn(&ir::Instruction<S>) -> Option<(I, ScopeInstType)>,
     ) -> Result<Self, NestedScopeVerificationError<I>> {
-        let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
+        let dominators =
+            Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
         let mut scopes: SecondaryMap<I, ()> = SecondaryMap::new();
         let mut scope_open: SecondaryMap<I, ir::InstLocation> = SecondaryMap::new();
@@ -228,7 +229,7 @@ where
                     }
                 }
 
-                Ok(ir.blocks[block_id].exit.successors())
+                Ok(ir.blocks[block_id].exit.kind.successors())
             },
             |scope_stack, block_id| {
                 for &inst_id in ir.blocks[block_id].instructions.iter().rev() {
@@ -373,10 +374,10 @@ impl ThisScopeLiveness {
     pub fn compute<S>(
         ir: &ir::Function<S>,
     ) -> Result<NestedScopeLiveness<ir::ThisScope>, ThisScopeVerificationError> {
-        NestedScopeLiveness::compute_with(ir, |inst| match *inst {
-            ir::Instruction::OpenThisScope(scope) => Some((scope, ScopeInstType::Open)),
-            ir::Instruction::SetThis(scope, _) => Some((scope, ScopeInstType::Use)),
-            ir::Instruction::CloseThisScope(scope) => Some((scope, ScopeInstType::Close)),
+        NestedScopeLiveness::compute_with(ir, |inst| match inst.kind {
+            ir::InstructionKind::OpenThisScope(scope) => Some((scope, ScopeInstType::Open)),
+            ir::InstructionKind::SetThis(scope, _) => Some((scope, ScopeInstType::Use)),
+            ir::InstructionKind::CloseThisScope(scope) => Some((scope, ScopeInstType::Close)),
             _ => None,
         })
     }
@@ -389,10 +390,10 @@ impl CallScopeLiveness {
     pub fn compute<S>(
         ir: &ir::Function<S>,
     ) -> Result<NestedScopeLiveness<ir::CallScope>, CallScopeVerificationError> {
-        NestedScopeLiveness::compute_with(ir, |inst| match *inst {
-            ir::Instruction::OpenCall { scope, .. } => Some((scope, ScopeInstType::Open)),
-            ir::Instruction::FixedReturn(scope, _) => Some((scope, ScopeInstType::Use)),
-            ir::Instruction::CloseCall(scope) => Some((scope, ScopeInstType::Close)),
+        NestedScopeLiveness::compute_with(ir, |inst| match inst.kind {
+            ir::InstructionKind::OpenCall { scope, .. } => Some((scope, ScopeInstType::Open)),
+            ir::InstructionKind::FixedReturn(scope, _) => Some((scope, ScopeInstType::Use)),
+            ir::InstructionKind::CloseCall(scope) => Some((scope, ScopeInstType::Close)),
             _ => None,
         })
     }
@@ -400,7 +401,7 @@ impl CallScopeLiveness {
 
 #[cfg(test)]
 mod tests {
-    use fabricator_vm::FunctionRef;
+    use fabricator_vm::{FunctionRef, Span};
 
     use crate::constant::Constant;
 
@@ -421,23 +422,28 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(scope),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(scope),
+                span: Span::null(),
+            }));
 
-        block_b.exit = ir::Exit::Jump(block_b_id);
+        block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars: Default::default(),
@@ -469,13 +475,19 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let true_ = instructions.insert(ir::Instruction::Constant(Constant::Boolean(true)));
+        let true_ = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Boolean(true)),
+            span: Span::null(),
+        });
         block_a.instructions.push(true_);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(scope),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Branch {
+        block_a.exit.kind = ir::ExitKind::Branch {
             cond: true_,
             if_false: block_b_id,
             if_true: block_a_id,
@@ -485,13 +497,15 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(scope),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars: Default::default(),
@@ -526,29 +540,40 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars: Default::default(),
@@ -583,36 +608,53 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
-        let this = instructions.insert(ir::Instruction::NewObject);
+        let this = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::NewObject,
+            span: Span::null(),
+        });
         block_a.instructions.push(this);
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::SetThis(outer_scope, this)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::SetThis(outer_scope, this),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars: Default::default(),
@@ -651,33 +693,47 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::NoOp));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::NoOp,
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(inner_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(inner_scope),
+                span: Span::null(),
+            }));
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseThisScope(outer_scope)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseThisScope(outer_scope),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars: Default::default(),

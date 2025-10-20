@@ -41,7 +41,7 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         let phi = phi.unwrap();
 
         let get_upsilon_source = |inst_id| {
-            if let ir::Instruction::Upsilon(_, source) = ir.instructions[inst_id] {
+            if let ir::InstructionKind::Upsilon(_, source) = ir.instructions[inst_id].kind {
                 source
             } else {
                 unreachable!();
@@ -58,9 +58,9 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         }
 
         if trivial {
-            ir.instructions[phi] = ir::Instruction::Copy(first_source);
+            ir.instructions[phi].kind = ir::InstructionKind::Copy(first_source);
             for &inst_id in &upsilons {
-                ir.instructions[inst_id] = ir::Instruction::NoOp;
+                ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
             }
         }
     }

@@ -6,7 +6,8 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
     // Map from copy instructions to their sources.
     let mut copies: HashMap<ir::InstId, ir::InstId> = HashMap::new();
 
-    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
+    let reachable_blocks =
+        topological_order(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
     // Since every instruction is in SSA form and every use must be dominated by a definition, it
     // should be enough to do this in one pass, as long as we iterate in topological order.
@@ -14,7 +15,7 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
         let block = &mut ir.blocks[block_id];
         for &inst_id in &block.instructions {
             let inst = &mut ir.instructions[inst_id];
-            if let &ir::Instruction::Copy(source) = &*inst {
+            if let &ir::InstructionKind::Copy(source) = &inst.kind {
                 // We do this from the top down, so for well-formed IR (sources dominate their
                 // use), any `Copy` instruction used as a source should have its real source in the
                 // `copies` map already. Therefore by induction this will always get the real source
@@ -31,17 +32,17 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
                 copies.insert(inst_id, real_source);
 
                 // We're removing every copy, so the existing copy instruction should be unused.
-                *inst = ir::Instruction::NoOp;
+                inst.kind = ir::InstructionKind::NoOp;
             }
 
-            for source in inst.sources_mut() {
+            for source in inst.kind.sources_mut() {
                 if let Some(&real_source) = copies.get(&*source) {
                     *source = real_source;
                 }
             }
         }
 
-        for source in block.exit.sources_mut() {
+        for source in block.exit.kind.sources_mut() {
             if let Some(&real_source) = copies.get(&*source) {
                 *source = real_source;
             }

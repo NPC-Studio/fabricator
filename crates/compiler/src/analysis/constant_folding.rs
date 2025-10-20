@@ -1,7 +1,8 @@
 use crate::{constant::Constant, graph::dfs::topological_order, ir};
 
 pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
-    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
+    let reachable_blocks =
+        topological_order(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
     // Since every instruction is in SSA form and in well-formed IR every use must be dominated by a
     // definition, iterating in topological order should fold everything possible in one pass.
@@ -10,7 +11,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 
         for &inst_id in &block.instructions {
             let get_constant = |inst_id| {
-                if let ir::Instruction::Constant(c) = &ir.instructions[inst_id] {
+                if let ir::InstructionKind::Constant(c) = &ir.instructions[inst_id].kind {
                     Some(c)
                 } else {
                     None
@@ -18,11 +19,12 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
             };
 
             let mut new_inst = None;
-            match ir.instructions[inst_id].clone() {
-                ir::Instruction::Copy(source) => {
-                    new_inst = get_constant(source).map(|c| ir::Instruction::Constant(c.clone()));
+            match ir.instructions[inst_id].kind.clone() {
+                ir::InstructionKind::Copy(source) => {
+                    new_inst =
+                        get_constant(source).map(|c| ir::InstructionKind::Constant(c.clone()));
                 }
-                ir::Instruction::UnOp { op, source } => {
+                ir::InstructionKind::UnOp { op, source } => {
                     if let Some(c) = get_constant(source) {
                         new_inst = match op {
                             ir::UnOp::IsDefined => Some(Constant::Boolean(!c.is_undefined())),
@@ -34,10 +36,10 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                             ir::UnOp::Increment => c.add(&Constant::Integer(1)),
                             ir::UnOp::Decrement => c.sub(&Constant::Integer(1)),
                         }
-                        .map(ir::Instruction::Constant);
+                        .map(ir::InstructionKind::Constant);
                     }
                 }
-                ir::Instruction::BinOp { left, op, right } => {
+                ir::InstructionKind::BinOp { left, op, right } => {
                     let left_const = get_constant(left);
                     let right_const = get_constant(right);
                     if let (Some(l), Some(r)) = (left_const, right_const) {
@@ -64,7 +66,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                             ir::BinOp::BitShiftRight => l.bit_shift_right(r).map(Constant::Integer),
                             ir::BinOp::NullCoalesce => Some(l.null_coalesce(r).clone()),
                         }
-                        .map(ir::Instruction::Constant);
+                        .map(ir::InstructionKind::Constant);
                     } else if let Some((un_op, source)) = match op {
                         ir::BinOp::Add => {
                             if right_const.and_then(Constant::to_integer) == Some(1) {
@@ -104,48 +106,48 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                         },
                         _ => None,
                     } {
-                        new_inst = Some(ir::Instruction::UnOp { op: un_op, source });
+                        new_inst = Some(ir::InstructionKind::UnOp { op: un_op, source });
                     } else if op == ir::BinOp::NullCoalesce {
                         if left_const.is_some_and(Constant::is_undefined) {
-                            new_inst = Some(ir::Instruction::Copy(right));
+                            new_inst = Some(ir::InstructionKind::Copy(right));
                         }
                     }
                 }
-                ir::Instruction::GetField { object, key } => {
+                ir::InstructionKind::GetField { object, key } => {
                     if let Some(key) = get_constant(key) {
-                        new_inst = Some(ir::Instruction::GetFieldConst {
+                        new_inst = Some(ir::InstructionKind::GetFieldConst {
                             object,
                             key: key.clone(),
                         })
                     }
                 }
-                ir::Instruction::SetField { object, key, value } => {
+                ir::InstructionKind::SetField { object, key, value } => {
                     if let Some(key) = get_constant(key) {
-                        new_inst = Some(ir::Instruction::SetFieldConst {
+                        new_inst = Some(ir::InstructionKind::SetFieldConst {
                             object,
                             key: key.clone(),
                             value,
                         })
                     }
                 }
-                ir::Instruction::GetIndex { array, indexes } => {
+                ir::InstructionKind::GetIndex { array, indexes } => {
                     if indexes.len() == 1 {
                         if let Some(index) = get_constant(indexes[0]) {
-                            new_inst = Some(ir::Instruction::GetIndexConst {
+                            new_inst = Some(ir::InstructionKind::GetIndexConst {
                                 array,
                                 index: index.clone(),
                             })
                         }
                     }
                 }
-                ir::Instruction::SetIndex {
+                ir::InstructionKind::SetIndex {
                     array,
                     indexes,
                     value,
                 } => {
                     if indexes.len() == 1 {
                         if let Some(index) = get_constant(indexes[0]) {
-                            new_inst = Some(ir::Instruction::SetIndexConst {
+                            new_inst = Some(ir::InstructionKind::SetIndexConst {
                                 array,
                                 index: index.clone(),
                                 value,
@@ -158,32 +160,32 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 
             if let Some(new_inst) = &mut new_inst {
                 match *new_inst {
-                    ir::Instruction::Constant(Constant::Undefined) => {
-                        *new_inst = ir::Instruction::Undefined;
+                    ir::InstructionKind::Constant(Constant::Undefined) => {
+                        *new_inst = ir::InstructionKind::Undefined;
                     }
-                    ir::Instruction::Boolean(b) => {
-                        *new_inst = ir::Instruction::Boolean(b);
+                    ir::InstructionKind::Boolean(b) => {
+                        *new_inst = ir::InstructionKind::Boolean(b);
                     }
                     _ => {}
                 }
             }
 
             if let Some(new_inst) = new_inst {
-                ir.instructions[inst_id] = new_inst;
+                ir.instructions[inst_id].kind = new_inst;
             }
         }
 
-        match block.exit {
-            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
-            ir::Exit::Jump(_) => {}
-            ir::Exit::Branch {
+        match block.exit.kind {
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) => {}
+            ir::ExitKind::Jump(_) => {}
+            ir::ExitKind::Branch {
                 cond,
                 if_false,
                 if_true,
             } => {
-                if let ir::Instruction::Constant(c) = ir.instructions[cond].clone() {
+                if let ir::InstructionKind::Constant(c) = ir.instructions[cond].kind.clone() {
                     let target = if c.to_bool() { if_true } else { if_false };
-                    block.exit = ir::Exit::Jump(target);
+                    block.exit.kind = ir::ExitKind::Jump(target);
                 }
             }
         }

@@ -5,7 +5,8 @@ use crate::{graph::predecessors::Predecessors, ir};
 /// Merge blocks where a block A unconditionally jumps to block B and A only has B as its single
 /// successor and block B only has A as its single predecessor.
 pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
-    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.successors());
+    let predecessors =
+        Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.kind.successors());
 
     let mut merge_next: HashMap<ir::BlockId, ir::BlockId> = HashMap::new();
     let mut merge_tails: HashSet<ir::BlockId> = HashSet::new();
@@ -20,18 +21,18 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
             }
         };
 
-        match block.exit {
-            ir::Exit::Jump(target) => {
+        match block.exit.kind {
+            ir::ExitKind::Jump(target) => {
                 merge(target);
             }
-            ir::Exit::Branch {
+            ir::ExitKind::Branch {
                 if_false, if_true, ..
             } => {
                 if if_false == if_true {
                     merge(if_false);
                 }
             }
-            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) => {}
         }
     }
 
@@ -69,11 +70,11 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
 /// Change block branch exits which jump to the same blocks into a jump exit.
 pub fn block_branch_to_jump<S>(ir: &mut ir::Function<S>) {
     for block in ir.blocks.values_mut() {
-        match block.exit {
-            ir::Exit::Branch {
+        match block.exit.kind {
+            ir::ExitKind::Branch {
                 if_false, if_true, ..
             } if if_false == if_true => {
-                block.exit = ir::Exit::Jump(if_false);
+                block.exit.kind = ir::ExitKind::Jump(if_false);
             }
             _ => {}
         }
@@ -86,7 +87,7 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
     let mut empty_block_redirects = HashMap::new();
     for (block_id, block) in ir.blocks.iter() {
         if block.instructions.is_empty() {
-            empty_block_redirects.insert(block_id, block.exit);
+            empty_block_redirects.insert(block_id, block.exit.kind);
         }
     }
 
@@ -103,7 +104,7 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
         while let Some(&empty_exit) = empty_block_redirects.get(&next_block) {
             empty_block_redirects.insert(block_id, empty_exit);
 
-            let ir::Exit::Jump(target) = empty_exit else {
+            let ir::ExitKind::Jump(target) = empty_exit else {
                 break;
             };
             next_block = target;
@@ -111,8 +112,8 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
             if !encountered_jump_targets.insert(next_block) {
                 // If we encounter a loop, then modify the first empty block's exit to be itself
                 // (the shortest infinite loop) and update the redirection map accordingly.
-                ir.blocks[block_id].exit = ir::Exit::Jump(block_id);
-                empty_block_redirects.insert(block_id, ir::Exit::Jump(block_id));
+                ir.blocks[block_id].exit.kind = ir::ExitKind::Jump(block_id);
+                empty_block_redirects.insert(block_id, ir::ExitKind::Jump(block_id));
                 break;
             }
         }
@@ -121,23 +122,23 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
     // Replace every block exit which jumps to an empty block with that block's (now furthest)
     // target.
     for block in ir.blocks.values_mut() {
-        match &mut block.exit {
-            &mut ir::Exit::Jump(target) => {
+        match &mut block.exit.kind {
+            &mut ir::ExitKind::Jump(target) => {
                 if let Some(&exit) = empty_block_redirects.get(&target) {
-                    block.exit = exit;
+                    block.exit.kind = exit;
                 }
             }
-            ir::Exit::Branch {
+            ir::ExitKind::Branch {
                 if_false, if_true, ..
             } => {
-                if let Some(&ir::Exit::Jump(target)) = empty_block_redirects.get(if_false) {
+                if let Some(&ir::ExitKind::Jump(target)) = empty_block_redirects.get(if_false) {
                     *if_false = target;
                 }
-                if let Some(&ir::Exit::Jump(target)) = empty_block_redirects.get(if_true) {
+                if let Some(&ir::ExitKind::Jump(target)) = empty_block_redirects.get(if_true) {
                     *if_true = target;
                 }
             }
-            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) => {}
         }
     }
 }

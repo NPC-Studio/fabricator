@@ -1,7 +1,7 @@
 use std::fmt;
 
 use arrayvec::ArrayVec;
-use fabricator_util::typed_id_map::{IdMap, SecondaryMap, new_id_type};
+use fabricator_util::typed_id_map::{IdMap, new_id_type};
 use fabricator_vm::{FunctionRef, Span};
 
 use crate::constant::Constant;
@@ -80,7 +80,7 @@ impl InstLocation {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum UnOp {
     IsDefined,
     IsUndefined,
@@ -92,7 +92,7 @@ pub enum UnOp {
     Decrement,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum BinOp {
     Add,
     Sub,
@@ -255,8 +255,8 @@ impl<S> Variable<S> {
 /// resource and the close instructions are meant to restore it. As long as scopes are strictly
 /// nested, then the state of the resource will be saved and restored in such a way that an outer
 /// scope should not be able to observe if an inner scope was opened and closed inside.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Instruction<S> {
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum InstructionKind<S> {
     NoOp,
     Copy(InstId),
     Undefined,
@@ -340,14 +340,14 @@ pub enum Instruction<S> {
     CloseCall(CallScope),
 }
 
-impl<S> Instruction<S> {
+impl<S> InstructionKind<S> {
     pub fn constants(&self) -> impl Iterator<Item = &Constant<S>> + '_ {
         match self {
-            Instruction::Constant(constant) => Some(constant),
-            Instruction::GetFieldConst { key, .. } => Some(key),
-            Instruction::SetFieldConst { key, .. } => Some(key),
-            Instruction::GetIndexConst { index, .. } => Some(index),
-            Instruction::SetIndexConst { index, .. } => Some(index),
+            InstructionKind::Constant(constant) => Some(constant),
+            InstructionKind::GetFieldConst { key, .. } => Some(key),
+            InstructionKind::SetFieldConst { key, .. } => Some(key),
+            InstructionKind::GetIndexConst { index, .. } => Some(index),
+            InstructionKind::SetIndexConst { index, .. } => Some(index),
             _ => None,
         }
         .into_iter()
@@ -367,27 +367,27 @@ impl<S> Instruction<S> {
         }
 
         match self {
-            &Instruction::Copy(source) => make_iter!([source]),
-            &Instruction::SetVariable(_, source) => make_iter!([source]),
-            &Instruction::SetMagic(_, source) => make_iter!([source]),
-            &Instruction::SetThis(_, this) => make_iter!([this]),
-            &Instruction::Argument(ind) => make_iter!([ind]),
-            &Instruction::GetField { object, key } => make_iter!([object, key]),
-            &Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
-            &Instruction::GetFieldConst { object, .. } => make_iter!([object]),
-            &Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
-            Instruction::GetIndex { array, indexes } => make_iter!([*array], indexes),
-            Instruction::SetIndex {
+            &InstructionKind::Copy(source) => make_iter!([source]),
+            &InstructionKind::SetVariable(_, source) => make_iter!([source]),
+            &InstructionKind::SetMagic(_, source) => make_iter!([source]),
+            &InstructionKind::SetThis(_, this) => make_iter!([this]),
+            &InstructionKind::Argument(ind) => make_iter!([ind]),
+            &InstructionKind::GetField { object, key } => make_iter!([object, key]),
+            &InstructionKind::SetField { object, key, value } => make_iter!([object, key, value]),
+            &InstructionKind::GetFieldConst { object, .. } => make_iter!([object]),
+            &InstructionKind::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            InstructionKind::GetIndex { array, indexes } => make_iter!([*array], indexes),
+            InstructionKind::SetIndex {
                 array,
                 indexes,
                 value,
             } => make_iter!([*array, *value], indexes),
-            &Instruction::GetIndexConst { array, .. } => make_iter!([array]),
-            &Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
-            &Instruction::Upsilon(_, source) => make_iter!([source]),
-            &Instruction::UnOp { source, .. } => make_iter!([source]),
-            &Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::OpenCall { func, args, .. } => {
+            &InstructionKind::GetIndexConst { array, .. } => make_iter!([array]),
+            &InstructionKind::SetIndexConst { array, value, .. } => make_iter!([array, value]),
+            &InstructionKind::Upsilon(_, source) => make_iter!([source]),
+            &InstructionKind::UnOp { source, .. } => make_iter!([source]),
+            &InstructionKind::BinOp { left, right, .. } => make_iter!([left, right]),
+            InstructionKind::OpenCall { func, args, .. } => {
                 make_iter!([*func], args)
             }
             _ => make_iter!([]),
@@ -408,27 +408,27 @@ impl<S> Instruction<S> {
         }
 
         match self {
-            Instruction::Copy(source) => make_iter!([source]),
-            Instruction::SetVariable(_, source) => make_iter!([source]),
-            Instruction::SetMagic(_, source) => make_iter!([source]),
-            Instruction::SetThis(_, this) => make_iter!([this]),
-            Instruction::Argument(ind) => make_iter!([ind]),
-            Instruction::GetField { object, key } => make_iter!([object, key]),
-            Instruction::SetField { object, key, value } => make_iter!([object, key, value]),
-            Instruction::GetFieldConst { object, .. } => make_iter!([object]),
-            Instruction::SetFieldConst { object, value, .. } => make_iter!([object, value]),
-            Instruction::GetIndex { array, indexes } => make_iter!([array], indexes),
-            Instruction::SetIndex {
+            InstructionKind::Copy(source) => make_iter!([source]),
+            InstructionKind::SetVariable(_, source) => make_iter!([source]),
+            InstructionKind::SetMagic(_, source) => make_iter!([source]),
+            InstructionKind::SetThis(_, this) => make_iter!([this]),
+            InstructionKind::Argument(ind) => make_iter!([ind]),
+            InstructionKind::GetField { object, key } => make_iter!([object, key]),
+            InstructionKind::SetField { object, key, value } => make_iter!([object, key, value]),
+            InstructionKind::GetFieldConst { object, .. } => make_iter!([object]),
+            InstructionKind::SetFieldConst { object, value, .. } => make_iter!([object, value]),
+            InstructionKind::GetIndex { array, indexes } => make_iter!([array], indexes),
+            InstructionKind::SetIndex {
                 array,
                 indexes,
                 value,
             } => make_iter!([array, value], indexes),
-            Instruction::GetIndexConst { array, .. } => make_iter!([array]),
-            Instruction::SetIndexConst { array, value, .. } => make_iter!([array, value]),
-            Instruction::Upsilon(_, source) => make_iter!([source]),
-            Instruction::UnOp { source, .. } => make_iter!([source]),
-            Instruction::BinOp { left, right, .. } => make_iter!([left, right]),
-            Instruction::OpenCall { func, args, .. } => {
+            InstructionKind::GetIndexConst { array, .. } => make_iter!([array]),
+            InstructionKind::SetIndexConst { array, value, .. } => make_iter!([array, value]),
+            InstructionKind::Upsilon(_, source) => make_iter!([source]),
+            InstructionKind::UnOp { source, .. } => make_iter!([source]),
+            InstructionKind::BinOp { left, right, .. } => make_iter!([left, right]),
+            InstructionKind::OpenCall { func, args, .. } => {
                 make_iter!([func], args)
             }
             _ => make_iter!([]),
@@ -437,65 +437,71 @@ impl<S> Instruction<S> {
 
     pub fn has_value(&self) -> bool {
         match self {
-            Instruction::Copy(..)
-            | Instruction::Undefined
-            | Instruction::Boolean(..)
-            | Instruction::Constant(..)
-            | Instruction::Closure { .. }
-            | Instruction::GetVariable(..)
-            | Instruction::GetMagic(..)
-            | Instruction::Globals
-            | Instruction::This
-            | Instruction::Other
-            | Instruction::CurrentClosure
-            | Instruction::NewObject
-            | Instruction::NewArray
-            | Instruction::FixedArgument(..)
-            | Instruction::ArgumentCount
-            | Instruction::Argument(..)
-            | Instruction::GetField { .. }
-            | Instruction::GetFieldConst { .. }
-            | Instruction::GetIndex { .. }
-            | Instruction::GetIndexConst { .. }
-            | Instruction::Phi(..)
-            | Instruction::UnOp { .. }
-            | Instruction::BinOp { .. }
-            | Instruction::FixedReturn(..) => true,
+            InstructionKind::Copy(..)
+            | InstructionKind::Undefined
+            | InstructionKind::Boolean(..)
+            | InstructionKind::Constant(..)
+            | InstructionKind::Closure { .. }
+            | InstructionKind::GetVariable(..)
+            | InstructionKind::GetMagic(..)
+            | InstructionKind::Globals
+            | InstructionKind::This
+            | InstructionKind::Other
+            | InstructionKind::CurrentClosure
+            | InstructionKind::NewObject
+            | InstructionKind::NewArray
+            | InstructionKind::FixedArgument(..)
+            | InstructionKind::ArgumentCount
+            | InstructionKind::Argument(..)
+            | InstructionKind::GetField { .. }
+            | InstructionKind::GetFieldConst { .. }
+            | InstructionKind::GetIndex { .. }
+            | InstructionKind::GetIndexConst { .. }
+            | InstructionKind::Phi(..)
+            | InstructionKind::UnOp { .. }
+            | InstructionKind::BinOp { .. }
+            | InstructionKind::FixedReturn(..) => true,
             _ => false,
         }
     }
 
     pub fn has_effect(&self) -> bool {
         match self {
-            Instruction::OpenVariable(..)
-            | Instruction::SetVariable { .. }
-            | Instruction::CloseVariable(..)
-            | Instruction::GetMagic(..)
-            | Instruction::SetMagic(..)
-            | Instruction::OpenThisScope(..)
-            | Instruction::SetThis(..)
-            | Instruction::CloseThisScope(..)
-            | Instruction::Argument(..)
-            | Instruction::GetField { .. }
-            | Instruction::SetField { .. }
-            | Instruction::GetFieldConst { .. }
-            | Instruction::SetFieldConst { .. }
-            | Instruction::GetIndex { .. }
-            | Instruction::SetIndex { .. }
-            | Instruction::GetIndexConst { .. }
-            | Instruction::SetIndexConst { .. }
-            | Instruction::Upsilon(..)
-            | Instruction::UnOp { .. }
-            | Instruction::BinOp { .. }
-            | Instruction::OpenCall { .. }
-            | Instruction::CloseCall(..) => true,
+            InstructionKind::OpenVariable(..)
+            | InstructionKind::SetVariable { .. }
+            | InstructionKind::CloseVariable(..)
+            | InstructionKind::GetMagic(..)
+            | InstructionKind::SetMagic(..)
+            | InstructionKind::OpenThisScope(..)
+            | InstructionKind::SetThis(..)
+            | InstructionKind::CloseThisScope(..)
+            | InstructionKind::Argument(..)
+            | InstructionKind::GetField { .. }
+            | InstructionKind::SetField { .. }
+            | InstructionKind::GetFieldConst { .. }
+            | InstructionKind::SetFieldConst { .. }
+            | InstructionKind::GetIndex { .. }
+            | InstructionKind::SetIndex { .. }
+            | InstructionKind::GetIndexConst { .. }
+            | InstructionKind::SetIndexConst { .. }
+            | InstructionKind::Upsilon(..)
+            | InstructionKind::UnOp { .. }
+            | InstructionKind::BinOp { .. }
+            | InstructionKind::OpenCall { .. }
+            | InstructionKind::CloseCall(..) => true,
             _ => false,
         }
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Instruction<S> {
+    pub kind: InstructionKind<S>,
+    pub span: Span,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Exit {
+pub enum ExitKind {
     Return {
         value: Option<InstId>,
     },
@@ -508,12 +514,12 @@ pub enum Exit {
     },
 }
 
-impl Exit {
+impl ExitKind {
     pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
         match self {
-            Exit::Throw(value) => Some(*value),
-            Exit::Return { value } => *value,
-            Exit::Branch { cond, .. } => Some(*cond),
+            ExitKind::Throw(value) => Some(*value),
+            ExitKind::Return { value } => *value,
+            ExitKind::Branch { cond, .. } => Some(*cond),
             _ => None,
         }
         .into_iter()
@@ -521,9 +527,9 @@ impl Exit {
 
     pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
         match self {
-            Exit::Throw(value) => Some(value),
-            Exit::Return { value } => value.as_mut(),
-            Exit::Branch { cond, .. } => Some(cond),
+            ExitKind::Throw(value) => Some(value),
+            ExitKind::Return { value } => value.as_mut(),
+            ExitKind::Branch { cond, .. } => Some(cond),
             _ => None,
         }
         .into_iter()
@@ -533,9 +539,9 @@ impl Exit {
         type Array = ArrayVec<BlockId, 2>;
 
         match self {
-            Exit::Return { .. } | Exit::Throw(_) => Array::from_iter([]),
-            &Exit::Jump(block_id) => Array::from_iter([block_id]),
-            &Exit::Branch {
+            ExitKind::Return { .. } | ExitKind::Throw(_) => Array::from_iter([]),
+            &ExitKind::Jump(block_id) => Array::from_iter([block_id]),
+            &ExitKind::Branch {
                 if_true, if_false, ..
             } => Array::from_iter([if_true, if_false]),
         }
@@ -545,10 +551,16 @@ impl Exit {
     /// Returns true if this exit has no successors because it exits the function.
     pub fn exits_function(&self) -> bool {
         match self {
-            Exit::Return { .. } | Exit::Throw(_) => true,
-            Exit::Jump(_) | Exit::Branch { .. } => false,
+            ExitKind::Return { .. } | ExitKind::Throw(_) => true,
+            ExitKind::Jump(_) | ExitKind::Branch { .. } => false,
         }
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Exit {
+    pub kind: ExitKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -561,13 +573,15 @@ impl Default for Block {
     fn default() -> Self {
         Self {
             instructions: Vec::new(),
-            exit: Exit::Return { value: None },
+            exit: Exit {
+                kind: ExitKind::Return { value: None },
+                span: Span::null(),
+            },
         }
     }
 }
 
 pub type InstructionMap<S> = IdMap<InstId, Instruction<S>>;
-pub type SpanMap = SecondaryMap<InstId, Span>;
 pub type BlockMap = IdMap<BlockId, Block>;
 pub type VariableMap<S> = IdMap<VarId, Variable<S>>;
 pub type ShadowVarSet = IdMap<ShadowVar, ()>;
@@ -581,7 +595,6 @@ pub struct Function<S> {
 
     pub reference: FunctionRef,
     pub instructions: InstructionMap<S>,
-    pub spans: SpanMap,
     pub blocks: BlockMap,
     pub variables: VariableMap<S>,
     pub shadow_vars: ShadowVarSet,
@@ -615,92 +628,92 @@ impl<S: AsRef<str>> Function<S> {
                 write_indent(f, 4)?;
                 write!(f, "I{}: ", inst_id.index())?;
 
-                match *inst {
-                    Instruction::NoOp => {
+                match inst.kind {
+                    InstructionKind::NoOp => {
                         writeln!(f, "no_op()")?;
                     }
-                    Instruction::Copy(source) => {
+                    InstructionKind::Copy(source) => {
                         writeln!(f, "copy({source})")?;
                     }
-                    Instruction::Undefined => {
+                    InstructionKind::Undefined => {
                         writeln!(f, "undefined()")?;
                     }
-                    Instruction::Boolean(b) => {
+                    InstructionKind::Boolean(b) => {
                         writeln!(f, "boolean({b})")?;
                     }
-                    Instruction::Constant(ref constant) => {
+                    InstructionKind::Constant(ref constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;
                     }
-                    Instruction::Closure { func, bind_this } => {
+                    InstructionKind::Closure { func, bind_this } => {
                         writeln!(f, "closure({func}, bind_this = {bind_this})")?;
                     }
-                    Instruction::OpenVariable(var) => {
+                    InstructionKind::OpenVariable(var) => {
                         writeln!(f, "open_var({var})")?;
                     }
-                    Instruction::GetVariable(var) => {
+                    InstructionKind::GetVariable(var) => {
                         writeln!(f, "get_var({var})")?;
                     }
-                    Instruction::SetVariable(var, source) => {
+                    InstructionKind::SetVariable(var, source) => {
                         writeln!(f, "set_var({var}, {source})")?;
                     }
-                    Instruction::CloseVariable(var) => {
+                    InstructionKind::CloseVariable(var) => {
                         writeln!(f, "close_var({var})")?;
                     }
-                    Instruction::GetMagic(ref magic) => {
+                    InstructionKind::GetMagic(ref magic) => {
                         writeln!(f, "get_magic({:?})", magic.as_ref())?;
                     }
-                    Instruction::SetMagic(ref magic, source) => {
+                    InstructionKind::SetMagic(ref magic, source) => {
                         writeln!(f, "set_magic({:?}, {source})", magic.as_ref())?;
                     }
-                    Instruction::Globals => {
+                    InstructionKind::Globals => {
                         writeln!(f, "globals()")?;
                     }
-                    Instruction::This => {
+                    InstructionKind::This => {
                         writeln!(f, "this()")?;
                     }
-                    Instruction::Other => {
+                    InstructionKind::Other => {
                         writeln!(f, "other()")?;
                     }
-                    Instruction::CurrentClosure => {
+                    InstructionKind::CurrentClosure => {
                         writeln!(f, "current_closure()")?;
                     }
-                    Instruction::OpenThisScope(scope) => {
+                    InstructionKind::OpenThisScope(scope) => {
                         writeln!(f, "open_this_scope({scope})")?;
                     }
-                    Instruction::SetThis(scope, this) => {
+                    InstructionKind::SetThis(scope, this) => {
                         writeln!(f, "set_this({scope}, this = {this})")?;
                     }
-                    Instruction::CloseThisScope(scope) => {
+                    InstructionKind::CloseThisScope(scope) => {
                         writeln!(f, "close_this_scope({scope})")?;
                     }
-                    Instruction::NewObject => {
+                    InstructionKind::NewObject => {
                         writeln!(f, "new_object()")?;
                     }
-                    Instruction::NewArray => {
+                    InstructionKind::NewArray => {
                         writeln!(f, "new_array()")?;
                     }
-                    Instruction::FixedArgument(ind) => {
+                    InstructionKind::FixedArgument(ind) => {
                         writeln!(f, "fixed_argument({ind})")?;
                     }
-                    Instruction::ArgumentCount => {
+                    InstructionKind::ArgumentCount => {
                         writeln!(f, "argument_count()")?;
                     }
-                    Instruction::Argument(ind) => {
+                    InstructionKind::Argument(ind) => {
                         writeln!(f, "argument({ind})")?;
                     }
-                    Instruction::GetField { object, key } => {
+                    InstructionKind::GetField { object, key } => {
                         writeln!(f, "get_field(object = {object}, key = {key})",)?;
                     }
-                    Instruction::SetField { object, key, value } => {
+                    InstructionKind::SetField { object, key, value } => {
                         writeln!(
                             f,
                             "set_field(object = {object}, key = {key}, value = {value})",
                         )?;
                     }
-                    Instruction::GetFieldConst { object, ref key } => {
+                    InstructionKind::GetFieldConst { object, ref key } => {
                         writeln!(f, "get_field(object = {object}, key = {:?})", key.as_str(),)?;
                     }
-                    Instruction::SetFieldConst {
+                    InstructionKind::SetFieldConst {
                         object,
                         ref key,
                         value,
@@ -711,7 +724,7 @@ impl<S: AsRef<str>> Function<S> {
                             key.as_str(),
                         )?;
                     }
-                    Instruction::GetIndex { array, ref indexes } => {
+                    InstructionKind::GetIndex { array, ref indexes } => {
                         write!(f, "get_index(array = {array}, indexes = [")?;
                         for (i, &ind) in indexes.iter().enumerate() {
                             if i != 0 {
@@ -721,7 +734,7 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         writeln!(f, "])")?;
                     }
-                    Instruction::SetIndex {
+                    InstructionKind::SetIndex {
                         array,
                         ref indexes,
                         value,
@@ -735,14 +748,14 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         writeln!(f, "])")?;
                     }
-                    Instruction::GetIndexConst { array, ref index } => {
+                    InstructionKind::GetIndexConst { array, ref index } => {
                         writeln!(
                             f,
                             "get_index(array = {array}, indexes = [{:?}])",
                             index.as_str(),
                         )?;
                     }
-                    Instruction::SetIndexConst {
+                    InstructionKind::SetIndexConst {
                         array,
                         ref index,
                         value,
@@ -753,11 +766,11 @@ impl<S: AsRef<str>> Function<S> {
                             index.as_str(),
                         )?;
                     }
-                    Instruction::Phi(shadow) => writeln!(f, "phi({shadow})")?,
-                    Instruction::Upsilon(shadow, source) => {
+                    InstructionKind::Phi(shadow) => writeln!(f, "phi({shadow})")?,
+                    InstructionKind::Upsilon(shadow, source) => {
                         writeln!(f, "upsilon({shadow}, {source})")?
                     }
-                    Instruction::UnOp { op, source } => match op {
+                    InstructionKind::UnOp { op, source } => match op {
                         UnOp::IsDefined => writeln!(f, "is_defined({source})")?,
                         UnOp::IsUndefined => writeln!(f, "is_undefined({source})")?,
                         UnOp::Test => writeln!(f, "into_bool({source})")?,
@@ -767,7 +780,7 @@ impl<S: AsRef<str>> Function<S> {
                         UnOp::Increment => writeln!(f, "increment({source})")?,
                         UnOp::Decrement => writeln!(f, "decrement({source})")?,
                     },
-                    Instruction::BinOp { left, op, right } => match op {
+                    InstructionKind::BinOp { left, op, right } => match op {
                         BinOp::Add => writeln!(f, "add({left}, {right})")?,
                         BinOp::Sub => writeln!(f, "sub({left}, {right})")?,
                         BinOp::Mult => writeln!(f, "mult({left}, {right})")?,
@@ -790,7 +803,7 @@ impl<S: AsRef<str>> Function<S> {
                         BinOp::BitShiftRight => writeln!(f, "bit_shift_right({left}, {right})")?,
                         BinOp::NullCoalesce => writeln!(f, "null_coalesce({left}, {right})")?,
                     },
-                    Instruction::OpenCall {
+                    InstructionKind::OpenCall {
                         scope,
                         func,
                         ref args,
@@ -804,18 +817,18 @@ impl<S: AsRef<str>> Function<S> {
                         }
                         writeln!(f, "])")?;
                     }
-                    Instruction::FixedReturn(scope, index) => {
+                    InstructionKind::FixedReturn(scope, index) => {
                         writeln!(f, "get_return({scope}, {})", index)?;
                     }
-                    Instruction::CloseCall(scope) => {
+                    InstructionKind::CloseCall(scope) => {
                         writeln!(f, "close_call({scope})")?;
                     }
                 }
             }
 
             write_indent(f, 4)?;
-            match block.exit {
-                Exit::Return { value } => match value {
+            match block.exit.kind {
+                ExitKind::Return { value } => match value {
                     Some(value) => {
                         writeln!(f, "return({value})")?;
                     }
@@ -823,13 +836,13 @@ impl<S: AsRef<str>> Function<S> {
                         writeln!(f, "return()")?;
                     }
                 },
-                Exit::Throw(value) => {
+                ExitKind::Throw(value) => {
                     writeln!(f, "throw({value})")?;
                 }
-                Exit::Jump(block_id) => {
+                ExitKind::Jump(block_id) => {
                     writeln!(f, "jump({})", block_id)?;
                 }
-                Exit::Branch {
+                ExitKind::Branch {
                     cond,
                     if_true,
                     if_false,

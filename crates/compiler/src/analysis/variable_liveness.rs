@@ -43,7 +43,8 @@ impl VariableLiveness {
     /// IR. Additionally verifies that all uses are within the live range and only owned variables
     /// are opened or closed.
     pub fn compute<S>(ir: &ir::Function<S>) -> Result<Self, VariableVerificationError> {
-        let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.successors());
+        let dominators =
+            Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
         let mut variables: SecondaryMap<ir::VarId, ()> = SecondaryMap::new();
         let mut variable_open: SecondaryMap<ir::VarId, ir::InstLocation> = SecondaryMap::new();
@@ -56,8 +57,8 @@ impl VariableLiveness {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst_loc = ir::InstLocation::new(block_id, inst_index);
 
-                match ir.instructions[inst_id] {
-                    ir::Instruction::OpenVariable(var_id) => {
+                match ir.instructions[inst_id].kind {
+                    ir::InstructionKind::OpenVariable(var_id) => {
                         variables.insert(var_id, ());
                         if variable_open.insert(var_id, inst_loc).is_some() {
                             return Err(VariableVerificationError {
@@ -66,12 +67,12 @@ impl VariableLiveness {
                             });
                         }
                     }
-                    ir::Instruction::GetVariable(var_id)
-                    | ir::Instruction::SetVariable(var_id, _) => {
+                    ir::InstructionKind::GetVariable(var_id)
+                    | ir::InstructionKind::SetVariable(var_id, _) => {
                         variables.insert(var_id, ());
                         variable_uses.get_or_insert_default(var_id).push(inst_loc);
                     }
-                    ir::Instruction::Closure { func, .. } => {
+                    ir::InstructionKind::Closure { func, .. } => {
                         for var in ir.functions[func].variables.values() {
                             // Creating a closure uses every upper variable that the closure closes
                             // over.
@@ -81,7 +82,7 @@ impl VariableLiveness {
                             }
                         }
                     }
-                    ir::Instruction::CloseVariable(var_id) => {
+                    ir::InstructionKind::CloseVariable(var_id) => {
                         variables.insert(var_id, ());
                         variable_closes.get_or_insert_default(var_id).push(inst_loc);
                     }
@@ -197,7 +198,7 @@ impl VariableLiveness {
 
 #[cfg(test)]
 mod tests {
-    use fabricator_vm::FunctionRef;
+    use fabricator_vm::{FunctionRef, Span};
 
     use crate::constant::Constant;
 
@@ -218,23 +219,28 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenVariable(var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenVariable(var),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseVariable(var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseVariable(var),
+                span: Span::null(),
+            }));
 
-        block_b.exit = ir::Exit::Jump(block_b_id);
+        block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables,
             shadow_vars: Default::default(),
@@ -266,13 +272,19 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let true_ = instructions.insert(ir::Instruction::Constant(Constant::Boolean(true)));
+        let true_ = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Boolean(true)),
+            span: Span::null(),
+        });
         block_a.instructions.push(true_);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::OpenVariable(var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenVariable(var),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Branch {
+        block_a.exit.kind = ir::ExitKind::Branch {
             cond: true_,
             if_false: block_b_id,
             if_true: block_a_id,
@@ -282,13 +294,15 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::CloseVariable(var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseVariable(var),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables,
             shadow_vars: Default::default(),

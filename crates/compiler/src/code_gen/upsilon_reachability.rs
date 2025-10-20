@@ -60,9 +60,13 @@ pub fn compute_upsilon_reachability<S>(
                     // In the case where there is also an overlapping outgoing range in the phi
                     // block that contains an `Upsilon` instruction, we start iterating on that
                     // block so it won't be skipped.
-                    ir.blocks[block_id].exit.successors().filter(|&block_id| {
-                        live_blocks.contains(&block_id) && block_id != phi_block
-                    })
+                    ir.blocks[block_id]
+                        .exit
+                        .kind
+                        .successors()
+                        .filter(|&block_id| {
+                            live_blocks.contains(&block_id) && block_id != phi_block
+                        })
                 },
                 |_| {},
             );
@@ -96,7 +100,7 @@ pub struct UpsilonReach {
 
 #[cfg(test)]
 mod tests {
-    use fabricator_vm::FunctionRef;
+    use fabricator_vm::{FunctionRef, Span};
 
     use crate::constant::Constant;
 
@@ -115,33 +119,47 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let one = instructions.insert(ir::Instruction::Constant(Constant::Integer(1)));
+        let one = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(1)),
+            span: Span::null(),
+        });
         block_a.instructions.push(one);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, one)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, one),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::Phi(shadow_var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Phi(shadow_var),
+                span: Span::null(),
+            }));
 
-        let two = instructions.insert(ir::Instruction::Constant(Constant::Integer(2)));
+        let two = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(2)),
+            span: Span::null(),
+        });
         block_b.instructions.push(two);
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, two)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, two),
+                span: Span::null(),
+            }));
 
-        block_b.exit = ir::Exit::Jump(block_b_id);
+        block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars,
@@ -184,27 +202,35 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let one = instructions.insert(ir::Instruction::Constant(Constant::Integer(1)));
+        let one = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(1)),
+            span: Span::null(),
+        });
         block_a.instructions.push(one);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::Upsilon(shadow_var, one)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, one),
+                span: Span::null(),
+            }));
 
-        block_a.exit = ir::Exit::Jump(block_b_id);
+        block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let block_b = &mut blocks[block_b_id];
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::Phi(shadow_var)));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Phi(shadow_var),
+                span: Span::null(),
+            }));
 
-        block_b.exit = ir::Exit::Jump(block_b_id);
+        block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let ir = ir::Function {
             num_parameters: 0,
             reference: FunctionRef::Chunk,
             instructions,
-            spans: Default::default(),
             blocks,
             variables: Default::default(),
             shadow_vars,

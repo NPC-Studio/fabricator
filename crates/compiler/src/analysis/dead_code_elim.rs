@@ -23,7 +23,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // Find all of the (forward) reachable blocks and number them according to a topological
     // ordering. We will use this to find back-edges.
 
-    let reachable_blocks = topological_order(ir.start_block, |b| ir.blocks[b].exit.successors());
+    let reachable_blocks =
+        topological_order(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
     let topological_ordering = reachable_blocks
         .iter()
         .copied()
@@ -55,6 +56,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     let predecessors = Predecessors::compute(ir.blocks.ids(), |b| {
         ir.blocks[b]
             .exit
+            .kind
             .successors()
             .filter(|&b| block_is_reachable(b))
     });
@@ -63,7 +65,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         .blocks
         .iter()
         .filter_map(|(block_id, block)| {
-            if block_is_reachable(block_id) && block.exit.exits_function() {
+            if block_is_reachable(block_id) && block.exit.kind.exits_function() {
                 Some(block_id)
             } else {
                 None
@@ -117,7 +119,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
 
     for &block_id in &reachable_blocks {
         let topological_number = topological_ordering[block_id.index() as usize];
-        let has_back_edge = ir.blocks[block_id].exit.successors().any(|successor| {
+        let has_back_edge = ir.blocks[block_id].exit.kind.successors().any(|successor| {
             topological_ordering[successor.index() as usize] <= topological_number
         });
 
@@ -161,9 +163,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     //    `Phi` is live.
     let mut upsilon_instructions: HashMap<ir::ShadowVar, Vec<ir::InstId>> = HashMap::new();
     for (inst_id, _) in inst_blocks.iter() {
-        let inst = &ir.instructions[inst_id];
-        match inst {
-            &ir::Instruction::Upsilon(shadow_var, source) => {
+        match &ir.instructions[inst_id].kind {
+            &ir::InstructionKind::Upsilon(shadow_var, source) => {
                 upsilon_instructions
                     .entry(shadow_var)
                     .or_default()
@@ -179,8 +180,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
 
     // Additionally, any parameter of `Exit::Return` or `Exit::Throw` is always live.
     for &block_id in &reachable_blocks {
-        match ir.blocks[block_id].exit {
-            ir::Exit::Return { value: Some(value) } | ir::Exit::Throw(value) => {
+        match ir.blocks[block_id].exit.kind {
+            ir::ExitKind::Return { value: Some(value) } | ir::ExitKind::Throw(value) => {
                 live_instructions.insert(value.index() as usize);
                 worklist.push(Work::Instruction(value));
             }
@@ -192,8 +193,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         let live_block;
         match work {
             Work::Instruction(inst_id) => {
-                match &ir.instructions[inst_id] {
-                    &ir::Instruction::Phi(shadow_var) => {
+                match &ir.instructions[inst_id].kind {
+                    &ir::InstructionKind::Phi(shadow_var) => {
                         for &inst_id in upsilon_instructions.get(&shadow_var).into_iter().flatten()
                         {
                             if live_instructions.insert(inst_id.index() as usize) {
@@ -216,8 +217,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                 // The `cond` parameter of `Exit::Branch` is only live if there is a live
                 // instruction that is control-flow dependent on this branch.
                 let block = &ir.blocks[block_id];
-                match block.exit {
-                    ir::Exit::Branch { cond, .. } => {
+                match block.exit.kind {
+                    ir::ExitKind::Branch { cond, .. } => {
                         if live_instructions.insert(cond.index() as usize) {
                             worklist.push(Work::Instruction(cond));
                         }
@@ -250,14 +251,15 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     for (block_id, block) in ir.blocks.iter_mut() {
         for &inst_id in &block.instructions {
             if !live_instructions.contains(inst_id.index() as usize) {
-                ir.instructions[inst_id] = ir::Instruction::NoOp;
+                // Any dead instruction can be replaced with a `NoOp`.
+                ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
             }
         }
 
-        match block.exit {
-            ir::Exit::Return { .. } | ir::Exit::Throw(_) => {}
-            ir::Exit::Jump(_) => {}
-            ir::Exit::Branch { if_false, .. } => {
+        match block.exit.kind {
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) => {}
+            ir::ExitKind::Jump(_) => {}
+            ir::ExitKind::Branch { if_false, .. } => {
                 if !live_branches.contains(block_id.index() as usize) {
                     // If this is not a branch that any live instruction is control-flow dependent
                     // on, then nothing in either successive branch is live (but there may be live
@@ -265,7 +267,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                     //
                     // In this case, it doesn't matter which branch we take, so just replace it with
                     // a jump to one of them.
-                    block.exit = ir::Exit::Jump(if_false);
+                    block.exit.kind = ir::ExitKind::Jump(if_false);
                 }
             }
         }

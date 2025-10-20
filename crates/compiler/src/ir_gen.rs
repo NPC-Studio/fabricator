@@ -345,7 +345,6 @@ where
         var_dict: &'a dyn VarDict<S>,
     ) -> Self {
         let instructions = ir::InstructionMap::new();
-        let spans = ir::SpanMap::new();
         let mut blocks = ir::BlockMap::new();
         let variables = ir::VariableMap::new();
         let shadow_vars = ir::ShadowVarSet::new();
@@ -360,13 +359,15 @@ where
         // O(n^2) in the number of variable declarations.
         let start_block = blocks.insert(ir::Block::default());
         let first_block = blocks.insert(ir::Block::default());
-        blocks[start_block].exit = ir::Exit::Jump(first_block);
+        blocks[start_block].exit = ir::Exit {
+            kind: ir::ExitKind::Jump(first_block),
+            span: reference.span().start_span(),
+        };
 
         let function = ir::Function {
             num_parameters: 0,
             reference,
             instructions,
-            spans,
             blocks,
             variables,
             shadow_vars,
@@ -399,12 +400,12 @@ where
             let arg_var = self.declare_var(param.name.clone(), ir::Variable::Owned.into())?;
 
             let mut value =
-                self.push_instruction(param.span, ir::Instruction::FixedArgument(param_index));
+                self.push_instruction(param.span, ir::InstructionKind::FixedArgument(param_index));
 
             if let Some(default) = &param.default {
                 let cond = self.push_instruction(
                     param.span,
-                    ir::Instruction::UnOp {
+                    ir::InstructionKind::UnOp {
                         op: ir::UnOp::IsUndefined,
                         source: value,
                     },
@@ -434,42 +435,54 @@ where
 
         let init_constructor_super_name = self.interner.intern(BuiltIns::INIT_CONSTRUCTOR_SUPER);
         let init_constructor_super = self.push_instruction(
-            body.span,
-            ir::Instruction::GetMagic(init_constructor_super_name),
+            body.span.start_span(),
+            ir::InstructionKind::GetMagic(init_constructor_super_name),
         );
 
         let get_constructor_super_name = self.interner.intern(BuiltIns::GET_CONSTRUCTOR_SUPER);
         let get_constructor_super = self.push_instruction(
-            body.span,
-            ir::Instruction::GetMagic(get_constructor_super_name),
+            body.span.start_span(),
+            ir::InstructionKind::GetMagic(get_constructor_super_name),
         );
 
         let set_super_name = self.interner.intern(BuiltIns::SET_SUPER);
-        let set_super = self.push_instruction(body.span, ir::Instruction::GetMagic(set_super_name));
+        let set_super = self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::GetMagic(set_super_name),
+        );
 
         // First, get this prototype's super object.
 
-        let our_closure = self.push_instruction(body.span, ir::Instruction::CurrentClosure);
+        let our_closure =
+            self.push_instruction(body.span.start_span(), ir::InstructionKind::CurrentClosure);
 
         let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
-            body.span,
-            ir::Instruction::OpenCall {
+            body.span.start_span(),
+            ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: init_constructor_super,
                 args: vec![our_closure],
             },
         );
 
-        let our_super =
-            self.push_instruction(body.span, ir::Instruction::FixedReturn(call_scope, 0));
-        self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+        let our_super = self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::FixedReturn(call_scope, 0),
+        );
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::CloseCall(call_scope),
+        );
 
         let our_super_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(body.span, ir::Instruction::OpenVariable(our_super_var));
         self.push_instruction(
-            body.span,
-            ir::Instruction::SetVariable(our_super_var, our_super),
+            body.span.start_span(),
+            ir::InstructionKind::OpenVariable(our_super_var),
+        );
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::SetVariable(our_super_var, our_super),
         );
 
         let inherit_func = if let Some(inherit) = inherit {
@@ -494,32 +507,37 @@ where
             let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
                 inherit.span,
-                ir::Instruction::OpenCall {
+                ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: inherit_func,
                     args,
                 },
             );
-            let ret =
-                self.push_instruction(inherit.span, ir::Instruction::FixedReturn(call_scope, 0));
-            self.push_instruction(inherit.span, ir::Instruction::CloseCall(call_scope));
+            let ret = self.push_instruction(
+                inherit.span,
+                ir::InstructionKind::FixedReturn(call_scope, 0),
+            );
+            self.push_instruction(inherit.span, ir::InstructionKind::CloseCall(call_scope));
             ret
         } else {
-            self.push_instruction(body.span, ir::Instruction::NewObject)
+            self.push_instruction(body.span.start_span(), ir::InstructionKind::NewObject)
         };
 
         // Set the super-table as the parent object for the `self` value.
 
         let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
-            body.span,
-            ir::Instruction::OpenCall {
+            body.span.start_span(),
+            ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: set_super,
                 args: vec![this, our_super],
             },
         );
-        self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::CloseCall(call_scope),
+        );
 
         // We must set this up early, because constructor statics may rely on each other, as long as
         // it is in-order.
@@ -539,14 +557,17 @@ where
             .insert(ir::Variable::Static(Constant::Boolean(false)));
 
         let check_initialized = self.push_instruction(
-            body.span,
-            ir::Instruction::GetVariable(our_super_is_initialized),
+            body.span.start_span(),
+            ir::InstructionKind::GetVariable(our_super_is_initialized),
         );
-        self.end_current_block(ir::Exit::Branch {
-            cond: check_initialized,
-            if_true: main_block,
-            if_false: init_block,
-        });
+        self.end_current_block(
+            body.span.start_span(),
+            ir::ExitKind::Branch {
+                cond: check_initialized,
+                if_true: main_block,
+                if_false: init_block,
+            },
+        );
 
         self.start_new_block(init_block);
 
@@ -557,33 +578,47 @@ where
 
             let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
-                body.span,
-                ir::Instruction::OpenCall {
+                body.span.start_span(),
+                ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: get_constructor_super,
                     args: vec![inherit_func.unwrap()],
                 },
             );
-            let inherited_super =
-                self.push_instruction(body.span, ir::Instruction::FixedReturn(call_scope, 0));
-            self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+            let inherited_super = self.push_instruction(
+                body.span.start_span(),
+                ir::InstructionKind::FixedReturn(call_scope, 0),
+            );
+            self.push_instruction(
+                body.span.start_span(),
+                ir::InstructionKind::CloseCall(call_scope),
+            );
 
             let call_scope = self.function.call_scopes.insert(());
             self.push_instruction(
-                body.span,
-                ir::Instruction::OpenCall {
+                body.span.start_span(),
+                ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: set_super,
                     args: vec![our_super, inherited_super],
                 },
             );
-            self.push_instruction(body.span, ir::Instruction::CloseCall(call_scope));
+            self.push_instruction(
+                body.span.start_span(),
+                ir::InstructionKind::CloseCall(call_scope),
+            );
         }
 
         // All static initializers have a "this" scope of the current super object
         let super_scope = self.function.this_scopes.insert(());
-        self.push_instruction(body.span, ir::Instruction::OpenThisScope(super_scope));
-        self.push_instruction(body.span, ir::Instruction::SetThis(super_scope, our_super));
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::OpenThisScope(super_scope),
+        );
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::SetThis(super_scope, our_super),
+        );
 
         // All function expressions within static initializers are *unbound*.
         self.push_closure_bind_mode(ClosureBindMode::BindNothing);
@@ -603,7 +638,9 @@ where
 
                         let key = self.push_instruction(
                             decls.span,
-                            ir::Instruction::Constant(Constant::String(decl_name.inner.clone())),
+                            ir::InstructionKind::Constant(Constant::String(
+                                decl_name.inner.clone(),
+                            )),
                         );
                         let value = self.expression(decl_value.as_ref().ok_or(IrGenError {
                             kind: IrGenErrorKind::ConstructorStaticNotInitialized,
@@ -612,7 +649,7 @@ where
 
                         self.push_instruction(
                             decls.span,
-                            ir::Instruction::SetField {
+                            ir::InstructionKind::SetField {
                                 object: our_super,
                                 key,
                                 value,
@@ -631,22 +668,32 @@ where
 
         self.pop_closure_bind_mode(ClosureBindMode::BindNothing);
 
-        self.push_instruction(body.span, ir::Instruction::CloseThisScope(super_scope));
-
-        let true_ = self.push_instruction(body.span, ir::Instruction::Boolean(true));
         self.push_instruction(
-            body.span,
-            ir::Instruction::SetVariable(our_super_is_initialized, true_),
+            body.span.start_span(),
+            ir::InstructionKind::CloseThisScope(super_scope),
         );
 
-        self.end_current_block(ir::Exit::Jump(main_block));
+        let true_ =
+            self.push_instruction(body.span.start_span(), ir::InstructionKind::Boolean(true));
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::SetVariable(our_super_is_initialized, true_),
+        );
+
+        self.end_current_block(body.span.start_span(), ir::ExitKind::Jump(main_block));
 
         self.start_new_block(main_block);
 
         // Our constructor body exists inside a "this" scope for the constructed object.
         let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(body.span, ir::Instruction::OpenThisScope(this_scope));
-        self.push_instruction(body.span, ir::Instruction::SetThis(this_scope, this));
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::OpenThisScope(this_scope),
+        );
+        self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::SetThis(this_scope, this),
+        );
 
         self.push_scope();
 
@@ -662,13 +709,19 @@ where
         }
 
         self.pop_scope();
-        self.end_current_block(ir::Exit::Return { value: Some(this) });
+        self.end_current_block(
+            body.span.end_span(),
+            ir::ExitKind::Return { value: Some(this) },
+        );
 
         Ok(self.finish())
     }
 
     fn finish(mut self) -> ir::Function<S> {
-        self.end_current_block(ir::Exit::Return { value: None });
+        self.end_current_block(
+            self.function.reference.span().end_span(),
+            ir::ExitKind::Return { value: None },
+        );
 
         assert!(self.break_target_stack.is_empty());
         assert!(self.continue_target_stack.is_empty());
@@ -719,14 +772,14 @@ where
                 let func_id = self.function.functions.insert(function);
                 let func = self.new_closure(func_stmt.span, func_id);
 
-                let this = self.push_instruction(func_stmt.span, ir::Instruction::This);
+                let this = self.push_instruction(func_stmt.span, ir::InstructionKind::This);
                 let key = self.push_instruction(
                     func_stmt.span,
-                    ir::Instruction::Constant(Constant::String(func_stmt.name.inner.clone())),
+                    ir::InstructionKind::Constant(Constant::String(func_stmt.name.inner.clone())),
                 );
                 self.push_instruction(
                     func_stmt.span,
-                    ir::Instruction::SetField {
+                    ir::InstructionKind::SetField {
                         object: this,
                         key,
                         value: func,
@@ -777,7 +830,7 @@ where
             ast::Statement::TryCatch(try_catch_stmt) => self.try_catch_stmt(try_catch_stmt),
             ast::Statement::Throw(throw_stmt) => {
                 let target = self.expression(&throw_stmt.target)?;
-                self.end_current_block(ir::Exit::Throw(target));
+                self.end_current_block(throw_stmt.span, ir::ExitKind::Throw(target));
                 Ok(())
             }
             ast::Statement::Call(function_call) => {
@@ -841,21 +894,27 @@ where
                 let successor = self.new_block();
 
                 let check_initialized =
-                    self.push_instruction(span, ir::Instruction::GetVariable(is_initialized));
-                self.end_current_block(ir::Exit::Branch {
-                    cond: check_initialized,
-                    if_true: successor,
-                    if_false: init_block,
-                });
+                    self.push_instruction(span, ir::InstructionKind::GetVariable(is_initialized));
+                self.end_current_block(
+                    span,
+                    ir::ExitKind::Branch {
+                        cond: check_initialized,
+                        if_true: successor,
+                        if_false: init_block,
+                    },
+                );
 
                 self.start_new_block(init_block);
 
                 let value = self.expression(value)?;
                 self.set_var(span, var, value);
-                let true_ = self.push_instruction(span, ir::Instruction::Boolean(true));
-                self.push_instruction(span, ir::Instruction::SetVariable(is_initialized, true_));
+                let true_ = self.push_instruction(span, ir::InstructionKind::Boolean(true));
+                self.push_instruction(
+                    span,
+                    ir::InstructionKind::SetVariable(is_initialized, true_),
+                );
 
-                self.end_current_block(ir::Exit::Jump(successor));
+                self.end_current_block(span, ir::ExitKind::Jump(successor));
 
                 self.start_new_block(successor);
             }
@@ -880,7 +939,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::Add,
                         right: val,
@@ -891,7 +950,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::Sub,
                         right: val,
@@ -902,7 +961,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::Mult,
                         right: val,
@@ -913,7 +972,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::Div,
                         right: val,
@@ -924,7 +983,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::Rem,
                         right: val,
@@ -935,7 +994,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::BitAnd,
                         right: val,
@@ -946,7 +1005,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::BitOr,
                         right: val,
@@ -957,7 +1016,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::BitXor,
                         right: val,
@@ -968,7 +1027,7 @@ where
                 let prev = self.read_mutable_target(assign_stmt.span, target.clone());
                 self.push_instruction(
                     assign_stmt.span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left: prev,
                         op: ir::BinOp::NullCoalesce,
                         right: val,
@@ -988,16 +1047,22 @@ where
         let else_block = self.new_block();
         let successor = self.new_block();
 
-        self.end_current_block(ir::Exit::Branch {
-            cond,
-            if_true: then_block,
-            if_false: else_block,
-        });
+        self.end_current_block(
+            if_statement.condition.span(),
+            ir::ExitKind::Branch {
+                cond,
+                if_true: then_block,
+                if_false: else_block,
+            },
+        );
 
         self.start_new_block(then_block);
         self.push_scope();
         self.statement(&if_statement.then_stmt)?;
-        self.end_current_block(ir::Exit::Jump(successor));
+        self.end_current_block(
+            if_statement.then_stmt.span().end_span(),
+            ir::ExitKind::Jump(successor),
+        );
         self.pop_scope();
 
         self.start_new_block(else_block);
@@ -1006,7 +1071,7 @@ where
             self.statement(else_stmt)?;
             self.pop_scope();
         }
-        self.end_current_block(ir::Exit::Jump(successor));
+        self.end_current_block(if_statement.span.end_span(), ir::ExitKind::Jump(successor));
 
         self.start_new_block(successor);
         Ok(())
@@ -1024,29 +1089,41 @@ where
         self.push_break_target(successor_block);
         self.push_continue_target(iter_block);
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(
+            for_statement.span.start_span(),
+            ir::ExitKind::Jump(cond_block),
+        );
         self.start_new_block(cond_block);
 
         let cond = self.expression(&for_statement.condition)?;
-        self.end_current_block(ir::Exit::Branch {
-            cond,
-            if_true: body_block,
-            if_false: successor_block,
-        });
+        self.end_current_block(
+            for_statement.condition.span(),
+            ir::ExitKind::Branch {
+                cond,
+                if_true: body_block,
+                if_false: successor_block,
+            },
+        );
 
         self.start_new_block(body_block);
         self.push_scope();
         self.statement(&for_statement.body)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(iter_block));
+        self.end_current_block(
+            for_statement.body.span().end_span(),
+            ir::ExitKind::Jump(iter_block),
+        );
         self.start_new_block(iter_block);
 
         self.push_scope();
         self.statement(&for_statement.iterator)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(
+            for_statement.iterator.span().end_span(),
+            ir::ExitKind::Jump(cond_block),
+        );
 
         self.start_new_block(successor_block);
 
@@ -1066,22 +1143,28 @@ where
         self.push_break_target(successor_block);
         self.push_continue_target(cond_block);
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(while_stmt.span.start_span(), ir::ExitKind::Jump(cond_block));
         self.start_new_block(cond_block);
 
         let cond = self.expression(&while_stmt.target)?;
-        self.end_current_block(ir::Exit::Branch {
-            cond,
-            if_true: body_block,
-            if_false: successor_block,
-        });
+        self.end_current_block(
+            while_stmt.target.span(),
+            ir::ExitKind::Branch {
+                cond,
+                if_true: body_block,
+                if_false: successor_block,
+            },
+        );
 
         self.start_new_block(body_block);
         self.push_scope();
         self.statement(&while_stmt.body)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(
+            while_stmt.body.span().end_span(),
+            ir::ExitKind::Jump(cond_block),
+        );
 
         self.start_new_block(successor_block);
 
@@ -1095,10 +1178,10 @@ where
         let times = self.expression(&repeat_stmt.target)?;
 
         let dec_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(repeat_stmt.span, ir::Instruction::OpenVariable(dec_var));
+        self.push_instruction(repeat_stmt.span, ir::InstructionKind::OpenVariable(dec_var));
         self.push_instruction(
             repeat_stmt.span,
-            ir::Instruction::SetVariable(dec_var, times),
+            ir::InstructionKind::SetVariable(dec_var, times),
         );
 
         let cond_block = self.new_block();
@@ -1108,39 +1191,55 @@ where
         self.push_break_target(successor_block);
         self.push_continue_target(cond_block);
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(
+            repeat_stmt.span.start_span(),
+            ir::ExitKind::Jump(cond_block),
+        );
         self.start_new_block(cond_block);
 
-        let prev = self.push_instruction(repeat_stmt.span, ir::Instruction::GetVariable(dec_var));
-        self.end_current_block(ir::Exit::Branch {
-            cond: prev,
-            if_true: body_block,
-            if_false: successor_block,
-        });
+        let prev =
+            self.push_instruction(repeat_stmt.span, ir::InstructionKind::GetVariable(dec_var));
+        self.end_current_block(
+            repeat_stmt.body.span().start_span(),
+            ir::ExitKind::Branch {
+                cond: prev,
+                if_true: body_block,
+                if_false: successor_block,
+            },
+        );
 
         self.start_new_block(body_block);
 
         let dec = self.push_instruction(
             repeat_stmt.span,
-            ir::Instruction::UnOp {
+            ir::InstructionKind::UnOp {
                 op: ir::UnOp::Decrement,
                 source: prev,
             },
         );
-        self.push_instruction(repeat_stmt.span, ir::Instruction::SetVariable(dec_var, dec));
+        self.push_instruction(
+            repeat_stmt.span,
+            ir::InstructionKind::SetVariable(dec_var, dec),
+        );
 
         self.push_scope();
         self.statement(&repeat_stmt.body)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(cond_block));
+        self.end_current_block(
+            repeat_stmt.body.span().end_span(),
+            ir::ExitKind::Jump(cond_block),
+        );
 
         self.start_new_block(successor_block);
 
         self.pop_continue_target(cond_block);
         self.pop_break_target(successor_block);
 
-        self.push_instruction(repeat_stmt.span, ir::Instruction::CloseVariable(dec_var));
+        self.push_instruction(
+            repeat_stmt.span,
+            ir::InstructionKind::CloseVariable(dec_var),
+        );
 
         Ok(())
     }
@@ -1158,7 +1257,7 @@ where
             let compare = self.expression(&case.compare)?;
             let is_equal = self.push_instruction(
                 case.span,
-                ir::Instruction::BinOp {
+                ir::InstructionKind::BinOp {
                     left: target,
                     op: ir::BinOp::Equal,
                     right: compare,
@@ -1167,11 +1266,14 @@ where
 
             let body_block = body_blocks[i];
             let next_block = self.new_block();
-            self.end_current_block(ir::Exit::Branch {
-                cond: is_equal,
-                if_true: body_block,
-                if_false: next_block,
-            });
+            self.end_current_block(
+                case.span,
+                ir::ExitKind::Branch {
+                    cond: is_equal,
+                    if_true: body_block,
+                    if_false: next_block,
+                },
+            );
 
             self.start_new_block(body_block);
             self.block(&case.body)?;
@@ -1181,9 +1283,12 @@ where
             //
             // Fall-through to the default case is handled by the jump to `next_block`.
             if i + 1 < body_blocks.len() {
-                self.end_current_block(ir::Exit::Jump(body_blocks[i + 1]));
+                self.end_current_block(
+                    case.body.span.end_span(),
+                    ir::ExitKind::Jump(body_blocks[i + 1]),
+                );
             } else {
-                self.end_current_block(ir::Exit::Jump(next_block));
+                self.end_current_block(case.body.span.end_span(), ir::ExitKind::Jump(next_block));
             }
 
             self.start_new_block(next_block);
@@ -1193,7 +1298,10 @@ where
             self.block(default)?;
         }
 
-        self.end_current_block(ir::Exit::Jump(successor_block));
+        self.end_current_block(
+            switch_stmt.span.end_span(),
+            ir::ExitKind::Jump(successor_block),
+        );
 
         self.start_new_block(successor_block);
         self.pop_break_target(successor_block);
@@ -1205,12 +1313,15 @@ where
         let target = self.expression(&with_stmt.target)?;
 
         let control_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(with_stmt.span, ir::Instruction::OpenVariable(control_var));
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::OpenVariable(control_var),
+        );
 
         let with_loop_iter_name = self.interner.intern(BuiltIns::WITH_LOOP_ITER);
         let with_loop_iter = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::GetMagic(with_loop_iter_name),
+            ir::InstructionKind::GetMagic(with_loop_iter_name),
         );
 
         // The iteration protocol is to call the iter init function and expect three returns: an
@@ -1229,7 +1340,7 @@ where
         let setup_call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::OpenCall {
+            ir::InstructionKind::OpenCall {
                 scope: setup_call_scope,
                 func: with_loop_iter,
                 args: vec![target],
@@ -1238,26 +1349,32 @@ where
 
         let iter_fn = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::FixedReturn(setup_call_scope, 0),
+            ir::InstructionKind::FixedReturn(setup_call_scope, 0),
         );
         let state = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::FixedReturn(setup_call_scope, 1),
+            ir::InstructionKind::FixedReturn(setup_call_scope, 1),
         );
         let init_control = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::FixedReturn(setup_call_scope, 2),
+            ir::InstructionKind::FixedReturn(setup_call_scope, 2),
         );
-
-        self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(setup_call_scope));
 
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::SetVariable(control_var, init_control),
+            ir::InstructionKind::CloseCall(setup_call_scope),
+        );
+
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::SetVariable(control_var, init_control),
         );
 
         let this_scope = self.function.this_scopes.insert(());
-        self.push_instruction(with_stmt.span, ir::Instruction::OpenThisScope(this_scope));
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::OpenThisScope(this_scope),
+        );
 
         let check_block = self.new_block();
         let body_block = self.new_block();
@@ -1266,16 +1383,21 @@ where
         self.push_continue_target(check_block);
         self.push_break_target(successor_block);
 
-        self.end_current_block(ir::Exit::Jump(check_block));
+        self.end_current_block(
+            with_stmt.body.span().start_span(),
+            ir::ExitKind::Jump(check_block),
+        );
         self.start_new_block(check_block);
 
-        let cur_control =
-            self.push_instruction(with_stmt.span, ir::Instruction::GetVariable(control_var));
+        let cur_control = self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::GetVariable(control_var),
+        );
 
         let iter_call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::OpenCall {
+            ir::InstructionKind::OpenCall {
                 scope: iter_call_scope,
                 func: iter_fn,
                 args: vec![state, cur_control],
@@ -1283,52 +1405,67 @@ where
         );
         let next_control = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::FixedReturn(iter_call_scope, 0),
+            ir::InstructionKind::FixedReturn(iter_call_scope, 0),
         );
         let iter_val = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::FixedReturn(iter_call_scope, 1),
+            ir::InstructionKind::FixedReturn(iter_call_scope, 1),
         );
-        self.push_instruction(with_stmt.span, ir::Instruction::CloseCall(iter_call_scope));
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::CloseCall(iter_call_scope),
+        );
 
         let control_is_undef = self.push_instruction(
             with_stmt.span,
-            ir::Instruction::UnOp {
+            ir::InstructionKind::UnOp {
                 op: ir::UnOp::IsUndefined,
                 source: next_control,
             },
         );
 
-        self.end_current_block(ir::Exit::Branch {
-            cond: control_is_undef,
-            if_true: successor_block,
-            if_false: body_block,
-        });
+        self.end_current_block(
+            with_stmt.target.span(),
+            ir::ExitKind::Branch {
+                cond: control_is_undef,
+                if_true: successor_block,
+                if_false: body_block,
+            },
+        );
         self.start_new_block(body_block);
 
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::SetVariable(control_var, next_control),
+            ir::InstructionKind::SetVariable(control_var, next_control),
         );
 
         self.push_instruction(
             with_stmt.span,
-            ir::Instruction::SetThis(this_scope, iter_val),
+            ir::InstructionKind::SetThis(this_scope, iter_val),
         );
 
         self.push_scope();
         self.statement(&with_stmt.body)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(successor_block));
+        self.end_current_block(
+            with_stmt.span.end_span(),
+            ir::ExitKind::Jump(successor_block),
+        );
 
         self.start_new_block(successor_block);
 
         self.pop_break_target(successor_block);
         self.pop_continue_target(check_block);
 
-        self.push_instruction(with_stmt.span, ir::Instruction::CloseThisScope(this_scope));
-        self.push_instruction(with_stmt.span, ir::Instruction::CloseVariable(control_var));
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::CloseThisScope(this_scope),
+        );
+        self.push_instruction(
+            with_stmt.span,
+            ir::InstructionKind::CloseVariable(control_var),
+        );
 
         Ok(())
     }
@@ -1349,10 +1486,13 @@ where
         let closure_span = try_catch_stmt.try_block.span();
 
         let pcall_name = self.interner.intern(BuiltIns::PCALL);
-        let pcall = self.push_instruction(closure_span, ir::Instruction::GetMagic(pcall_name));
+        let pcall = self.push_instruction(closure_span, ir::InstructionKind::GetMagic(pcall_name));
 
         let exit_code_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(closure_span, ir::Instruction::OpenVariable(exit_code_var));
+        self.push_instruction(
+            closure_span,
+            ir::InstructionKind::OpenVariable(exit_code_var),
+        );
 
         let allow_return_with_arg = match self.func_type {
             FunctionType::Normal => true,
@@ -1381,7 +1521,7 @@ where
 
         let inner_closure = self.push_instruction(
             closure_span,
-            ir::Instruction::Closure {
+            ir::InstructionKind::Closure {
                 func: func_id,
                 bind_this: true,
             },
@@ -1390,39 +1530,48 @@ where
         let call_scope = self.function.call_scopes.insert(());
         self.push_instruction(
             closure_span,
-            ir::Instruction::OpenCall {
+            ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: pcall,
                 args: vec![inner_closure],
             },
         );
-        let success =
-            self.push_instruction(closure_span, ir::Instruction::FixedReturn(call_scope, 0));
-        let ret_or_err =
-            self.push_instruction(closure_span, ir::Instruction::FixedReturn(call_scope, 1));
-        self.push_instruction(closure_span, ir::Instruction::CloseCall(call_scope));
+        let success = self.push_instruction(
+            closure_span,
+            ir::InstructionKind::FixedReturn(call_scope, 0),
+        );
+        let ret_or_err = self.push_instruction(
+            closure_span,
+            ir::InstructionKind::FixedReturn(call_scope, 1),
+        );
+        self.push_instruction(closure_span, ir::InstructionKind::CloseCall(call_scope));
 
         let success_block = self.new_block();
         let err_block = self.new_block();
 
-        self.end_current_block(ir::Exit::Branch {
-            cond: success,
-            if_true: success_block,
-            if_false: err_block,
-        });
+        self.end_current_block(
+            closure_span,
+            ir::ExitKind::Branch {
+                cond: success,
+                if_true: success_block,
+                if_false: err_block,
+            },
+        );
 
         self.start_new_block(success_block);
 
-        let exit_code =
-            self.push_instruction(closure_span, ir::Instruction::GetVariable(exit_code_var));
+        let exit_code = self.push_instruction(
+            closure_span,
+            ir::InstructionKind::GetVariable(exit_code_var),
+        );
 
         let return_code = self.push_instruction(
             closure_span,
-            ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
+            ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
         );
         let exit_code_is_return = self.push_instruction(
             closure_span,
-            ir::Instruction::BinOp {
+            ir::InstructionKind::BinOp {
                 left: exit_code,
                 op: ir::BinOp::Equal,
                 right: return_code,
@@ -1431,14 +1580,20 @@ where
 
         let do_return = self.new_block();
         let no_return = self.new_block();
-        self.end_current_block(ir::Exit::Branch {
-            cond: exit_code_is_return,
-            if_true: do_return,
-            if_false: no_return,
-        });
+        self.end_current_block(
+            closure_span,
+            ir::ExitKind::Branch {
+                cond: exit_code_is_return,
+                if_true: do_return,
+                if_false: no_return,
+            },
+        );
 
         self.start_new_block(do_return);
-        self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+        self.push_instruction(
+            closure_span,
+            ir::InstructionKind::CloseVariable(exit_code_var),
+        );
         if allow_return_with_arg {
             self.do_return(closure_span, Some(ret_or_err))?;
         } else {
@@ -1450,11 +1605,11 @@ where
         if allow_break {
             let break_code = self.push_instruction(
                 closure_span,
-                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
+                ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
             );
             let exit_code_is_break = self.push_instruction(
                 closure_span,
-                ir::Instruction::BinOp {
+                ir::InstructionKind::BinOp {
                     left: exit_code,
                     op: ir::BinOp::Equal,
                     right: break_code,
@@ -1463,14 +1618,20 @@ where
 
             let do_break = self.new_block();
             let no_break = self.new_block();
-            self.end_current_block(ir::Exit::Branch {
-                cond: exit_code_is_break,
-                if_true: do_break,
-                if_false: no_break,
-            });
+            self.end_current_block(
+                closure_span,
+                ir::ExitKind::Branch {
+                    cond: exit_code_is_break,
+                    if_true: do_break,
+                    if_false: no_break,
+                },
+            );
 
             self.start_new_block(do_break);
-            self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+            self.push_instruction(
+                closure_span,
+                ir::InstructionKind::CloseVariable(exit_code_var),
+            );
             self.do_break(closure_span)?;
 
             self.start_new_block(no_break);
@@ -1479,11 +1640,11 @@ where
         if allow_continue {
             let continue_code = self.push_instruction(
                 closure_span,
-                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
+                ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
             );
             let exit_code_is_continue = self.push_instruction(
                 closure_span,
-                ir::Instruction::BinOp {
+                ir::InstructionKind::BinOp {
                     left: exit_code,
                     op: ir::BinOp::Equal,
                     right: continue_code,
@@ -1492,21 +1653,30 @@ where
 
             let do_continue = self.new_block();
             let no_continue = self.new_block();
-            self.end_current_block(ir::Exit::Branch {
-                cond: exit_code_is_continue,
-                if_true: do_continue,
-                if_false: no_continue,
-            });
+            self.end_current_block(
+                closure_span,
+                ir::ExitKind::Branch {
+                    cond: exit_code_is_continue,
+                    if_true: do_continue,
+                    if_false: no_continue,
+                },
+            );
 
             self.start_new_block(do_continue);
-            self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+            self.push_instruction(
+                closure_span,
+                ir::InstructionKind::CloseVariable(exit_code_var),
+            );
             self.do_continue(closure_span)?;
 
             self.start_new_block(no_continue);
         }
 
         let successor_block = self.new_block();
-        self.end_current_block(ir::Exit::Jump(successor_block));
+        self.end_current_block(
+            try_catch_stmt.try_block.span().end_span(),
+            ir::ExitKind::Jump(successor_block),
+        );
 
         self.start_new_block(err_block);
         self.push_scope();
@@ -1517,10 +1687,16 @@ where
         self.statement(&try_catch_stmt.catch_block)?;
         self.pop_scope();
 
-        self.end_current_block(ir::Exit::Jump(successor_block));
+        self.end_current_block(
+            try_catch_stmt.catch_block.span().end_span(),
+            ir::ExitKind::Jump(successor_block),
+        );
 
         self.start_new_block(successor_block);
-        self.push_instruction(closure_span, ir::Instruction::CloseVariable(exit_code_var));
+        self.push_instruction(
+            closure_span,
+            ir::InstructionKind::CloseVariable(exit_code_var),
+        );
 
         Ok(())
     }
@@ -1528,7 +1704,7 @@ where
     fn do_return(&mut self, span: Span, value: Option<ir::InstId>) -> Result<(), IrGenError> {
         match self.func_type {
             FunctionType::Normal => {
-                self.end_current_block(ir::Exit::Return { value });
+                self.end_current_block(span, ir::ExitKind::Return { value });
             }
             FunctionType::Constructor { this, .. } => {
                 if value.is_some() {
@@ -1537,7 +1713,7 @@ where
                         span,
                     });
                 }
-                self.end_current_block(ir::Exit::Return { value: Some(this) });
+                self.end_current_block(span, ir::ExitKind::Return { value: Some(this) });
             }
             FunctionType::TryCatch {
                 exit_code,
@@ -1552,10 +1728,15 @@ where
                 }
                 let return_code = self.push_instruction(
                     span,
-                    ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
+                    ir::InstructionKind::Constant(Constant::Integer(
+                        TryCatchExitCode::Return as i64,
+                    )),
                 );
-                self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
-                self.end_current_block(ir::Exit::Return { value });
+                self.push_instruction(
+                    span,
+                    ir::InstructionKind::SetVariable(exit_code, return_code),
+                );
+                self.end_current_block(span, ir::ExitKind::Return { value });
             }
         }
         Ok(())
@@ -1563,7 +1744,7 @@ where
 
     fn do_break(&mut self, span: Span) -> Result<(), IrGenError> {
         if let Some(&jump) = self.break_target_stack.last() {
-            self.non_local_jump(jump)
+            self.non_local_jump(span, jump)
         } else if let FunctionType::TryCatch {
             allow_break,
             exit_code,
@@ -1573,10 +1754,13 @@ where
         {
             let return_code = self.push_instruction(
                 span,
-                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
+                ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
             );
-            self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
-            self.end_current_block(ir::Exit::Return { value: None });
+            self.push_instruction(
+                span,
+                ir::InstructionKind::SetVariable(exit_code, return_code),
+            );
+            self.end_current_block(span, ir::ExitKind::Return { value: None });
             Ok(())
         } else {
             Err(IrGenError {
@@ -1588,7 +1772,7 @@ where
 
     fn do_continue(&mut self, span: Span) -> Result<(), IrGenError> {
         if let Some(&jump) = self.continue_target_stack.last() {
-            self.non_local_jump(jump)
+            self.non_local_jump(span, jump)
         } else if let FunctionType::TryCatch {
             allow_continue,
             exit_code,
@@ -1598,10 +1782,13 @@ where
         {
             let return_code = self.push_instruction(
                 span,
-                ir::Instruction::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
+                ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
             );
-            self.push_instruction(span, ir::Instruction::SetVariable(exit_code, return_code));
-            self.end_current_block(ir::Exit::Return { value: None });
+            self.push_instruction(
+                span,
+                ir::InstructionKind::SetVariable(exit_code, return_code),
+            );
+            self.end_current_block(span, ir::ExitKind::Return { value: None });
             Ok(())
         } else {
             Err(IrGenError {
@@ -1611,42 +1798,46 @@ where
         }
     }
 
-    fn non_local_jump(&mut self, jump: NonLocalJump) -> Result<(), IrGenError> {
+    fn non_local_jump(&mut self, span: Span, jump: NonLocalJump) -> Result<(), IrGenError> {
         // We may be jumping to an outer scope which should cause variables declared in inner scopes
         // to close. Generate a cleanup block to close all of the variables between this scope and
         // the target scope.
         let cleanup_block = self.new_block();
-        self.end_current_block(ir::Exit::Jump(cleanup_block));
+        self.end_current_block(span, ir::ExitKind::Jump(cleanup_block));
         self.start_new_block(cleanup_block);
 
         for i in (jump.pop_vars_to + 1..self.scopes.len()).rev() {
             for &var_id in &self.scopes[i].to_close {
-                let inst_id = self
-                    .function
-                    .instructions
-                    .insert(ir::Instruction::CloseVariable(var_id));
+                let inst_id = self.function.instructions.insert(ir::Instruction {
+                    kind: ir::InstructionKind::CloseVariable(var_id),
+                    span,
+                });
                 self.function.blocks[cleanup_block]
                     .instructions
                     .push(inst_id);
             }
         }
 
-        self.end_current_block(ir::Exit::Jump(jump.target));
+        self.end_current_block(span, ir::ExitKind::Jump(jump.target));
         Ok(())
     }
 
     fn expression(&mut self, expr: &ast::Expression<S>) -> Result<ir::InstId, IrGenError> {
         Ok(match expr {
             ast::Expression::Constant(c, span) => {
-                self.push_instruction(*span, ir::Instruction::Constant(c.clone()))
+                self.push_instruction(*span, ir::InstructionKind::Constant(c.clone()))
             }
             ast::Expression::Ident(s) => self.ident_expr(s),
-            ast::Expression::Global(span) => self.push_instruction(*span, ir::Instruction::Globals),
-            ast::Expression::This(span) => self.push_instruction(*span, ir::Instruction::This),
-            ast::Expression::Other(span) => self.push_instruction(*span, ir::Instruction::Other),
+            ast::Expression::Global(span) => {
+                self.push_instruction(*span, ir::InstructionKind::Globals)
+            }
+            ast::Expression::This(span) => self.push_instruction(*span, ir::InstructionKind::This),
+            ast::Expression::Other(span) => {
+                self.push_instruction(*span, ir::InstructionKind::Other)
+            }
             ast::Expression::Group(expr) => self.expression(&expr.inner)?,
             ast::Expression::Object(fields) => {
-                let object = self.push_instruction(fields.span, ir::Instruction::NewObject);
+                let object = self.push_instruction(fields.span, ir::InstructionKind::NewObject);
 
                 for field in &fields.fields {
                     let field_span = field.span();
@@ -1659,7 +1850,7 @@ where
                             let value = self.expression(value)?;
                             self.push_instruction(
                                 field_span,
-                                ir::Instruction::SetFieldConst {
+                                ir::InstructionKind::SetFieldConst {
                                     object,
                                     key: Constant::String(name.inner.clone()),
                                     value,
@@ -1672,7 +1863,7 @@ where
                             let value = self.ident_expr(name);
                             self.push_instruction(
                                 field_span,
-                                ir::Instruction::SetFieldConst {
+                                ir::InstructionKind::SetFieldConst {
                                     object,
                                     key: Constant::String(name.inner.clone()),
                                     value,
@@ -1685,12 +1876,12 @@ where
                 object
             }
             ast::Expression::Array(array) => {
-                let array_inst = self.push_instruction(array.span, ir::Instruction::NewArray);
+                let array_inst = self.push_instruction(array.span, ir::InstructionKind::NewArray);
                 for (i, value) in array.entries.iter().enumerate() {
                     let value = self.expression(value)?;
                     self.push_instruction(
                         array.span,
-                        ir::Instruction::SetIndexConst {
+                        ir::InstructionKind::SetIndexConst {
                             array: array_inst,
                             index: Constant::Integer(i as i64),
                             value,
@@ -1700,7 +1891,7 @@ where
                 array_inst
             }
             ast::Expression::Unary(unary_expr) => {
-                let inst = ir::Instruction::UnOp {
+                let inst = ir::InstructionKind::UnOp {
                     op: match unary_expr.op {
                         ast::UnaryOp::Not => ir::UnOp::Not,
                         ast::UnaryOp::Minus => ir::UnOp::Negate,
@@ -1718,7 +1909,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Add,
                             right,
@@ -1730,7 +1921,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Sub,
                             right,
@@ -1742,7 +1933,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Mult,
                             right,
@@ -1754,7 +1945,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Div,
                             right,
@@ -1766,7 +1957,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Rem,
                             right,
@@ -1778,7 +1969,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::IDiv,
                             right,
@@ -1790,7 +1981,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Equal,
                             right,
@@ -1802,7 +1993,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::NotEqual,
                             right,
@@ -1814,7 +2005,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::LessThan,
                             right,
@@ -1826,7 +2017,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::LessEqual,
                             right,
@@ -1838,7 +2029,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::GreaterThan,
                             right,
@@ -1850,7 +2041,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::GreaterEqual,
                             right,
@@ -1868,7 +2059,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::Xor,
                             right,
@@ -1880,7 +2071,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::BitAnd,
                             right,
@@ -1892,7 +2083,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::BitOr,
                             right,
@@ -1904,7 +2095,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::BitXor,
                             right,
@@ -1916,7 +2107,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::BitShiftLeft,
                             right,
@@ -1928,7 +2119,7 @@ where
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
                         bin_expr.span,
-                        ir::Instruction::BinOp {
+                        ir::InstructionKind::BinOp {
                             left,
                             op: ir::BinOp::BitShiftRight,
                             right,
@@ -1977,11 +2168,11 @@ where
                 let base = self.expression(&field_expr.base)?;
                 let field = self.push_instruction(
                     field_expr.span,
-                    ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
+                    ir::InstructionKind::Constant(Constant::String(field_expr.field.inner.clone())),
                 );
                 self.push_instruction(
                     field_expr.span,
-                    ir::Instruction::GetField {
+                    ir::InstructionKind::GetField {
                         object: base,
                         key: field,
                     },
@@ -1995,7 +2186,7 @@ where
                 }
                 self.push_instruction(
                     index_expr.span,
-                    ir::Instruction::GetIndex {
+                    ir::InstructionKind::GetIndex {
                         array: base,
                         indexes,
                     },
@@ -2003,10 +2194,10 @@ where
             }
             ast::Expression::Argument(arg_expr) => {
                 let arg_index = self.expression(&arg_expr.arg_index)?;
-                self.push_instruction(arg_expr.span, ir::Instruction::Argument(arg_index))
+                self.push_instruction(arg_expr.span, ir::InstructionKind::Argument(arg_index))
             }
             ast::Expression::ArgumentCount(span) => {
-                self.push_instruction(*span, ir::Instruction::ArgumentCount)
+                self.push_instruction(*span, ir::InstructionKind::ArgumentCount)
             }
         })
     }
@@ -2026,10 +2217,12 @@ where
             let object = self.expression(&field_expr.base)?;
             let key = self.push_instruction(
                 call.span,
-                ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
+                ir::InstructionKind::Constant(Constant::String(field_expr.field.inner.clone())),
             );
-            let func =
-                self.push_instruction(call.base.span(), ir::Instruction::GetField { object, key });
+            let func = self.push_instruction(
+                call.base.span(),
+                ir::InstructionKind::GetField { object, key },
+            );
             CallType::Method { func, object }
         } else {
             CallType::Function(self.expression(&call.base)?)
@@ -2049,8 +2242,8 @@ where
 
         let this_scope = if let Some(this) = this {
             let this_scope = self.function.this_scopes.insert(());
-            self.push_instruction(call.span, ir::Instruction::OpenThisScope(this_scope));
-            self.push_instruction(call.span, ir::Instruction::SetThis(this_scope, this));
+            self.push_instruction(call.span, ir::InstructionKind::OpenThisScope(this_scope));
+            self.push_instruction(call.span, ir::InstructionKind::SetThis(this_scope, this));
             Some(this_scope)
         } else {
             None
@@ -2058,18 +2251,18 @@ where
 
         self.push_instruction(
             call.span,
-            ir::Instruction::OpenCall {
+            ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func,
                 args,
             },
         );
 
-        let ret = self.push_instruction(call.span, ir::Instruction::FixedReturn(call_scope, 0));
-        self.push_instruction(call.span, ir::Instruction::CloseCall(call_scope));
+        let ret = self.push_instruction(call.span, ir::InstructionKind::FixedReturn(call_scope, 0));
+        self.push_instruction(call.span, ir::InstructionKind::CloseCall(call_scope));
 
         if let Some(this_scope) = this_scope {
-            self.push_instruction(call.span, ir::Instruction::CloseThisScope(this_scope));
+            self.push_instruction(call.span, ir::InstructionKind::CloseThisScope(this_scope));
         }
 
         Ok(ret)
@@ -2083,31 +2276,37 @@ where
         if_false: impl FnOnce(&mut Self) -> Result<ir::InstId, IrGenError>,
     ) -> Result<ir::InstId, IrGenError> {
         let res_var = self.function.variables.insert(ir::Variable::Owned);
-        self.push_instruction(span, ir::Instruction::OpenVariable(res_var));
+        self.push_instruction(span, ir::InstructionKind::OpenVariable(res_var));
 
         let if_true_block = self.new_block();
         let if_false_block = self.new_block();
         let successor = self.new_block();
 
-        self.end_current_block(ir::Exit::Branch {
-            cond,
-            if_true: if_true_block,
-            if_false: if_false_block,
-        });
+        self.end_current_block(
+            span,
+            ir::ExitKind::Branch {
+                cond,
+                if_true: if_true_block,
+                if_false: if_false_block,
+            },
+        );
 
         self.start_new_block(if_true_block);
         let if_true_res = if_true(self)?;
-        self.push_instruction(span, ir::Instruction::SetVariable(res_var, if_true_res));
-        self.end_current_block(ir::Exit::Jump(successor));
+        self.push_instruction(span, ir::InstructionKind::SetVariable(res_var, if_true_res));
+        self.end_current_block(span, ir::ExitKind::Jump(successor));
 
         self.start_new_block(if_false_block);
         let if_false_res = if_false(self)?;
-        self.push_instruction(span, ir::Instruction::SetVariable(res_var, if_false_res));
-        self.end_current_block(ir::Exit::Jump(successor));
+        self.push_instruction(
+            span,
+            ir::InstructionKind::SetVariable(res_var, if_false_res),
+        );
+        self.end_current_block(span, ir::ExitKind::Jump(successor));
 
         self.start_new_block(successor);
-        let res = self.push_instruction(span, ir::Instruction::GetVariable(res_var));
-        self.push_instruction(span, ir::Instruction::CloseVariable(res_var));
+        let res = self.push_instruction(span, ir::InstructionKind::GetVariable(res_var));
+        self.push_instruction(span, ir::InstructionKind::CloseVariable(res_var));
 
         Ok(res)
     }
@@ -2118,32 +2317,34 @@ where
         } else {
             match self.var_dict.free_var_mode(ident) {
                 FreeVarMode::This => {
-                    let this = self.push_instruction(ident.span, ir::Instruction::This);
+                    let this = self.push_instruction(ident.span, ir::InstructionKind::This);
                     let key = self.push_instruction(
                         ident.span,
-                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                        ir::InstructionKind::Constant(Constant::String(ident.inner.clone())),
                     );
                     self.push_instruction(
                         ident.span,
-                        ir::Instruction::GetField { object: this, key },
+                        ir::InstructionKind::GetField { object: this, key },
                     )
                 }
                 FreeVarMode::GlobalVar => {
-                    let globals = self.push_instruction(ident.span, ir::Instruction::Globals);
+                    let globals = self.push_instruction(ident.span, ir::InstructionKind::Globals);
                     let key = self.push_instruction(
                         ident.span,
-                        ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                        ir::InstructionKind::Constant(Constant::String(ident.inner.clone())),
                     );
                     self.push_instruction(
                         ident.span,
-                        ir::Instruction::GetField {
+                        ir::InstructionKind::GetField {
                             object: globals,
                             key,
                         },
                     )
                 }
-                FreeVarMode::Magic { .. } => self
-                    .push_instruction(ident.span, ir::Instruction::GetMagic(ident.inner.clone())),
+                FreeVarMode::Magic { .. } => self.push_instruction(
+                    ident.span,
+                    ir::InstructionKind::GetMagic(ident.inner.clone()),
+                ),
             }
         }
     }
@@ -2162,14 +2363,14 @@ where
                 let right = this.expression(right)?;
                 Ok(this.push_instruction(
                     span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left,
                         op: ir::BinOp::And,
                         right,
                     },
                 ))
             },
-            |this| Ok(this.push_instruction(span, ir::Instruction::Boolean(false))),
+            |this| Ok(this.push_instruction(span, ir::InstructionKind::Boolean(false))),
         )
     }
 
@@ -2183,12 +2384,12 @@ where
         self.if_expr(
             span,
             left,
-            |this| Ok(this.push_instruction(span, ir::Instruction::Boolean(true))),
+            |this| Ok(this.push_instruction(span, ir::InstructionKind::Boolean(true))),
             |this| {
                 let right = this.expression(right)?;
                 Ok(this.push_instruction(
                     span,
-                    ir::Instruction::BinOp {
+                    ir::InstructionKind::BinOp {
                         left,
                         op: ir::BinOp::Or,
                         right,
@@ -2207,7 +2408,7 @@ where
         let left = self.expression(left)?;
         let cond = self.push_instruction(
             span,
-            ir::Instruction::UnOp {
+            ir::InstructionKind::UnOp {
                 op: ir::UnOp::IsUndefined,
                 source: left,
             },
@@ -2228,7 +2429,8 @@ where
             ast::MutationOp::Increment => ir::UnOp::Increment,
             ast::MutationOp::Decrement => ir::UnOp::Decrement,
         };
-        let new = self.push_instruction(mutation.span, ir::Instruction::UnOp { op, source: old });
+        let new =
+            self.push_instruction(mutation.span, ir::InstructionKind::UnOp { op, source: old });
         self.write_mutable_target(mutation.span, target, new);
         Ok((old, new))
     }
@@ -2246,14 +2448,18 @@ where
                         FreeVarMode::This => {
                             let key = self.push_instruction(
                                 target.span(),
-                                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                                ir::InstructionKind::Constant(Constant::String(
+                                    ident.inner.clone(),
+                                )),
                             );
                             MutableTarget::This { key }
                         }
                         FreeVarMode::GlobalVar => {
                             let key = self.push_instruction(
                                 target.span(),
-                                ir::Instruction::Constant(Constant::String(ident.inner.clone())),
+                                ir::InstructionKind::Constant(Constant::String(
+                                    ident.inner.clone(),
+                                )),
                             );
                             MutableTarget::Globals { key }
                         }
@@ -2274,7 +2480,7 @@ where
                 let object = self.expression(&field_expr.base)?;
                 let key = self.push_instruction(
                     target.span(),
-                    ir::Instruction::Constant(Constant::String(field_expr.field.inner.clone())),
+                    ir::InstructionKind::Constant(Constant::String(field_expr.field.inner.clone())),
                 );
                 MutableTarget::Field { object, key }
             }
@@ -2293,27 +2499,27 @@ where
         match target {
             MutableTarget::Var(var) => self.get_var(span, var),
             MutableTarget::This { key } => {
-                let this = self.push_instruction(span, ir::Instruction::This);
-                self.push_instruction(span, ir::Instruction::GetField { object: this, key })
+                let this = self.push_instruction(span, ir::InstructionKind::This);
+                self.push_instruction(span, ir::InstructionKind::GetField { object: this, key })
             }
             MutableTarget::Globals { key } => {
-                let globals = self.push_instruction(span, ir::Instruction::Globals);
+                let globals = self.push_instruction(span, ir::InstructionKind::Globals);
                 self.push_instruction(
                     span,
-                    ir::Instruction::GetField {
+                    ir::InstructionKind::GetField {
                         object: globals,
                         key,
                     },
                 )
             }
             MutableTarget::Field { object, key } => {
-                self.push_instruction(span, ir::Instruction::GetField { object, key })
+                self.push_instruction(span, ir::InstructionKind::GetField { object, key })
             }
             MutableTarget::Index { array, indexes } => {
-                self.push_instruction(span, ir::Instruction::GetIndex { array, indexes })
+                self.push_instruction(span, ir::InstructionKind::GetIndex { array, indexes })
             }
             MutableTarget::Magic(name) => {
-                self.push_instruction(span, ir::Instruction::GetMagic(name))
+                self.push_instruction(span, ir::InstructionKind::GetMagic(name))
             }
         }
     }
@@ -2324,10 +2530,10 @@ where
                 self.set_var(span, var, value);
             }
             MutableTarget::This { key } => {
-                let this = self.push_instruction(span, ir::Instruction::This);
+                let this = self.push_instruction(span, ir::InstructionKind::This);
                 self.push_instruction(
                     span,
-                    ir::Instruction::SetField {
+                    ir::InstructionKind::SetField {
                         object: this,
                         key,
                         value,
@@ -2335,10 +2541,10 @@ where
                 );
             }
             MutableTarget::Globals { key } => {
-                let globals = self.push_instruction(span, ir::Instruction::Globals);
+                let globals = self.push_instruction(span, ir::InstructionKind::Globals);
                 self.push_instruction(
                     span,
-                    ir::Instruction::SetField {
+                    ir::InstructionKind::SetField {
                         object: globals,
                         key,
                         value,
@@ -2346,12 +2552,12 @@ where
                 );
             }
             MutableTarget::Field { object, key } => {
-                self.push_instruction(span, ir::Instruction::SetField { object, key, value });
+                self.push_instruction(span, ir::InstructionKind::SetField { object, key, value });
             }
             MutableTarget::Index { array, indexes } => {
                 self.push_instruction(
                     span,
-                    ir::Instruction::SetIndex {
+                    ir::InstructionKind::SetIndex {
                         array,
                         indexes,
                         value,
@@ -2359,7 +2565,7 @@ where
                 );
             }
             MutableTarget::Magic(magic) => {
-                self.push_instruction(span, ir::Instruction::SetMagic(magic, value));
+                self.push_instruction(span, ir::InstructionKind::SetMagic(magic, value));
             }
         }
     }
@@ -2433,7 +2639,7 @@ where
             if let Some(popped_scope) = self.scopes.pop() {
                 // Close every variable in the popped scope.
                 for var_id in popped_scope.to_close {
-                    self.push_instruction(Span::null(), ir::Instruction::CloseVariable(var_id));
+                    self.push_instruction(Span::null(), ir::InstructionKind::CloseVariable(var_id));
                 }
 
                 // Remove visible variables in the popped scope from the var lookup map.
@@ -2536,7 +2742,10 @@ where
                         // Since we're using block scoping, we need to close this variable when the
                         // scope ends.
                         top_scope.to_close.push(var_id);
-                        self.push_instruction(Span::null(), ir::Instruction::OpenVariable(var_id));
+                        self.push_instruction(
+                            vname.span,
+                            ir::InstructionKind::OpenVariable(var_id),
+                        );
                     } else {
                         // If we're not using block scoping, just open every variable at the very
                         // start of the function. This keeps the IR well-formed even with no block
@@ -2544,10 +2753,10 @@ where
                         //
                         // We push this instruction to `start_block`, which is kept otherwise empty
                         // for this purpose.
-                        let inst_id = self
-                            .function
-                            .instructions
-                            .insert(ir::Instruction::OpenVariable(var_id));
+                        let inst_id = self.function.instructions.insert(ir::Instruction {
+                            kind: ir::InstructionKind::OpenVariable(var_id),
+                            span: vname.span,
+                        });
                         self.function.blocks[self.function.start_block]
                             .instructions
                             .push(inst_id);
@@ -2592,7 +2801,7 @@ where
     fn get_var(&mut self, span: Span, var: VarDecl<S>) -> ir::InstId {
         match var {
             VarDecl::Normal(var_id) => {
-                self.push_instruction(span, ir::Instruction::GetVariable(var_id))
+                self.push_instruction(span, ir::InstructionKind::GetVariable(var_id))
             }
             VarDecl::ConstructorStatic(field) => {
                 let FunctionType::Constructor { parent, .. } = self.func_type else {
@@ -2601,17 +2810,17 @@ where
 
                 self.push_instruction(
                     span,
-                    ir::Instruction::GetFieldConst {
+                    ir::InstructionKind::GetFieldConst {
                         object: parent,
                         key: Constant::String(field.clone()),
                     },
                 )
             }
             VarDecl::UpperConstructorStatic { parent, field } => {
-                let parent = self.push_instruction(span, ir::Instruction::GetVariable(parent));
+                let parent = self.push_instruction(span, ir::InstructionKind::GetVariable(parent));
                 self.push_instruction(
                     span,
-                    ir::Instruction::GetFieldConst {
+                    ir::InstructionKind::GetFieldConst {
                         object: parent,
                         key: Constant::String(field.clone()),
                     },
@@ -2623,7 +2832,7 @@ where
     fn set_var(&mut self, span: Span, var: VarDecl<S>, value: ir::InstId) {
         match var {
             VarDecl::Normal(var_id) => {
-                self.push_instruction(span, ir::Instruction::SetVariable(var_id, value));
+                self.push_instruction(span, ir::InstructionKind::SetVariable(var_id, value));
             }
             VarDecl::ConstructorStatic(field) => {
                 let FunctionType::Constructor { parent, .. } = self.func_type else {
@@ -2632,7 +2841,7 @@ where
 
                 self.push_instruction(
                     span,
-                    ir::Instruction::SetFieldConst {
+                    ir::InstructionKind::SetFieldConst {
                         object: parent,
                         key: Constant::String(field),
                         value,
@@ -2640,10 +2849,10 @@ where
                 );
             }
             VarDecl::UpperConstructorStatic { parent, field } => {
-                let parent = self.push_instruction(span, ir::Instruction::GetVariable(parent));
+                let parent = self.push_instruction(span, ir::InstructionKind::GetVariable(parent));
                 self.push_instruction(
                     span,
-                    ir::Instruction::SetFieldConst {
+                    ir::InstructionKind::SetFieldConst {
                         object: parent,
                         key: Constant::String(field),
                         value,
@@ -2658,9 +2867,9 @@ where
     }
 
     /// If there is a current block, finishes it with the given `Exit`.
-    fn end_current_block(&mut self, exit: ir::Exit) {
+    fn end_current_block(&mut self, span: Span, kind: ir::ExitKind) {
         if let Some(current_block) = self.current_block {
-            self.function.blocks[current_block].exit = exit;
+            self.function.blocks[current_block].exit = ir::Exit { kind, span };
             self.current_block = None;
         }
     }
@@ -2729,28 +2938,28 @@ where
         {
             ClosureBindMode::BindDefault => self.push_instruction(
                 span,
-                ir::Instruction::Closure {
+                ir::InstructionKind::Closure {
                     func: func_id,
                     bind_this: true,
                 },
             ),
             ClosureBindMode::BindNewThis(this) => {
                 let this_scope = self.function.this_scopes.insert(());
-                self.push_instruction(span, ir::Instruction::OpenThisScope(this_scope));
-                self.push_instruction(span, ir::Instruction::SetThis(this_scope, this));
+                self.push_instruction(span, ir::InstructionKind::OpenThisScope(this_scope));
+                self.push_instruction(span, ir::InstructionKind::SetThis(this_scope, this));
                 let closure = self.push_instruction(
                     span,
-                    ir::Instruction::Closure {
+                    ir::InstructionKind::Closure {
                         func: func_id,
                         bind_this: true,
                     },
                 );
-                self.push_instruction(span, ir::Instruction::CloseThisScope(this_scope));
+                self.push_instruction(span, ir::InstructionKind::CloseThisScope(this_scope));
                 closure
             }
             ClosureBindMode::BindNothing => self.push_instruction(
                 span,
-                ir::Instruction::Closure {
+                ir::InstructionKind::Closure {
                     func: func_id,
                     bind_this: false,
                 },
@@ -2758,7 +2967,7 @@ where
         }
     }
 
-    fn push_instruction(&mut self, span: Span, inst: ir::Instruction<S>) -> ir::InstId {
+    fn push_instruction(&mut self, span: Span, kind: ir::InstructionKind<S>) -> ir::InstId {
         let current_block = if let Some(current) = self.current_block {
             current
         } else {
@@ -2771,13 +2980,13 @@ where
             dead_block
         };
 
-        let inst_id = self.function.instructions.insert(inst);
+        let inst_id = self
+            .function
+            .instructions
+            .insert(ir::Instruction { kind, span });
         self.function.blocks[current_block]
             .instructions
             .push(inst_id);
-        if !span.is_null() {
-            self.function.spans.insert(inst_id, span);
-        }
         inst_id
     }
 }
