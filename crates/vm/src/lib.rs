@@ -33,8 +33,8 @@ pub use self::{
     registry::{Registry, Singleton},
     stack::Stack,
     stash::{
-        Fetchable, Stashable, StashedClosure, StashedMagicSet, StashedObject, StashedPrototype,
-        StashedThread, StashedUserData, StashedUserDataMethods,
+        Fetchable, Stashable, StashedCallback, StashedClosure, StashedFunction, StashedMagicSet,
+        StashedObject, StashedPrototype, StashedThread, StashedUserData, StashedUserDataMethods,
     },
     string::{InternedStrings, SharedStr, String, StringMap},
     thread::{BacktraceFrame, Execution, ExternVmError, OpError, Thread, VmError},
