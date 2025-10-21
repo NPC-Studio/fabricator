@@ -3,11 +3,13 @@ use core::fmt;
 use gc_arena::{DynamicRoot, DynamicRootSet, Gc, Mutation, Rootable};
 
 use crate::{
+    callback::{Callback, CallbackInner},
     closure::{Closure, ClosureInner, Prototype},
     magic::MagicSet,
     object::{Object, ObjectInner},
     thread::{Thread, ThreadInner},
     user_data::{UserData, UserDataInner, UserDataMethods},
+    value::Function,
 };
 
 /// A trait for types that can be stashed into a [`DynamicRootSet`].
@@ -78,6 +80,61 @@ impl Fetchable for StashedClosure {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
         Closure::from_inner(roots.fetch(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct StashedCallback(DynamicRoot<Rootable![CallbackInner<'_>]>);
+
+impl fmt::Debug for StashedCallback {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StashedCallback")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+impl<'gc> Stashable<'gc> for Callback<'gc> {
+    type Stashed = StashedCallback;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedCallback(roots.stash::<Rootable![CallbackInner<'_>]>(mc, self.into_inner()))
+    }
+}
+
+impl Fetchable for StashedCallback {
+    type Fetched<'gc> = Callback<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        Callback::from_inner(roots.fetch(&self.0))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StashedFunction {
+    Closure(StashedClosure),
+    Callback(StashedCallback),
+}
+
+impl<'gc> Stashable<'gc> for Function<'gc> {
+    type Stashed = StashedFunction;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        match self {
+            Function::Closure(closure) => StashedFunction::Closure(closure.stash(mc, roots)),
+            Function::Callback(callback) => StashedFunction::Callback(callback.stash(mc, roots)),
+        }
+    }
+}
+
+impl Fetchable for StashedFunction {
+    type Fetched<'gc> = Function<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        match self {
+            StashedFunction::Closure(closure) => Function::Closure(closure.fetch(roots)),
+            StashedFunction::Callback(callback) => Function::Callback(callback.fetch(roots)),
+        }
     }
 }
 
