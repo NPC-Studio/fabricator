@@ -4,7 +4,7 @@ mod thread;
 pub use self::{
     dispatch::OpError,
     thread::{
-        BacktraceFrame, ClosureBacktraceFrame, Execution, ExternBacktraceFrame,
-        ExternClosureBacktraceFrame, ExternVmError, Thread, ThreadInner, ThreadState, VmError,
+        BacktraceFrame, CallError, ClosureBacktraceFrame, Execution, ExternBacktraceFrame,
+        ExternClosureBacktraceFrame, Thread, ThreadInner, ThreadState, VmError,
     },
 };

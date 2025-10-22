@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
 
@@ -15,10 +15,10 @@ use crate::{
     value::{Function, Value},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VmError<'gc> {
     pub error: Error<'gc>,
-    pub backtrace: Vec<BacktraceFrame<'gc>>,
+    pub backtrace: Arc<[BacktraceFrame<'gc>]>,
 }
 
 impl<'gc> fmt::Display for VmError<'gc> {
@@ -46,65 +46,50 @@ impl<'gc> fmt::Display for VmError<'gc> {
     }
 }
 
-impl<'gc> VmError<'gc> {
-    pub fn into_extern(self) -> ExternVmError {
-        ExternVmError {
-            error: self.error.into_extern(),
-            backtrace: self.backtrace.into_iter().map(|f| f.to_extern()).collect(),
-        }
-    }
+#[derive(Debug, Clone)]
+pub enum CallError {
+    Runtime(RuntimeError),
+    Vm {
+        error: ExternError,
+        backtrace: Arc<[ExternBacktraceFrame]>,
+    },
 }
 
-#[derive(Debug)]
-pub struct ExternVmError {
-    pub error: ExternError,
-    pub backtrace: Vec<ExternBacktraceFrame>,
-}
-
-impl StdError for ExternVmError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        self.error.source()
-    }
-}
-
-impl fmt::Display for ExternVmError {
+impl fmt::Display for CallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.error {
-            ExternError::Script(script_error) => writeln!(f, "script error: {script_error}")?,
-            ExternError::Runtime(runtime_error) => {
-                // Try not to print huge stacks of stack traces, check to see if the causal error
-                // is an `ExternVmError` and walk the chain until we get something that is not
-                // `ExternVmError`.
-                let mut runtime_error = runtime_error;
-                while let Some(extern_error) = runtime_error.downcast_ref::<ExternVmError>() {
-                    if let ExternError::Runtime(rte) = &extern_error.error {
-                        runtime_error = rte;
-                    } else {
-                        break;
+        match self {
+            CallError::Runtime(runtime_err) => write!(f, "runtime error: {runtime_err}"),
+            CallError::Vm { error, backtrace } => {
+                writeln!(f, "{}", error)?;
+                write!(f, "VM backtrace:")?;
+                for (i, frame) in backtrace.iter().rev().enumerate() {
+                    writeln!(f)?;
+                    write!(f, "{:>4}: ", i)?;
+                    match frame {
+                        ExternBacktraceFrame::Closure(closure_frame) => {
+                            write!(
+                                f,
+                                "{}:{}",
+                                closure_frame.chunk_name, closure_frame.line_number
+                            )?;
+                        }
+                        ExternBacktraceFrame::Callback(callback) => {
+                            write!(f, "<callback {:p}>", callback)?;
+                        }
                     }
                 }
-                writeln!(f, "runtime error: {runtime_error}")?;
+                Ok(())
             }
         }
+    }
+}
 
-        write!(f, "VM backtrace:")?;
-        for (i, frame) in self.backtrace.iter().rev().enumerate() {
-            writeln!(f)?;
-            write!(f, "{:>4}: ", i)?;
-            match frame {
-                ExternBacktraceFrame::Closure(closure_frame) => {
-                    write!(
-                        f,
-                        "{}:{}",
-                        closure_frame.chunk_name, closure_frame.line_number
-                    )?;
-                }
-                ExternBacktraceFrame::Callback(callback) => {
-                    write!(f, "<callback {:p}>", callback)?;
-                }
-            }
+impl StdError for CallError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            CallError::Runtime(runtime_error) => Some(runtime_error.as_ref()),
+            CallError::Vm { error, .. } => error.source(),
         }
-        Ok(())
     }
 }
 
@@ -146,30 +131,32 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    /// Calls `Thread::run` with `this` set to `ctx.globals()` and `other` set to
+    /// Run a function on this `Thread` with `this` set to `ctx.globals()` and `other` set to
     /// `Value::Undefined`.
     ///
-    /// This is a convenience method for calling a closure using `Thread::with_exec` for top-level
-    /// closures which are not expected to take parameters or return values.
-    pub fn run(self, ctx: Context<'gc>, closure: Closure<'gc>) -> Result<(), ExternVmError> {
-        self.run_with(ctx, closure, ctx.globals(), Value::Undefined)
+    /// This is a convenience method for calling a function using `Thread::with_exec` for top-level
+    /// functions which are not expected to take parameters or return values.
+    pub fn run(
+        self,
+        ctx: Context<'gc>,
+        function: impl Into<Function<'gc>>,
+    ) -> Result<(), CallError> {
+        self.with_exec(ctx, |mut exec| exec.call(ctx, function))
     }
 
-    /// Run a closure on this `Thread` with the given values of `this` and `other`.
+    /// Run a function on this `Thread` with the given values of `this` and `other`.
     ///
-    /// This is a convenience method for calling a closure using `Thread::with_exec` for top-level
-    /// closures which are not expected to take parameters or return values.
+    /// This is a convenience method for calling a function using `Thread::with_exec` for top-level
+    /// functions which are not expected to take parameters or return values.
     pub fn run_with(
         self,
         ctx: Context<'gc>,
-        closure: Closure<'gc>,
+        function: impl Into<Function<'gc>>,
         this: impl Into<Value<'gc>>,
         other: impl Into<Value<'gc>>,
-    ) -> Result<(), ExternVmError> {
-        self.with_state(&ctx, |state| {
-            state
-                .call(ctx, closure, this.into(), other.into(), 0)
-                .map_err(VmError::into_extern)
+    ) -> Result<(), CallError> {
+        self.with_exec(ctx, |mut exec| {
+            exec.with_this_other(this, other).call(ctx, function)
         })
     }
 
@@ -312,21 +299,64 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// Arguments to the function will be taken from the stack and returns placed back into the
     /// stack.
     ///
-    /// If the provided `function` is a closure, then any returned `VmError` will be turned into an
-    /// `ExternVmError` and placed into a `RuntimeError`.
+    /// Closure and callback errors are converted into `CallError` in a smart way appropriate for
+    /// calling a function from within a callback on its calling thread. If the provided function is
+    /// a callback that errors and the returned `RuntimeError` wraps a `CallError`, then the inner
+    /// `CallError` will be returned. If the provided function is a closure which errors and the
+    /// returned `VmError` contains a `CallError`, then the inner `CallError` will be returned
+    /// with an inner VM backtrace if present, or the outer VM backtrace if not present. In this
+    /// way, callbacks that call functions using `Execution::call` will not add extra layers
+    /// of `CallError`, only the *innermost* errors and backtraces will be returned, and since
+    /// execution took place on the same `Thread`, the backtrace will already show all outer
+    /// callbacks.
     #[inline]
-    pub fn call(&mut self, ctx: Context<'gc>, function: Function<'gc>) -> Result<(), RuntimeError> {
-        match function {
-            Function::Closure(closure) => Ok(self
-                .call_closure(ctx, closure)
-                .map_err(|e| e.into_extern())?),
+    pub fn call(
+        &mut self,
+        ctx: Context<'gc>,
+        function: impl Into<Function<'gc>>,
+    ) -> Result<(), CallError> {
+        match function.into() {
+            Function::Closure(closure) => {
+                if let Err(vm_err) = self.call_closure(ctx, closure) {
+                    if let Error::Runtime(rte) = &vm_err.error {
+                        if let Some(call_err) = rte.downcast_ref::<CallError>() {
+                            return Err(match call_err {
+                                CallError::Runtime(runtime_error) => CallError::Vm {
+                                    error: runtime_error.clone().into(),
+                                    backtrace: vm_err
+                                        .backtrace
+                                        .into_iter()
+                                        .map(|f| f.to_extern())
+                                        .collect(),
+                                },
+                                CallError::Vm { .. } => call_err.clone(),
+                            });
+                        }
+                    }
+
+                    return Err(CallError::Vm {
+                        error: vm_err.error.into_extern(),
+                        backtrace: vm_err
+                            .backtrace
+                            .into_iter()
+                            .map(|f| f.to_extern())
+                            .collect(),
+                    });
+                }
+            }
             Function::Callback(callback) => {
                 self.thread.frames.push(Frame::Callback(callback));
                 let res = callback.call(ctx, self.reborrow());
                 assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
-                res
+                if let Err(err) = res {
+                    if let Some(call_err) = err.downcast_ref::<CallError>() {
+                        return Err(call_err.clone());
+                    }
+                }
             }
         }
+
+        Ok(())
     }
 
     /// Returns the current execution frame depth.

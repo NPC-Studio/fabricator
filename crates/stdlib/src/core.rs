@@ -204,7 +204,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             // callbacks while ignoring any bound `this`.
             func = func.rebind(&ctx, vm::Value::Undefined);
         }
-        exec.call(ctx, func)
+        Ok(exec.call(ctx, func)?)
     });
     lib.insert(
         ctx.intern("script_execute"),
@@ -237,7 +237,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             // NOTE: This allocates, see the implementation of `script_execute`.
             func = func.rebind(&ctx, vm::Value::Undefined);
         }
-        exec.call(ctx, func)
+        Ok(exec.call(ctx, func)?)
     });
     lib.insert(
         ctx.intern("script_execute_ext"),
@@ -263,7 +263,7 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
                 }
             }
         }
-        exec.call(ctx, func)
+        Ok(exec.call(ctx, func)?)
     });
     lib.insert(
         ctx.intern("method_call"),

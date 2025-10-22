@@ -556,7 +556,9 @@ fn pretty_print_value<'gc>(
                 {
                     let to_string: vm::Function = vm::FromValue::from_value(ctx, to_string)
                         .map_err(vm::RuntimeError::from)?;
-                    exec.with_this(object).call(ctx, to_string)?;
+                    exec.with_this(object)
+                        .call(ctx, to_string)
+                        .map_err(vm::RuntimeError::from)?;
                     let s: vm::String =
                         exec.stack().consume(ctx).map_err(vm::RuntimeError::from)?;
                     Ok(write!(f, "{}", s)?)

@@ -56,8 +56,7 @@ fn run_code(
 
         let thread = vm::Thread::new(&ctx);
         thread.with_exec(ctx, |mut exec| {
-            exec.call_closure(ctx, closure)
-                .map_err(|e| e.into_extern())?;
+            exec.call(ctx, closure)?;
             Ok(exec.stack().get(0) == vm::Value::Boolean(true))
         })
     })

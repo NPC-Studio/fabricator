@@ -37,7 +37,7 @@ pub use self::{
         StashedObject, StashedPrototype, StashedThread, StashedUserData, StashedUserDataMethods,
     },
     string::{InternedStrings, SharedStr, String, StringMap},
-    thread::{BacktraceFrame, Execution, ExternVmError, OpError, Thread, VmError},
+    thread::{BacktraceFrame, CallError, Execution, OpError, Thread, VmError},
     user_data::{UserData, UserDataIter, UserDataMeta, UserDataMethods},
     value::{Function, Value},
 };

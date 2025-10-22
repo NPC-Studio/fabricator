@@ -279,8 +279,7 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                 let instance_ud =
                     State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
                 exec.with_this(instance_ud)
-                    .call_closure(ctx, ctx.fetch(&destroy_closure))
-                    .map_err(|e| e.into_extern())?;
+                    .call(ctx, ctx.fetch(&destroy_closure))?;
                 exec.stack().clear();
             }
 
@@ -293,8 +292,7 @@ pub fn layers_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                 let instance_ud =
                     State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
                 exec.with_this(instance_ud)
-                    .call_closure(ctx, ctx.fetch(&clean_up_closure))
-                    .map_err(|e| e.into_extern())?;
+                    .call(ctx, ctx.fetch(&clean_up_closure))?;
                 exec.stack().clear();
             }
 

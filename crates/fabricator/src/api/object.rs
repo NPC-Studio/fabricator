@@ -448,8 +448,7 @@ pub fn object_api<'gc>(
                 },
                 || {
                     exec.with_this(instance_ud)
-                        .call_closure(ctx, ctx.fetch(&create_script))
-                        .map_err(|e| e.into_extern())
+                        .call(ctx, ctx.fetch(&create_script))
                 },
             )?;
         }
@@ -535,8 +534,7 @@ pub fn object_api<'gc>(
                 },
                 || {
                     exec.with_this(instance_ud)
-                        .call_closure(ctx, ctx.fetch(&create_script))
-                        .map_err(|e| e.into_extern())
+                        .call(ctx, ctx.fetch(&create_script))
                 },
             )?;
         }
@@ -683,8 +681,7 @@ pub fn object_api<'gc>(
                 let instance_ud =
                     State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
                 exec.with_this(instance_ud)
-                    .call_closure(ctx, ctx.fetch(&destroy_closure))
-                    .map_err(|e| e.into_extern())?;
+                    .call(ctx, ctx.fetch(&destroy_closure))?;
                 exec.stack().clear();
             }
 
@@ -697,8 +694,7 @@ pub fn object_api<'gc>(
                 let instance_ud =
                     State::ctx_with(ctx, |state| ctx.fetch(&state.instances[instance_id].this))?;
                 exec.with_this(instance_ud)
-                    .call_closure(ctx, ctx.fetch(&clean_up_closure))
-                    .map_err(|e| e.into_extern())?;
+                    .call(ctx, ctx.fetch(&clean_up_closure))?;
                 exec.stack().clear();
             }
 

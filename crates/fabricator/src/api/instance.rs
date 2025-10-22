@@ -277,9 +277,7 @@ pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                 .get(&event)
                 .cloned()
         })? {
-            exec.with_this(instance_ud)
-                .call_closure(ctx, ctx.fetch(&closure))
-                .map_err(|e| e.into_extern())?;
+            exec.with_this(instance_ud).call(ctx, ctx.fetch(&closure))?;
             exec.stack().clear();
         }
 
@@ -315,8 +313,7 @@ pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
                     current_event,
                 },
                 || {
-                    exec.call_closure(ctx, ctx.fetch(&closure))
-                        .map_err(|e| e.into_extern())?;
+                    exec.call(ctx, ctx.fetch(&closure))?;
                     exec.stack().clear();
                     Ok(())
                 },

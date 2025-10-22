@@ -8,7 +8,10 @@ use thiserror::Error;
 
 use crate::{interpreter::Context, string::SharedStr, user_data::UserData, value::Value};
 
-pub use self::{raw_gc::RawGc, runtime_error::RuntimeError};
+pub use self::{
+    raw_gc::RawGc,
+    runtime_error::{RuntimeError, SharedError, ThinError},
+};
 
 /// An error raised directly from FML which contains a `Value`.
 ///
