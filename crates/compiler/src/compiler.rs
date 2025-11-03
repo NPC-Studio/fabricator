@@ -502,7 +502,7 @@ impl<'gc> Compiler<'gc> {
         }
 
         // Extract all enum definitions from every parsed AST, and make sure none of the enum names
-        // conflict with any pre-existing magic variable name.
+        // conflict with any pre-existing special.
 
         // List of starting enum indexes per chunk, to identify which enums come from which chunk.
         let mut enum_chunk_indexes = Vec::new();
@@ -522,8 +522,10 @@ impl<'gc> Compiler<'gc> {
 
             for i in prev_enum_len..enums.len() {
                 let enum_ = enums.get(i).unwrap();
-                // Enums are not allowed to shadow names of existing global variables.
-                if global_vars.contains(&enum_.name.inner) {
+                // Enums are not allowed to shadow names of existing magic variables or global
+                // variables.
+                if magic.find(enum_.name.inner).is_some() || global_vars.contains(&enum_.name.inner)
+                {
                     let line_number = chunk.line_number(enum_.span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ShadowsSpecial {
@@ -572,7 +574,7 @@ impl<'gc> Compiler<'gc> {
 
         // Gather all exported items from every AST, then produce a new read-only *stub* magic
         // variable for each export, making sure that the exported name does not conflict with any
-        // pre-existing magic variable or enum.
+        // pre-existing special.
 
         let mut exports = ExportSet::new();
 
@@ -608,9 +610,12 @@ impl<'gc> Compiler<'gc> {
                 let export_name = export.name();
                 let export_span = export.span();
 
-                // New exports are not allowed to shadow names for existing enums or global
-                // variables.
-                if enums.find(export_name).is_some() || global_vars.contains(export_name) {
+                // New exports are not allowed to shadow names for existing magic variables, enums
+                // or global variables.
+                if magic.find(*export_name).is_some()
+                    || enums.find(export_name).is_some()
+                    || global_vars.contains(export_name)
+                {
                     let line_number = chunk.line_number(export_span.start());
                     return Err(CompileError {
                         kind: CompileErrorKind::ShadowsSpecial {
