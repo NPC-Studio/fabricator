@@ -58,9 +58,11 @@ pub struct EnumEvaluationError {
     pub span: Span,
 }
 
+pub type EnumValue = i64;
+
 #[derive(Debug, Clone)]
 pub enum ResolvingEnumVariantKind<S> {
-    Evaluated(i64),
+    Evaluated(EnumValue),
     Implicit,
     Expression(ast::Expression<S>),
 }
@@ -338,7 +340,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
         // in this order and all references should be present.
 
         for (enum_index, variant_index) in eval_order {
-            let get_evaluated = |enum_index: usize, var_index: usize| -> i64 {
+            let get_evaluated = |enum_index: usize, var_index: usize| -> EnumValue {
                 match self.enums[enum_index].variants[var_index].kind {
                     ResolvingEnumVariantKind::Evaluated(v) => v,
                     _ => panic!("enum #{enum_index} variant #{var_index} has not been evaluated"),
@@ -358,7 +360,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                         ResolvingEnumVariantKind::Evaluated(value);
                 }
                 ResolvingEnumVariantKind::Expression(mut expression) => {
-                    struct EnumExpander<'a, S>(&'a dyn Fn(&S, &S) -> Option<i64>);
+                    struct EnumExpander<'a, S>(&'a dyn Fn(&S, &S) -> Option<EnumValue>);
 
                     impl<'a, S> ast::VisitorMut<S> for EnumExpander<'a, S> {
                         type Break = ();
@@ -447,7 +449,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
 pub struct EnumVariant<S> {
     pub name: S,
     pub name_span: Span,
-    pub value: i64,
+    pub value: EnumValue,
     pub span: Span,
 }
 
@@ -460,6 +462,8 @@ pub struct Enum<S> {
     pub dict: HashMap<S, usize>,
     pub span: Span,
 }
+
+pub type SyntheticEnums<S> = HashMap<S, HashMap<S, EnumValue>>;
 
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
@@ -474,6 +478,38 @@ impl<S> Default for EnumSet<S> {
             enums: Vec::new(),
             dict: HashMap::new(),
         }
+    }
+}
+
+impl<S: Clone + Eq + Hash> EnumSet<S> {
+    /// Create an `EnumSet` with externally defined enums from the given [`SyntheticEnums`] set.
+    pub fn with_synthetic(synthetic_enums: SyntheticEnums<S>) -> Self {
+        let mut this = Self::default();
+
+        for (enum_name, enum_variants) in synthetic_enums {
+            let mut variants = Vec::new();
+            let mut dict = HashMap::new();
+            for (variant_name, variant_value) in enum_variants {
+                dict.insert(variant_name.clone(), variants.len());
+                variants.push(EnumVariant {
+                    name: variant_name,
+                    name_span: Span::null(),
+                    value: variant_value,
+                    span: Span::null(),
+                });
+            }
+
+            this.dict.insert(enum_name.clone(), this.enums.len());
+            this.enums.push(Enum {
+                name: enum_name,
+                name_span: Span::null(),
+                variants,
+                dict,
+                span: Span::null(),
+            });
+        }
+
+        this
     }
 }
 
@@ -594,5 +630,53 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                 .collect(),
             dict: self.dict,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    pub use super::*;
+
+    use crate::{lexer::Lexer, parser::ParseSettings, string_interner::StringInterner};
+
+    #[test]
+    fn test_synthetic() {
+        struct SimpleInterner;
+
+        impl StringInterner for SimpleInterner {
+            type String = String;
+
+            fn intern(&mut self, s: &str) -> Self::String {
+                s.to_owned()
+            }
+        }
+
+        const SOURCE: &str = r#"
+            var value = Hello.B;
+        "#;
+
+        let enums = EnumSet::with_synthetic(SyntheticEnums::from_iter([(
+            "Hello".to_owned(),
+            HashMap::from_iter([("A".to_owned(), 1), ("B".to_owned(), 2)]),
+        )]));
+
+        let mut tokens = Vec::new();
+        Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
+
+        let mut block = ParseSettings::strict().parse(tokens).unwrap();
+
+        enums.expand(&mut block).unwrap();
+
+        let ast::Statement::Var(ast::VarDeclarationStmt { vars, .. }) = &block.statements[0] else {
+            panic!()
+        };
+
+        let var = &vars[0];
+
+        assert!(*var.0 == "value");
+        assert!(matches!(
+            var.1,
+            Some(ast::Expression::Constant(Constant::Integer(2), _))
+        ));
     }
 }

@@ -238,11 +238,20 @@ pub struct ImportItems<'gc> {
 }
 
 impl<'gc> ImportItems<'gc> {
-    pub fn from_magic(magic: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
+    pub fn with_magic(stdlib: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
+        Self::from_parts(None, None, None, stdlib)
+    }
+
+    pub fn from_parts(
+        macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
+        enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
+        global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
+        magic: Gc<'gc, vm::MagicSet<'gc>>,
+    ) -> Self {
         Self {
-            macros: None,
-            enums: None,
-            global_vars: None,
+            macros,
+            enums,
+            global_vars,
             magic,
         }
     }
@@ -293,7 +302,7 @@ impl vm::Fetchable for StashedImportItems {
 
 /// Compile FML code.
 ///
-/// Compiles separate code units together in multiple phases to allow for cross referencing.
+/// Compiles separate code units together in multiple phases to allow for interdependencies.
 pub struct Compiler<'gc> {
     ctx: vm::Context<'gc>,
     config: String,

@@ -47,7 +47,7 @@ fn run_code(
         let (proto, _, _) = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::from_magic(testing_stdlib(ctx)),
+            compiler::ImportItems::with_magic(testing_stdlib(ctx)),
             compile_settings,
             name,
             code,

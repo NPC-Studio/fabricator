@@ -561,7 +561,7 @@ fn load_scripts(
 
         log::info!("compiling all global scripts...");
         let mut script_compiler =
-            compiler::Compiler::new(ctx, config_name, compiler::ImportItems::from_magic(magic));
+            compiler::Compiler::new(ctx, config_name, compiler::ImportItems::with_magic(magic));
 
         let mut scripts = project.scripts.values().collect::<Vec<_>>();
 

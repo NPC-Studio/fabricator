@@ -14,7 +14,7 @@ use crate::{
 
 /// FML values for core VM functionality.
 ///
-/// Can be assumed to be present in any FML environment, and may be required for compilation.
+/// Will be assumed to be present in any `MagicSet`, and may be required for compilation.
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct BuiltIns<'gc> {
