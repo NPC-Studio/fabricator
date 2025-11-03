@@ -582,7 +582,7 @@ fn load_scripts(
             )?;
         }
 
-        let (scripts, script_imports, _) = script_compiler.compile()?;
+        let script_output = script_compiler.compile()?.optimize_and_generate(&ctx);
         log::info!("finished compiling all global scripts!");
 
         log::info!("compiling all object scripts...");
@@ -591,10 +591,8 @@ fn load_scripts(
                 code_buf.clear();
                 File::open(&script.path)?.read_to_string(&mut code_buf)?;
                 let name = script.path.to_string_lossy();
-                let (proto, _, _) = compiler::Compiler::compile_chunk(
-                    ctx,
-                    config_name,
-                    script_imports,
+                let mut compiler = compiler::Compiler::new(ctx, config_name, script_output.exports);
+                compiler.add_chunk(
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Modern => compiler::CompileSettings::modern(),
@@ -603,6 +601,8 @@ fn load_scripts(
                     name.into_owned(),
                     &code_buf,
                 )?;
+                let proto_output = compiler.compile()?.optimize_and_generate(&ctx);
+                let proto = proto_output.chunks[0];
                 object_events
                     .entry(config.object_dict[object_name])
                     .or_default()
@@ -615,7 +615,8 @@ fn load_scripts(
         log::info!("finished compiling all object scripts!");
 
         Ok(Scripts {
-            scripts: scripts
+            scripts: script_output
+                .chunks
                 .into_iter()
                 .map(|proto| {
                     ctx.stash(vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap())
