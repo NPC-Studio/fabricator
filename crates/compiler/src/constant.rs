@@ -175,7 +175,7 @@ impl<S> Constant<S> {
         let self_int = if let Some(i) = self.to_integer() {
             i
         } else if let Some(f) = self.to_float() {
-            f.round() as i64
+            f.trunc() as i64
         } else {
             return None;
         };
@@ -183,7 +183,7 @@ impl<S> Constant<S> {
         let other_int = if let Some(i) = other.to_integer() {
             i
         } else if let Some(f) = other.to_float() {
-            f.round() as i64
+            f.trunc() as i64
         } else {
             return None;
         };

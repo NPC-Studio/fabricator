@@ -28,6 +28,10 @@ assert(true > 0.5);
 assert(2 % 3 == 2);
 assert(4 mod 3 == 1);
 assert(4.9 div 3.1 == 1);
+assert(2.0 div 1.9 == 2);
+assert(-2.0 div 1.9 == -2);
+assert(-2.0 div -1.9 == 2);
+assert(2.0 div -1.9 == -2);
 
 {
 	var i = 0;
@@ -90,6 +94,10 @@ assert(black_box(true) > 0.5);
 assert(black_box(2) % 3 == 2);
 assert(black_box(4) mod 3 == 1);
 assert(black_box(4.9) div 3.1 == 1);
+assert(black_box(2.0) div 1.9 == 2);
+assert(black_box(-2.0) div 1.9 == -2);
+assert(black_box(-2.0) div -1.9 == 2);
+assert(black_box(2.0) div -1.9 == -2);
 
 {
 	var i = black_box(0);

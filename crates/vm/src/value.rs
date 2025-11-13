@@ -298,7 +298,7 @@ impl<'gc> Value<'gc> {
 
     /// Interpret numeric values as integers.
     ///
-    /// Integers are returned as themselves, booleans return 0 or 1, and floats are rounded to the
+    /// Integers are returned as themselves, booleans return 0 or 1, and floats are truncated to the
     /// nearest integer.
     #[inline]
     #[must_use]
@@ -306,7 +306,7 @@ impl<'gc> Value<'gc> {
         match self {
             Value::Boolean(b) => Some(if b { 1 } else { 0 }),
             Value::Integer(i) => Some(i),
-            Value::Float(f) => Some(f.round() as i64),
+            Value::Float(f) => Some(f.trunc() as i64),
             _ => None,
         }
     }
@@ -465,22 +465,8 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
-        let self_int = if let Some(i) = self.as_integer() {
-            i
-        } else if let Some(f) = self.cast_float() {
-            f.round() as i64
-        } else {
-            return None;
-        };
-
-        let other_int = if let Some(i) = other.as_integer() {
-            i
-        } else if let Some(f) = other.cast_float() {
-            f.round() as i64
-        } else {
-            return None;
-        };
-
+        let self_int = self.cast_integer()?;
+        let other_int = other.cast_integer()?;
         Some(self_int.wrapping_div(other_int))
     }
 
