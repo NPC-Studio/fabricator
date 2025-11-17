@@ -101,10 +101,10 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             for &shadow_var in phi_functions.values() {
                 inst_change_set.insert(
                     0,
-                    ir.instructions.insert(ir::Instruction {
-                        kind: ir::InstructionKind::Phi(shadow_var),
-                        span: Span::null(),
-                    }),
+                    ir.instructions.insert(ir::Instruction::new(
+                        ir::InstructionKind::Phi(shadow_var),
+                        Span::null(),
+                    )),
                 );
             }
             inst_change_set.apply(&mut block.instructions);
@@ -188,19 +188,19 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             // If we don't have a value to add to an `Upsilon`, then we have to
                             // make one to keep the IR well-formed. This was use of a value that was
                             // undefined on this code path, so we set the value to undefined.
-                            var_inst = ir.instructions.insert(ir::Instruction {
-                                kind: ir::InstructionKind::Undefined,
-                                span: Span::null(),
-                            });
+                            var_inst = ir.instructions.insert(ir::Instruction::new(
+                                ir::InstructionKind::Undefined,
+                                Span::null(),
+                            ));
                             block.instructions.push(var_inst);
                         }
 
                         block
                             .instructions
-                            .push(ir.instructions.insert(ir::Instruction {
-                                kind: ir::InstructionKind::Upsilon(shadow_var, var_inst),
-                                span: ir.instructions[var_inst].span,
-                            }));
+                            .push(ir.instructions.insert(ir::Instruction::new(
+                                ir::InstructionKind::Upsilon(shadow_var, var_inst),
+                                ir.instructions[var_inst].span,
+                            )));
                     }
                 }
             }

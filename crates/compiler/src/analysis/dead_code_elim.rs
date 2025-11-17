@@ -163,18 +163,15 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     //    `Phi` is live.
     let mut upsilon_instructions: HashMap<ir::ShadowVar, Vec<ir::InstId>> = HashMap::new();
     for (inst_id, _) in inst_blocks.iter() {
-        match &ir.instructions[inst_id].kind {
-            &ir::InstructionKind::Upsilon(shadow_var, source) => {
-                upsilon_instructions
-                    .entry(shadow_var)
-                    .or_default()
-                    .extend([inst_id, source]);
-            }
-            inst if inst.has_effect() => {
-                live_instructions.insert(inst_id.index() as usize);
-                worklist.push(Work::Instruction(inst_id));
-            }
-            _ => {}
+        let inst = &ir.instructions[inst_id];
+        if let ir::InstructionKind::Upsilon(shadow_var, source) = inst.kind {
+            upsilon_instructions
+                .entry(shadow_var)
+                .or_default()
+                .extend([inst_id, source]);
+        } else if inst.effects.has_effect() {
+            live_instructions.insert(inst_id.index() as usize);
+            worklist.push(Work::Instruction(inst_id));
         }
     }
 

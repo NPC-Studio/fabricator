@@ -72,6 +72,7 @@ impl fmt::Display for InstLocation {
 }
 
 impl InstLocation {
+    #[must_use]
     pub fn new(block_id: BlockId, inst_index: usize) -> Self {
         Self {
             block_id,
@@ -137,6 +138,8 @@ impl<S> Variable<S> {
 
 /// A single IR instruction.
 ///
+/// # SSA Form
+///
 /// IR instructions are always in SSA (Single Static Assignment) form and thus have an implicit
 /// "output variable". Other instructions that use the output of a previous instruction will
 /// reference that instruction directly via `InstId`.
@@ -147,7 +150,7 @@ impl<S> Variable<S> {
 /// definition -- in other words, all paths through the CFG (Control Flow Graph) starting with
 /// `start_block` that reach any use of an instruction must always pass through its definition.
 ///
-/// # SSA Form
+/// # Phi / Upsilon
 ///
 /// SSA form requires that join points in the CFG have special instructions to select between
 /// different data definitions depending on the path in the CFG that was taken. These are normally
@@ -434,62 +437,173 @@ impl<S> InstructionKind<S> {
             _ => make_iter!([]),
         }
     }
+}
 
-    pub fn has_value(&self) -> bool {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum OutputType {
+    Void,
+    Undefined,
+    Boolean,
+    Scalar,
+    String,
+    Object,
+    Array,
+    Function,
+    Any,
+}
+
+impl OutputType {
+    /// Returns `true` if the output type is [`Self::Void`].
+    #[must_use]
+    pub fn is_void(&self) -> bool {
+        matches!(self, Self::Void)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum StateEffect {
+    None,
+    Read,
+    Write,
+}
+
+impl StateEffect {
+    pub fn can_write(self) -> bool {
         match self {
-            InstructionKind::Copy(..)
-            | InstructionKind::Undefined
-            | InstructionKind::Boolean(..)
-            | InstructionKind::Constant(..)
-            | InstructionKind::Closure { .. }
-            | InstructionKind::GetVariable(..)
-            | InstructionKind::GetMagic(..)
-            | InstructionKind::Globals
-            | InstructionKind::This
-            | InstructionKind::Other
-            | InstructionKind::CurrentClosure
-            | InstructionKind::NewObject
-            | InstructionKind::NewArray
-            | InstructionKind::FixedArgument(..)
-            | InstructionKind::ArgumentCount
-            | InstructionKind::Argument(..)
-            | InstructionKind::GetField { .. }
-            | InstructionKind::GetFieldConst { .. }
-            | InstructionKind::GetIndex { .. }
-            | InstructionKind::GetIndexConst { .. }
-            | InstructionKind::Phi(..)
-            | InstructionKind::UnOp { .. }
-            | InstructionKind::BinOp { .. }
-            | InstructionKind::FixedReturn(..) => true,
+            StateEffect::None | StateEffect::Read => false,
+            StateEffect::Write => true,
+        }
+    }
+
+    pub fn has_dependency(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Read, Self::Write) | (Self::Write, Self::Read) | (Self::Write, Self::Write) => {
+                true
+            }
             _ => false,
         }
     }
 
-    pub fn has_effect(&self) -> bool {
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (_, Self::Write) | (Self::Write, _) => Self::Write,
+            (_, Self::Read) | (Self::Read, _) => Self::Read,
+            (Self::None, Self::None) => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum VariableEffect<V> {
+    None,
+    Read(V),
+    Write(V),
+    ReadAny,
+    WriteAny,
+}
+
+impl<V> VariableEffect<V> {
+    pub fn can_write(self) -> bool {
         match self {
-            InstructionKind::OpenVariable(..)
-            | InstructionKind::SetVariable { .. }
-            | InstructionKind::CloseVariable(..)
-            | InstructionKind::GetMagic(..)
-            | InstructionKind::SetMagic(..)
-            | InstructionKind::OpenThisScope(..)
-            | InstructionKind::SetThis(..)
-            | InstructionKind::CloseThisScope(..)
-            | InstructionKind::Argument(..)
-            | InstructionKind::GetField { .. }
-            | InstructionKind::SetField { .. }
-            | InstructionKind::GetFieldConst { .. }
-            | InstructionKind::SetFieldConst { .. }
-            | InstructionKind::GetIndex { .. }
-            | InstructionKind::SetIndex { .. }
-            | InstructionKind::GetIndexConst { .. }
-            | InstructionKind::SetIndexConst { .. }
-            | InstructionKind::Upsilon(..)
-            | InstructionKind::UnOp { .. }
-            | InstructionKind::BinOp { .. }
-            | InstructionKind::OpenCall { .. }
-            | InstructionKind::CloseCall(..) => true,
+            VariableEffect::Write(_) | VariableEffect::WriteAny => true,
             _ => false,
+        }
+    }
+}
+
+impl<V: Eq> VariableEffect<V> {
+    pub fn has_dependency(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::None, _) | (_, Self::None) => false,
+            (Self::Read(_) | Self::ReadAny, Self::Read(_) | Self::ReadAny) => false,
+            (Self::Read(self_var_id), Self::Write(other_var_id))
+            | (Self::Write(self_var_id), Self::Read(other_var_id))
+            | (Self::Write(self_var_id), Self::Write(other_var_id)) => self_var_id == other_var_id,
+            (Self::Read(_), Self::WriteAny) => true,
+            (Self::Write(_), Self::ReadAny | Self::WriteAny) => true,
+            (Self::ReadAny, Self::Write(_) | Self::WriteAny) => true,
+            (Self::WriteAny, Self::Read(_) | Self::Write(_) | Self::ReadAny | Self::WriteAny) => {
+                true
+            }
+        }
+    }
+
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (VariableEffect::None, other) => other,
+            (this, VariableEffect::None) => this,
+
+            (VariableEffect::WriteAny, _)
+            | (_, VariableEffect::WriteAny)
+            | (VariableEffect::ReadAny, VariableEffect::Write(_))
+            | (VariableEffect::Write(_), VariableEffect::ReadAny) => VariableEffect::WriteAny,
+
+            (VariableEffect::Read(self_var_id), VariableEffect::Write(other_var_id))
+            | (VariableEffect::Write(self_var_id), VariableEffect::Read(other_var_id))
+            | (VariableEffect::Write(self_var_id), VariableEffect::Write(other_var_id)) => {
+                if self_var_id == other_var_id {
+                    VariableEffect::Write(self_var_id)
+                } else {
+                    VariableEffect::WriteAny
+                }
+            }
+
+            (VariableEffect::Read(_), VariableEffect::ReadAny)
+            | (VariableEffect::ReadAny, VariableEffect::Read(_))
+            | (VariableEffect::ReadAny, VariableEffect::ReadAny) => VariableEffect::ReadAny,
+
+            (VariableEffect::Read(self_var_id), VariableEffect::Read(other_var_id)) => {
+                if self_var_id == other_var_id {
+                    VariableEffect::Read(self_var_id)
+                } else {
+                    VariableEffect::ReadAny
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Effects {
+    pub variable: VariableEffect<VarId>,
+    pub shadow: VariableEffect<ShadowVar>,
+    pub global: StateEffect,
+    pub can_error: bool,
+}
+
+impl Effects {
+    pub fn none() -> Self {
+        Self {
+            variable: VariableEffect::None,
+            shadow: VariableEffect::None,
+            global: StateEffect::None,
+            can_error: false,
+        }
+    }
+
+    pub fn can_write(&self) -> bool {
+        self.variable.can_write() || self.shadow.can_write() || self.global.can_write()
+    }
+
+    pub fn has_effect(&self) -> bool {
+        self.can_write() || self.can_error
+    }
+
+    pub fn has_dependency(&self, other: &Self) -> bool {
+        self.variable.has_dependency(other.variable)
+            || self.shadow.has_dependency(other.shadow)
+            || self.global.has_dependency(other.global)
+            || (self.can_error && other.can_error)
+            || (self.can_error && other.can_write())
+            || (self.can_write() && other.can_error)
+    }
+
+    pub fn combine(&self, other: &Self) -> Self {
+        Self {
+            variable: self.variable.combine(other.variable),
+            shadow: self.shadow.combine(other.shadow),
+            global: self.global.combine(other.global),
+            can_error: self.can_error || other.can_error,
         }
     }
 }
@@ -498,6 +612,119 @@ impl<S> InstructionKind<S> {
 pub struct Instruction<S> {
     pub kind: InstructionKind<S>,
     pub span: Span,
+    pub output_type: OutputType,
+    pub effects: Effects,
+}
+
+impl<S> Instruction<S> {
+    /// Create a new instruction with the given `kind` and `span`.
+    ///
+    /// The `output_type` and `effects` fields are initially set to the most narrow output type and
+    /// the most permissive effects that can be known using only the created instruction itself.
+    #[must_use]
+    pub fn new(kind: InstructionKind<S>, span: Span) -> Self {
+        let output_type = match kind {
+            InstructionKind::Copy(_) => OutputType::Any,
+            InstructionKind::Undefined => OutputType::Undefined,
+            InstructionKind::Boolean(_) => OutputType::Boolean,
+            InstructionKind::Constant(ref constant) => match constant {
+                Constant::Undefined => OutputType::Undefined,
+                Constant::Boolean(_) => OutputType::Boolean,
+                Constant::Integer(_) | Constant::Float(_) => OutputType::Scalar,
+                Constant::String(_) => OutputType::String,
+            },
+            InstructionKind::Closure { .. } => OutputType::Function,
+            InstructionKind::GetVariable(_) => OutputType::Any,
+            InstructionKind::GetMagic(_) => OutputType::Any,
+            InstructionKind::Globals => OutputType::Object,
+            InstructionKind::This => OutputType::Any,
+            InstructionKind::Other => OutputType::Any,
+            InstructionKind::CurrentClosure => OutputType::Function,
+            InstructionKind::NewObject => OutputType::Object,
+            InstructionKind::NewArray => OutputType::Array,
+            InstructionKind::FixedArgument(_) => OutputType::Any,
+            InstructionKind::ArgumentCount => OutputType::Scalar,
+            InstructionKind::Argument(_) => OutputType::Any,
+            InstructionKind::GetField { .. } => OutputType::Any,
+            InstructionKind::GetFieldConst { .. } => OutputType::Any,
+            InstructionKind::GetIndex { .. } => OutputType::Any,
+            InstructionKind::GetIndexConst { .. } => OutputType::Any,
+            InstructionKind::Phi(_) => OutputType::Any,
+            InstructionKind::UnOp { .. } => OutputType::Any,
+            InstructionKind::BinOp { .. } => OutputType::Any,
+            InstructionKind::FixedReturn(..) => OutputType::Any,
+            _ => OutputType::Void,
+        };
+
+        let effects = match kind {
+            InstructionKind::GetVariable(var_id) => Effects {
+                variable: VariableEffect::Read(var_id),
+                ..Effects::none()
+            },
+            InstructionKind::OpenVariable(var_id)
+            | InstructionKind::SetVariable(var_id, _)
+            | InstructionKind::CloseVariable(var_id) => Effects {
+                variable: VariableEffect::Write(var_id),
+                ..Effects::none()
+            },
+            InstructionKind::GetMagic(_) | InstructionKind::SetMagic(_, _) => Effects {
+                global: StateEffect::Write,
+                can_error: true,
+                ..Effects::none()
+            },
+            InstructionKind::OpenThisScope(_)
+            | InstructionKind::SetThis(_, _)
+            | InstructionKind::CloseThisScope(_) => Effects {
+                global: StateEffect::Write,
+                ..Effects::none()
+            },
+            InstructionKind::GetField { .. }
+            | InstructionKind::GetFieldConst { .. }
+            | InstructionKind::GetIndex { .. }
+            | InstructionKind::GetIndexConst { .. } => Effects {
+                global: StateEffect::Read,
+                can_error: true,
+                ..Effects::none()
+            },
+            InstructionKind::SetField { .. }
+            | InstructionKind::SetFieldConst { .. }
+            | InstructionKind::SetIndex { .. }
+            | InstructionKind::SetIndexConst { .. } => Effects {
+                global: StateEffect::Write,
+                can_error: true,
+                ..Effects::none()
+            },
+            InstructionKind::Phi(shadow_var) => Effects {
+                shadow: VariableEffect::Read(shadow_var),
+                ..Effects::none()
+            },
+            InstructionKind::Upsilon(shadow_var, _) => Effects {
+                shadow: VariableEffect::Write(shadow_var),
+                ..Effects::none()
+            },
+            InstructionKind::UnOp { .. } | InstructionKind::BinOp { .. } => Effects {
+                can_error: true,
+                ..Effects::none()
+            },
+            InstructionKind::OpenCall { .. } => Effects {
+                global: StateEffect::Write,
+                can_error: true,
+                ..Effects::none()
+            },
+            InstructionKind::CloseCall(_) => Effects {
+                global: StateEffect::Write,
+                ..Effects::none()
+            },
+            _ => Effects::none(),
+        };
+
+        Self {
+            kind,
+            span,
+            output_type,
+            effects,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -549,6 +776,7 @@ impl ExitKind {
     }
 
     /// Returns true if this exit has no successors because it exits the function.
+    #[must_use]
     pub fn exits_function(&self) -> bool {
         match self {
             ExitKind::Return { .. } | ExitKind::Throw(_) => true,

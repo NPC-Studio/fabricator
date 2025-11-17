@@ -1808,10 +1808,10 @@ where
 
         for i in (jump.pop_vars_to + 1..self.scopes.len()).rev() {
             for &var_id in &self.scopes[i].to_close {
-                let inst_id = self.function.instructions.insert(ir::Instruction {
-                    kind: ir::InstructionKind::CloseVariable(var_id),
+                let inst_id = self.function.instructions.insert(ir::Instruction::new(
+                    ir::InstructionKind::CloseVariable(var_id),
                     span,
-                });
+                ));
                 self.function.blocks[cleanup_block]
                     .instructions
                     .push(inst_id);
@@ -2759,10 +2759,10 @@ where
                         //
                         // We push this instruction to `start_block`, which is kept otherwise empty
                         // for this purpose.
-                        let inst_id = self.function.instructions.insert(ir::Instruction {
-                            kind: ir::InstructionKind::OpenVariable(var_id),
-                            span: vname.span,
-                        });
+                        let inst_id = self.function.instructions.insert(ir::Instruction::new(
+                            ir::InstructionKind::OpenVariable(var_id),
+                            vname.span,
+                        ));
                         self.function.blocks[self.function.start_block]
                             .instructions
                             .push(inst_id);
@@ -2989,7 +2989,7 @@ where
         let inst_id = self
             .function
             .instructions
-            .insert(ir::Instruction { kind, span });
+            .insert(ir::Instruction::new(kind, span));
         self.function.blocks[current_block]
             .instructions
             .push(inst_id);

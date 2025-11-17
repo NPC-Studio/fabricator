@@ -168,6 +168,7 @@ impl<'gc> From<Function<'gc>> for Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
+    #[must_use]
     pub fn type_name(self) -> &'static str {
         match self {
             Value::Undefined => "undefined",
@@ -190,6 +191,7 @@ impl<'gc> Value<'gc> {
     }
 
     #[inline]
+    #[must_use]
     pub fn as_bool(self) -> Option<bool> {
         match self {
             Value::Boolean(b) => Some(b),
