@@ -44,14 +44,15 @@ fn run_code(
     let mut interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
-        let mut compiler = compiler::Compiler::new(
+        let output = compiler::Compiler::compile_chunk(
             ctx,
             "default",
             compiler::ImportItems::with_magic(testing_stdlib(ctx)),
-        );
-        compiler.add_chunk(compile_settings, name, &code)?;
-        let output = compiler.compile()?.optimize_and_generate(&ctx);
-        let closure = vm::Closure::new(&ctx, output.chunks[0], vm::Value::Undefined).unwrap();
+            compile_settings,
+            name,
+            code,
+        )?;
+        let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
         thread.with_exec(ctx, |mut exec| {

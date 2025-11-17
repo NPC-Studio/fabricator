@@ -582,7 +582,7 @@ fn load_scripts(
             )?;
         }
 
-        let script_output = script_compiler.compile()?.optimize_and_generate(&ctx);
+        let script_output = script_compiler.compile()?;
         log::info!("finished compiling all global scripts!");
 
         log::info!("compiling all object scripts...");
@@ -601,7 +601,7 @@ fn load_scripts(
                     name.into_owned(),
                     &code_buf,
                 )?;
-                let proto_output = compiler.compile()?.optimize_and_generate(&ctx);
+                let proto_output = compiler.compile()?;
                 let proto = proto_output.chunks[0];
                 object_events
                     .entry(config.object_dict[object_name])

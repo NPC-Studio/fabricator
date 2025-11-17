@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::{collections::HashSet, path::Path};
 
 use fabricator_util::index_containers::IndexMap;
 use fabricator_vm as vm;
@@ -29,7 +26,7 @@ use crate::{
         verify_references::{ReferenceVerificationError, verify_references},
         verify_upvars::{UpVarVerificationError, verify_no_root_upvars, verify_upvars},
     },
-    code_gen::gen_prototype,
+    code_gen::{Prototype, gen_prototype},
     enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
     exports::{DuplicateExportError, Export, ExportSet, ExportSettings},
     ir,
@@ -79,6 +76,7 @@ pub struct CompileError {
 pub struct CompileSettings {
     pub parse: ParseSettings,
     pub ir_gen: IrGenSettings,
+    pub optimization_passes: u8,
     pub export_top_level_functions: bool,
 }
 
@@ -87,6 +85,7 @@ impl CompileSettings {
         Self {
             parse: ParseSettings::compat(),
             ir_gen: IrGenSettings::compat(),
+            optimization_passes: 2,
             export_top_level_functions: true,
         }
     }
@@ -95,6 +94,7 @@ impl CompileSettings {
         Self {
             parse: ParseSettings::strict(),
             ir_gen: IrGenSettings::modern(),
+            optimization_passes: 2,
             export_top_level_functions: true,
         }
     }
@@ -110,6 +110,11 @@ impl CompileSettings {
         } else {
             Self::modern()
         }
+    }
+
+    pub fn set_optimization_passes(mut self, passes: u8) -> Self {
+        self.optimization_passes = passes;
+        self
     }
 
     pub fn export_top_level_functions(mut self, export_top_funcs: bool) -> Self {
@@ -309,6 +314,28 @@ pub struct Compiler<'gc> {
 }
 
 impl<'gc> Compiler<'gc> {
+    /// Compile a single chunk.
+    ///
+    /// Returns the chunk prototype as well as a merged `ImportItems` set. This is a convenience
+    /// method for creating a `Compiler` instance and compiling only a single chunk.
+    pub fn compile_chunk(
+        ctx: vm::Context<'gc>,
+        config: impl Into<String>,
+        imports: ImportItems<'gc>,
+        compile_settings: CompileSettings,
+        chunk_name: impl Into<String>,
+        code: &str,
+    ) -> Result<ChunkOutput<'gc>, CompileError> {
+        let mut this = Self::new(ctx, config, imports);
+        this.add_chunk(compile_settings, chunk_name, code)?;
+        let output = this.compile()?;
+        Ok(ChunkOutput {
+            exports: output.exports,
+            chunk_prototype: output.chunks[0],
+            all_prototypes: output.all_prototypes,
+        })
+    }
+
     pub fn new(
         ctx: vm::Context<'gc>,
         config: impl Into<String>,
@@ -362,7 +389,30 @@ impl<'gc> Compiler<'gc> {
         Ok(index)
     }
 
-    pub fn compile(self) -> Result<CompiledIr<'gc>, CompileError> {
+    pub fn compile(self) -> Result<CompilerOutput<'gc>, CompileError> {
+        fn optimize_and_generate_proto<'gc>(
+            compile_settings: CompileSettings,
+            ir: &mut ir::Function<vm::String<'gc>>,
+            magic: &vm::MagicSet<'gc>,
+        ) -> Prototype<vm::String<'gc>> {
+            if let Err(err) = verify_ir(ir) {
+                panic!("Internal IR Generation Error: {err}\nIR: {ir:?}");
+            }
+            for _ in 0..compile_settings.optimization_passes {
+                optimize_ir(ir);
+            }
+            if let Err(err) = verify_ir(ir) {
+                panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
+            }
+
+            match gen_prototype(&ir, |n| magic.find(*n)) {
+                Ok(proto) => proto,
+                Err(err) => {
+                    panic!("Internal Codegen Error: {err}\nIR: {ir:?}");
+                }
+            }
+        }
+
         let Self {
             ctx,
             config,
@@ -599,19 +649,9 @@ impl<'gc> Compiler<'gc> {
         }
 
         let magic = Gc::new(&ctx, magic);
+        let magic_write = Gc::write(&ctx, magic);
 
-        let imports = ImportItems {
-            macros: None,
-            enums: None,
-            global_vars: None,
-            magic,
-        };
-
-        let mut output = CompiledIr {
-            imports,
-            ir_chunks: Vec::new(),
-            magic_ir_chunks: HashMap::new(),
-        };
+        let mut all_prototypes = Vec::new();
 
         // For each exported item, produce a "magic chunk" in the IR output.
 
@@ -626,7 +666,7 @@ impl<'gc> Compiler<'gc> {
                 Export::Function(func_stmt) => {
                     let magic_index = export_magic_indexes[i];
 
-                    let ir = compile_settings
+                    let mut ir = compile_settings
                         .ir_gen
                         .gen_func_stmt_ir(
                             &mut VmInterner::new(ctx),
@@ -646,14 +686,27 @@ impl<'gc> Compiler<'gc> {
                             }
                         })?;
 
-                    output.magic_ir_chunks.insert(magic_index, (chunk, ir));
+                    let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
+                    let vm_proto = proto.into_vm(&ctx, chunk, magic);
+                    let closure = vm::Closure::new(&ctx, vm_proto, vm::Value::Undefined).unwrap();
+
+                    all_prototypes.push((ir, vm_proto));
+
+                    vm::MagicSet::replace(
+                        magic_write,
+                        magic_index,
+                        vm::MagicConstant::new_ptr(&ctx, closure),
+                    )
+                    .unwrap();
                 }
                 Export::GlobalVar(_) => {}
             }
         }
 
+        let mut chunks = Vec::new();
+
         for (chunk, block, compile_settings) in parsed_chunks {
-            let ir = compile_settings
+            let mut ir = compile_settings
                 .ir_gen
                 .gen_chunk_ir(
                     &mut VmInterner::new(self.ctx),
@@ -673,27 +726,57 @@ impl<'gc> Compiler<'gc> {
                     }
                 })?;
 
-            output.ir_chunks.push((chunk, ir));
+            let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
+            let vm_proto = proto.into_vm(&ctx, chunk, magic);
+            all_prototypes.push((ir, vm_proto));
+            chunks.push(vm_proto);
         }
 
-        output.imports.macros = if macros.is_empty() {
-            None
-        } else {
-            Some(Gc::new(&ctx, macros))
-        };
-        output.imports.enums = if enums.is_empty() {
-            None
-        } else {
-            Some(Gc::new(&ctx, enums))
-        };
-        output.imports.global_vars = if global_vars.is_empty() {
-            None
-        } else {
-            Some(Gc::new(&ctx, global_vars))
+        let imports = ImportItems {
+            macros: if macros.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, macros))
+            },
+            enums: if enums.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, enums))
+            },
+            global_vars: if global_vars.is_empty() {
+                None
+            } else {
+                Some(Gc::new(&ctx, global_vars))
+            },
+            magic,
         };
 
-        Ok(output)
+        Ok(CompilerOutput {
+            exports: imports,
+            chunks,
+            all_prototypes,
+        })
     }
+}
+
+pub struct CompilerOutput<'gc> {
+    /// Provided `ImportItems` merged with all of the exports in the current compilation unit, may
+    /// be used in subsequent compilation units.
+    pub exports: ImportItems<'gc>,
+
+    /// One generated prototype per input chunk, in the order provided to [`Compiler`].
+    pub chunks: Vec<Gc<'gc, vm::Prototype<'gc>>>,
+
+    /// A prototype for evern input chunk and function export, paired with the final IR used to
+    /// generate the prototype.
+    pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
+}
+
+/// A version of [`CompilerOutput`] for a single chunk.
+pub struct ChunkOutput<'gc> {
+    pub exports: ImportItems<'gc>,
+    pub chunk_prototype: Gc<'gc, vm::Prototype<'gc>>,
+    pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
 }
 
 struct Chunk<'gc> {
@@ -725,111 +808,4 @@ impl<'gc, 'a> VarDict<vm::String<'gc>> for CompilerVarDict<'gc, 'a> {
             FreeVarMode::This
         }
     }
-}
-
-/// The intermediary output of a [`Compiler`].
-///
-/// Initially contains all of the generated, unoptimized IR for both provided chunks and also
-/// function exports. Can be used to examine or modify the IR before final prototype generation.
-pub struct CompiledIr<'gc> {
-    imports: ImportItems<'gc>,
-    ir_chunks: Vec<(vm::Chunk<'gc>, ir::Function<vm::String<'gc>>)>,
-    magic_ir_chunks: HashMap<usize, (vm::Chunk<'gc>, ir::Function<vm::String<'gc>>)>,
-}
-
-impl<'gc> CompiledIr<'gc> {
-    pub fn irs(&self) -> impl Iterator<Item = &'_ ir::Function<vm::String<'gc>>> + '_ {
-        self.ir_chunks
-            .iter()
-            .chain(self.magic_ir_chunks.values())
-            .map(|(_, ir)| ir)
-    }
-
-    pub fn irs_mut(&mut self) -> impl Iterator<Item = &'_ mut ir::Function<vm::String<'gc>>> + '_ {
-        self.ir_chunks
-            .iter_mut()
-            .chain(self.magic_ir_chunks.values_mut())
-            .map(|(_, ir)| ir)
-    }
-
-    /// Run optimization passes on all IR.
-    pub fn optimize(&mut self, passes: u8) {
-        for ir in self.irs_mut() {
-            if let Err(err) = verify_ir(ir) {
-                panic!("Internal IR Generation Error: {err}\nIR: {ir:?}");
-            }
-            for _ in 0..passes {
-                optimize_ir(ir);
-            }
-            if let Err(err) = verify_ir(ir) {
-                panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
-            }
-        }
-    }
-
-    /// Generate final compiler output.
-    pub fn generate(self, mc: &Mutation<'gc>) -> CompilerOutput<'gc> {
-        let magic = self.imports.magic;
-
-        let generate_proto =
-            |chunk: vm::Chunk<'gc>, ir: &ir::Function<vm::String<'gc>>| match gen_prototype(
-                &ir,
-                |n| magic.find(*n),
-            ) {
-                Ok(proto) => proto.into_vm(mc, chunk, magic),
-                Err(err) => {
-                    panic!("Internal Codegen Error: {err}\nIR: {ir:?}");
-                }
-            };
-
-        let mut output = CompilerOutput {
-            exports: self.imports,
-            chunks: Vec::new(),
-            all_prototypes: Vec::new(),
-        };
-
-        let magic_write = Gc::write(mc, magic);
-
-        for (magic_index, (chunk, ir)) in self.magic_ir_chunks {
-            let proto = generate_proto(chunk, &ir);
-            let closure = vm::Closure::new(mc, proto, vm::Value::Undefined).unwrap();
-            output.all_prototypes.push((ir, proto));
-            vm::MagicSet::replace(
-                magic_write,
-                magic_index,
-                vm::MagicConstant::new_ptr(mc, closure),
-            )
-            .unwrap();
-        }
-
-        for (chunk, ir) in self.ir_chunks {
-            let proto = generate_proto(chunk, &ir);
-            output.chunks.push(proto);
-            output.all_prototypes.push((ir, proto));
-        }
-
-        output
-    }
-
-    /// Convenience method to optimize all IR with default settings and generate final compiler
-    /// output.
-    pub fn optimize_and_generate(mut self, mc: &Mutation<'gc>) -> CompilerOutput<'gc> {
-        const DEFAULT_OPTIMIZATION_PASSES: u8 = 2;
-
-        self.optimize(DEFAULT_OPTIMIZATION_PASSES);
-        self.generate(mc)
-    }
-}
-
-pub struct CompilerOutput<'gc> {
-    /// Provided `ImportItems` merged with all of the exports in the current compilation unit, may
-    /// be used in subsequent compilation units.
-    pub exports: ImportItems<'gc>,
-
-    /// One generated prototype per input chunk, in the order provided to [`Compiler`].
-    pub chunks: Vec<Gc<'gc, vm::Prototype<'gc>>>,
-
-    /// A prototype for evern input chunk and function export, paired with the final IR used to
-    /// generate the prototype.
-    pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
 }

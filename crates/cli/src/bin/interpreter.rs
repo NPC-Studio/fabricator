@@ -9,7 +9,6 @@ use fabricator_compiler::{
 };
 use fabricator_stdlib::{StdlibContext as _, string::debug_value};
 use fabricator_vm as vm;
-use gc_arena::Gc;
 
 #[derive(Parser)]
 struct Cli {
@@ -34,18 +33,19 @@ fn main() -> Result<ExitCode, Error> {
             let mut code = String::new();
             File::open(&path)?.read_to_string(&mut code)?;
 
+            let settings = CompileSettings::from_path(&path).set_optimization_passes(cli.opt_level);
+
             interpreter.enter(|ctx| {
-                let mut compiler = Compiler::new(ctx, "", ImportItems::with_magic(ctx.stdlib()));
-                compiler.add_chunk(
-                    CompileSettings::from_path(&path),
+                let output = Compiler::compile_chunk(
+                    ctx,
+                    "",
+                    ImportItems::with_magic(ctx.stdlib()),
+                    settings,
                     path.to_string_lossy().into_owned(),
                     &code,
                 )?;
-                let mut ir = compiler.compile()?;
-                ir.optimize(cli.opt_level);
-                let output = ir.generate(&ctx);
                 let closure =
-                    vm::Closure::new(&ctx, output.chunks[0], vm::Value::Undefined).unwrap();
+                    vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
 
                 let thread = vm::Thread::new(&ctx);
                 Ok(match thread.run(ctx, closure) {
@@ -61,16 +61,17 @@ fn main() -> Result<ExitCode, Error> {
             let mut code = String::new();
             File::open(&path)?.read_to_string(&mut code)?;
 
+            let settings = CompileSettings::from_path(&path).set_optimization_passes(cli.opt_level);
+
             interpreter.enter(|ctx| {
-                let mut compiler = Compiler::new(ctx, "", ImportItems::with_magic(ctx.stdlib()));
-                compiler.add_chunk(
-                    CompileSettings::from_path(&path),
+                let output = Compiler::compile_chunk(
+                    ctx,
+                    "",
+                    ImportItems::with_magic(ctx.stdlib()),
+                    settings,
                     path.to_string_lossy().into_owned(),
                     &code,
                 )?;
-                let mut ir = compiler.compile()?;
-                ir.optimize(cli.opt_level);
-                let output = ir.generate(&ctx);
 
                 for (ir, proto) in output.all_prototypes {
                     let chunk = proto.chunk();
@@ -102,7 +103,7 @@ fn main() -> Result<ExitCode, Error> {
             let mut editor = rustyline::DefaultEditor::new()?;
             let thread = interpreter.enter(|ctx| ctx.stash(vm::Thread::new(&ctx)));
 
-            let settings = CompileSettings::modern();
+            let settings = CompileSettings::modern().set_optimization_passes(cli.opt_level);
 
             let mut imports =
                 interpreter.enter(|ctx| ctx.stash(ImportItems::with_magic(ctx.stdlib())));
@@ -118,23 +119,6 @@ fn main() -> Result<ExitCode, Error> {
                         ..
                     }
                 )
-            }
-
-            fn compile_chunk<'gc>(
-                ctx: vm::Context<'gc>,
-                config: impl Into<String>,
-                imports: ImportItems<'gc>,
-                settings: CompileSettings,
-                chunk_name: impl Into<String>,
-                code: &str,
-                opt_level: u8,
-            ) -> Result<(Gc<'gc, vm::Prototype<'gc>>, ImportItems<'gc>), CompileError> {
-                let mut compiler = Compiler::new(ctx, config, imports);
-                compiler.add_chunk(settings, chunk_name, &code)?;
-                let mut ir = compiler.compile()?;
-                ir.optimize(opt_level);
-                let output = ir.generate(&ctx);
-                Ok((output.chunks[0], output.exports))
             }
 
             loop {
@@ -153,37 +137,31 @@ fn main() -> Result<ExitCode, Error> {
                             line.push_str(&read);
                         }
 
-                        let compile_res = compile_chunk(
-                            ctx,
-                            "",
-                            ctx.fetch(&imports),
-                            settings,
-                            "line-input",
-                            &format!("return {line};"),
-                            cli.opt_level,
-                        )
-                        .or_else(|e| {
-                            if is_end_of_stream_err(&e) {
-                                Err(e)
-                            } else {
-                                compile_chunk(
-                                    ctx,
-                                    "",
-                                    ctx.fetch(&imports),
-                                    settings,
-                                    "line-input",
-                                    &format!("{line};"),
-                                    cli.opt_level,
-                                )
-                            }
-                        });
+                        let try_compile = |code: &str| {
+                            Compiler::compile_chunk(
+                                ctx,
+                                "",
+                                ctx.fetch(&imports),
+                                settings,
+                                "line-input",
+                                code,
+                            )
+                        };
+
+                        let compile_res = try_compile(&line)
+                            .or_else(|_| try_compile(&format!("return {line};")))
+                            .or_else(|_| try_compile(&format!("{line};")));
 
                         match compile_res {
-                            Ok((proto, new_imports)) => {
-                                imports = ctx.stash(new_imports);
+                            Ok(output) => {
+                                imports = ctx.stash(output.exports);
 
-                                let closure =
-                                    vm::Closure::new(&ctx, proto, vm::Value::Undefined).unwrap();
+                                let closure = vm::Closure::new(
+                                    &ctx,
+                                    output.chunk_prototype,
+                                    vm::Value::Undefined,
+                                )
+                                .unwrap();
 
                                 let thread = ctx.fetch(&thread);
                                 thread.with_exec(ctx, |mut exec| {
