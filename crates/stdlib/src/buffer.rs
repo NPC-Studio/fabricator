@@ -111,6 +111,12 @@ impl Buffer {
         ud
     }
 
+    pub fn downcast<'gc>(
+        ud: vm::UserData<'gc>,
+    ) -> Result<&'gc Buffer, vm::user_data::BadUserDataType> {
+        ud.downcast_static::<Buffer>()
+    }
+
     pub fn data<'a>(&'a self) -> Ref<'a, [u8]> {
         Ref::map(self.inner.borrow(), |cell| cell.data.as_slice())
     }
@@ -263,7 +269,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let buffer_write = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (buffer, data_type, value): (vm::UserData, vm::UserData, vm::Value) =
             exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
 
         macro_rules! write_value {
             ($val_ty:ty) => {{
@@ -322,7 +328,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let buffer_seek = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (buffer, seek_type, seek): (vm::UserData, vm::UserData, isize) =
             exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         let seek_type = *seek_type.downcast_static::<BufferSeek>()?;
 
         let base = match seek_type {
@@ -340,7 +346,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let buffer_read = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (buffer, data_type): (vm::UserData, vm::UserData) = exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         let data_type = *data_type.downcast_static::<DataType>()?;
 
         macro_rules! read_value {
@@ -383,7 +389,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let buffer_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let buffer: vm::UserData = exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
 
         buffer.data = Vec::new();
         buffer.cursor = 0;
@@ -397,7 +403,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let buffer_get_address = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let buffer: vm::UserData = exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         exec.stack().replace(
             ctx,
             Pointer::new(buffer.data.as_mut_ptr())
@@ -413,7 +419,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let buffer_get_size = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let buffer: vm::UserData = exec.stack().consume(ctx)?;
-        let buffer = buffer.downcast_static::<Buffer>()?.inner.borrow();
+        let buffer = Buffer::downcast(buffer)?.inner.borrow();
         exec.stack().replace(ctx, buffer.data.len() as isize);
         Ok(())
     });
@@ -430,7 +436,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
             vm::Value,
             usize,
         ) = exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         let data_type = *data_type.downcast_static::<DataType>()?;
 
         let data_width = match data_type.fixed_byte_width() {
@@ -506,7 +512,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     let buffer_peek = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let (buffer, offset, data_type): (vm::UserData, usize, vm::UserData) =
             exec.stack().consume(ctx)?;
-        let mut buffer = buffer.downcast_static::<Buffer>()?.inner.borrow_mut();
+        let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         let data_type = *data_type.downcast_static::<DataType>()?;
 
         macro_rules! read_value {
