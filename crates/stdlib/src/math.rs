@@ -65,7 +65,7 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let round = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: f64 = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, arg.round());
+        exec.stack().replace(ctx, arg.round_ties_even());
         Ok(())
     });
     lib.insert(ctx.intern("round"), vm::MagicConstant::new_ptr(&ctx, round));
