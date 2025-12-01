@@ -320,4 +320,16 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         ctx.intern("struct_exists"),
         vm::MagicConstant::new_ptr(&ctx, struct_exists),
     );
+
+    let struct_names_count = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let obj: vm::Object<'_> = exec.stack().consume(ctx)?;
+        let keys = obj.borrow().map.keys().len() as i64;
+        exec.stack().replace(ctx, keys);
+
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("struct_names_count"),
+        vm::MagicConstant::new_ptr(&ctx, struct_names_count),
+    );
 }
