@@ -86,7 +86,15 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
 
     let sign = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
         let arg: f64 = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, arg.signum());
+        let output = if arg > 0.0 {
+            1.0
+        } else if arg < 0.0 {
+            -1.0
+        } else {
+            0.0
+        };
+        
+        exec.stack().replace(ctx, output);
         Ok(())
     });
     lib.insert(ctx.intern("sign"), vm::MagicConstant::new_ptr(&ctx, sign));
