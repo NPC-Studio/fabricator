@@ -41,9 +41,9 @@ pub fn json_to_value<'gc>(
             } else if let Some(n) = number.as_f64() {
                 vm::Value::Float(n)
             } else {
-                return Err(vm::RuntimeError::msg(format!(
-                    "json number {number:?} is not an i64 or f64"
-                )));
+                return Err(vm::RuntimeError::msg(
+                    "json number {number:?} is not an i64 or f64",
+                ));
             }
         }
         serde_json::Value::String(s) => ctx.intern(&s).into(),
@@ -122,9 +122,7 @@ pub fn value_to_json<'gc>(
                         .ok_or_else(|| vm::RuntimeError::msg("invalid JSON float value"))?,
                 )
             } else {
-                return Err(vm::RuntimeError::msg(format!(
-                    "cannot convert userdata to JSON"
-                )));
+                return Err(vm::RuntimeError::msg("cannot convert userdata to JSON"));
             }
         }
         vm::Value::Closure(_) | vm::Value::Callback(_) => {
