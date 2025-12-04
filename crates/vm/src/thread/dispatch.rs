@@ -77,7 +77,7 @@ pub(super) struct Dispatch<'gc, 'a> {
 }
 
 impl<'gc, 'a> Dispatch<'gc, 'a> {
-    pub fn new(
+    pub(super) fn new(
         ctx: Context<'gc>,
         closure: Closure<'gc>,
         this: &'a mut Value<'gc>,

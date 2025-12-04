@@ -31,8 +31,9 @@ pub struct ByteCode {
     // Encoded bytecode, each instruction is serialized directly into the byte array and jump
     // offsets are stored in byte offets.
     bytes: Box<[MaybeUninit<u8>]>,
-    // Ordered list of each instruction bytecode start position.
-    inst_byte_positions: Box<[usize]>,
+    // Ordered list of each instruction bytecode boundary, including an entry for the very end of
+    // bytecode.
+    inst_boundaries: Box<[usize]>,
     // Span data for each instruction.
     inst_spans: Box<[Span]>,
 }
@@ -86,18 +87,17 @@ impl ByteCode {
             return Err(ByteCodeEncodingError::BadLastInstruction);
         }
 
-        let mut inst_positions = Vec::new();
+        let mut inst_positions = Vec::with_capacity(insts.len());
         let mut pos = 0;
         for &inst in &insts {
             inst_positions.push(pos);
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
+        inst_positions.push(pos);
 
         let mut bytes = Vec::new();
-        let mut inst_byte_positions = Vec::with_capacity(size_hint);
         for (i, mut inst) in insts.iter().copied().enumerate() {
             assert_eq!(inst_positions[i], bytes.len());
-            inst_byte_positions.push(bytes.len());
 
             // Rewrite jump instruction targets to be in bytes
 
@@ -137,7 +137,7 @@ impl ByteCode {
 
         Ok(Self {
             bytes: bytes.into_boxed_slice(),
-            inst_byte_positions: inst_byte_positions.into_boxed_slice(),
+            inst_boundaries: inst_positions.into_boxed_slice(),
             inst_spans: inst_spans.into_boxed_slice(),
         })
     }
@@ -145,12 +145,13 @@ impl ByteCode {
     /// Return the count of encoded instructions.
     #[inline]
     pub fn instruction_len(&self) -> usize {
-        self.inst_byte_positions.len()
+        self.inst_boundaries.len() - 1
     }
 
     #[inline]
     pub fn instruction(&self, inst_index: usize) -> Instruction {
-        let pc = self.inst_byte_positions[inst_index];
+        assert!(inst_index < self.instruction_len());
+        let pc = self.inst_boundaries[inst_index];
         unsafe { self.decode_instruction_at(pc) }
     }
 
@@ -159,16 +160,20 @@ impl ByteCode {
         self.inst_spans[inst_index]
     }
 
+    /// Return the program counter for the given instruction index. The `inst_index` may be any
+    /// *value up to and including* the instruction length (so one past the final instruction).
     #[inline]
     pub fn pc_for_instruction_index(&self, inst_index: usize) -> usize {
-        self.inst_byte_positions[inst_index]
+        self.inst_boundaries[inst_index]
     }
 
     /// Find the instruction index for the given program counter value.
     ///
-    /// If the given `pc` is not the start of an instruction, will return `None`.
+    /// If the given `pc` is not the start of an instruction or the exact end of bytecode, will
+    /// return `None`.
+    #[inline]
     pub fn instruction_index_for_pc(&self, pc: usize) -> Option<usize> {
-        self.inst_byte_positions
+        self.inst_boundaries
             .binary_search_by_key(&pc, |&offset| offset)
             .ok()
     }
@@ -187,6 +192,9 @@ impl ByteCode {
         Ok(())
     }
 
+    // # SAFETY
+    //
+    // Must be called with a `pc` that is the start of a valid instruction.
     unsafe fn decode_instruction_at(&self, pc: usize) -> Instruction {
         unsafe {
             let mut ptr = self.bytes.as_ptr().add(pc);
@@ -287,11 +295,9 @@ impl<'gc> Dispatcher<'gc> {
     }
 
     /// Returns the current instruction index.
-    ///
-    /// This will always return `Some` unless the dispatcher has reached the end of the bytecode.
     #[inline]
-    pub fn instruction_index(&self) -> Option<usize> {
-        self.bytecode.instruction_index_for_pc(self.pc())
+    pub fn instruction_index(&self) -> usize {
+        self.bytecode.instruction_index_for_pc(self.pc()).unwrap()
     }
 
     /// Dispatch instructions to the given [`Dispatch`] impl.
@@ -299,6 +305,7 @@ impl<'gc> Dispatcher<'gc> {
     /// # Panics
     ///
     /// Panics if `Self::at_end()` returns true.
+    #[inline(never)]
     pub fn dispatch_loop<D: Dispatch>(&mut self, dispatch: &mut D) -> Result<D::Break, D::Error> {
         assert!(
             self.pc() != self.bytecode.bytes.len(),
@@ -321,7 +328,49 @@ impl<'gc> Dispatcher<'gc> {
         }
     }
 
-    #[inline]
+    /// Dispatch up to `count` instructions on the given [`Dispatch`] impl. Returns Some if the
+    /// dispatch impl breaks or errors, None if the instruction count limit was reached. If Some is
+    /// returned, the second element of the returned tuple is the remaining allocated instructions.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `count` is non-zero and `Self::at_end()` returns true.
+    #[inline(never)]
+    pub fn dispatch_count<D: Dispatch>(
+        &mut self,
+        dispatch: &mut D,
+        mut count: u32,
+    ) -> Option<(Result<D::Break, D::Error>, u32)> {
+        if count == 0 {
+            return None;
+        }
+
+        assert!(
+            self.pc() != self.bytecode.bytes.len(),
+            "dispatcher reached end of bytecode"
+        );
+
+        while count > 0 {
+            count -= 1;
+            let prev_ptr = self.ptr;
+            match self.dispatch_one(dispatch) {
+                Ok(ControlFlow::Continue(())) => {}
+                Ok(ControlFlow::Break(b)) => {
+                    return Some((Ok(b), count));
+                }
+                Err(err) => {
+                    // Reset the PC back to the instruction that caused the error.
+                    self.ptr = prev_ptr;
+                    // We count an instruction that errors as an executed instruction here.
+                    return Some((Err(err), count));
+                }
+            }
+        }
+
+        None
+    }
+
+    #[inline(always)]
     fn dispatch_one<D: Dispatch>(
         &mut self,
         dispatch: &mut D,

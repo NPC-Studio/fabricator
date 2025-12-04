@@ -1,10 +1,12 @@
 mod dispatch;
+mod error;
 mod thread;
 
 pub use self::{
     dispatch::OpError,
-    thread::{
-        BacktraceFrame, CallError, ClosureBacktraceFrame, Execution, ExternBacktraceFrame,
-        ExternClosureBacktraceFrame, Thread, ThreadInner, ThreadState, VmError,
+    error::{
+        BacktraceFrame, CallError, ClosureBacktraceFrame, ExternBacktraceFrame,
+        ExternClosureBacktraceFrame, VmError,
     },
+    thread::{Backtrace, Execution, Hook, Thread, ThreadInner, ThreadState},
 };

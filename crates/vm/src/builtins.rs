@@ -137,7 +137,7 @@ impl<'gc> BuiltIns<'gc> {
                         sub_exec.call_closure(ctx, closure).map_err(|e| e.error)
                     }
                     Function::Callback(callback) => {
-                        callback.call(ctx, sub_exec).map_err(|e| e.into())
+                        sub_exec.call_callback(ctx, callback).map_err(|e| e.into())
                     }
                 };
                 match res {

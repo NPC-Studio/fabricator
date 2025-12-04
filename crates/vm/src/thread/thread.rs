@@ -1,101 +1,30 @@
-use std::{error::Error as StdError, fmt, sync::Arc};
-
-use gc_arena::{Collect, Gc, Lock, Mutation, RefLock};
+use gc_arena::{
+    Collect, Gc, Lock, Mutation, RefLock,
+    collect::{DynCollect, dyn_collect},
+};
 
 use crate::{
     callback::Callback,
     closure::{Closure, SharedValue},
-    debug::LineNumber,
-    error::{Error, ExternError, RawGc, RuntimeError},
+    error::Error,
+    error::RuntimeError,
     instructions,
     interpreter::Context,
     stack::Stack,
-    string::SharedStr,
-    thread::dispatch,
+    thread::{
+        dispatch,
+        error::{BacktraceFrame, CallError, ClosureBacktraceFrame},
+    },
     value::{Function, Value},
 };
 
-#[derive(Debug, Clone)]
-pub struct VmError<'gc> {
-    pub error: Error<'gc>,
-    pub backtrace: Arc<[BacktraceFrame<'gc>]>,
-}
-
-impl<'gc> fmt::Display for VmError<'gc> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}", self.error)?;
-        write!(f, "VM backtrace:")?;
-        for (i, frame) in self.backtrace.iter().rev().enumerate() {
-            writeln!(f)?;
-            write!(f, "{:>4}: ", i)?;
-            match frame {
-                BacktraceFrame::Closure(closure_frame) => {
-                    write!(
-                        f,
-                        "{}:{}",
-                        closure_frame.chunk_name(),
-                        closure_frame.line_number()
-                    )?;
-                }
-                BacktraceFrame::Callback(callback) => {
-                    write!(f, "<callback {:p}>", callback.into_inner())?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum CallError {
-    Runtime(RuntimeError),
-    Vm {
-        error: ExternError,
-        backtrace: Arc<[ExternBacktraceFrame]>,
-    },
-}
-
-impl fmt::Display for CallError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CallError::Runtime(runtime_err) => write!(f, "runtime error: {runtime_err}"),
-            CallError::Vm { error, backtrace } => {
-                writeln!(f, "{}", error)?;
-                write!(f, "VM backtrace:")?;
-                for (i, frame) in backtrace.iter().rev().enumerate() {
-                    writeln!(f)?;
-                    write!(f, "{:>4}: ", i)?;
-                    match frame {
-                        ExternBacktraceFrame::Closure(closure_frame) => {
-                            write!(
-                                f,
-                                "{}:{}",
-                                closure_frame.chunk_name, closure_frame.line_number
-                            )?;
-                        }
-                        ExternBacktraceFrame::Callback(callback) => {
-                            write!(f, "<callback {:p}>", callback)?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl StdError for CallError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            CallError::Runtime(runtime_error) => Some(runtime_error.as_ref()),
-            CallError::Vm { error, .. } => error.source(),
-        }
-    }
-}
+use super::error::VmError;
 
 #[derive(Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Thread<'gc>(Gc<'gc, ThreadInner<'gc>>);
+
+pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -104,9 +33,8 @@ pub struct ThreadState<'gc> {
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
     heap: Vec<OwnedHeapVar<'gc>>,
+    hook_state: Option<HookState<'gc>>,
 }
-
-pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 
 impl<'gc> Thread<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Thread<'gc> {
@@ -117,6 +45,7 @@ impl<'gc> Thread<'gc> {
                 registers: Vec::new(),
                 stack: Vec::new(),
                 heap: Vec::new(),
+                hook_state: None,
             }),
         ))
     }
@@ -129,6 +58,19 @@ impl<'gc> Thread<'gc> {
     #[inline]
     pub fn into_inner(self) -> Gc<'gc, ThreadInner<'gc>> {
         self.0
+    }
+
+    pub fn set_hook(self, ctx: Context<'gc>, mut hook: impl Hook<'gc> + Collect<'gc> + 'gc) {
+        let hook_step_next = hook.on_step_count(ctx);
+        self.0.borrow_mut(&ctx).hook_state = Some(HookState {
+            hook: Box::new(hook),
+            hook_step_next,
+            hook_step_remain: hook_step_next,
+        });
+    }
+
+    pub fn clear_hook(self, mc: &Mutation<'gc>) {
+        self.0.borrow_mut(mc).hook_state = None;
     }
 
     /// Run a function on this `Thread` with `this` set to `ctx.globals()` and `other` set to
@@ -202,8 +144,8 @@ impl<'gc> Thread<'gc> {
 
 /// An execution context for some `Thread`.
 ///
-/// This type is passed to all callbacks to allow them to manipulate the call stack and call FML
-/// code using the calling `Thread`.
+/// This type is passed to all callbacks to allow them to manipulate the call stack and call
+/// functions code using the calling `Thread`.
 pub struct Execution<'gc, 'a> {
     thread: &'a mut ThreadState<'gc>,
     stack_bottom: usize,
@@ -294,6 +236,18 @@ impl<'gc, 'a> Execution<'gc, 'a> {
             .call(ctx, closure, self.this, self.other, self.stack_bottom)
     }
 
+    #[inline]
+    pub fn call_callback(
+        &mut self,
+        ctx: Context<'gc>,
+        callback: Callback<'gc>,
+    ) -> Result<(), RuntimeError> {
+        self.thread.frames.push(Frame::Callback(callback));
+        let res = callback.call(ctx, self.reborrow());
+        assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
+        res
+    }
+
     /// Call a `Function` within a callback.
     ///
     /// Arguments to the function will be taken from the stack and returns placed back into the
@@ -345,9 +299,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
                 }
             }
             Function::Callback(callback) => {
-                self.thread.frames.push(Frame::Callback(callback));
-                let res = callback.call(ctx, self.reborrow());
-                assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
+                let res = self.call_callback(ctx, callback);
                 if let Err(err) = res {
                     if let Some(call_err) = err.downcast_ref::<CallError>() {
                         return Err(call_err.clone());
@@ -387,67 +339,87 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct ClosureBacktraceFrame<'gc> {
-    pub closure: Closure<'gc>,
-    pub instruction: usize,
+/// A backtrace context for some `Thread`, provided to execution hooks.
+pub struct Backtrace<'gc, 'a> {
+    frames: &'a [Frame<'gc>],
 }
 
-impl<'gc> ClosureBacktraceFrame<'gc> {
-    pub fn chunk_name(&self) -> &SharedStr {
-        self.closure.prototype().chunk().name()
+impl<'gc, 'a> Backtrace<'gc, 'a> {
+    /// Returns the current execution frame depth.
+    ///
+    /// Every function call, both normal script closures and Rust callbacks, increase the frame
+    /// depth by 1.
+    ///
+    /// This will always be at least 1 for the callback currently executing.
+    #[inline]
+    pub fn frame_depth(&self) -> usize {
+        self.frames.len()
     }
 
-    pub fn line_number(&self) -> LineNumber {
-        let chunk = self.closure.prototype().chunk();
-        let prototype = self.closure.prototype();
-        let bytecode = prototype.bytecode();
-        let span = bytecode.span(self.instruction);
-        chunk.line_number(span.start())
-    }
-
-    pub fn to_extern(&self) -> ExternClosureBacktraceFrame {
-        ExternClosureBacktraceFrame {
-            closure: RawGc::new(self.closure.into_inner()),
-            instruction: self.instruction,
-            line_number: self.line_number(),
-            chunk_name: self.chunk_name().clone(),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum BacktraceFrame<'gc> {
-    Closure(ClosureBacktraceFrame<'gc>),
-    Callback(Callback<'gc>),
-}
-
-impl<'gc> BacktraceFrame<'gc> {
-    pub fn to_extern(&self) -> ExternBacktraceFrame {
-        match self {
-            BacktraceFrame::Closure(closure_backtrace_frame) => {
-                ExternBacktraceFrame::Closure(closure_backtrace_frame.to_extern())
-            }
-            BacktraceFrame::Callback(callback) => {
-                ExternBacktraceFrame::Callback(RawGc::new(callback.into_inner()))
-            }
-        }
+    /// Return a descriptor for this frame or an upper frame.
+    ///
+    /// The index 0 will return *this* frame, which will always be a callback frame.
+    ///
+    /// Any higher index will return upper frames, starting with the immediate caller and ending
+    /// with the top-level executing frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if given an index that is larger than the return value of [`Execution::frame_depth`].
+    #[inline]
+    pub fn frame(&self, index: usize) -> BacktraceFrame<'gc> {
+        assert!(index < self.frames.len());
+        self.frames[self.frames.len() - 1 - index].backtrace_frame()
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ExternClosureBacktraceFrame {
-    pub closure: RawGc,
-    pub instruction: usize,
-    pub line_number: LineNumber,
-    pub chunk_name: SharedStr,
+pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
+    /// Called whenever a closure is called, or when a callback is called from a closure.
+    ///
+    /// At the time of call, the frame for the callee will be on the frame stack, so calling
+    /// `backtrace.upper_frame(0)` will return the function that has just been called.
+    fn on_call(
+        &mut self,
+        _ctx: Context<'gc>,
+        _backtrace: Backtrace<'gc, '_>,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    /// Called whenever a closure returns, or when a callback returns back to a closure.
+    ///
+    /// At the time of call, the frame for the returning function will still be on the frame stack,
+    /// so calling `backtrace.upper_frame(0)` will return the function that has just returned.
+    fn on_return(
+        &mut self,
+        _ctx: Context<'gc>,
+        _backtrace: Backtrace<'gc, '_>,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    /// If this method returns a non-zero N, then every [`Hook::on_step`] will be called every
+    /// N VM instructions.
+    ///
+    /// This counter is kept between calls and returns, even totally independent thread calls. The
+    /// `on_step_count` method itself is called when the hook implementation is set, as well as
+    /// immediately after every call to `on_step`.
+    fn on_step_count(&mut self, _ctx: Context<'gc>) -> u32 {
+        0
+    }
+
+    /// Called every N VM instructions, where N is the value returned from the last call to
+    /// [`Hook::on_step_count`].
+    fn on_step(
+        &mut self,
+        _ctx: Context<'gc>,
+        _backtrace: Backtrace<'gc, '_>,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum ExternBacktraceFrame {
-    Closure(ExternClosureBacktraceFrame),
-    Callback(RawGc),
-}
+dyn_collect!(dyn Hook<'gc>);
 
 #[derive(Debug, Collect)]
 #[collect(no_drop)]
@@ -498,6 +470,14 @@ impl<'gc> OwnedHeapVar<'gc> {
 
 #[derive(Collect)]
 #[collect(no_drop)]
+struct HookState<'gc> {
+    hook: Box<dyn Hook<'gc>>,
+    hook_step_next: u32,
+    hook_step_remain: u32,
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
 struct ClosureFrame<'gc> {
     closure: Closure<'gc>,
     this: Value<'gc>,
@@ -520,7 +500,7 @@ impl<'gc> Frame<'gc> {
         match self {
             Frame::Closure(script_frame) => BacktraceFrame::Closure(ClosureBacktraceFrame {
                 closure: script_frame.closure,
-                instruction: script_frame.dispatcher.instruction_index().unwrap(),
+                instruction: script_frame.dispatcher.instruction_index(),
             }),
             &Frame::Callback(callback) => BacktraceFrame::Callback(callback),
         }
@@ -567,7 +547,25 @@ impl<'gc> ThreadState<'gc> {
             })
         });
 
-        loop {
+        if let Some(hook_state) = &mut self.hook_state {
+            if let Err(err) = hook_state.hook.on_call(
+                ctx,
+                Backtrace {
+                    frames: &self.frames,
+                },
+            ) {
+                let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
+                self.frames.truncate(bottom_frame);
+
+                return Err(VmError {
+                    error: err.into(),
+                    backtrace,
+                }
+                .into());
+            }
+        }
+
+        let err = loop {
             let Frame::Closure(frame) = self.frames.last_mut().unwrap() else {
                 unreachable!()
             };
@@ -583,10 +581,10 @@ impl<'gc> ThreadState<'gc> {
             // the *previous* `register_bottom`.
             //
             // In this way, there is always the expected slice of 256 registers for the top script
-            // frame. Additionally, the amount that the registers vector is resized is minimal:
-            // it is only grown by the `used_registers` value on a call and it is only shrunk by
-            // the `used_registers` value on a return, and the `used_registers` value is usually
-            // small, especially for small functions.
+            // frame. Additionally, the amount that the registers vector is resized is minimal: it
+            // is only grown by the `used_registers` value on a call and it is only shrunk by the
+            // `used_registers` value on a return, and the `used_registers` value is usually small,
+            // especially for small functions.
             //
             // The sliding register slice for frames will have overlap, so garbage may be left
             // in the calling frame's register slice when the called frame returns. This will be
@@ -607,7 +605,7 @@ impl<'gc> ThreadState<'gc> {
                 .unwrap();
             let heap = &mut self.heap[frame.heap_bottom..];
             let stack = Stack::new(&mut self.stack, frame.stack_bottom);
-            let ret = frame.dispatcher.dispatch_loop(&mut dispatch::Dispatch::new(
+            let mut dispatch = dispatch::Dispatch::new(
                 ctx,
                 frame.closure,
                 &mut frame.this,
@@ -615,11 +613,33 @@ impl<'gc> ThreadState<'gc> {
                 registers,
                 heap,
                 stack,
-            ));
+            );
 
-            let mut error = None;
-            match ret {
-                Ok(next) => match next {
+            let next = if let Some(hook_state) = &mut self.hook_state
+                && hook_state.hook_step_next != 0
+            {
+                match frame
+                    .dispatcher
+                    .dispatch_count(&mut dispatch, hook_state.hook_step_remain)
+                {
+                    Some((res, count)) => {
+                        hook_state.hook_step_remain = count;
+                        match res {
+                            Ok(next) => Some(next),
+                            Err(err) => break err,
+                        }
+                    }
+                    None => None,
+                }
+            } else {
+                match frame.dispatcher.dispatch_loop(&mut dispatch) {
+                    Ok(next) => Some(next),
+                    Err(err) => break err,
+                }
+            };
+
+            match next {
+                Some(next) => match next {
                     dispatch::Next::Call {
                         function,
                         args_bottom,
@@ -660,22 +680,58 @@ impl<'gc> ThreadState<'gc> {
                                         0,
                                     ),
                                 }));
+
+                                if let Some(hook_state) = &mut self.hook_state {
+                                    if let Err(err) = hook_state.hook.on_call(
+                                        ctx,
+                                        Backtrace {
+                                            frames: &self.frames,
+                                        },
+                                    ) {
+                                        break err.into();
+                                    }
+                                }
                             }
                             Function::Callback(callback) => {
                                 let stack_bottom = frame.stack_bottom + args_bottom;
                                 let this = frame.this;
                                 let other = frame.other;
                                 self.frames.push(Frame::Callback(callback));
+
+                                if let Some(hook_state) = &mut self.hook_state {
+                                    if let Err(err) = hook_state.hook.on_call(
+                                        ctx,
+                                        Backtrace {
+                                            frames: &self.frames,
+                                        },
+                                    ) {
+                                        break err.into();
+                                    }
+                                }
+
                                 let execution = Execution {
                                     thread: self,
                                     stack_bottom,
                                     this,
                                     other,
                                 };
-                                if let Err(err) = callback.call(ctx, execution) {
-                                    error = Some(err.into());
+                                let res = callback.call(ctx, execution);
+
+                                if let Some(hook_state) = &mut self.hook_state {
+                                    if let Err(err) = hook_state.hook.on_return(
+                                        ctx,
+                                        Backtrace {
+                                            frames: &self.frames,
+                                        },
+                                    ) {
+                                        break err.into();
+                                    }
                                 }
+
                                 assert!(matches!(self.frames.pop(), Some(Frame::Callback(_))));
+                                if let Err(err) = res {
+                                    break err.into();
+                                }
                             }
                         }
                     }
@@ -690,30 +746,49 @@ impl<'gc> ThreadState<'gc> {
                         // Clear the heap values for this frame.
                         self.heap.truncate(frame.heap_bottom);
 
+                        if let Some(hook_state) = &mut self.hook_state {
+                            if let Err(err) = hook_state.hook.on_return(
+                                ctx,
+                                Backtrace {
+                                    frames: &self.frames,
+                                },
+                            ) {
+                                break err.into();
+                            }
+                        }
+
                         // Pop the returning frame.
                         self.frames.pop().unwrap();
 
-                        // If we are now below our initial frame, then return.
+                        // If we have returned from our initial frame, then we can stop executing.
                         if self.frames.len() == bottom_frame {
                             return Ok(());
                         }
                     }
                 },
-                Err(err) => {
-                    error = Some(err);
+                None => {
+                    let hook_state = self.hook_state.as_mut().unwrap();
+                    if let Err(err) = hook_state.hook.on_step(
+                        ctx,
+                        Backtrace {
+                            frames: &self.frames,
+                        },
+                    ) {
+                        break err.into();
+                    }
+                    hook_state.hook_step_next = hook_state.hook.on_step_count(ctx);
+                    hook_state.hook_step_remain = hook_state.hook_step_next;
                 }
             }
+        };
 
-            if let Some(err) = error {
-                let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
-                self.frames.truncate(bottom_frame);
+        let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
+        self.frames.truncate(bottom_frame);
 
-                return Err(VmError {
-                    error: err,
-                    backtrace,
-                }
-                .into());
-            }
+        Err(VmError {
+            error: err,
+            backtrace,
         }
+        .into())
     }
 }
