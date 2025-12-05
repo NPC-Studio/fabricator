@@ -243,8 +243,41 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         callback: Callback<'gc>,
     ) -> Result<(), RuntimeError> {
         self.thread.frames.push(Frame::Callback(callback));
-        let res = callback.call(ctx, self.reborrow());
-        assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
+
+        struct DropCallbackFrame<'gc, 'a>(Execution<'gc, 'a>);
+
+        impl<'gc, 'a> Drop for DropCallbackFrame<'gc, 'a> {
+            fn drop(&mut self) {
+                assert!(matches!(
+                    self.0.thread.frames.pop(),
+                    Some(Frame::Callback(_))
+                ));
+            }
+        }
+
+        let mut drop_frame = DropCallbackFrame(self.reborrow());
+        let mut this = drop_frame.0.reborrow();
+
+        if let Some(hook_state) = &mut this.thread.hook_state {
+            hook_state.hook.on_call(
+                ctx,
+                Backtrace {
+                    frames: &this.thread.frames,
+                },
+            )?;
+        }
+
+        let res = callback.call(ctx, this.reborrow());
+
+        if let Some(hook_state) = &mut this.thread.hook_state {
+            hook_state.hook.on_return(
+                ctx,
+                Backtrace {
+                    frames: &this.thread.frames,
+                },
+            );
+        }
+
         res
     }
 
@@ -374,10 +407,10 @@ impl<'gc, 'a> Backtrace<'gc, 'a> {
 }
 
 pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
-    /// Called whenever a closure is called, or when a callback is called from a closure.
+    /// Called whenever a [`Closure`] or [`Callback`] is called using the owning [`Thread`].
     ///
-    /// At the time of call, the frame for the callee will be on the frame stack, so calling
-    /// `backtrace.upper_frame(0)` will return the function that has just been called.
+    /// At the time of call, the frame for the callee will be newly pushed onto the frame stack, so
+    /// calling `backtrace.upper_frame(0)` will return the function that has just been called.
     fn on_call(
         &mut self,
         _ctx: Context<'gc>,
@@ -386,17 +419,18 @@ pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
         Ok(())
     }
 
-    /// Called whenever a closure returns, or when a callback returns back to a closure.
+    /// Called whenever a closure or callback returns using the owning [`Thread`].
     ///
     /// At the time of call, the frame for the returning function will still be on the frame stack,
     /// so calling `backtrace.upper_frame(0)` will return the function that has just returned.
-    fn on_return(
-        &mut self,
-        _ctx: Context<'gc>,
-        _backtrace: Backtrace<'gc, '_>,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
+    ///
+    /// This function will be called unconditionally whenever a frame is popped, *even* when the
+    /// returning frame is unwinding due to an error.
+    ///
+    /// This thread hook *cannot* generate synthetic runtime errors because it is too confusing: if
+    /// it were allowed to generate an error and did so, the same hook still must be called after
+    /// this repeatedly for every upper unwinding frame.
+    fn on_return(&mut self, _ctx: Context<'gc>, _backtrace: Backtrace<'gc, '_>) {}
 
     /// If this method returns a non-zero N, then every [`Hook::on_step`] will be called every
     /// N VM instructions.
@@ -696,40 +730,15 @@ impl<'gc> ThreadState<'gc> {
                                 let stack_bottom = frame.stack_bottom + args_bottom;
                                 let this = frame.this;
                                 let other = frame.other;
-                                self.frames.push(Frame::Callback(callback));
 
-                                if let Some(hook_state) = &mut self.hook_state {
-                                    if let Err(err) = hook_state.hook.on_call(
-                                        ctx,
-                                        Backtrace {
-                                            frames: &self.frames,
-                                        },
-                                    ) {
-                                        break err.into();
-                                    }
-                                }
-
-                                let execution = Execution {
+                                if let Err(err) = (Execution {
                                     thread: self,
                                     stack_bottom,
                                     this,
                                     other,
-                                };
-                                let res = callback.call(ctx, execution);
-
-                                if let Some(hook_state) = &mut self.hook_state {
-                                    if let Err(err) = hook_state.hook.on_return(
-                                        ctx,
-                                        Backtrace {
-                                            frames: &self.frames,
-                                        },
-                                    ) {
-                                        break err.into();
-                                    }
-                                }
-
-                                assert!(matches!(self.frames.pop(), Some(Frame::Callback(_))));
-                                if let Err(err) = res {
+                                })
+                                .call_callback(ctx, callback)
+                                {
                                     break err.into();
                                 }
                             }
@@ -747,14 +756,12 @@ impl<'gc> ThreadState<'gc> {
                         self.heap.truncate(frame.heap_bottom);
 
                         if let Some(hook_state) = &mut self.hook_state {
-                            if let Err(err) = hook_state.hook.on_return(
+                            hook_state.hook.on_return(
                                 ctx,
                                 Backtrace {
                                     frames: &self.frames,
                                 },
-                            ) {
-                                break err.into();
-                            }
+                            );
                         }
 
                         // Pop the returning frame.
@@ -783,7 +790,20 @@ impl<'gc> ThreadState<'gc> {
         };
 
         let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
-        self.frames.truncate(bottom_frame);
+
+        if let Some(hook_state) = &mut self.hook_state {
+            while self.frames.len() > bottom_frame {
+                hook_state.hook.on_return(
+                    ctx,
+                    Backtrace {
+                        frames: &self.frames,
+                    },
+                );
+                self.frames.pop();
+            }
+        } else {
+            self.frames.truncate(bottom_frame);
+        }
 
         Err(VmError {
             error: err,

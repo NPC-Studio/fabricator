@@ -7,7 +7,7 @@ use crate::{
     string::String, user_data::UserData,
 };
 
-#[derive(Copy, Clone, Collect)]
+#[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub enum Function<'gc> {
     Closure(Closure<'gc>),

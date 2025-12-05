@@ -58,9 +58,9 @@ fn test_vm_call_return_hooks() {
         impl<'gc> vm::Hook<'gc> for TestHook {
             fn on_call(
                 &mut self,
-                _ctx: fabricator_vm::Context<'gc>,
-                backtrace: fabricator_vm::Backtrace<'gc, '_>,
-            ) -> Result<(), fabricator_vm::RuntimeError> {
+                _ctx: vm::Context<'gc>,
+                backtrace: vm::Backtrace<'gc, '_>,
+            ) -> Result<(), vm::RuntimeError> {
                 self.frame_count.set(self.frame_count.get() + 1);
                 self.max_count
                     .set(self.max_count.get().max(self.frame_count.get()));
@@ -78,11 +78,7 @@ fn test_vm_call_return_hooks() {
                 Ok(())
             }
 
-            fn on_return(
-                &mut self,
-                _ctx: fabricator_vm::Context<'gc>,
-                backtrace: fabricator_vm::Backtrace<'gc, '_>,
-            ) -> Result<(), fabricator_vm::RuntimeError> {
+            fn on_return(&mut self, _ctx: vm::Context<'gc>, backtrace: vm::Backtrace<'gc, '_>) {
                 self.frame_count.set(self.frame_count.get() - 1);
 
                 match backtrace.frame_depth() {
@@ -95,7 +91,6 @@ fn test_vm_call_return_hooks() {
                     )),
                     _ => unreachable!(),
                 }
-                Ok(())
             }
         }
 
@@ -115,6 +110,77 @@ fn test_vm_call_return_hooks() {
 
         assert!(frame_count.get() == 0);
         assert!(max_count.get() == 4);
+    });
+}
+
+#[test]
+fn test_vm_return_hook_on_error() {
+    let mut interpreter = vm::Interpreter::new();
+
+    interpreter.enter(|ctx| {
+        let output = compiler::Compiler::compile_chunk(
+            ctx,
+            "default",
+            compiler::ImportItems::with_magic(ctx.stdlib()),
+            compiler::CompileSettings::modern(),
+            "vm hook test",
+            r#"
+                function test1() {
+                    throw "hello";
+                }
+
+                function test2() {
+                    test1();
+                }
+
+                test2();
+            "#,
+        )
+        .unwrap();
+        let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
+
+        #[derive(Collect)]
+        #[collect(require_static)]
+        struct TestHook {
+            frame_count: Rc<Cell<u32>>,
+        }
+
+        impl<'gc> vm::Hook<'gc> for TestHook {
+            fn on_call(
+                &mut self,
+                _ctx: vm::Context<'gc>,
+                backtrace: vm::Backtrace<'gc, '_>,
+            ) -> Result<(), vm::RuntimeError> {
+                self.frame_count.set(self.frame_count.get() + 1);
+                assert!(self.frame_count.get() as usize == backtrace.frame_depth());
+                Ok(())
+            }
+
+            fn on_return(&mut self, _ctx: vm::Context<'gc>, backtrace: vm::Backtrace<'gc, '_>) {
+                assert!(self.frame_count.get() as usize == backtrace.frame_depth());
+                self.frame_count.set(self.frame_count.get() - 1);
+            }
+        }
+
+        let thread = vm::Thread::new(&ctx);
+
+        let frame_count = Rc::new(Cell::new(0));
+        thread.set_hook(
+            ctx,
+            TestHook {
+                frame_count: frame_count.clone(),
+            },
+        );
+
+        assert!(matches!(
+            thread.run(ctx, closure),
+            Err(vm::CallError::Vm {
+                error: vm::ExternError::Script(vm::ExternScriptError(vm::ExternValue::String(s))),
+                ..
+            }) if s.as_str() == "hello"
+        ));
+
+        assert!(frame_count.get() == 0);
     });
 }
 
@@ -158,15 +224,15 @@ fn test_vm_step_hook() {
         impl Error for ExecLimitError {}
 
         impl<'gc> vm::Hook<'gc> for TestHook {
-            fn on_step_count(&mut self, _ctx: fabricator_vm::Context<'gc>) -> u32 {
+            fn on_step_count(&mut self, _ctx: vm::Context<'gc>) -> u32 {
                 10_000
             }
 
             fn on_step(
                 &mut self,
-                _ctx: fabricator_vm::Context<'gc>,
-                _backtrace: fabricator_vm::Backtrace<'gc, '_>,
-            ) -> Result<(), fabricator_vm::RuntimeError> {
+                _ctx: vm::Context<'gc>,
+                _backtrace: vm::Backtrace<'gc, '_>,
+            ) -> Result<(), vm::RuntimeError> {
                 Err(ExecLimitError.into())
             }
         }
