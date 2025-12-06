@@ -211,31 +211,17 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         ));
                     }
                 }
-                ir::InstructionKind::Undefined => {
-                    vm_instructions.push((
-                        Instruction::Undefined {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                        },
-                        inst.span,
-                    ));
-                }
-                ir::InstructionKind::Boolean(is_true) => {
-                    vm_instructions.push((
-                        Instruction::Boolean {
-                            dest: reg_alloc.instruction_registers[inst_id],
-                            is_true,
-                        },
-                        inst.span,
-                    ));
-                }
                 ir::InstructionKind::Constant(ref c) => {
-                    vm_instructions.push((
-                        Instruction::LoadConstant {
+                    let dest = reg_alloc.instruction_registers[inst_id];
+                    let vm_inst = match *c {
+                        Constant::Undefined => Instruction::Undefined { dest },
+                        Constant::Boolean(is_true) => Instruction::Boolean { dest, is_true },
+                        _ => Instruction::LoadConstant {
                             dest: reg_alloc.instruction_registers[inst_id],
                             constant: get_const_index(c)?,
                         },
-                        inst.span,
-                    ));
+                    };
+                    vm_instructions.push((vm_inst, inst.span));
                 }
                 ir::InstructionKind::Closure { func, bind_this } => {
                     vm_instructions.push((

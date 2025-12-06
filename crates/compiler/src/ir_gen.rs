@@ -673,8 +673,10 @@ where
             ir::InstructionKind::CloseThisScope(super_scope),
         );
 
-        let true_ =
-            self.push_instruction(body.span.start_span(), ir::InstructionKind::Boolean(true));
+        let true_ = self.push_instruction(
+            body.span.start_span(),
+            ir::InstructionKind::Constant(Constant::Boolean(true)),
+        );
         self.push_instruction(
             body.span.start_span(),
             ir::InstructionKind::SetVariable(our_super_is_initialized, true_),
@@ -908,7 +910,8 @@ where
 
                 let value = self.expression(value)?;
                 self.set_var(span, var, value);
-                let true_ = self.push_instruction(span, ir::InstructionKind::Boolean(true));
+                let true_ = self
+                    .push_instruction(span, ir::InstructionKind::Constant(Constant::Boolean(true)));
                 self.push_instruction(
                     span,
                     ir::InstructionKind::SetVariable(is_initialized, true_),
@@ -2370,7 +2373,12 @@ where
                     },
                 ))
             },
-            |this| Ok(this.push_instruction(span, ir::InstructionKind::Boolean(false))),
+            |this| {
+                Ok(this.push_instruction(
+                    span,
+                    ir::InstructionKind::Constant(Constant::Boolean(false)),
+                ))
+            },
         )
     }
 
@@ -2384,7 +2392,10 @@ where
         self.if_expr(
             span,
             left,
-            |this| Ok(this.push_instruction(span, ir::InstructionKind::Boolean(true))),
+            |this| {
+                Ok(this
+                    .push_instruction(span, ir::InstructionKind::Constant(Constant::Boolean(true))))
+            },
             |this| {
                 let right = this.expression(right)?;
                 Ok(this.push_instruction(

@@ -158,18 +158,6 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                 _ => {}
             }
 
-            if let Some(new_inst) = &mut new_inst {
-                match *new_inst {
-                    ir::InstructionKind::Constant(Constant::Undefined) => {
-                        *new_inst = ir::InstructionKind::Undefined;
-                    }
-                    ir::InstructionKind::Boolean(b) => {
-                        *new_inst = ir::InstructionKind::Boolean(b);
-                    }
-                    _ => {}
-                }
-            }
-
             if let Some(new_inst) = new_inst {
                 ir.instructions[inst_id].kind = new_inst;
             }

@@ -262,8 +262,6 @@ impl<S> Variable<S> {
 pub enum InstructionKind<S> {
     NoOp,
     Copy(InstId),
-    Undefined,
-    Boolean(bool),
     Constant(Constant<S>),
     Closure {
         func: FuncId,
@@ -625,8 +623,6 @@ impl<S> Instruction<S> {
     pub fn new(kind: InstructionKind<S>, span: Span) -> Self {
         let output_type = match kind {
             InstructionKind::Copy(_) => OutputType::Any,
-            InstructionKind::Undefined => OutputType::Undefined,
-            InstructionKind::Boolean(_) => OutputType::Boolean,
             InstructionKind::Constant(ref constant) => match constant {
                 Constant::Undefined => OutputType::Undefined,
                 Constant::Boolean(_) => OutputType::Boolean,
@@ -862,12 +858,6 @@ impl<S: AsRef<str>> Function<S> {
                     }
                     InstructionKind::Copy(source) => {
                         writeln!(f, "copy({source})")?;
-                    }
-                    InstructionKind::Undefined => {
-                        writeln!(f, "undefined()")?;
-                    }
-                    InstructionKind::Boolean(b) => {
-                        writeln!(f, "boolean({b})")?;
                     }
                     InstructionKind::Constant(ref constant) => {
                         writeln!(f, "constant({:?})", constant.as_str())?;

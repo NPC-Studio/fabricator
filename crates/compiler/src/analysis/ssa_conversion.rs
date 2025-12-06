@@ -5,6 +5,7 @@ use fabricator_vm::Span;
 
 use crate::{
     analysis::vec_change_set::VecChangeSet,
+    constant::Constant,
     graph::{dfs::depth_first_search_with, dominators::Dominators},
     ir,
 };
@@ -144,7 +145,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                         } else if !skip_vars.contains(&var_id) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
-                            inst.kind = ir::InstructionKind::Undefined;
+                            inst.kind = ir::InstructionKind::Constant(Constant::Undefined);
                         }
                     }
                     ir::InstructionKind::SetVariable(var_id, source) => {
@@ -189,7 +190,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             // make one to keep the IR well-formed. This was use of a value that was
                             // undefined on this code path, so we set the value to undefined.
                             var_inst = ir.instructions.insert(ir::Instruction::new(
-                                ir::InstructionKind::Undefined,
+                                ir::InstructionKind::Constant(Constant::Undefined),
                                 Span::null(),
                             ));
                             block.instructions.push(var_inst);

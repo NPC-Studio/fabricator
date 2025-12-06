@@ -53,24 +53,6 @@ impl<S: Hash> Hash for Constant<S> {
     }
 }
 
-impl<S> From<bool> for Constant<S> {
-    fn from(b: bool) -> Self {
-        Constant::Boolean(b)
-    }
-}
-
-impl<S> From<i64> for Constant<S> {
-    fn from(i: i64) -> Self {
-        Constant::Integer(i)
-    }
-}
-
-impl<S> From<f64> for Constant<S> {
-    fn from(f: f64) -> Self {
-        Constant::Float(f)
-    }
-}
-
 impl<S> Constant<S> {
     #[inline]
     pub fn is_undefined(&self) -> bool {
