@@ -619,8 +619,8 @@ pub struct Instruction<S> {
 impl<S> Instruction<S> {
     /// Create a new instruction with the given `kind` and `span`.
     ///
-    /// The `output_type` and `effects` fields are initially set to the most narrow output type and
-    /// the most permissive effects that can be known using only the created instruction itself.
+    /// The `output_type` and `effects` fields are initially set to the most narrow values that can
+    /// be known using only the created instruction itself.
     #[must_use]
     pub fn new(kind: InstructionKind<S>, span: Span) -> Self {
         let output_type = match kind {
