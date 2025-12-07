@@ -1,6 +1,6 @@
 use std::{
     ops::{self, Range},
-    ptr::NonNull,
+    ptr,
 };
 
 use fabricator_vm as vm;
@@ -8,16 +8,16 @@ use gc_arena::Mutation;
 use thiserror::Error;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Pointer(pub NonNull<u8>);
+pub struct Pointer(pub *const u8);
 
-impl From<NonNull<u8>> for Pointer {
-    fn from(value: NonNull<u8>) -> Self {
+impl From<*const u8> for Pointer {
+    fn from(value: *const u8) -> Self {
         Self(value)
     }
 }
 
 impl ops::Deref for Pointer {
-    type Target = NonNull<u8>;
+    type Target = *const u8;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -25,8 +25,12 @@ impl ops::Deref for Pointer {
 }
 
 impl Pointer {
-    pub fn new(p: *mut u8) -> Option<Self> {
-        Some(Self(NonNull::new(p)?))
+    pub fn new(p: *const u8) -> Self {
+        Self(p)
+    }
+
+    pub fn null() -> Self {
+        Self(ptr::null())
     }
 
     pub fn into_userdata<'gc>(self, mc: &Mutation<'gc>) -> vm::UserData<'gc> {
@@ -41,7 +45,7 @@ impl Pointer {
         Ok(*ud.downcast_static::<Pointer>()?)
     }
 
-    pub fn into_inner(self) -> NonNull<u8> {
+    pub fn as_ptr(self) -> *const u8 {
         self.0
     }
 }
@@ -110,4 +114,53 @@ pub fn resolve_array_range(
     }
 
     Ok((range, is_reverse))
+}
+
+pub trait MagicExt<'gc> {
+    fn insert_constant(
+        &mut self,
+        ctx: vm::Context<'gc>,
+        name: &str,
+        value: impl Into<vm::Value<'gc>>,
+    );
+
+    fn insert_callback<F, A, R, E>(&mut self, ctx: vm::Context<'gc>, name: &str, f: F)
+    where
+        F: Fn(vm::Context<'gc>, A) -> Result<R, E> + 'static,
+        A: vm::FromMultiValue<'gc>,
+        R: vm::IntoMultiValue<'gc>,
+        vm::RuntimeError: From<E>;
+}
+
+impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
+    fn insert_constant(
+        &mut self,
+        ctx: vm::Context<'gc>,
+        name: &str,
+        value: impl Into<vm::Value<'gc>>,
+    ) {
+        self.insert(
+            ctx.intern(name),
+            vm::MagicConstant::new_ptr(&ctx, value.into()),
+        );
+    }
+
+    fn insert_callback<F, A, R, E>(&mut self, ctx: vm::Context<'gc>, name: &str, f: F)
+    where
+        F: Fn(vm::Context<'gc>, A) -> Result<R, E> + 'static,
+        A: vm::FromMultiValue<'gc>,
+        R: vm::IntoMultiValue<'gc>,
+        vm::RuntimeError: From<E>,
+    {
+        self.insert_constant(
+            ctx,
+            name,
+            vm::Callback::from_fn(&ctx, move |ctx, mut exec| {
+                let args: A = exec.stack().consume(ctx)?;
+                let ret = f(ctx, args)?;
+                exec.stack().replace(ctx, ret);
+                Ok(())
+            }),
+        )
+    }
 }

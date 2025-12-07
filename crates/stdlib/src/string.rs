@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    convert::Infallible,
     fmt,
     io::{self, Write as _},
     mem,
@@ -9,361 +10,328 @@ use fabricator_vm as vm;
 use gc_arena::Gc;
 use thiserror::Error;
 
-use crate::util::resolve_array_range;
+use crate::util::{MagicExt as _, resolve_array_range};
+
+pub fn string_trim<'gc>(
+    ctx: vm::Context<'gc>,
+    (string, trims): (vm::String<'gc>, Option<Vec<vm::String<'gc>>>),
+) -> Result<vm::String<'gc>, Infallible> {
+    Ok(if let Some(trims) = trims {
+        let mut string = string.as_str();
+        for trim in trims {
+            string = string.trim_start_matches(trim.as_str());
+            string = string.trim_end_matches(trim.as_str());
+        }
+        ctx.intern(string)
+    } else {
+        ctx.intern(string.as_str().trim())
+    })
+}
+
+pub fn string_length<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let value: vm::Value = exec.stack().consume(ctx)?;
+    let string = value_to_string(ctx, exec.reborrow(), value)?;
+    exec.stack().replace(ctx, string.chars().count() as isize);
+    Ok(())
+}
+
+pub fn string_byte_length<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let value: vm::Value = exec.stack().consume(ctx)?;
+    let string = value_to_string(ctx, exec.reborrow(), value)?;
+    exec.stack().replace(ctx, string.len() as isize);
+    Ok(())
+}
+
+pub fn ord<'gc>(_ctx: vm::Context<'gc>, arg: vm::String<'gc>) -> Result<isize, vm::RuntimeError> {
+    let mut iter = arg.as_str().chars();
+    let c = iter.next();
+    if c.is_none() || iter.next().is_some() {
+        return Err(vm::RuntimeError::msg(
+            "`ord` must be given a single character string",
+        ));
+    }
+    Ok(c.unwrap() as isize)
+}
+
+pub fn show_debug_message<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let fmt_string: vm::String = exec.stack().from_index(ctx, 0)?;
+
+    let mut stdout = io::stdout().lock();
+    for part in split_format(&fmt_string) {
+        match part {
+            FormatPart::Str(s) => write!(stdout, "{}", s)?,
+            FormatPart::Arg(arg) => {
+                let mut buf = String::new();
+                let val = exec.stack().get(arg + 1);
+                print_value(&mut buf, ctx, exec.reborrow(), val)?;
+                write!(stdout, "{}", buf)?;
+            }
+        }
+    }
+    writeln!(stdout)?;
+    exec.stack().clear();
+    Ok(())
+}
+
+pub fn string<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let out = match exec.stack().get(0) {
+        vm::Value::String(fmt) => {
+            let mut out = String::new();
+            for part in split_format(&fmt) {
+                match part {
+                    FormatPart::Str(s) => out.push_str(s),
+                    FormatPart::Arg(arg) => {
+                        let val = exec.stack().get(arg + 1);
+                        print_value(&mut out, ctx, exec.reborrow(), val)?;
+                    }
+                }
+            }
+            ctx.intern(&out)
+        }
+        other => value_to_string(ctx, exec.reborrow(), other)?,
+    };
+    exec.stack().replace(ctx, out);
+    Ok(())
+}
+
+pub fn string_char_at<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, index): (vm::String<'gc>, usize),
+) -> Result<String, vm::RuntimeError> {
+    let mut chars = string.chars();
+    let index = index.checked_sub(1).ok_or_else(|| {
+        vm::RuntimeError::msg(format!(
+            "index given to `string_char_at` is 1-indexed and cannot be 0"
+        ))
+    })?;
+    let c = chars.nth(index).ok_or_else(|| {
+        vm::RuntimeError::msg(format!(
+            "index {index} is out of range in string of length {}",
+            string.chars().count()
+        ))
+    })?;
+    Ok(c.to_string())
+}
+
+pub fn string_digits<'gc>(
+    _ctx: vm::Context<'gc>,
+    input: vm::String<'gc>,
+) -> Result<String, Infallible> {
+    let mut output = String::new();
+
+    for c in input.chars() {
+        if c.is_digit(10) {
+            output.push(c);
+        }
+    }
+
+    Ok(output)
+}
+
+pub fn string_pos<'gc>(
+    _ctx: vm::Context<'gc>,
+    (substr, string): (vm::String<'gc>, vm::String<'gc>),
+) -> Result<isize, Infallible> {
+    Ok(string
+        .find(substr.as_str())
+        .map(|i| i as isize + 1)
+        .unwrap_or(0))
+}
+
+pub fn string_last_pos<'gc>(
+    _ctx: vm::Context<'gc>,
+    (substr, string): (vm::String<'gc>, vm::String<'gc>),
+) -> Result<isize, Infallible> {
+    Ok(string
+        .rfind(substr.as_str())
+        .map(|i| i as isize + 1)
+        .unwrap_or(0))
+}
+
+pub fn string_count<'gc>(
+    _ctx: vm::Context<'gc>,
+    (substr, string): (vm::String<'gc>, vm::String<'gc>),
+) -> Result<isize, vm::RuntimeError> {
+    if substr.is_empty() {
+        return Err(vm::RuntimeError::msg(
+            "substr cannot be empty in `string_count`",
+        ));
+    }
+    let mut string = string.as_str();
+    let mut count = 0;
+    while let Some(index) = string.find(substr.as_str()) {
+        count += 1;
+        string = &string[index + substr.len()..];
+    }
+    Ok(count)
+}
+
+pub fn string_copy<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, index, count): (vm::String<'gc>, usize, usize),
+) -> Result<String, vm::RuntimeError> {
+    let index = index.checked_sub(1).ok_or_else(|| {
+        vm::RuntimeError::msg(format!(
+            "index given to `string_copy` is 1-indexed and cannot be 0"
+        ))
+    })?;
+    Ok(string.chars().skip(index).take(count).collect::<String>())
+}
+
+pub fn string_delete<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, index, count): (vm::String<'gc>, isize, isize),
+) -> Result<String, vm::RuntimeError> {
+    if index == 0 {
+        return Err(vm::RuntimeError::msg(format!(
+            "index given to `string_delete` is 1-indexed and cannot be 0"
+        )));
+    }
+    let (range, _) = resolve_array_range(string.chars().count(), Some(index - 1), Some(count))?;
+    Ok(string
+        .chars()
+        .enumerate()
+        .filter_map(|(i, c)| if range.contains(&i) { None } else { Some(c) })
+        .collect::<String>())
+}
+
+pub fn string_insert<'gc>(
+    _ctx: vm::Context<'gc>,
+    (substr, string, index): (vm::String<'gc>, vm::String<'gc>, usize),
+) -> Result<String, Infallible> {
+    let index = index.saturating_sub(1).clamp(0, string.len());
+    Ok(format!(
+        "{}{}{}",
+        &string[0..index],
+        substr,
+        &string[index..]
+    ))
+}
+
+pub fn string_replace<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, substr, newstr): (vm::String<'gc>, vm::String<'gc>, vm::String<'gc>),
+) -> Result<String, Infallible> {
+    Ok(string.replacen(substr.as_str(), newstr.as_str(), 1))
+}
+
+pub fn string_replace_all<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, substr, newstr): (vm::String<'gc>, vm::String<'gc>, vm::String<'gc>),
+) -> Result<String, Infallible> {
+    Ok(string.replace(substr.as_str(), newstr.as_str()))
+}
+
+pub fn string_ends_with<'gc>(
+    _ctx: vm::Context<'gc>,
+    (string, substr): (vm::String<'gc>, vm::String<'gc>),
+) -> Result<bool, Infallible> {
+    Ok(string.ends_with(substr.as_str()))
+}
+
+pub fn string_trim_end<'gc>(
+    ctx: vm::Context<'gc>,
+    (string, patterns): (vm::String<'gc>, Option<vm::Array<'gc>>),
+) -> Result<vm::String<'gc>, vm::RuntimeError> {
+    let res = if let Some(patterns) = patterns {
+        let mut res = string.as_str();
+        loop {
+            let mut changed = false;
+            for i in 0..patterns.len() {
+                let pat = patterns
+                    .get(i)
+                    .coerce_string(ctx)
+                    .ok_or_else(|| vm::RuntimeError::msg("trim pattern must be a string"))?;
+                let new_res = res.trim_end_matches(pat.as_str());
+                if new_res.len() != res.len() {
+                    changed = true;
+                    res = new_res;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        res
+    } else {
+        string.trim_end()
+    };
+    Ok(ctx.intern(res))
+}
+
+pub fn string_format<'gc>(
+    _ctx: vm::Context<'gc>,
+    (val, whole, decimal): (f64, usize, usize),
+) -> Result<String, Infallible> {
+    let decimal_point = if val.fract() == 0.0 { 0 } else { 1 };
+    Ok(format!(
+        "{val:width$.prec$}",
+        val = val,
+        width = whole + decimal + decimal_point,
+        prec = decimal
+    ))
+}
+
+pub fn string_lower<'gc>(
+    _ctx: vm::Context<'gc>,
+    string: vm::String<'gc>,
+) -> Result<String, Infallible> {
+    Ok(string.to_ascii_lowercase())
+}
+
+pub fn string_upper<'gc>(
+    _ctx: vm::Context<'gc>,
+    string: vm::String<'gc>,
+) -> Result<String, Infallible> {
+    Ok(string.to_ascii_uppercase())
+}
 
 pub fn string_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let string_trim = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, trims): (vm::String, Option<Vec<vm::String>>) = exec.stack().consume(ctx)?;
-        let string = if let Some(trims) = trims {
-            let mut string = string.as_str();
-            for trim in trims {
-                string = string.trim_start_matches(trim.as_str());
-                string = string.trim_end_matches(trim.as_str());
-            }
-            ctx.intern(string)
-        } else {
-            ctx.intern(string.as_str().trim())
-        };
-        exec.stack().replace(ctx, string);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_trim"),
-        vm::MagicConstant::new_ptr(&ctx, string_trim),
+    lib.insert_callback(ctx, "string_trim", string_trim);
+    lib.insert_constant(
+        ctx,
+        "string_length",
+        vm::Callback::from_fn(&ctx, string_length),
     );
-
-    let string_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let value: vm::Value = exec.stack().consume(ctx)?;
-        let string = value_to_string(ctx, exec.reborrow(), value)?;
-        exec.stack().replace(ctx, string.chars().count() as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_length"),
-        vm::MagicConstant::new_ptr(&ctx, string_length),
+    lib.insert_constant(
+        ctx,
+        "string_byte_length",
+        vm::Callback::from_fn(&ctx, string_byte_length),
     );
-
-    let string_byte_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let value: vm::Value = exec.stack().consume(ctx)?;
-        let string = value_to_string(ctx, exec.reborrow(), value)?;
-        exec.stack().replace(ctx, string.len() as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_byte_length"),
-        vm::MagicConstant::new_ptr(&ctx, string_byte_length),
+    lib.insert_callback(ctx, "ord", ord);
+    lib.insert_constant(
+        ctx,
+        "show_debug_message",
+        vm::Callback::from_fn(&ctx, show_debug_message),
     );
-
-    let ord = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let arg: vm::String = exec.stack().consume(ctx)?;
-        let mut iter = arg.as_str().chars();
-        let c = iter.next();
-        if c.is_none() || iter.next().is_some() {
-            return Err(vm::RuntimeError::msg(
-                "`ord` must be given a single character string",
-            ));
-        }
-        exec.stack().replace(ctx, c.unwrap() as isize);
-        Ok(())
-    });
-    lib.insert(ctx.intern("ord"), vm::MagicConstant::new_ptr(&ctx, ord));
-
-    let show_debug_message = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let fmt_string: vm::String = exec.stack().from_index(ctx, 0)?;
-
-        let mut stdout = io::stdout().lock();
-        for part in split_format(&fmt_string) {
-            match part {
-                FormatPart::Str(s) => write!(stdout, "{}", s)?,
-                FormatPart::Arg(arg) => {
-                    let mut buf = String::new();
-                    let val = exec.stack().get(arg + 1);
-                    print_value(&mut buf, ctx, exec.reborrow(), val)?;
-                    write!(stdout, "{}", buf)?;
-                }
-            }
-        }
-        writeln!(stdout)?;
-        exec.stack().clear();
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("show_debug_message"),
-        vm::MagicConstant::new_ptr(&ctx, show_debug_message),
-    );
-
-    let string = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let out = match exec.stack().get(0) {
-            vm::Value::String(fmt) => {
-                let mut out = String::new();
-                for part in split_format(&fmt) {
-                    match part {
-                        FormatPart::Str(s) => out.push_str(s),
-                        FormatPart::Arg(arg) => {
-                            let val = exec.stack().get(arg + 1);
-                            print_value(&mut out, ctx, exec.reborrow(), val)?;
-                        }
-                    }
-                }
-                ctx.intern(&out)
-            }
-            other => value_to_string(ctx, exec.reborrow(), other)?,
-        };
-        exec.stack().replace(ctx, out);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string"),
-        vm::MagicConstant::new_ptr(&ctx, string),
-    );
-
-    let string_char_at = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, index): (vm::String, usize) = exec.stack().consume(ctx)?;
-        let mut chars = string.chars();
-        let index = index.checked_sub(1).ok_or_else(|| {
-            vm::RuntimeError::msg(format!(
-                "index given to `string_char_at` is 1-indexed and cannot be 0"
-            ))
-        })?;
-        let c = chars.nth(index).ok_or_else(|| {
-            vm::RuntimeError::msg(format!(
-                "index {index} is out of range in string of length {}",
-                string.chars().count()
-            ))
-        })?;
-        exec.stack().replace(ctx, c.to_string());
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_char_at"),
-        vm::MagicConstant::new_ptr(&ctx, string_char_at),
-    );
-
-    let string_digits = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let input: vm::String = exec.stack().consume(ctx)?;
-        let mut output = String::new();
-
-        for c in input.chars() {
-            if c.is_digit(10) {
-                output.push(c);
-            }
-        }
-
-        exec.stack().replace(ctx, output);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_digits"),
-        vm::MagicConstant::new_ptr(&ctx, string_digits),
-    );
-
-    let string_pos = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (substr, string): (vm::String, vm::String) = exec.stack().consume(ctx)?;
-        let index = string
-            .find(substr.as_str())
-            .map(|i| i as isize + 1)
-            .unwrap_or(0);
-        exec.stack().replace(ctx, index);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_pos"),
-        vm::MagicConstant::new_ptr(&ctx, string_pos),
-    );
-
-    let string_last_pos = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (substr, string): (vm::String, vm::String) = exec.stack().consume(ctx)?;
-        let index = string
-            .rfind(substr.as_str())
-            .map(|i| i as isize + 1)
-            .unwrap_or(0);
-        exec.stack().replace(ctx, index);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_last_pos"),
-        vm::MagicConstant::new_ptr(&ctx, string_last_pos),
-    );
-
-    let string_count = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (substr, string): (vm::String, vm::String) = exec.stack().consume(ctx)?;
-        if substr.is_empty() {
-            return Err(vm::RuntimeError::msg(
-                "substr cannot be empty in `string_count`",
-            ));
-        }
-        let mut string = string.as_str();
-        let mut count = 0;
-        while let Some(index) = string.find(substr.as_str()) {
-            count += 1;
-            string = &string[index + substr.len()..];
-        }
-        exec.stack().replace(ctx, count);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_count"),
-        vm::MagicConstant::new_ptr(&ctx, string_count),
-    );
-
-    let string_copy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, index, count): (vm::String, usize, usize) = exec.stack().consume(ctx)?;
-        let index = index.checked_sub(1).ok_or_else(|| {
-            vm::RuntimeError::msg(format!(
-                "index given to `string_copy` is 1-indexed and cannot be 0"
-            ))
-        })?;
-        exec.stack().replace(
-            ctx,
-            string.chars().skip(index).take(count).collect::<String>(),
-        );
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_copy"),
-        vm::MagicConstant::new_ptr(&ctx, string_copy),
-    );
-
-    let string_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, index, count): (vm::String, isize, isize) = exec.stack().consume(ctx)?;
-        if index == 0 {
-            return Err(vm::RuntimeError::msg(format!(
-                "index given to `string_delete` is 1-indexed and cannot be 0"
-            )));
-        }
-        let (range, _) = resolve_array_range(string.chars().count(), Some(index - 1), Some(count))?;
-        exec.stack().replace(
-            ctx,
-            string
-                .chars()
-                .enumerate()
-                .filter_map(|(i, c)| if range.contains(&i) { None } else { Some(c) })
-                .collect::<String>(),
-        );
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_delete"),
-        vm::MagicConstant::new_ptr(&ctx, string_delete),
-    );
-
-    let string_insert = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (substr, string, index): (vm::String, vm::String, usize) = exec.stack().consume(ctx)?;
-        let index = index.saturating_sub(1).clamp(0, string.len());
-        exec.stack().replace(
-            ctx,
-            format!("{}{}{}", &string[0..index], substr, &string[index..]),
-        );
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_insert"),
-        vm::MagicConstant::new_ptr(&ctx, string_insert),
-    );
-
-    let string_replace = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, substr, newstr): (vm::String, vm::String, vm::String) =
-            exec.stack().consume(ctx)?;
-        exec.stack()
-            .replace(ctx, string.replacen(substr.as_str(), newstr.as_str(), 1));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_replace"),
-        vm::MagicConstant::new_ptr(&ctx, string_replace),
-    );
-
-    let string_replace_all = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, substr, newstr): (vm::String, vm::String, vm::String) =
-            exec.stack().consume(ctx)?;
-        exec.stack()
-            .replace(ctx, string.replace(substr.as_str(), newstr.as_str()));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_replace_all"),
-        vm::MagicConstant::new_ptr(&ctx, string_replace_all),
-    );
-
-    let string_ends_with = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, substr): (vm::String, vm::String) = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, string.ends_with(substr.as_str()));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_ends_with"),
-        vm::MagicConstant::new_ptr(&ctx, string_ends_with),
-    );
-
-    let string_trim_end = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (string, patterns): (vm::String, Option<vm::Array>) = exec.stack().consume(ctx)?;
-        let res = if let Some(patterns) = patterns {
-            let mut res = string.as_str();
-            loop {
-                let mut changed = false;
-                for i in 0..patterns.len() {
-                    let pat = patterns
-                        .get(i)
-                        .coerce_string(ctx)
-                        .ok_or_else(|| vm::RuntimeError::msg("trim pattern must be a string"))?;
-                    let new_res = res.trim_end_matches(pat.as_str());
-                    if new_res.len() != res.len() {
-                        changed = true;
-                        res = new_res;
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-            res
-        } else {
-            string.trim_end()
-        };
-        exec.stack().replace(ctx, ctx.intern(res));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_trim_end"),
-        vm::MagicConstant::new_ptr(&ctx, string_trim_end),
-    );
-
-    let string_format = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (val, whole, decimal): (f64, usize, usize) = exec.stack().consume(ctx)?;
-        let decimal_point = if val.fract() == 0.0 { 0 } else { 1 };
-        let s = format!(
-            "{val:width$.prec$}",
-            val = val,
-            width = whole + decimal + decimal_point,
-            prec = decimal
-        );
-        exec.stack().replace(ctx, s);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_format"),
-        vm::MagicConstant::new_ptr(&ctx, string_format),
-    );
-
-    let string_lower = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let string: vm::String = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, string.to_ascii_lowercase());
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_lower"),
-        vm::MagicConstant::new_ptr(&ctx, string_lower),
-    );
-
-    let string_upper = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let string: vm::String = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, string.to_ascii_uppercase());
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("string_upper"),
-        vm::MagicConstant::new_ptr(&ctx, string_upper),
-    );
+    lib.insert_constant(ctx, "string", vm::Callback::from_fn(&ctx, string));
+    lib.insert_callback(ctx, "string_char_at", string_char_at);
+    lib.insert_callback(ctx, "string_digits", string_digits);
+    lib.insert_callback(ctx, "string_pos", string_pos);
+    lib.insert_callback(ctx, "string_last_pos", string_last_pos);
+    lib.insert_callback(ctx, "string_count", string_count);
+    lib.insert_callback(ctx, "string_copy", string_copy);
+    lib.insert_callback(ctx, "string_delete", string_delete);
+    lib.insert_callback(ctx, "string_insert", string_insert);
+    lib.insert_callback(ctx, "string_replace", string_replace);
+    lib.insert_callback(ctx, "string_replace_all", string_replace_all);
+    lib.insert_callback(ctx, "string_ends_with", string_ends_with);
+    lib.insert_callback(ctx, "string_trim_end", string_trim_end);
+    lib.insert_callback(ctx, "string_format", string_format);
+    lib.insert_callback(ctx, "string_lower", string_lower);
+    lib.insert_callback(ctx, "string_upper", string_upper);
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

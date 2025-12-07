@@ -8,7 +8,7 @@ pub mod ds_priority;
 pub mod json;
 pub mod math;
 pub mod string;
-mod util;
+pub mod util;
 
 pub use self::util::Pointer;
 

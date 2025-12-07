@@ -1,6 +1,5 @@
-use fabricator_vm::{self as vm, instructions::HeapIdx};
+use fabricator_vm::{self as vm, closure, instructions::HeapIdx};
 use gc_arena::{Collect, Gc, Mutation};
-use vm::closure;
 
 use crate::constant::Constant;
 

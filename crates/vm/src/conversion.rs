@@ -3,8 +3,14 @@ use std::{array, iter, ops, string::String as StdString};
 use thiserror::Error;
 
 use crate::{
-    array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
-    string::String, user_data::UserData, value::Function, value::Value,
+    array::Array,
+    callback::Callback,
+    closure::Closure,
+    interpreter::Context,
+    object::Object,
+    string::String,
+    user_data::UserData,
+    value::{Function, Value},
 };
 
 #[derive(Debug, Clone, Copy, Error)]

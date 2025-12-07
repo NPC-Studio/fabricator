@@ -406,9 +406,7 @@ pub fn buffer_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         let mut buffer = Buffer::downcast(buffer)?.inner.borrow_mut();
         exec.stack().replace(
             ctx,
-            Pointer::new(buffer.data.as_mut_ptr())
-                .unwrap()
-                .into_userdata(&ctx),
+            Pointer::new(buffer.data.as_mut_ptr()).into_userdata(&ctx),
         );
         Ok(())
     });

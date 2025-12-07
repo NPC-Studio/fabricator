@@ -215,7 +215,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     let dest = reg_alloc.instruction_registers[inst_id];
                     let vm_inst = match *c {
                         Constant::Undefined => Instruction::Undefined { dest },
-                        Constant::Boolean(is_true) => Instruction::Boolean { dest, is_true },
+                        Constant::Boolean(value) => Instruction::Boolean { dest, value },
                         _ => Instruction::LoadConstant {
                             dest: reg_alloc.instruction_registers[inst_id],
                             constant: get_const_index(c)?,

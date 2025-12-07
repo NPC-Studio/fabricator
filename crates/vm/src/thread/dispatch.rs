@@ -246,8 +246,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
-    fn boolean(&mut self, dest: RegIdx, is_true: bool) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = Value::Boolean(is_true);
+    fn boolean(&mut self, dest: RegIdx, value: bool) -> Result<(), Self::Error> {
+        self.registers[dest as usize] = Value::Boolean(value);
         Ok(())
     }
 

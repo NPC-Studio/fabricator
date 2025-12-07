@@ -15,8 +15,8 @@ macro_rules! for_each_instruction {
             undefined = Undefined { dest: RegIdx };
 
             [basic]
-            /// Set the `dest` register to `Value::Boolean(val)`.
-            boolean = Boolean { dest: RegIdx, is_true: bool };
+            /// Set the `dest` register to `Value::Boolean(is_true)`.
+            boolean = Boolean { dest: RegIdx, value: bool };
 
             [basic]
             /// Load a constant into the `dest` register.

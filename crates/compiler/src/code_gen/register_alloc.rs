@@ -28,8 +28,6 @@ impl RegisterAllocation {
     ///
     /// Will try to coalesce registers for shadow variables and the registers for the `Phi` /
     /// `Upsilon` instructions that read and write to them.
-    ///
-    /// Returns `None` if no allocation could be found that fits in the available registers.
     pub fn allocate<S>(ir: &ir::Function<S>) -> Result<Self, ProtoGenError> {
         let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
         let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
