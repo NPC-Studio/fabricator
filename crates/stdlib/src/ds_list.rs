@@ -185,4 +185,17 @@ pub fn ds_list_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
         ctx.intern("ds_list_size"),
         vm::MagicConstant::new_ptr(&ctx, ds_list_size),
     );
+
+    let ds_list_clear = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
+        let ds_list: vm::UserData = exec.stack().from_index(ctx, 0)?;
+        let ds_list = DsList::downcast_write(&ctx, ds_list)?;
+        DsList::borrow_mut(ds_list).clear();
+
+        exec.stack().clear();
+        Ok(())
+    });
+    lib.insert(
+        ctx.intern("ds_list_clear"),
+        vm::MagicConstant::new_ptr(&ctx, ds_list_clear),
+    );
 }
