@@ -231,28 +231,19 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct ImportItems<'gc> {
-    macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
-    enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
-    global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
-    magic: Gc<'gc, vm::MagicSet<'gc>>,
+    pub macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
+    pub enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
+    pub global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
+    pub magic: Gc<'gc, vm::MagicSet<'gc>>,
 }
 
 impl<'gc> ImportItems<'gc> {
     pub fn with_magic(stdlib: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
-        Self::from_parts(None, None, None, stdlib)
-    }
-
-    pub fn from_parts(
-        macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
-        enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
-        global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
-        magic: Gc<'gc, vm::MagicSet<'gc>>,
-    ) -> Self {
         Self {
-            macros,
-            enums,
-            global_vars,
-            magic,
+            macros: None,
+            enums: None,
+            global_vars: None,
+            magic: stdlib,
         }
     }
 }
