@@ -30,7 +30,7 @@ fn test_vm_call_return_hooks() {
         let output = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::with_magic(magic),
+            compiler::ImportItems::with_magic(&ctx, magic),
             compiler::CompileSettings::modern(),
             "vm hook test",
             r#"
@@ -121,7 +121,7 @@ fn test_vm_return_hook_on_error() {
         let output = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::with_magic(ctx.stdlib()),
+            compiler::ImportItems::with_magic(&ctx, ctx.stdlib()),
             compiler::CompileSettings::modern(),
             "vm hook test",
             r#"
@@ -192,7 +192,7 @@ fn test_vm_step_hook() {
         let output = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::with_magic(ctx.stdlib()),
+            compiler::ImportItems::with_magic(&ctx, ctx.stdlib()),
             compiler::CompileSettings::modern(),
             "vm hook test",
             r#"

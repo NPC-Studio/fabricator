@@ -231,18 +231,18 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 #[derive(Debug, Copy, Clone, Collect)]
 #[collect(no_drop)]
 pub struct ImportItems<'gc> {
-    pub macros: Option<Gc<'gc, MacroSet<vm::String<'gc>>>>,
-    pub enums: Option<Gc<'gc, EnumSet<vm::String<'gc>>>>,
-    pub global_vars: Option<Gc<'gc, HashSet<vm::String<'gc>>>>,
+    pub macros: Gc<'gc, MacroSet<vm::String<'gc>>>,
+    pub enums: Gc<'gc, EnumSet<vm::String<'gc>>>,
+    pub global_vars: Gc<'gc, HashSet<vm::String<'gc>>>,
     pub magic: Gc<'gc, vm::MagicSet<'gc>>,
 }
 
 impl<'gc> ImportItems<'gc> {
-    pub fn with_magic(stdlib: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
+    pub fn with_magic(mc: &Mutation<'gc>, stdlib: Gc<'gc, vm::MagicSet<'gc>>) -> Self {
         Self {
-            macros: None,
-            enums: None,
-            global_vars: None,
+            macros: Gc::new(mc, MacroSet::new()),
+            enums: Gc::new(mc, EnumSet::new()),
+            global_vars: Gc::new(mc, HashSet::new()),
             magic: stdlib,
         }
     }
@@ -250,9 +250,9 @@ impl<'gc> ImportItems<'gc> {
 
 #[derive(Clone)]
 pub struct StashedImportItems {
-    macros: Option<DynamicRoot<Rootable![MacroSet<vm::String<'_>>]>>,
-    enums: Option<DynamicRoot<Rootable![EnumSet<vm::String<'_>>]>>,
-    global_vars: Option<DynamicRoot<Rootable![HashSet<vm::String<'_>>]>>,
+    macros: DynamicRoot<Rootable![MacroSet<vm::String<'_>>]>,
+    enums: DynamicRoot<Rootable![EnumSet<vm::String<'_>>]>,
+    global_vars: DynamicRoot<Rootable![HashSet<vm::String<'_>>]>,
     magic: vm::StashedMagicSet,
 }
 
@@ -261,15 +261,9 @@ impl<'gc> vm::Stashable<'gc> for ImportItems<'gc> {
 
     fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
         StashedImportItems {
-            macros: self
-                .macros
-                .map(|macros| roots.stash::<Rootable![MacroSet<vm::String<'_>>]>(mc, macros)),
-            enums: self
-                .enums
-                .map(|enums| roots.stash::<Rootable![EnumSet<vm::String<'_>>]>(mc, enums)),
-            global_vars: self
-                .global_vars
-                .map(|globals| roots.stash::<Rootable![HashSet<vm::String<'_>>]>(mc, globals)),
+            macros: roots.stash::<Rootable![MacroSet<vm::String<'_>>]>(mc, self.macros),
+            enums: roots.stash::<Rootable![EnumSet<vm::String<'_>>]>(mc, self.enums),
+            global_vars: roots.stash::<Rootable![HashSet<vm::String<'_>>]>(mc, self.global_vars),
             magic: vm::Stashable::stash(self.magic, mc, roots),
         }
     }
@@ -280,12 +274,9 @@ impl vm::Fetchable for StashedImportItems {
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> ImportItems<'gc> {
         ImportItems {
-            macros: self.macros.as_ref().map(|macros| roots.fetch(&macros)),
-            enums: self.enums.as_ref().map(|enums| roots.fetch(&enums)),
-            global_vars: self
-                .global_vars
-                .as_ref()
-                .map(|globals| roots.fetch(&globals)),
+            macros: roots.fetch(&self.macros),
+            enums: roots.fetch(&self.enums),
+            global_vars: roots.fetch(&self.global_vars),
             magic: self.magic.fetch(roots),
         }
     }
@@ -332,9 +323,9 @@ impl<'gc> Compiler<'gc> {
         config: impl Into<String>,
         imports: ImportItems<'gc>,
     ) -> Self {
-        let macros = imports.macros.as_deref().cloned().unwrap_or_default();
-        let enums = imports.enums.as_deref().cloned().unwrap_or_default();
-        let global_vars = imports.global_vars.as_deref().cloned().unwrap_or_default();
+        let macros = imports.macros.as_ref().clone();
+        let enums = imports.enums.as_ref().clone();
+        let global_vars = imports.global_vars.as_ref().clone();
         let magic = imports.magic.as_ref().clone();
 
         Self {
@@ -724,21 +715,9 @@ impl<'gc> Compiler<'gc> {
         }
 
         let imports = ImportItems {
-            macros: if macros.is_empty() {
-                None
-            } else {
-                Some(Gc::new(&ctx, macros))
-            },
-            enums: if enums.is_empty() {
-                None
-            } else {
-                Some(Gc::new(&ctx, enums))
-            },
-            global_vars: if global_vars.is_empty() {
-                None
-            } else {
-                Some(Gc::new(&ctx, global_vars))
-            },
+            macros: Gc::new(&ctx, macros),
+            enums: Gc::new(&ctx, enums),
+            global_vars: Gc::new(&ctx, global_vars),
             magic,
         };
 

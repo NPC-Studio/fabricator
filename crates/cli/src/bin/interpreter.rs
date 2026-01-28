@@ -39,7 +39,7 @@ fn main() -> Result<ExitCode, Error> {
                 let output = Compiler::compile_chunk(
                     ctx,
                     "",
-                    ImportItems::with_magic(ctx.stdlib()),
+                    ImportItems::with_magic(&ctx, ctx.stdlib()),
                     settings,
                     path.to_string_lossy().into_owned(),
                     &code,
@@ -67,7 +67,7 @@ fn main() -> Result<ExitCode, Error> {
                 let output = Compiler::compile_chunk(
                     ctx,
                     "",
-                    ImportItems::with_magic(ctx.stdlib()),
+                    ImportItems::with_magic(&ctx, ctx.stdlib()),
                     settings,
                     path.to_string_lossy().into_owned(),
                     &code,
@@ -106,7 +106,7 @@ fn main() -> Result<ExitCode, Error> {
             let settings = CompileSettings::modern().set_optimization_passes(cli.opt_level);
 
             let mut imports =
-                interpreter.enter(|ctx| ctx.stash(ImportItems::with_magic(ctx.stdlib())));
+                interpreter.enter(|ctx| ctx.stash(ImportItems::with_magic(&ctx, ctx.stdlib())));
 
             fn is_end_of_stream_err(e: &CompileError) -> bool {
                 matches!(

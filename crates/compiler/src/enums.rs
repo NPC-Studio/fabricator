@@ -514,6 +514,10 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
 }
 
 impl<S> EnumSet<S> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// The current count of extracted enums.
     ///
     /// Each enum is assigned a sequential index for identification starting from zero. Checking the

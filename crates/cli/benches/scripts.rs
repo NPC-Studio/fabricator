@@ -15,7 +15,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
         let output = compiler::Compiler::compile_chunk(
             ctx,
             "default",
-            compiler::ImportItems::with_magic(ctx.stdlib()),
+            compiler::ImportItems::with_magic(&ctx, ctx.stdlib()),
             compiler::CompileSettings::modern(),
             name,
             code,
