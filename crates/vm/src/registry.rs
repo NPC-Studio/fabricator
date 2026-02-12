@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, collections::hash_map};
 
 use gc_arena::{Collect, DynamicRootSet, Gc, Mutation, RefLock, Rootable, arena::Root};
 use rustc_hash::FxHashMap;
@@ -24,8 +24,10 @@ impl<'gc, T: Default> Singleton<'gc> for T {
 #[collect(no_drop)]
 pub struct Registry<'gc> {
     roots: DynamicRootSet<'gc>,
-    singletons: Gc<'gc, RefLock<FxHashMap<TypeId, Option<Any<'gc>>>>>,
+    singletons: Gc<'gc, SingletonMap<'gc>>,
 }
+
+type SingletonMap<'gc> = RefLock<FxHashMap<TypeId, Option<Any<'gc>>>>;
 
 impl<'gc> Registry<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
@@ -59,6 +61,32 @@ impl<'gc> Registry<'gc> {
 
         // Insert a marker `None` value to guard against recursive dependencies.
         self.singletons.borrow_mut(&ctx).insert(type_id, None);
+
+        // Remove any stale partially created singleton in case of panic during construction.
+        struct Guard<'gc> {
+            ctx: Context<'gc>,
+            type_id: TypeId,
+            singletons: Gc<'gc, SingletonMap<'gc>>,
+        }
+
+        impl<'gc> Drop for Guard<'gc> {
+            fn drop(&mut self) {
+                match self.singletons.borrow_mut(&self.ctx).entry(self.type_id) {
+                    hash_map::Entry::Occupied(occupied) => {
+                        if occupied.get().is_none() {
+                            occupied.remove_entry();
+                        }
+                    }
+                    hash_map::Entry::Vacant(_) => {}
+                }
+            }
+        }
+
+        let _guard = Guard {
+            ctx,
+            type_id,
+            singletons: self.singletons,
+        };
 
         // Don't hold the singletons lock during creation to allow singletons to depend on each
         // other.
