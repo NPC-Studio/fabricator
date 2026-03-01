@@ -1337,7 +1337,7 @@ fn get_binary_operator<S>(token: &TokenKind<S>) -> Option<ast::BinaryOp> {
         TokenKind::Minus => Some(ast::BinaryOp::Sub),
         TokenKind::Star => Some(ast::BinaryOp::Mult),
         TokenKind::Slash => Some(ast::BinaryOp::Div),
-        TokenKind::Percent => Some(ast::BinaryOp::Rem),
+        TokenKind::Percent => Some(ast::BinaryOp::Mod),
         TokenKind::Mod => Some(ast::BinaryOp::Rem),
         TokenKind::Div => Some(ast::BinaryOp::IDiv),
         TokenKind::And => Some(ast::BinaryOp::And),
@@ -1505,6 +1505,7 @@ fn binary_priority(operator: ast::BinaryOp) -> (OperatorPriority, OperatorPriori
     match operator {
         ast::BinaryOp::Mult => (11, 11),
         ast::BinaryOp::Div => (11, 11),
+        ast::BinaryOp::Mod => (11, 11),
         ast::BinaryOp::Rem => (11, 11),
         ast::BinaryOp::IDiv => (11, 11),
         ast::BinaryOp::Add => (10, 10),

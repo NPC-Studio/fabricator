@@ -1955,7 +1955,7 @@ where
                         },
                     )
                 }
-                ast::BinaryOp::Rem => {
+                ast::BinaryOp::Mod | ast::BinaryOp::Rem => {
                     let left = self.expression(&bin_expr.left)?;
                     let right = self.expression(&bin_expr.right)?;
                     self.push_instruction(
