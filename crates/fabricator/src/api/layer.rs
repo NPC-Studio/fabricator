@@ -70,7 +70,7 @@ impl<'gc> LayerIdUserData<'gc> {
 
     pub fn downcast(
         userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::user_data::BadUserDataType> {
+    ) -> Result<&'gc Self, vm::BadUserDataType> {
         userdata.downcast::<Rootable![LayerIdUserData<'_>]>()
     }
 }

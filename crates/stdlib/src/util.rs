@@ -11,6 +11,7 @@ use thiserror::Error;
 pub struct Pointer(pub *const u8);
 
 impl From<*const u8> for Pointer {
+    #[inline]
     fn from(value: *const u8) -> Self {
         Self(value)
     }
@@ -19,16 +20,19 @@ impl From<*const u8> for Pointer {
 impl ops::Deref for Pointer {
     type Target = *const u8;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl Pointer {
+    #[inline]
     pub fn new(p: *const u8) -> Self {
         Self(p)
     }
 
+    #[inline]
     pub fn null() -> Self {
         Self(ptr::null())
     }
@@ -37,14 +41,17 @@ impl Pointer {
         vm::UserData::new_static(mc, self)
     }
 
+    #[inline]
     pub fn is_pointer<'gc>(ud: vm::UserData<'gc>) -> bool {
         ud.is_static::<Pointer>()
     }
 
-    pub fn downcast<'gc>(ud: vm::UserData<'gc>) -> Result<Pointer, vm::user_data::BadUserDataType> {
+    #[inline]
+    pub fn downcast<'gc>(ud: vm::UserData<'gc>) -> Result<Pointer, vm::BadUserDataType> {
         Ok(*ud.downcast_static::<Pointer>()?)
     }
 
+    #[inline]
     pub fn as_ptr(self) -> *const u8 {
         self.0
     }
@@ -130,6 +137,11 @@ pub trait MagicExt<'gc> {
         A: vm::FromMultiValue<'gc>,
         R: vm::IntoMultiValue<'gc>,
         vm::RuntimeError: From<E>;
+
+    fn insert_exec_callback<F, E>(&mut self, ctx: vm::Context<'gc>, name: &str, f: F)
+    where
+        F: Fn(vm::Context<'gc>, vm::Execution<'gc, '_>) -> Result<(), E> + 'static,
+        vm::RuntimeError: From<E>;
 }
 
 impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
@@ -161,6 +173,18 @@ impl<'gc> MagicExt<'gc> for vm::MagicSet<'gc> {
                 exec.stack().replace(ctx, ret);
                 Ok(())
             }),
+        )
+    }
+
+    fn insert_exec_callback<F, E>(&mut self, ctx: vm::Context<'gc>, name: &str, f: F)
+    where
+        F: Fn(vm::Context<'gc>, vm::Execution<'gc, '_>) -> Result<(), E> + 'static,
+        vm::RuntimeError: From<E>,
+    {
+        self.insert_constant(
+            ctx,
+            name,
+            vm::Callback::from_fn(&ctx, move |ctx, exec| Ok(f(ctx, exec)?)),
         )
     }
 }

@@ -1,204 +1,181 @@
 use std::{
     cmp::{self, Ordering},
+    convert::Infallible,
     iter,
 };
 
 use fabricator_vm as vm;
 use gc_arena::Gc;
 
-use crate::util::{resolve_array_index, resolve_array_range};
+use crate::util::{MagicExt as _, resolve_array_index, resolve_array_range};
+
+pub fn array_create<'gc>(
+    ctx: vm::Context<'gc>,
+    (length, value): (usize, vm::Value<'gc>),
+) -> Result<vm::Array<'gc>, Infallible> {
+    Ok(vm::Array::from_iter(&ctx, iter::repeat_n(value, length)))
+}
+
+pub fn array_create_ext<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let (length, create): (usize, vm::Function) = exec.stack().consume(ctx)?;
+    let array = vm::Array::with_capacity(&ctx, length);
+
+    for i in 0..length {
+        exec.stack().replace(ctx, i as isize);
+        exec.call(ctx, create)?;
+        array.set(&ctx, i, exec.stack().get(0));
+    }
+
+    exec.stack().replace(ctx, array);
+    Ok(())
+}
+
+pub fn array_length<'gc>(
+    _ctx: vm::Context<'gc>,
+    array: vm::Array<'gc>,
+) -> Result<isize, Infallible> {
+    Ok(array.len() as isize)
+}
+
+pub fn array_delete<'gc>(
+    ctx: vm::Context<'gc>,
+    (array, index, count): (vm::Array<'gc>, isize, isize),
+) -> Result<(), vm::RuntimeError> {
+    let (range, _) = resolve_array_range(array.len(), Some(index), Some(count))?;
+    array.borrow_mut(&ctx).drain(range);
+    Ok(())
+}
+
+pub fn array_get_index<'gc>(
+    _ctx: vm::Context<'gc>,
+    (array, value, offset, length): (vm::Array<'gc>, vm::Value<'gc>, Option<isize>, Option<isize>),
+) -> Result<isize, vm::RuntimeError> {
+    let (range, is_reverse) = resolve_array_range(array.len(), offset, length)?;
+    let array = array.borrow();
+    let mut range_iter = array[range.clone()].iter();
+
+    let idx = if is_reverse {
+        range_iter
+            .rev()
+            .position(|&v| v == value)
+            .map(|i| (range.end - 1 - i) as isize)
+    } else {
+        range_iter
+            .position(|&v| v == value)
+            .map(|i| (i + range.start) as isize)
+    }
+    .unwrap_or(-1);
+
+    Ok(idx)
+}
+
+pub fn array_push<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::TypeError> {
+    let array: vm::Array = exec.stack().from_index(ctx, 0)?;
+    for &value in &exec.stack()[1..] {
+        array.push(&ctx, value)
+    }
+    exec.stack().clear();
+    Ok(())
+}
+
+pub fn array_pop<'gc>(
+    ctx: vm::Context<'gc>,
+    array: vm::Array<'gc>,
+) -> Result<vm::Value<'gc>, Infallible> {
+    Ok(array.pop(&ctx))
+}
+
+pub fn array_sort<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let (array, comparator): (vm::Array, Option<vm::Value>) = exec.stack().consume(ctx)?;
+    sort_array(
+        ctx,
+        exec.reborrow(),
+        array,
+        comparator.unwrap_or(true.into()),
+    )?;
+    Ok(())
+}
+
+pub fn array_contains<'gc>(
+    ctx: vm::Context<'gc>,
+    (array, value, index, count): (vm::Array<'gc>, vm::Value<'gc>, Option<isize>, Option<isize>),
+) -> Result<bool, vm::RuntimeError> {
+    let (range, _) = resolve_array_range(array.len(), index, count)?;
+    Ok(array.borrow_mut(&ctx)[range].contains(&value))
+}
+
+pub fn array_map<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let (input, function, index, count): (vm::Array, vm::Function, Option<isize>, Option<isize>) =
+        exec.stack().consume(ctx)?;
+    let (range, _) = resolve_array_range(input.len(), index, count)?;
+    let output = vm::Array::with_capacity(&ctx, range.len());
+    for i in range {
+        exec.stack().replace(ctx, (input.get(i), i as isize));
+        exec.call(ctx, function)?;
+        output.set(&ctx, i, exec.stack().get(0));
+    }
+    exec.stack().replace(ctx, output);
+    Ok(())
+}
+
+pub fn array_copy<'gc>(
+    ctx: vm::Context<'gc>,
+    (dest, dest_index, src, src_index, length): (
+        vm::Array<'gc>,
+        isize,
+        vm::Array<'gc>,
+        isize,
+        isize,
+    ),
+) -> Result<(), vm::RuntimeError> {
+    let dest_index = resolve_array_index(dest.len(), Some(dest_index))?;
+    let (src_range, is_reverse) = resolve_array_range(src.len(), Some(src_index), Some(length))?;
+
+    if is_reverse {
+        for (i, ind) in src_range.rev().enumerate() {
+            dest.set(&ctx, dest_index + i, src.get(ind));
+        }
+    } else {
+        for (i, ind) in src_range.enumerate() {
+            dest.set(&ctx, dest_index + i, src.get(ind));
+        }
+    }
+    Ok(())
+}
+
+pub fn array_resize<'gc>(
+    ctx: vm::Context<'gc>,
+    (array, new_len): (vm::Array<'gc>, usize),
+) -> Result<(), Infallible> {
+    array.borrow_mut(&ctx).resize(new_len, vm::Value::Undefined);
+    Ok(())
+}
 
 pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let array_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let mut stack = exec.stack();
-        let (length, value): (usize, vm::Value) = stack.consume(ctx)?;
-        let array = vm::Array::from_iter(&ctx, iter::repeat_n(value, length));
-        stack.replace(ctx, array);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_create"),
-        vm::MagicConstant::new_ptr(&ctx, array_create),
-    );
-
-    let array_create_ext = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (length, create): (usize, vm::Function) = exec.stack().consume(ctx)?;
-        let array = vm::Array::with_capacity(&ctx, length);
-
-        for i in 0..length {
-            exec.stack().replace(ctx, i as isize);
-            exec.call(ctx, create)?;
-            array.set(&ctx, i, exec.stack().get(0));
-        }
-
-        exec.stack().replace(ctx, array);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_create_ext"),
-        vm::MagicConstant::new_ptr(&ctx, array_create_ext),
-    );
-
-    let array_length = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let mut stack = exec.stack();
-        let array: vm::Array = stack.consume(ctx)?;
-        stack.replace(ctx, array.len() as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_length"),
-        vm::MagicConstant::new_ptr(&ctx, array_length),
-    );
-
-    let array_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (array, index, count): (vm::Array, isize, isize) = exec.stack().consume(ctx)?;
-        let (range, _) = resolve_array_range(array.len(), Some(index), Some(count))?;
-        array.borrow_mut(&ctx).drain(range);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_delete"),
-        vm::MagicConstant::new_ptr(&ctx, array_delete),
-    );
-
-    let array_get_index = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (array, value, offset, length): (vm::Array, vm::Value, Option<isize>, Option<isize>) =
-            exec.stack().consume(ctx)?;
-
-        let (range, is_reverse) = resolve_array_range(array.len(), offset, length)?;
-        let array = array.borrow();
-        let mut range_iter = array[range.clone()].iter();
-
-        let idx = if is_reverse {
-            range_iter
-                .rev()
-                .position(|&v| v == value)
-                .map(|i| (range.end - 1 - i) as isize)
-        } else {
-            range_iter
-                .position(|&v| v == value)
-                .map(|i| (i + range.start) as isize)
-        }
-        .unwrap_or(-1);
-
-        exec.stack().replace(ctx, idx);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_get_index"),
-        vm::MagicConstant::new_ptr(&ctx, array_get_index),
-    );
-
-    let array_push = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let array: vm::Array = exec.stack().from_index(ctx, 0)?;
-        for &value in &exec.stack()[1..] {
-            array.push(&ctx, value)
-        }
-        exec.stack().clear();
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_push"),
-        vm::MagicConstant::new_ptr(&ctx, array_push),
-    );
-
-    let array_pop = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let array: vm::Array = exec.stack().consume(ctx)?;
-        exec.stack().replace(ctx, array.pop(&ctx));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_pop"),
-        vm::MagicConstant::new_ptr(&ctx, array_pop),
-    );
-
-    let array_sort = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (array, comparator): (vm::Array, Option<vm::Value>) = exec.stack().consume(ctx)?;
-        sort_array(
-            ctx,
-            exec.reborrow(),
-            array,
-            comparator.unwrap_or(true.into()),
-        )?;
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_sort"),
-        vm::MagicConstant::new_ptr(&ctx, array_sort),
-    );
-
-    let array_contains = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (array, value, index, count): (vm::Array, vm::Value, Option<isize>, Option<isize>) =
-            exec.stack().consume(ctx)?;
-        let (range, _) = resolve_array_range(array.len(), index, count)?;
-        exec.stack()
-            .replace(ctx, array.borrow_mut(&ctx)[range].contains(&value));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_contains"),
-        vm::MagicConstant::new_ptr(&ctx, array_contains),
-    );
-
-    let array_map = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (input, function, index, count): (
-            vm::Array,
-            vm::Function,
-            Option<isize>,
-            Option<isize>,
-        ) = exec.stack().consume(ctx)?;
-        let (range, _) = resolve_array_range(input.len(), index, count)?;
-        let output = vm::Array::with_capacity(&ctx, range.len());
-        for i in range {
-            exec.stack().replace(ctx, (input.get(i), i as isize));
-            exec.call(ctx, function)?;
-            output.set(&ctx, i, exec.stack().get(0));
-        }
-        exec.stack().replace(ctx, output);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_map"),
-        vm::MagicConstant::new_ptr(&ctx, array_map),
-    );
-
-    let array_copy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (dest, dest_index, src, src_index, length): (
-            vm::Array,
-            isize,
-            vm::Array,
-            isize,
-            isize,
-        ) = exec.stack().consume(ctx)?;
-        let dest_index = resolve_array_index(dest.len(), Some(dest_index))?;
-        let (src_range, is_reverse) =
-            resolve_array_range(src.len(), Some(src_index), Some(length))?;
-
-        if is_reverse {
-            for (i, ind) in src_range.rev().enumerate() {
-                dest.set(&ctx, dest_index + i, src.get(ind));
-            }
-        } else {
-            for (i, ind) in src_range.enumerate() {
-                dest.set(&ctx, dest_index + i, src.get(ind));
-            }
-        }
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_copy"),
-        vm::MagicConstant::new_ptr(&ctx, array_copy),
-    );
-
-    let array_resize = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (array, new_len): (vm::Array, usize) = exec.stack().consume(ctx)?;
-        array.borrow_mut(&ctx).resize(new_len, vm::Value::Undefined);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("array_resize"),
-        vm::MagicConstant::new_ptr(&ctx, array_resize),
-    );
+    lib.insert_callback(ctx, "array_create", array_create);
+    lib.insert_exec_callback(ctx, "array_create_ext", array_create_ext);
+    lib.insert_callback(ctx, "array_length", array_length);
+    lib.insert_callback(ctx, "array_delete", array_delete);
+    lib.insert_callback(ctx, "array_get_index", array_get_index);
+    lib.insert_exec_callback(ctx, "array_push", array_push);
+    lib.insert_callback(ctx, "array_pop", array_pop);
+    lib.insert_exec_callback(ctx, "array_sort", array_sort);
+    lib.insert_callback(ctx, "array_contains", array_contains);
+    lib.insert_exec_callback(ctx, "array_map", array_map);
+    lib.insert_callback(ctx, "array_copy", array_copy);
+    lib.insert_callback(ctx, "array_resize", array_resize);
 }
 
 fn sort_array<'gc>(

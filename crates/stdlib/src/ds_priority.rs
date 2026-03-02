@@ -2,11 +2,14 @@ use std::{
     cell::{Ref, RefMut},
     cmp,
     collections::BinaryHeap,
+    convert::Infallible,
     sync::atomic,
 };
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Mutation, RefLock, Rootable, barrier};
+
+use crate::util::MagicExt as _;
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -23,6 +26,7 @@ pub struct Entry<'gc> {
 }
 
 impl<'gc> PartialEq for Entry<'gc> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other).is_eq()
     }
@@ -31,12 +35,14 @@ impl<'gc> PartialEq for Entry<'gc> {
 impl<'gc> Eq for Entry<'gc> {}
 
 impl<'gc> PartialOrd for Entry<'gc> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<'gc> Ord for Entry<'gc> {
+    #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.priority.total_cmp(&other.priority)
     }
@@ -85,37 +91,38 @@ impl<'gc> DsPriority<'gc> {
         ud
     }
 
-    pub fn downcast(
-        ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsPriority<'gc>, vm::user_data::BadUserDataType> {
+    #[inline]
+    pub fn downcast(ud: vm::UserData<'gc>) -> Result<&'gc DsPriority<'gc>, vm::BadUserDataType> {
         ud.downcast::<Rootable![DsPriority<'_>]>()
     }
 
+    #[inline]
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsPriority<'gc>>, vm::user_data::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsPriority<'gc>>, vm::BadUserDataType> {
         ud.downcast_write::<Rootable![DsPriority<'_>]>(mc)
     }
 
+    #[inline]
     pub fn borrow(&self) -> Ref<'_, BinaryHeap<Entry<'gc>>> {
         self.inner.borrow()
     }
 
+    #[inline]
     pub fn borrow_mut(this: &barrier::Write<Self>) -> RefMut<'_, BinaryHeap<Entry<'gc>>> {
         let inner = barrier::field!(this, DsPriority, inner);
         inner.unlock().borrow_mut()
     }
 }
 
+pub fn ds_priority_create<'gc>(
+    ctx: vm::Context<'gc>,
+    (): (),
+) -> Result<vm::UserData<'gc>, Infallible> {
+    Ok(DsPriority::new().into_userdata(ctx))
+}
+
 pub fn ds_priority_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let ds_priority_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        exec.stack()
-            .replace(ctx, DsPriority::new().into_userdata(ctx));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_priority_create"),
-        vm::MagicConstant::new_ptr(&ctx, ds_priority_create),
-    );
+    lib.insert_callback(ctx, "ds_priority_create", ds_priority_create);
 }

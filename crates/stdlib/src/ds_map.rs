@@ -1,11 +1,14 @@
 use std::{
     cell::{Ref, RefMut},
+    convert::Infallible,
     sync::atomic,
 };
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Mutation, RefLock, Rootable, barrier};
 use rustc_hash::FxHashMap;
+
+use crate::util::MagicExt as _;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Collect)]
 #[collect(no_drop)]
@@ -130,23 +133,25 @@ impl<'gc> DsMap<'gc> {
         ud
     }
 
-    pub fn downcast(
-        ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsMap<'gc>, vm::user_data::BadUserDataType> {
+    #[inline]
+    pub fn downcast(ud: vm::UserData<'gc>) -> Result<&'gc DsMap<'gc>, vm::BadUserDataType> {
         ud.downcast::<Rootable![DsMap<'_>]>()
     }
 
+    #[inline]
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsMap<'gc>>, vm::user_data::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsMap<'gc>>, vm::BadUserDataType> {
         ud.downcast_write::<Rootable![DsMap<'_>]>(mc)
     }
 
+    #[inline]
     pub fn borrow(&self) -> Ref<'_, FxHashMap<MapKey<'gc>, vm::Value<'gc>>> {
         self.inner.borrow()
     }
 
+    #[inline]
     pub fn borrow_mut(
         this: &barrier::Write<Self>,
     ) -> RefMut<'_, FxHashMap<MapKey<'gc>, vm::Value<'gc>>> {
@@ -155,13 +160,10 @@ impl<'gc> DsMap<'gc> {
     }
 }
 
+pub fn ds_map_create<'gc>(ctx: vm::Context<'gc>, (): ()) -> Result<vm::UserData<'gc>, Infallible> {
+    Ok(DsMap::new().into_userdata(ctx))
+}
+
 pub fn ds_map_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let ds_map_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        exec.stack().replace(ctx, DsMap::new().into_userdata(ctx));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_map_create"),
-        vm::MagicConstant::new_ptr(&ctx, ds_map_create),
-    );
+    lib.insert_callback(ctx, "ds_map_create", ds_map_create);
 }

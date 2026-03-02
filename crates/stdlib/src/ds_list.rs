@@ -1,10 +1,13 @@
 use std::{
     cell::{Ref, RefMut},
+    convert::Infallible,
     sync::atomic,
 };
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Mutation, RefLock, Rootable, barrier};
+
+use crate::util::MagicExt as _;
 
 #[derive(Collect)]
 #[collect(no_drop)]
@@ -92,97 +95,90 @@ impl<'gc> DsList<'gc> {
         ud
     }
 
-    pub fn downcast(
-        ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsList<'gc>, vm::user_data::BadUserDataType> {
+    #[inline]
+    pub fn downcast(ud: vm::UserData<'gc>) -> Result<&'gc DsList<'gc>, vm::BadUserDataType> {
         ud.downcast::<Rootable![DsList<'_>]>()
     }
 
+    #[inline]
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsList<'gc>>, vm::user_data::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsList<'gc>>, vm::BadUserDataType> {
         ud.downcast_write::<Rootable![DsList<'_>]>(mc)
     }
 
+    #[inline]
     pub fn borrow(&self) -> Ref<'_, Vec<vm::Value<'gc>>> {
         self.inner.borrow()
     }
 
+    #[inline]
     pub fn borrow_mut(this: &barrier::Write<Self>) -> RefMut<'_, Vec<vm::Value<'gc>>> {
         let inner = barrier::field!(this, DsList, inner);
         inner.unlock().borrow_mut()
     }
 }
 
+pub fn ds_list_create<'gc>(ctx: vm::Context<'gc>, (): ()) -> Result<vm::UserData<'gc>, Infallible> {
+    Ok(DsList::new().into_userdata(ctx))
+}
+
+pub fn ds_list_add<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let ds_list: vm::UserData = exec.stack().from_index(ctx, 0)?;
+    let ds_list = DsList::downcast_write(&ctx, ds_list)?;
+    let mut vec = DsList::borrow_mut(ds_list);
+    vec.extend_from_slice(&exec.stack()[1..]);
+    exec.stack().clear();
+    Ok(())
+}
+
+pub fn ds_list_find_index<'gc>(
+    _ctx: vm::Context<'gc>,
+    (ds_list, value): (vm::UserData<'gc>, vm::Value<'gc>),
+) -> Result<isize, vm::BadUserDataType> {
+    let ds_list = DsList::downcast(ds_list)?;
+    let index = ds_list
+        .inner
+        .borrow()
+        .iter()
+        .position(|&v| v == value)
+        .map(|i| i as isize)
+        .unwrap_or(-1);
+    Ok(index)
+}
+
+pub fn ds_list_delete<'gc>(
+    ctx: vm::Context<'gc>,
+    (ds_list, index): (vm::UserData<'gc>, usize),
+) -> Result<(), vm::RuntimeError> {
+    let ds_list = DsList::downcast_write(&ctx, ds_list)?;
+    let mut vec = DsList::borrow_mut(ds_list);
+    if index >= vec.len() {
+        return Err(vm::RuntimeError::msg(format!(
+            "index {index} out of range of ds_list with length {}",
+            vec.len()
+        )));
+    }
+    vec.remove(index);
+    Ok(())
+}
+
+pub fn ds_list_size<'gc>(
+    _ctx: vm::Context<'gc>,
+    ds_list: vm::UserData<'gc>,
+) -> Result<isize, vm::RuntimeError> {
+    let ds_list = DsList::downcast(ds_list)?;
+    Ok(ds_list.borrow().len() as isize)
+}
+
 pub fn ds_list_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let ds_list_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        exec.stack().replace(ctx, DsList::new().into_userdata(ctx));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_list_create"),
-        vm::MagicConstant::new_ptr(&ctx, ds_list_create),
-    );
-
-    let ds_list_add = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let ds_list: vm::UserData = exec.stack().from_index(ctx, 0)?;
-        let ds_list = DsList::downcast_write(&ctx, ds_list)?;
-        let mut vec = DsList::borrow_mut(ds_list);
-        vec.extend_from_slice(&exec.stack()[1..]);
-        exec.stack().clear();
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_list_add"),
-        vm::MagicConstant::new_ptr(&ctx, ds_list_add),
-    );
-
-    let ds_list_find_index = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (ds_list, value): (vm::UserData, vm::Value) = exec.stack().consume(ctx)?;
-        let ds_list = DsList::downcast_write(&ctx, ds_list)?;
-        let index = ds_list
-            .inner
-            .borrow()
-            .iter()
-            .position(|&v| v == value)
-            .map(|i| i as isize)
-            .unwrap_or(-1);
-        exec.stack().replace(ctx, index);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_list_find_index"),
-        vm::MagicConstant::new_ptr(&ctx, ds_list_find_index),
-    );
-
-    let ds_list_delete = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (ds_list, index): (vm::UserData, usize) = exec.stack().consume(ctx)?;
-        let ds_list = DsList::downcast_write(&ctx, ds_list)?;
-        let mut vec = DsList::borrow_mut(ds_list);
-        if index >= vec.len() {
-            return Err(vm::RuntimeError::msg(format!(
-                "index {index} out of range of ds_list with length {}",
-                vec.len()
-            )));
-        }
-        vec.remove(index);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_list_delete"),
-        vm::MagicConstant::new_ptr(&ctx, ds_list_delete),
-    );
-
-    let ds_list_size = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let ds_list: vm::UserData = exec.stack().from_index(ctx, 0)?;
-        let ds_list = DsList::downcast(ds_list)?;
-        exec.stack()
-            .replace(ctx, ds_list.inner.borrow().len() as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_list_size"),
-        vm::MagicConstant::new_ptr(&ctx, ds_list_size),
-    );
+    lib.insert_callback(ctx, "ds_list_create", ds_list_create);
+    lib.insert_exec_callback(ctx, "ds_list_add", ds_list_add);
+    lib.insert_callback(ctx, "ds_list_find_index", ds_list_find_index);
+    lib.insert_callback(ctx, "ds_list_delete", ds_list_delete);
+    lib.insert_callback(ctx, "ds_list_size", ds_list_size);
 }

@@ -250,27 +250,11 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_callback(ctx, "is_struct", is_struct);
     lib.insert_callback(ctx, "is_array", is_array);
     lib.insert_callback(ctx, "is_ptr", is_ptr);
-    lib.insert_constant(
-        ctx,
-        "debug_get_callstack",
-        vm::Callback::from_fn(&ctx, debug_get_callstack),
-    );
-    lib.insert_constant(
-        ctx,
-        "script_execute",
-        vm::Callback::from_fn(&ctx, script_execute),
-    );
-    lib.insert_constant(
-        ctx,
-        "script_execute_ext",
-        vm::Callback::from_fn(&ctx, script_execute_ext),
-    );
-    lib.insert_constant(ctx, "method_call", vm::Callback::from_fn(&ctx, method_call));
-    lib.insert_constant(
-        ctx,
-        "array_concat",
-        vm::Callback::from_fn(&ctx, array_concat),
-    );
+    lib.insert_exec_callback(ctx, "debug_get_callstack", debug_get_callstack);
+    lib.insert_exec_callback(ctx, "script_execute", script_execute);
+    lib.insert_exec_callback(ctx, "script_execute_ext", script_execute_ext);
+    lib.insert_exec_callback(ctx, "method_call", method_call);
+    lib.insert_exec_callback(ctx, "array_concat", array_concat);
     lib.insert_callback(ctx, "struct_get_names", struct_get_names);
     lib.insert_callback(ctx, "struct_remove", struct_remove);
     lib.insert_callback(ctx, "struct_exists", struct_exists);

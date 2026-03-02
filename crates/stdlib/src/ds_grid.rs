@@ -1,8 +1,10 @@
-use std::sync::atomic;
+use std::{convert::Infallible, sync::atomic};
 
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Lock, Mutation, Rootable, barrier};
 use thiserror::Error;
+
+use crate::util::MagicExt as _;
 
 #[derive(Debug, Copy, Clone, Error)]
 #[error("index [{x}, {y}] out of range of grid size {width}x{height}")]
@@ -98,17 +100,27 @@ impl<'gc> DsGrid<'gc> {
         ud
     }
 
-    pub fn downcast(
-        ud: vm::UserData<'gc>,
-    ) -> Result<&'gc DsGrid<'gc>, vm::user_data::BadUserDataType> {
+    #[inline]
+    pub fn downcast(ud: vm::UserData<'gc>) -> Result<&'gc DsGrid<'gc>, vm::BadUserDataType> {
         ud.downcast::<Rootable![DsGrid<'_>]>()
     }
 
+    #[inline]
     pub fn downcast_write(
         mc: &Mutation<'gc>,
         ud: vm::UserData<'gc>,
-    ) -> Result<&'gc barrier::Write<DsGrid<'gc>>, vm::user_data::BadUserDataType> {
+    ) -> Result<&'gc barrier::Write<DsGrid<'gc>>, vm::BadUserDataType> {
         ud.downcast_write::<Rootable![DsGrid<'_>]>(mc)
+    }
+
+    #[inline]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    #[inline]
+    pub fn height(&self) -> usize {
+        self.height
     }
 
     pub fn get(&self, x: usize, y: usize) -> Result<vm::Value<'gc>, OutOfGridRangeError> {
@@ -145,87 +157,77 @@ impl<'gc> DsGrid<'gc> {
     }
 }
 
+pub fn ds_grid_create<'gc>(
+    ctx: vm::Context<'gc>,
+    (width, height): (usize, usize),
+) -> Result<vm::UserData<'gc>, Infallible> {
+    Ok(DsGrid::new(width, height).into_userdata(ctx))
+}
+
+pub fn ds_grid_set_region<'gc>(
+    ctx: vm::Context<'gc>,
+    (grid, xmin, ymin, xmax, ymax, value): (
+        vm::UserData<'gc>,
+        usize,
+        usize,
+        usize,
+        usize,
+        vm::Value<'gc>,
+    ),
+) -> Result<(), vm::RuntimeError> {
+    let grid = DsGrid::downcast_write(&ctx, grid)?;
+
+    if xmin > xmax || ymin > ymax {
+        return Err(vm::RuntimeError::msg(format!(
+            "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is invalid"
+        )));
+    }
+
+    if xmin >= grid.width || xmax >= grid.width || ymin >= grid.height || ymax >= grid.height {
+        return Err(vm::RuntimeError::msg(format!(
+            "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is out of range of size {}x{}",
+            grid.width, grid.height
+        )));
+    }
+
+    for x in xmin..=xmax {
+        for y in ymin..=ymax {
+            DsGrid::set(grid, x, y, value)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn ds_grid_clear<'gc>(
+    ctx: vm::Context<'gc>,
+    (grid, value): (vm::UserData<'gc>, vm::Value<'gc>),
+) -> Result<(), vm::BadUserDataType> {
+    let grid = DsGrid::downcast_write(&ctx, grid)?;
+    let array = barrier::field!(grid, DsGrid, array).as_deref();
+    for i in 0..array.len() {
+        array[i].unlock().set(value);
+    }
+    Ok(())
+}
+
+pub fn ds_grid_width<'gc>(
+    _ctx: vm::Context<'gc>,
+    grid: vm::UserData<'gc>,
+) -> Result<isize, vm::BadUserDataType> {
+    Ok(DsGrid::downcast(grid)?.width as isize)
+}
+
+pub fn ds_grid_height<'gc>(
+    _ctx: vm::Context<'gc>,
+    grid: vm::UserData<'gc>,
+) -> Result<isize, vm::BadUserDataType> {
+    Ok(DsGrid::downcast(grid)?.height as isize)
+}
+
 pub fn ds_grid_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
-    let ds_grid_create = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (width, height): (usize, usize) = exec.stack().consume(ctx)?;
-        exec.stack()
-            .replace(ctx, DsGrid::new(width, height).into_userdata(ctx));
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_grid_create"),
-        vm::MagicConstant::new_ptr(&ctx, ds_grid_create),
-    );
-
-    let ds_grid_set_region = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (grid, xmin, ymin, xmax, ymax, value): (
-            vm::UserData,
-            usize,
-            usize,
-            usize,
-            usize,
-            vm::Value,
-        ) = exec.stack().consume(ctx)?;
-        let grid = DsGrid::downcast_write(&ctx, grid)?;
-
-        if xmin > xmax || ymin > ymax {
-            return Err(vm::RuntimeError::msg(format!(
-                "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is invalid"
-            )));
-        }
-
-        if xmin >= grid.width || xmax >= grid.width || ymin >= grid.height || ymax >= grid.height {
-            return Err(vm::RuntimeError::msg(format!(
-                "grid region [{xmin}, {ymin}, {xmax}, {ymax}] is out of range of size {}x{}",
-                grid.width, grid.height
-            )));
-        }
-
-        for x in xmin..=xmax {
-            for y in ymin..=ymax {
-                DsGrid::set(grid, x, y, value)?;
-            }
-        }
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_grid_set_region"),
-        vm::MagicConstant::new_ptr(&ctx, ds_grid_set_region),
-    );
-
-    let ds_grid_clear = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let (grid, value): (vm::UserData, vm::Value) = exec.stack().consume(ctx)?;
-        let grid = DsGrid::downcast_write(&ctx, grid)?;
-        let array = barrier::field!(grid, DsGrid, array).as_deref();
-        for i in 0..array.len() {
-            array[i].unlock().set(value);
-        }
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_grid_clear"),
-        vm::MagicConstant::new_ptr(&ctx, ds_grid_clear),
-    );
-
-    let ds_grid_width = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let grid: vm::UserData = exec.stack().consume(ctx)?;
-        exec.stack()
-            .replace(ctx, DsGrid::downcast(grid)?.width as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_grid_width"),
-        vm::MagicConstant::new_ptr(&ctx, ds_grid_width),
-    );
-
-    let ds_grid_height = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let grid: vm::UserData = exec.stack().consume(ctx)?;
-        exec.stack()
-            .replace(ctx, DsGrid::downcast(grid)?.height as isize);
-        Ok(())
-    });
-    lib.insert(
-        ctx.intern("ds_grid_height"),
-        vm::MagicConstant::new_ptr(&ctx, ds_grid_height),
-    );
+    lib.insert_callback(ctx, "ds_grid_create", ds_grid_create);
+    lib.insert_callback(ctx, "ds_grid_set_region", ds_grid_set_region);
+    lib.insert_callback(ctx, "ds_grid_clear", ds_grid_clear);
+    lib.insert_callback(ctx, "ds_grid_width", ds_grid_width);
+    lib.insert_callback(ctx, "ds_grid_height", ds_grid_height);
 }
