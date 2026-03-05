@@ -21,7 +21,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
     // Find all of the (forward) reachable blocks and number them according to a topological
-    // ordering. We will use this to find back-edges.
+    // ordering. We will use this to find retreating edges.
 
     let reachable_blocks =
         topological_order(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
@@ -32,7 +32,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         .map(|(i, block_id)| (block_id.index() as usize, i))
         .collect::<IndexMap<_>>();
 
-    // We ignore (forward) unreachable blocks in analysis, since they must only contain dead conde.
+    // We ignore (forward) unreachable blocks in analysis, since they must only contain dead code.
     let block_is_reachable = |id: ir::BlockId| topological_ordering.contains(id.index() as usize);
 
     // Normally blocks don't have a shared "exit" block, so in order to calculate the post-dominator
@@ -89,13 +89,13 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // Cytron et al. does not actually cover how to handle potentially infinite loops in dead code
     // elimination.
     //
-    // We check for any back edges in the CFG and treat all of them as potentially an infinite
-    // loop. Since an infinite loop is an effect, we mark all of these blocks with back-edges as
-    // having live branches.
+    // We check for any retreating edges in the CFG and treat all of them as potentially an infinite
+    // loop. Since an infinite loop is an effect, we mark all of these blocks with retreating edges
+    // as having live branches.
     //
     // Additionally, we may have blocks that are (reverse) *unreachable* from our synthetic exit
-    // node due to being in an infinite loop with no exit. Any such block with a back-edge is added
-    // to `exit_blocks`, to ensure that every block is reachable from the synthetic exit node.
+    // node due to being in an infinite loop with no exit. Any such block with a retreating edge is
+    // added to `exit_blocks`, to ensure that every block is reachable from the synthetic exit node.
 
     // We're filtering out blocks that are not also *forward* reachable here, since we know they
     // only contain dead code.
@@ -119,18 +119,19 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
 
     for &block_id in &reachable_blocks {
         let topological_number = topological_ordering[block_id.index() as usize];
-        let has_back_edge = ir.blocks[block_id].exit.kind.successors().any(|successor| {
+        let has_retreating_edge = ir.blocks[block_id].exit.kind.successors().any(|successor| {
             topological_ordering[successor.index() as usize] <= topological_number
         });
 
-        if has_back_edge {
-            // A back-edge is a potentially infinite loop, which we should consider as an effect.
+        if has_retreating_edge {
+            // A retreating edge is a potentially infinite loop, which we should consider as an
+            // effect.
             live_branches.insert(block_id.index() as usize);
             worklist.push(Work::Branch(block_id));
 
-            // For every reverse unreachable block with a back-edge, add a link to the synthetic
-            // exit. This makes every block reachable from the synthetic exit and gives us *some*
-            // information about control dependencies within infinite loops.
+            // For every reverse unreachable block with a retreating edge, add a link to the
+            // synthetic exit. This makes every block reachable from the synthetic exit and gives us
+            // *some* information about control dependencies within infinite loops.
             //
             // This is what major compilers do, see: https://reviews.llvm.org/D29705
             if !reverse_reachable_blocks.contains(block_id.index() as usize) {
@@ -221,8 +222,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                         }
                     }
                     _ => {
-                        // This node must have a back-edge, which can make it a live branch without
-                        // being an actual branch.
+                        // This node must have a retreating edge, which can make it a live branch
+                        // without being an actual branch.
                     }
                 }
 
