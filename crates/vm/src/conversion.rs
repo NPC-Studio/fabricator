@@ -10,7 +10,7 @@ use crate::{
     object::Object,
     string::String,
     user_data::UserData,
-    value::{Function, Value},
+    value::{Function, Number, Value},
 };
 
 #[derive(Debug, Clone, Copy, Error)]
@@ -39,6 +39,7 @@ impl_into!(
     bool,
     i64,
     f64,
+    Number,
     String<'gc>,
     Object<'gc>,
     Array<'gc>,
@@ -219,6 +220,19 @@ macro_rules! impl_float_from {
     };
 }
 impl_float_from!(f32, f64);
+
+impl<'gc> FromValue<'gc> for Number {
+    fn from_value(_ctx: Context<'gc>, value: Value<'gc>) -> Result<Self, TypeError> {
+        if let Some(n) = value.to_number() {
+            Ok(n)
+        } else {
+            Err(TypeError {
+                expected: "numeric value",
+                found: value.type_name(),
+            })
+        }
+    }
+}
 
 macro_rules! impl_from {
     ($([$e:ident $t:ty]),* $(,)?) => {

@@ -897,7 +897,7 @@ impl<S> UnaryExpr<S> {
 impl<S: Eq + Clone> UnaryExpr<S> {
     pub fn fold_constant(&self) -> Option<Constant<S>> {
         match self.op {
-            UnaryOp::Not => Some(Constant::Boolean(!self.target.fold_constant()?.to_bool())),
+            UnaryOp::Not => Some(Constant::Boolean(!self.target.fold_constant()?.cast_bool())),
             UnaryOp::Minus => self.target.fold_constant()?.negate(),
             UnaryOp::BitNegate => Some(Constant::Integer(
                 self.target.fold_constant()?.bit_negate()?,
@@ -992,7 +992,7 @@ impl<S> TernaryExpr<S> {
 impl<S: Eq + Clone> TernaryExpr<S> {
     pub fn fold_constant(&self) -> Option<Constant<S>> {
         let cond = self.cond.fold_constant()?;
-        if cond.to_bool() {
+        if cond.cast_bool() {
             self.if_true.fold_constant()
         } else {
             self.if_false.fold_constant()

@@ -29,8 +29,8 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                         new_inst = match op {
                             ir::UnOp::IsDefined => Some(Constant::Boolean(!c.is_undefined())),
                             ir::UnOp::IsUndefined => Some(Constant::Boolean(c.is_undefined())),
-                            ir::UnOp::Test => Some(Constant::Boolean(!c.to_bool())),
-                            ir::UnOp::Not => Some(Constant::Boolean(!c.to_bool())),
+                            ir::UnOp::Test => Some(Constant::Boolean(!c.cast_bool())),
+                            ir::UnOp::Not => Some(Constant::Boolean(!c.cast_bool())),
                             ir::UnOp::Negate => c.negate(),
                             ir::UnOp::BitNegate => c.bit_negate().map(Constant::Integer),
                             ir::UnOp::Increment => c.add(&Constant::Integer(1)),
@@ -69,18 +69,18 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                         .map(ir::InstructionKind::Constant);
                     } else if let Some((un_op, source)) = match op {
                         ir::BinOp::Add => {
-                            if right_const.and_then(Constant::to_integer) == Some(1) {
+                            if right_const.and_then(Constant::as_integer) == Some(1) {
                                 Some((ir::UnOp::Increment, left))
-                            } else if right_const.and_then(Constant::to_integer) == Some(-1) {
+                            } else if right_const.and_then(Constant::as_integer) == Some(-1) {
                                 Some((ir::UnOp::Decrement, left))
                             } else {
                                 None
                             }
                         }
                         ir::BinOp::Sub => {
-                            if right_const.and_then(Constant::to_integer) == Some(1) {
+                            if right_const.and_then(Constant::as_integer) == Some(1) {
                                 Some((ir::UnOp::Decrement, left))
-                            } else if right_const.and_then(Constant::to_integer) == Some(-1) {
+                            } else if right_const.and_then(Constant::as_integer) == Some(-1) {
                                 Some((ir::UnOp::Increment, left))
                             } else {
                                 None
@@ -172,7 +172,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                 if_true,
             } => {
                 if let ir::InstructionKind::Constant(c) = ir.instructions[cond].kind.clone() {
-                    let target = if c.to_bool() { if_true } else { if_false };
+                    let target = if c.cast_bool() { if_true } else { if_false };
                     block.exit.kind = ir::ExitKind::Jump(target);
                 }
             }

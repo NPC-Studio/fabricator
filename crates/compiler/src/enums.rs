@@ -399,7 +399,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                     );
                     let value = expression
                         .fold_constant()
-                        .and_then(|c| c.to_integer())
+                        .and_then(|c| c.as_integer())
                         .ok_or(EnumResolutionError {
                             kind: EnumResolutionErrorKind::EnumVariantNotConstantInteger,
                             enum_index,

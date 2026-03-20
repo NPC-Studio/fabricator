@@ -1,5 +1,6 @@
 use std::hash::{Hash, Hasher};
 
+use fabricator_vm::value::Number;
 use gc_arena::Collect;
 
 #[derive(Debug, Copy, Clone, Collect)]
@@ -53,14 +54,90 @@ impl<S: Hash> Hash for Constant<S> {
     }
 }
 
+impl<S> From<bool> for Constant<S> {
+    fn from(b: bool) -> Self {
+        Constant::Boolean(b)
+    }
+}
+
+impl<S> From<i64> for Constant<S> {
+    fn from(i: i64) -> Self {
+        Constant::Integer(i)
+    }
+}
+
+impl<S> From<f64> for Constant<S> {
+    fn from(f: f64) -> Self {
+        Constant::Float(f)
+    }
+}
+
+impl<S> From<Number> for Constant<S> {
+    fn from(n: Number) -> Self {
+        match n {
+            Number::Integer(i) => Self::Integer(i),
+            Number::Float(f) => Self::Float(f),
+        }
+    }
+}
+
 impl<S> Constant<S> {
     #[inline]
+    #[must_use]
     pub fn is_undefined(&self) -> bool {
         matches!(&self, Constant::Undefined)
     }
 
     #[inline]
-    pub fn to_bool(&self) -> bool {
+    #[must_use]
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            Constant::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_integer(&self) -> Option<i64> {
+        match self {
+            Constant::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            Constant::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_string(&self) -> Option<&S> {
+        match self {
+            Constant::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn to_number(&self) -> Option<Number> {
+        match self {
+            Constant::Boolean(b) => Some(Number::Integer(if *b { 1 } else { 0 })),
+            Constant::Integer(i) => Some(Number::Integer(*i)),
+            Constant::Float(f) => Some(Number::Float(*f)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cast_bool(&self) -> bool {
         match *self {
             Constant::Undefined => false,
             Constant::Boolean(b) => b,
@@ -71,106 +148,38 @@ impl<S> Constant<S> {
     }
 
     #[inline]
-    pub fn to_integer(&self) -> Option<i64> {
-        match *self {
-            Constant::Boolean(b) => Some(if b { 1 } else { 0 }),
-            Constant::Integer(i) => Some(i),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn to_float(&self) -> Option<f64> {
-        match *self {
-            Constant::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
-            Constant::Integer(i) => Some(i as f64),
-            Constant::Float(f) => Some(f),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn negate(&self) -> Option<Constant<S>> {
-        match *self {
-            Constant::Boolean(b) => Some(Constant::Integer(if b { -1 } else { 0 })),
-            Constant::Integer(i) => Some(Constant::Integer(i.wrapping_neg())),
-            Constant::Float(f) => Some(Constant::Float(-f)),
-            _ => None,
-        }
+        Some(self.to_number()?.negate().into())
     }
 
     #[inline]
     pub fn add(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(Constant::Integer(a.wrapping_add(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
-            Some(Constant::Float(a + b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.add(other.to_number()?).into())
     }
 
     #[inline]
     pub fn sub(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(Constant::Integer(a.wrapping_sub(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
-            Some(Constant::Float(a - b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.sub(other.to_number()?).into())
     }
 
     #[inline]
     pub fn mult(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(Constant::Integer(a.wrapping_mul(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
-            Some(Constant::Float(a * b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.mult(other.to_number()?).into())
     }
 
     #[inline]
     pub fn div(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
-            Some(Constant::Float(a / b))
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub fn rem(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(Constant::Integer(a.wrapping_rem(b)))
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
-            Some(Constant::Float(a % b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.div(other.to_number()?).into())
     }
 
     #[inline]
     pub fn idiv(&self, other: &Constant<S>) -> Option<i64> {
-        let self_int = if let Some(i) = self.to_integer() {
-            i
-        } else if let Some(f) = self.to_float() {
-            f.trunc() as i64
-        } else {
-            return None;
-        };
+        Some(self.to_number()?.idiv(other.to_number()?).into())
+    }
 
-        let other_int = if let Some(i) = other.to_integer() {
-            i
-        } else if let Some(f) = other.to_float() {
-            f.trunc() as i64
-        } else {
-            return None;
-        };
-
-        Some(self_int.wrapping_div(other_int))
+    #[inline]
+    pub fn rem(&self, other: &Constant<S>) -> Option<Constant<S>> {
+        Some(self.to_number()?.rem(other.to_number()?).into())
     }
 
     #[inline]
@@ -181,10 +190,8 @@ impl<S> Constant<S> {
         match (self, other) {
             (Constant::Undefined, Constant::Undefined) => true,
             (Constant::String(a), Constant::String(b)) => a == b,
-            (a, b) => {
-                if let (Some(a), Some(b)) = (a.to_integer(), b.to_integer()) {
-                    a == b
-                } else if let (Some(a), Some(b)) = (a.to_float(), b.to_float()) {
+            _ => {
+                if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
                     a == b
                 } else {
                     false
@@ -195,9 +202,7 @@ impl<S> Constant<S> {
 
     #[inline]
     pub fn less_than(&self, other: &Constant<S>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(a < b)
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
             Some(a < b)
         } else {
             None
@@ -206,9 +211,7 @@ impl<S> Constant<S> {
 
     #[inline]
     pub fn less_equal(&self, other: &Constant<S>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.to_integer(), other.to_integer()) {
-            Some(a <= b)
-        } else if let (Some(a), Some(b)) = (self.to_float(), other.to_float()) {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
             Some(a <= b)
         } else {
             None
@@ -217,47 +220,47 @@ impl<S> Constant<S> {
 
     #[inline]
     pub fn and(&self, other: &Constant<S>) -> bool {
-        self.to_bool() && other.to_bool()
+        self.cast_bool() && other.cast_bool()
     }
 
     #[inline]
     pub fn or(&self, other: &Constant<S>) -> bool {
-        self.to_bool() || other.to_bool()
+        self.cast_bool() || other.cast_bool()
     }
 
     #[inline]
     pub fn xor(&self, other: &Constant<S>) -> bool {
-        self.to_bool() ^ other.to_bool()
+        self.cast_bool() ^ other.cast_bool()
     }
 
     #[inline]
     pub fn bit_negate(&self) -> Option<i64> {
-        Some(!self.to_integer()?)
+        Some(self.to_number()?.bit_negate())
     }
 
     #[inline]
     pub fn bit_and(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_integer()? & other.to_integer()?)
+        Some(self.to_number()?.bit_and(other.to_number()?))
     }
 
     #[inline]
     pub fn bit_or(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_integer()? | other.to_integer()?)
+        Some(self.to_number()?.bit_or(other.to_number()?))
     }
 
     #[inline]
     pub fn bit_xor(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_integer()? ^ other.to_integer()?)
+        Some(self.to_number()?.bit_xor(other.to_number()?))
     }
 
     #[inline]
     pub fn bit_shift_left(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_integer()? << other.to_integer()?)
+        Some(self.to_number()?.bit_shift_left(other.to_number()?))
     }
 
     #[inline]
     pub fn bit_shift_right(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_integer()? >> other.to_integer()?)
+        Some(self.to_number()?.bit_shift_right(other.to_number()?))
     }
 
     #[inline]

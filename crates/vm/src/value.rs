@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cmp, fmt};
 
 use gc_arena::{Collect, Mutation};
 
@@ -54,7 +54,7 @@ impl<'gc> From<Callback<'gc>> for Function<'gc> {
 ///   3) `coerce_xxx` conversions are expensive and should not usually be done implicitly except in
 ///      specific circumstances. They include things like coercing scalar values into strings and
 ///      userdata type coercions.
-#[derive(Copy, Clone, PartialEq, Default, Collect)]
+#[derive(Copy, Clone, Default, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
     #[default]
@@ -68,6 +68,13 @@ pub enum Value<'gc> {
     Closure(Closure<'gc>),
     Callback(Callback<'gc>),
     UserData(UserData<'gc>),
+}
+
+impl<'gc> PartialEq for Value<'gc> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.equal(*other)
+    }
 }
 
 impl<'gc> fmt::Debug for Value<'gc> {
@@ -119,6 +126,15 @@ impl<'gc> From<i64> for Value<'gc> {
 impl<'gc> From<f64> for Value<'gc> {
     fn from(f: f64) -> Self {
         Value::Float(f)
+    }
+}
+
+impl<'gc> From<Number> for Value<'gc> {
+    fn from(n: Number) -> Self {
+        match n {
+            Number::Integer(i) => Value::Integer(i),
+            Number::Float(f) => Value::Float(f),
+        }
     }
 }
 
@@ -192,7 +208,7 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     #[must_use]
-    pub fn as_bool(self) -> Option<bool> {
+    pub fn as_boolean(self) -> Option<bool> {
         match self {
             Value::Boolean(b) => Some(b),
             _ => None,
@@ -213,6 +229,16 @@ impl<'gc> Value<'gc> {
     pub fn as_float(self) -> Option<f64> {
         match self {
             Value::Float(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_number(self) -> Option<Number> {
+        match self {
+            Value::Integer(i) => Some(Number::Integer(i)),
+            Value::Float(f) => Some(Number::Float(f)),
             _ => None,
         }
     }
@@ -281,6 +307,20 @@ impl<'gc> Value<'gc> {
         }
     }
 
+    /// Return numeric values as integers or floats.
+    ///
+    /// Integers and floats are returned as themselves, booleans return integral 0 or 1.
+    #[inline]
+    #[must_use]
+    pub fn to_number(self) -> Option<Number> {
+        match self {
+            Value::Boolean(b) => Some(Number::Integer(if b { 1 } else { 0 })),
+            Value::Integer(i) => Some(Number::Integer(i)),
+            Value::Float(f) => Some(Number::Float(f)),
+            _ => None,
+        }
+    }
+
     /// Interpret any value as a boolean.
     ///
     /// Boolean values are returned as themselves, `Value::Undefined` returns false, integers and
@@ -300,17 +340,12 @@ impl<'gc> Value<'gc> {
 
     /// Interpret numeric values as integers.
     ///
-    /// Integers are returned as themselves, booleans return 0 or 1, and floats are truncated to the
-    /// nearest integer.
+    /// Integers are returned as themselves, booleans return 0 or 1, and floats return their integer
+    /// part.
     #[inline]
     #[must_use]
     pub fn cast_integer(self) -> Option<i64> {
-        match self {
-            Value::Boolean(b) => Some(if b { 1 } else { 0 }),
-            Value::Integer(i) => Some(i),
-            Value::Float(f) => Some(f.trunc() as i64),
-            _ => None,
-        }
+        self.to_number().map(Number::cast_integer)
     }
 
     /// Interpret numeric values as floats.
@@ -320,12 +355,7 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn cast_float(self) -> Option<f64> {
-        match self {
-            Value::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
-            Value::Integer(i) => Some(i as f64),
-            Value::Float(f) => Some(f),
-            _ => None,
-        }
+        self.to_number().map(Number::cast_float)
     }
 
     /// Coerce values into strings.
@@ -398,78 +428,43 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn negate(self) -> Option<Value<'gc>> {
-        match self {
-            Value::Boolean(b) => Some(Value::Integer(if b { -1 } else { 0 })),
-            Value::Integer(i) => Some(Value::Integer(-i)),
-            Value::Float(f) => Some(Value::Float(-f)),
-            _ => None,
-        }
+        Some(self.to_number()?.negate().into())
     }
 
     #[inline]
     #[must_use]
     pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(Value::Integer(a.wrapping_add(b)))
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
-            Some(Value::Float(a + b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.add(other.to_number()?).into())
     }
 
     #[inline]
     #[must_use]
     pub fn sub(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(Value::Integer(a.wrapping_sub(b)))
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
-            Some(Value::Float(a - b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.sub(other.to_number()?).into())
     }
 
     #[inline]
     #[must_use]
     pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(Value::Integer(a.wrapping_mul(b)))
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
-            Some(Value::Float(a * b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.mult(other.to_number()?).into())
     }
 
     #[inline]
     #[must_use]
     pub fn div(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
-            Some(Value::Float(a / b))
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(Value::Integer(a.wrapping_rem(b)))
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
-            Some(Value::Float(a % b))
-        } else {
-            None
-        }
+        Some(self.to_number()?.div(other.to_number()?).into())
     }
 
     #[inline]
     #[must_use]
     pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
-        let self_int = self.cast_integer()?;
-        let other_int = other.cast_integer()?;
-        Some(self_int.wrapping_div(other_int))
+        Some(self.to_number()?.idiv(other.to_number()?).into())
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
+        Some(self.to_number()?.rem(other.to_number()?).into())
     }
 
     #[inline]
@@ -487,9 +482,7 @@ impl<'gc> Value<'gc> {
             (Value::Callback(a), Value::Callback(b)) => a == b,
             (Value::UserData(a), Value::UserData(b)) => a == b,
             _ => {
-                if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-                    a == b
-                } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
+                if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
                     a == b
                 } else {
                     false
@@ -501,9 +494,7 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(a < b)
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
             Some(a < b)
         } else {
             None
@@ -513,9 +504,7 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
-        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Some(a <= b)
-        } else if let (Some(a), Some(b)) = (self.cast_float(), other.cast_float()) {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
             Some(a <= b)
         } else {
             None
@@ -543,42 +532,221 @@ impl<'gc> Value<'gc> {
     #[inline]
     #[must_use]
     pub fn bit_negate(&self) -> Option<i64> {
-        Some(!self.cast_integer()?)
+        Some(self.to_number()?.bit_negate())
     }
 
     #[inline]
     #[must_use]
     pub fn bit_and(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.cast_integer()? & other.cast_integer()?)
+        Some(self.to_number()?.bit_and(other.to_number()?))
     }
 
     #[inline]
     #[must_use]
     pub fn bit_or(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.cast_integer()? | other.cast_integer()?)
+        Some(self.to_number()?.bit_or(other.to_number()?))
     }
 
     #[inline]
     #[must_use]
     pub fn bit_xor(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.cast_integer()? ^ other.cast_integer()?)
+        Some(self.to_number()?.bit_xor(other.to_number()?))
     }
 
     #[inline]
     #[must_use]
     pub fn bit_shift_left(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.cast_integer()? << other.cast_integer()?)
+        Some(self.to_number()?.bit_shift_left(other.to_number()?))
     }
 
     #[inline]
     #[must_use]
     pub fn bit_shift_right(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.cast_integer()? >> other.cast_integer()?)
+        Some(self.to_number()?.bit_shift_right(other.to_number()?))
     }
 
     #[inline]
     #[must_use]
     pub fn null_coalesce(self, other: Value<'gc>) -> Value<'gc> {
         if self.is_undefined() { other } else { self }
+    }
+}
+
+/// A numeric value that has an exact representation in [`Value`].
+#[derive(Debug, Copy, Clone)]
+pub enum Number {
+    Integer(i64),
+    Float(f64),
+}
+
+impl PartialEq for Number {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_cmp(other).is_some_and(|o| o.is_eq())
+    }
+}
+
+impl PartialOrd for Number {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        fn cmp_int_float(a: i64, b: f64) -> Option<cmp::Ordering> {
+            // Maximum integer value such that the value may be losslessly converted into a float,
+            // and additionally no other integer value will convert to that same float.
+            const MAX_EXACT_INTEGER: u64 = (1 << f64::MANTISSA_DIGITS) - 1;
+
+            if a.unsigned_abs() <= MAX_EXACT_INTEGER {
+                (a as f64).partial_cmp(&b)
+            } else if b.is_finite() {
+                debug_assert!(b.fract() == 0.0);
+                Some(a.cmp(&(b as i64)))
+            } else {
+                // `b` is either infinite or NaN, so just compare with zero.
+                0.0.partial_cmp(&b)
+            }
+        }
+
+        match (*self, *other) {
+            (Number::Integer(a), Number::Integer(b)) => a.partial_cmp(&b),
+            (Number::Float(a), Number::Float(b)) => a.partial_cmp(&b),
+            (Number::Integer(a), Number::Float(b)) => cmp_int_float(a, b),
+            (Number::Float(a), Number::Integer(b)) => cmp_int_float(b, a).map(|o| o.reverse()),
+        }
+    }
+}
+
+impl Number {
+    #[inline]
+    #[must_use]
+    pub fn as_integer(self) -> Option<i64> {
+        if let Number::Integer(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn as_float(self) -> Option<f64> {
+        if let Number::Float(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cast_integer(self) -> i64 {
+        match self {
+            Number::Integer(i) => i,
+            Number::Float(f) => f as i64,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cast_float(self) -> f64 {
+        match self {
+            Number::Integer(i) => i as f64,
+            Number::Float(f) => f,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn negate(self) -> Number {
+        match self {
+            Number::Integer(i) => Number::Integer(i.wrapping_neg()),
+            Number::Float(f) => Number::Float(-f),
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn add(self, other: Number) -> Number {
+        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
+            Number::Integer(a.wrapping_add(b))
+        } else {
+            Number::Float(self.cast_float() + other.cast_float())
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn sub(self, other: Number) -> Number {
+        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
+            Number::Integer(a.wrapping_sub(b))
+        } else {
+            Number::Float(self.cast_float() - other.cast_float())
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn mult(self, other: Number) -> Number {
+        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
+            Number::Integer(a.wrapping_mul(b))
+        } else {
+            Number::Float(self.cast_float() * other.cast_float())
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn div(self, other: Number) -> f64 {
+        self.cast_float() / other.cast_float()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn idiv(self, other: Number) -> i64 {
+        self.cast_integer().wrapping_div(other.cast_integer())
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rem(self, other: Number) -> Number {
+        if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
+            Number::Integer(a.wrapping_rem(b))
+        } else {
+            Number::Float(self.cast_float() % other.cast_float())
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_negate(&self) -> i64 {
+        !self.cast_integer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_and(&self, other: Number) -> i64 {
+        self.cast_integer() & other.cast_integer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_or(&self, other: Number) -> i64 {
+        self.cast_integer() | other.cast_integer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_xor(&self, other: Number) -> i64 {
+        self.cast_integer() ^ other.cast_integer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_shift_left(&self, other: Number) -> i64 {
+        self.cast_integer() << other.cast_integer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bit_shift_right(&self, other: Number) -> i64 {
+        self.cast_integer() >> other.cast_integer()
     }
 }
