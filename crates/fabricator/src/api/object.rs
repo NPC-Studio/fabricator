@@ -202,9 +202,7 @@ impl<'gc> ObjectUserData<'gc> {
         ud
     }
 
-    pub fn downcast(
-        userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::BadUserDataType> {
+    pub fn downcast(userdata: vm::UserData<'gc>) -> Result<&'gc Self, vm::BadUserDataType> {
         userdata.downcast::<Rootable![ObjectUserData<'_>]>()
     }
 }
@@ -638,17 +636,14 @@ pub fn object_api<'gc>(
         .unwrap();
 
     let instance_destroy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let object_or_instance: Option<vm::UserData> = exec.stack().consume(ctx)?;
+        let object_or_instance = if let Some(ud) = exec.stack().consume(ctx)? {
+            ud
+        } else {
+            vm::FromValue::from_value(ctx, exec.this())?
+        };
 
         let mut to_destroy = Vec::new();
         State::ctx_with(ctx, |state| {
-            let object_or_instance = if let Some(obj_inst) = object_or_instance {
-                obj_inst
-            } else {
-                let instance_id = EventState::ctx_with(ctx, |ev| ev.instance_id)?;
-                ctx.fetch(&state.instances[instance_id].this)
-            };
-
             if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
                 if let Some(set) = state.instances_for_object.get(object.id) {
                     to_destroy.extend(
