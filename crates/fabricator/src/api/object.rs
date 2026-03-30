@@ -173,10 +173,10 @@ impl<'gc> ObjectUserData<'gc> {
                                 let ud: vm::UserData =
                                     vm::FromValue::from_value(ctx, array.get(idx))?;
                                 let instance = InstanceUserData::downcast(ud)?;
-                                idx += 1;
                                 if state.instances.get(instance.id).is_some_and(|i| i.active) {
                                     return Ok(Some(ud));
                                 }
+                                idx += 1;
                             }
                             Ok(None)
                         })??;
