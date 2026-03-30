@@ -1390,6 +1390,7 @@ where
             with_stmt.body.span().start_span(),
             ir::ExitKind::Jump(check_block),
         );
+
         self.start_new_block(check_block);
 
         let cur_control = self.push_instruction(
@@ -1435,6 +1436,7 @@ where
                 if_false: body_block,
             },
         );
+
         self.start_new_block(body_block);
 
         self.push_instruction(
@@ -1451,10 +1453,7 @@ where
         self.statement(&with_stmt.body)?;
         self.pop_scope();
 
-        self.end_current_block(
-            with_stmt.span.end_span(),
-            ir::ExitKind::Jump(successor_block),
-        );
+        self.end_current_block(with_stmt.span.end_span(), ir::ExitKind::Jump(check_block));
 
         self.start_new_block(successor_block);
 
