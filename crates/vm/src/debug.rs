@@ -182,6 +182,7 @@ impl<'gc> PartialEq for Chunk<'gc> {
 impl<'gc> Eq for Chunk<'gc> {}
 
 impl<'gc> Chunk<'gc> {
+    #[must_use]
     pub fn new<R>(mc: &Mutation<'gc>, chunk: Root<'gc, R>) -> Self
     where
         R: for<'a> Rootable<'a> + 'static,
@@ -196,6 +197,7 @@ impl<'gc> Chunk<'gc> {
         ))
     }
 
+    #[must_use]
     pub fn new_static<T>(mc: &Mutation<'gc>, val: T) -> Self
     where
         T: ChunkData + 'static,
@@ -203,14 +205,17 @@ impl<'gc> Chunk<'gc> {
         Self::new::<gc_arena::Static<T>>(mc, val.into())
     }
 
+    #[must_use]
     pub fn from_inner(inner: Gc<'gc, ChunkInner>) -> Self {
         Self(Any::from_inner(inner))
     }
 
+    #[must_use]
     pub fn into_inner(self) -> Gc<'gc, ChunkInner> {
         self.0.into_inner()
     }
 
+    #[must_use]
     pub fn downcast<R>(self) -> Option<&'gc Root<'gc, R>>
     where
         R: for<'b> Rootable<'b> + 'static,
@@ -219,6 +224,7 @@ impl<'gc> Chunk<'gc> {
         self.0.downcast::<R>()
     }
 
+    #[must_use]
     pub fn downcast_write<R>(self, mc: &Mutation<'gc>) -> Option<&'gc barrier::Write<Root<'gc, R>>>
     where
         R: for<'b> Rootable<'b> + 'static,
@@ -227,19 +233,23 @@ impl<'gc> Chunk<'gc> {
         self.0.downcast_write::<R>(mc)
     }
 
+    #[must_use]
     pub fn downcast_static<T: 'static>(self) -> Option<&'gc T> {
         self.downcast::<gc_arena::Static<T>>().map(|r| &r.0)
     }
 
+    #[must_use]
     pub fn name(self) -> &'gc SharedStr {
         (self.0.metadata().methods.name)(self.0)
     }
 
+    #[must_use]
     pub fn line_number(self, byte_offset: usize) -> LineNumber {
         (self.0.metadata().methods.line_number)(self.0, byte_offset)
     }
 
     /// Returns a printable identifier for a function within a chunk.
+    #[must_use]
     pub fn function_identifier(self, reference: FunctionRef) -> FunctionIdentifier {
         match reference {
             FunctionRef::Named(ref_name, span) => FunctionIdentifier {
@@ -274,6 +284,7 @@ pub enum FunctionRef {
 }
 
 impl FunctionRef {
+    #[must_use]
     pub fn span(&self) -> Span {
         match *self {
             FunctionRef::Named(_, span) => span,
