@@ -3,10 +3,17 @@ mod runtime_error;
 
 use std::{error::Error as StdError, fmt};
 
-use gc_arena::Collect;
+use gc_arena::{Collect, Gc, Lock, Mutation, Rootable, barrier};
 use thiserror::Error;
 
-use crate::{interpreter::Context, string::SharedStr, user_data::UserData, value::Value};
+use crate::{
+    interpreter::Context,
+    registry::Singleton,
+    string::SharedStr,
+    string::String,
+    user_data::{BadUserDataType, UserData, UserDataMethods},
+    value::Value,
+};
 
 pub use self::{
     raw_gc::RawGc,
@@ -185,21 +192,100 @@ impl<'gc, E: StdError + Send + Sync + 'static> From<E> for Error<'gc> {
     }
 }
 
+#[derive(Clone, Collect)]
+#[collect(no_drop)]
+struct RuntimeErrorUserData<'gc> {
+    error: RuntimeError,
+    // Cache the string representation of this error
+    string_repr: Lock<Option<String<'gc>>>,
+}
+
+impl<'gc> RuntimeErrorUserData<'gc> {
+    fn new(error: RuntimeError) -> Self {
+        Self {
+            error,
+            string_repr: Lock::new(None),
+        }
+    }
+
+    fn into_userdata(self, ctx: Context<'gc>) -> UserData<'gc> {
+        #[derive(Copy, Clone, Collect)]
+        #[collect(require_static)]
+        struct Methods;
+
+        impl<'gc> UserDataMethods<'gc> for Methods {
+            fn coerce_string(&self, ud: UserData<'gc>, ctx: Context<'gc>) -> Option<String<'gc>> {
+                if let Some(s) = RuntimeErrorUserData::downcast(ud)
+                    .unwrap()
+                    .string_repr
+                    .get()
+                {
+                    return Some(s);
+                }
+
+                let ud = RuntimeErrorUserData::downcast_write(&ctx, ud).unwrap();
+                Some(RuntimeErrorUserData::to_string(ud, ctx))
+            }
+        }
+
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct ErrorMethodsSingleton<'gc>(Gc<'gc, dyn UserDataMethods<'gc>>);
+
+        impl<'gc> Singleton<'gc> for ErrorMethodsSingleton<'gc> {
+            fn create(ctx: Context<'gc>) -> Self {
+                let methods = Gc::new(&ctx, Methods);
+                ErrorMethodsSingleton(gc_arena::unsize!(methods => dyn UserDataMethods<'gc>))
+            }
+        }
+
+        let methods = ctx.singleton::<Rootable![ErrorMethodsSingleton<'_>]>().0;
+        let ud = UserData::new::<Rootable![RuntimeErrorUserData<'_>]>(&ctx, self);
+        ud.set_methods(&ctx, Some(methods));
+        ud.into()
+    }
+
+    #[inline]
+    fn downcast(ud: UserData<'gc>) -> Result<&'gc RuntimeErrorUserData<'gc>, BadUserDataType> {
+        ud.downcast::<Rootable![RuntimeErrorUserData<'_>]>()
+    }
+
+    #[inline]
+    fn downcast_write(
+        mc: &Mutation<'gc>,
+        ud: UserData<'gc>,
+    ) -> Result<&'gc barrier::Write<RuntimeErrorUserData<'gc>>, BadUserDataType> {
+        ud.downcast_write::<Rootable![RuntimeErrorUserData<'_>]>(mc)
+    }
+
+    /// Return a (cached) string representation of the held `RuntimeError`.
+    fn to_string(this: &barrier::Write<Self>, ctx: Context<'gc>) -> String<'gc> {
+        if let Some(s) = this.string_repr.get() {
+            return s;
+        }
+
+        let string_repr = barrier::field!(this, Self, string_repr);
+        let s = ctx.intern(&this.error.to_string());
+        string_repr.unlock().set(Some(s));
+        s
+    }
+}
+
 impl<'gc> Error<'gc> {
     /// Turn a [`Value`] into an `Error`.
     ///
-    /// If the provided value is a [`UserData`] object which holds a [`RuntimeError`], then this
-    /// conversion will clone the held `RuntimeError` and properly return an [`Error::Runtime`]
-    /// variant. This is how Rust errors are properly transported through scripts: a `RuntimeError`
-    /// which is turned into a `Value` with [`Error::to_value`] will always turn back into a
-    /// `RuntimeError` error with [`Error::from_value`].
+    /// If the provided value is a [`UserData`] object returned from `[Error::to_value]`, then
+    /// this conversion will clone the `RuntimeError` held in the `UserData` and properly return
+    /// an [`Error::Runtime`] variant. This is how Rust errors are properly transported through
+    /// scripts: a `RuntimeError` which is turned into a `Value` with [`Error::to_value`] will
+    /// always turn back into a `RuntimeError` error with [`Error::from_value`].
     ///
     /// If the given value is *any other* kind of script value, then this will return a
     /// [`ScriptError`] instead.
     pub fn from_value(value: Value<'gc>) -> Self {
         if let Value::UserData(ud) = value {
-            if let Ok(err) = ud.downcast_static::<RuntimeError>() {
-                return Error::Runtime(err.clone());
+            if let Ok(err_ud) = RuntimeErrorUserData::downcast(ud) {
+                return Error::Runtime(err_ud.error.clone());
             }
         }
 
@@ -210,11 +296,17 @@ impl<'gc> Error<'gc> {
     ///
     /// For script errors, this simply returns the original [`Value`] directly.
     ///
-    /// For Rust errors, this will return a [`UserData`] value which holds a [`RuntimeError`].
+    /// For Rust errors, this will return a special [`UserData`] value which holds the
+    /// [`RuntimeError`].
+    ///
+    /// Note that the returned `UserData` is *not the same* as `UserData::new_static(runtime_err)`,
+    /// it is impossible to construct this `UserData` in any other way than by calling this method.
     pub fn to_value(&self, ctx: Context<'gc>) -> Value<'gc> {
         match self {
             Error::Script(err) => err.0,
-            Error::Runtime(err) => UserData::new_static(&ctx, err.clone()).into(),
+            Error::Runtime(err) => RuntimeErrorUserData::new(err.clone())
+                .into_userdata(ctx)
+                .into(),
         }
     }
 
