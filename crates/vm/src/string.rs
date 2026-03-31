@@ -88,6 +88,14 @@ impl<'gc> fmt::Debug for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
+    pub fn from_inner(inner: Gc<'gc, SharedStr>) -> Self {
+        Self(inner)
+    }
+
+    pub fn into_inner(self) -> Gc<'gc, SharedStr> {
+        self.0
+    }
+
     #[inline]
     pub fn as_str(self) -> &'gc str {
         self.0.as_ref().as_ref()

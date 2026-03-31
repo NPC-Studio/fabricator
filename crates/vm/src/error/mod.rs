@@ -3,7 +3,7 @@ mod runtime_error;
 
 use std::{error::Error as StdError, fmt};
 
-use gc_arena::{Collect, Gc, Lock, Mutation, Rootable, barrier};
+use gc_arena::{Collect, Gc, GcWeak, Lock, Mutation, Rootable, barrier};
 use thiserror::Error;
 
 use crate::{
@@ -197,14 +197,14 @@ impl<'gc, E: StdError + Send + Sync + 'static> From<E> for Error<'gc> {
 struct RuntimeErrorUserData<'gc> {
     error: RuntimeError,
     // Cache the string representation of this error
-    string_repr: Lock<Option<String<'gc>>>,
+    display_cache: Lock<Option<GcWeak<'gc, SharedStr>>>,
 }
 
 impl<'gc> RuntimeErrorUserData<'gc> {
     fn new(error: RuntimeError) -> Self {
         Self {
             error,
-            string_repr: Lock::new(None),
+            display_cache: Lock::new(None),
         }
     }
 
@@ -217,14 +217,21 @@ impl<'gc> RuntimeErrorUserData<'gc> {
             fn coerce_string(&self, ud: UserData<'gc>, ctx: Context<'gc>) -> Option<String<'gc>> {
                 if let Some(s) = RuntimeErrorUserData::downcast(ud)
                     .unwrap()
-                    .string_repr
+                    .display_cache
                     .get()
+                    .and_then(|s| s.upgrade(&ctx))
                 {
-                    return Some(s);
+                    return Some(String::from_inner(s));
                 }
 
-                let ud = RuntimeErrorUserData::downcast_write(&ctx, ud).unwrap();
-                Some(RuntimeErrorUserData::to_string(ud, ctx))
+                let this = RuntimeErrorUserData::downcast_write(&ctx, ud).unwrap();
+
+                let string_repr = barrier::field!(this, RuntimeErrorUserData, display_cache);
+                let s = ctx.intern(&this.error.to_string());
+                string_repr
+                    .unlock()
+                    .set(Some(Gc::downgrade(String::into_inner(s))));
+                Some(s)
             }
         }
 
@@ -256,18 +263,6 @@ impl<'gc> RuntimeErrorUserData<'gc> {
         ud: UserData<'gc>,
     ) -> Result<&'gc barrier::Write<RuntimeErrorUserData<'gc>>, BadUserDataType> {
         ud.downcast_write::<Rootable![RuntimeErrorUserData<'_>]>(mc)
-    }
-
-    /// Return a (cached) string representation of the held `RuntimeError`.
-    fn to_string(this: &barrier::Write<Self>, ctx: Context<'gc>) -> String<'gc> {
-        if let Some(s) = this.string_repr.get() {
-            return s;
-        }
-
-        let string_repr = barrier::field!(this, Self, string_repr);
-        let s = ctx.intern(&this.error.to_string());
-        string_repr.unlock().set(Some(s));
-        s
     }
 }
 
