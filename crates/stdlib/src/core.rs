@@ -236,6 +236,21 @@ pub fn struct_names_count<'gc>(
     Ok(obj.borrow().map.keys().len() as i64)
 }
 
+/// Gets a key from a struct.
+///
+/// This is the equivalent of doing `struct[$ "key"]`.
+pub fn struct_get<'gc>(
+    _ctx: vm::Context<'gc>,
+    (obj, key): (vm::Object<'gc>, vm::String<'gc>),
+) -> Result<vm::Value<'gc>, Infallible> {
+    Ok(obj
+        .borrow()
+        .map
+        .get(&key)
+        .copied()
+        .unwrap_or(vm::Value::Undefined))
+}
+
 pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_constant(ctx, "pointer_null", Pointer::null().into_userdata(&ctx));
     lib.insert_callback(ctx, "gml_pragma", gml_pragma);
@@ -259,4 +274,6 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_callback(ctx, "struct_remove", struct_remove);
     lib.insert_callback(ctx, "struct_exists", struct_exists);
     lib.insert_callback(ctx, "struct_names_count", struct_names_count);
+    lib.insert_callback(ctx, "struct_get", struct_get);
+    lib.insert_callback(ctx, "variable_instance_get", struct_get);
 }
