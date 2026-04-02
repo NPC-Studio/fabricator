@@ -163,6 +163,53 @@ pub fn array_resize<'gc>(
     Ok(())
 }
 
+/// Insert a value into an array at a given position, shifting all other values
+/// down one index.
+///
+/// If [`array_length`] is less than `pos`, we will resize the array
+/// to be at least as long as `pos + 1`. If we expand the array in such a manner,
+/// the intervening slots will be filled with [`vm::Value::Undefined`], as if you
+/// had called [`array_resize`] with `pos + 1`.
+pub fn array_insert<'gc>(
+    ctx: vm::Context<'gc>,
+    (array, pos, value): (vm::Array<'gc>, usize, vm::Value<'gc>),
+) -> Result<(), Infallible> {
+    let mut a = array.borrow_mut(&ctx);
+    if pos > a.len() {
+        a.resize(pos + 1, vm::Value::Undefined);
+    }
+    a.insert(pos, value);
+
+    Ok(())
+}
+
+/// Checks if any member of the array satisfies the given function. This function
+/// short-circuits, so once it returns true once, then it will be stop running.
+///
+/// In the event that the array itself is shortened by a closer passed into this function,
+/// which is very bad idea, this closure will give the value `vm::Value::Undefined` for indices
+/// which no longer exist on the array.
+pub fn array_any<'gc>(
+    ctx: vm::Context<'gc>,
+    mut exec: vm::Execution<'gc, '_>,
+) -> Result<(), vm::RuntimeError> {
+    let (input, function): (vm::Array<'gc>, vm::Function<'gc>) = exec.stack().consume(ctx)?;
+
+    let len = input.len();
+    let mut o = false;
+    for i in 0..len {
+        exec.stack().replace(ctx, (input.get(i), i as isize));
+        exec.call(ctx, function)?;
+        if exec.stack().get(0).cast_bool() {
+            o = true;
+            break;
+        }
+    }
+
+    exec.stack().replace(ctx, vm::Value::Boolean(o));
+    Ok(())
+}
+
 pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_callback(ctx, "array_create", array_create);
     lib.insert_exec_callback(ctx, "array_create_ext", array_create_ext);
@@ -176,6 +223,8 @@ pub fn array_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_exec_callback(ctx, "array_map", array_map);
     lib.insert_callback(ctx, "array_copy", array_copy);
     lib.insert_callback(ctx, "array_resize", array_resize);
+    lib.insert_callback(ctx, "array_insert", array_insert);
+    lib.insert_exec_callback(ctx, "array_any", array_any);
 }
 
 fn sort_array<'gc>(
