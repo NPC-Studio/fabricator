@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt, rc::Rc, sync::Arc};
 
 use crate::{
     callback::Callback,
@@ -11,7 +11,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct VmError<'gc> {
     pub error: Error<'gc>,
-    pub backtrace: Arc<[BacktraceFrame<'gc>]>,
+    pub backtrace: Rc<[BacktraceFrame<'gc>]>,
 }
 
 impl<'gc> fmt::Display for VmError<'gc> {

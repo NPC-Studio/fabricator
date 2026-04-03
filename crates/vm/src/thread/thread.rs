@@ -321,27 +321,31 @@ impl<'gc, 'a> Execution<'gc, 'a> {
                         }
                     }
 
-                    return Err(CallError::Vm {
+                    Err(CallError::Vm {
                         error: vm_err.error.into_extern(),
                         backtrace: vm_err
                             .backtrace
                             .into_iter()
                             .map(|f| f.to_extern())
                             .collect(),
-                    });
+                    })
+                } else {
+                    Ok(())
                 }
             }
             Function::Callback(callback) => {
                 let res = self.call_callback(ctx, callback);
                 if let Err(err) = res {
                     if let Some(call_err) = err.downcast_ref::<CallError>() {
-                        return Err(call_err.clone());
+                        Err(call_err.clone())
+                    } else {
+                        Err(CallError::Runtime(err))
                     }
+                } else {
+                    Ok(())
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Returns the current execution frame depth.
