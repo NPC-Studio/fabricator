@@ -143,7 +143,13 @@ pub fn string_pos<'gc>(
 ) -> Result<isize, Infallible> {
     Ok(string
         .find(substr.as_str())
-        .map(|i| i as isize + 1)
+        .map(|byte_pos| {
+            string
+                .char_indices()
+                .position(|(bp, _)| byte_pos == bp)
+                .unwrap() as isize
+                + 1
+        })
         .unwrap_or(0))
 }
 
@@ -153,7 +159,13 @@ pub fn string_last_pos<'gc>(
 ) -> Result<isize, Infallible> {
     Ok(string
         .rfind(substr.as_str())
-        .map(|i| i as isize + 1)
+        .map(|byte_pos| {
+            string
+                .char_indices()
+                .position(|(bp, _)| byte_pos == bp)
+                .unwrap() as isize
+                + 1
+        })
         .unwrap_or(0))
 }
 
