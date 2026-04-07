@@ -114,6 +114,16 @@ pub fn random_set_seed<'gc>(ctx: vm::Context<'gc>, seed: u32) -> Result<(), Infa
     Ok(())
 }
 
+/// Gets the current random seed. If you set this seed again with [`random_set_seed`],
+/// the random pRNG will be restored to the same state as is after this function.
+pub fn random_get_seed<'gc>(ctx: vm::Context<'gc>, _no_args: ()) -> Result<i64, Infallible> {
+    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+    let next_seed = rng.random();
+    *rng = SmallRng::seed_from_u64(next_seed);
+
+    Ok(next_seed as i64)
+}
+
 /// This is a shorthand, effectively, for `random_range(0.0, other_bound)`. `other_bound`
 /// can be less than 0 or greater than zero.
 ///
@@ -333,6 +343,7 @@ pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_callback(ctx, "clamp", clamp);
     lib.insert_callback(ctx, "randomize", randomize);
     lib.insert_callback(ctx, "random_set_seed", random_set_seed);
+    lib.insert_callback(ctx, "random_get_seed", random_get_seed);
     lib.insert_callback(ctx, "random", random);
     lib.insert_callback(ctx, "irandom", irandom);
     lib.insert_callback(ctx, "random_range", random_range);

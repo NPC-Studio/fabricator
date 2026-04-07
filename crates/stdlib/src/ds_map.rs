@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 
 use crate::util::MagicExt as _;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Collect)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Collect, Debug)]
 #[collect(no_drop)]
 pub enum MapKey<'gc> {
     Undefined,
@@ -164,6 +164,64 @@ pub fn ds_map_create<'gc>(ctx: vm::Context<'gc>, (): ()) -> Result<vm::UserData<
     Ok(DsMap::new().into_userdata(ctx))
 }
 
+/// Returns an array filled with every key in the map.
+pub fn ds_map_keys_to_array<'gc>(
+    ctx: vm::Context<'gc>,
+    map: vm::UserData<'gc>,
+) -> Result<vm::Array<'gc>, vm::TypeError> {
+    let map = match DsMap::downcast(map) {
+        Ok(v) => Ok(v),
+        Err(fabricator_vm::BadUserDataType) => Err(vm::TypeError {
+            expected: "DsMap",
+            found: "a different user data",
+        }),
+    }?;
+
+    let map = map.borrow();
+    Ok(vm::Array::from_iter(
+        &ctx,
+        map.keys().copied().map(|v| match v {
+            MapKey::Undefined => vm::Value::Undefined,
+            MapKey::Boolean(v) => vm::Value::Boolean(v),
+            MapKey::Integer(v) => vm::Value::Integer(v),
+            MapKey::Float(v) => vm::Value::Float(v as f64),
+            MapKey::String(v) => vm::Value::String(v),
+            MapKey::Object(v) => vm::Value::Object(v),
+            MapKey::Array(v) => vm::Value::Array(v),
+            MapKey::Closure(v) => vm::Value::Closure(v),
+            MapKey::Callback(v) => vm::Value::Callback(v),
+            MapKey::UserData(v) => vm::Value::UserData(v),
+        }),
+    ))
+}
+
+/// Deletes a key from a ds map. Returns the value, if there was any, within the map.
+pub fn ds_map_delete<'gc>(
+    ctx: vm::Context<'gc>,
+    (map, key): (vm::Value<'gc>, vm::Value<'gc>),
+) -> Result<vm::Value<'gc>, vm::TypeError> {
+    let map = match map {
+        vm::Value::UserData(user_data) => match DsMap::downcast_write(&ctx, user_data) {
+            Ok(v) => Ok(v),
+            Err(fabricator_vm::BadUserDataType) => Err(vm::TypeError {
+                expected: "DsMap",
+                found: "a different user data",
+            }),
+        },
+        other => Err(vm::TypeError {
+            expected: "user data",
+            found: other.type_name(),
+        }),
+    }?;
+
+    let mut map = DsMap::borrow_mut(map);
+
+    let key = MapKey::new(key);
+    Ok(map.remove(&key).unwrap_or(vm::Value::Undefined))
+}
+
 pub fn ds_map_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_callback(ctx, "ds_map_create", ds_map_create);
+    lib.insert_callback(ctx, "ds_map_keys_to_array", ds_map_keys_to_array);
+    lib.insert_callback(ctx, "ds_map_delete", ds_map_delete);
 }
