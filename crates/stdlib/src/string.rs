@@ -106,21 +106,20 @@ pub fn string<'gc>(
     Ok(())
 }
 
+/// Gets the character at a given character index in the string.
+/// Strings are 1-indexed, not 0-indexed.
+///
+/// If `index` is 0 (or a negative number) is provided, we'll return the first character in the string.
+///
+/// If `index` is greater than the length of the string (since we are 1-indexed, the last character
+/// in the string), then we will return an *empty string*.
 pub fn string_char_at<'gc>(
     _ctx: vm::Context<'gc>,
-    (string, index): (vm::String<'gc>, usize),
-) -> Result<String, vm::RuntimeError> {
+    (string, index): (vm::String<'gc>, i64),
+) -> Result<String, Infallible> {
     let mut chars = string.chars();
-    let index = index.checked_sub(1).ok_or_else(|| {
-        vm::RuntimeError::msg("index given to `string_char_at` is 1-indexed and cannot be 0")
-    })?;
-    let c = chars.nth(index).ok_or_else(|| {
-        vm::RuntimeError::msg(format!(
-            "index {index} is out of range in string of length {}",
-            string.chars().count()
-        ))
-    })?;
-    Ok(c.to_string())
+    let index = if index <= 0 { 1 } else { index as usize - 1 };
+    Ok(chars.nth(index).map(|v| v.to_string()).unwrap_or_default())
 }
 
 pub fn string_digits<'gc>(
