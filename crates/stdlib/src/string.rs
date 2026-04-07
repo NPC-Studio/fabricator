@@ -112,9 +112,7 @@ pub fn string_char_at<'gc>(
 ) -> Result<String, vm::RuntimeError> {
     let mut chars = string.chars();
     let index = index.checked_sub(1).ok_or_else(|| {
-        vm::RuntimeError::msg(format!(
-            "index given to `string_char_at` is 1-indexed and cannot be 0"
-        ))
+        vm::RuntimeError::msg("index given to `string_char_at` is 1-indexed and cannot be 0")
     })?;
     let c = chars.nth(index).ok_or_else(|| {
         vm::RuntimeError::msg(format!(
@@ -132,7 +130,7 @@ pub fn string_digits<'gc>(
     let mut output = String::new();
 
     for c in input.chars() {
-        if c.is_digit(10) {
+        if c.is_ascii_digit() {
             output.push(c);
         }
     }
@@ -183,9 +181,7 @@ pub fn string_copy<'gc>(
     (string, index, count): (vm::String<'gc>, usize, usize),
 ) -> Result<String, vm::RuntimeError> {
     let index = index.checked_sub(1).ok_or_else(|| {
-        vm::RuntimeError::msg(format!(
-            "index given to `string_copy` is 1-indexed and cannot be 0"
-        ))
+        vm::RuntimeError::msg("index given to `string_copy` is 1-indexed and cannot be 0")
     })?;
     Ok(string.chars().skip(index).take(count).collect::<String>())
 }
@@ -195,9 +191,9 @@ pub fn string_delete<'gc>(
     (string, index, count): (vm::String<'gc>, isize, isize),
 ) -> Result<String, vm::RuntimeError> {
     if index == 0 {
-        return Err(vm::RuntimeError::msg(format!(
-            "index given to `string_delete` is 1-indexed and cannot be 0"
-        )));
+        return Err(vm::RuntimeError::msg(
+            "index given to `string_delete` is 1-indexed and cannot be 0",
+        ));
     }
     let (range, _) = resolve_array_range(string.chars().count(), Some(index - 1), Some(count))?;
     Ok(string
@@ -361,8 +357,7 @@ pub fn split_format<'a>(s: &'a str) -> impl Iterator<Item = FormatPart<'a>> + 'a
                 // Stop at any trailing `{` so that we make sure to parse the innermost brace pair.
                 //
                 // The string `"hello {{0}"` should have one valid format argument.
-                let Some(right_brace_pos) = self.rest[left_brace_pos + 1..].find(&['{', '}'])
-                else {
+                let Some(right_brace_pos) = self.rest[left_brace_pos + 1..].find(['{', '}']) else {
                     break;
                 };
                 let right_brace_pos = left_brace_pos + 1 + right_brace_pos;
@@ -390,7 +385,7 @@ pub fn split_format<'a>(s: &'a str) -> impl Iterator<Item = FormatPart<'a>> + 'a
                 }
             }
 
-            Some(FormatPart::Str(mem::replace(&mut self.rest, "")))
+            Some(FormatPart::Str(mem::take(&mut self.rest)))
         }
     }
 
@@ -559,15 +554,20 @@ fn pretty_print_value<'gc>(
                             write!(f, ", ")?;
                         }
                     }
-                    Ok(write!(f, "]")?)
+                    write!(f, "]")?;
                 } else {
-                    Ok(write!(f, "<recursive array>")?)
+                    write!(f, "<recursive array>")?;
                 }
+
+                Ok(())
             }
-            vm::Value::UserData(user_data) => Ok(match user_data.coerce_string(ctx) {
-                Some(s) => write!(f, "{:?}", s)?,
-                None => write!(f, "{}", value)?,
-            }),
+            vm::Value::UserData(user_data) => {
+                match user_data.coerce_string(ctx) {
+                    Some(s) => write!(f, "{:?}", s)?,
+                    None => write!(f, "{}", value)?,
+                };
+                Ok(())
+            }
             _ => Ok(write!(f, "{}", value)?),
         }
     }
