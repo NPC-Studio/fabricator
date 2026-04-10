@@ -4,7 +4,7 @@ pub type RegIdx = u8;
 pub type ConstIdx = u16;
 pub type HeapIdx = u8;
 pub type ProtoIdx = u8;
-pub type MagicIdx = u16;
+pub type MagicIdx = u32;
 pub type InstIdx = u32;
 
 macro_rules! for_each_instruction {

@@ -190,7 +190,7 @@ impl<'gc> Prototype<'gc> {
                     .map_err(|_| PrototypeVerificationError::BadMagicIdx(magic_idx, inst_index))
             };
 
-            let verify_const_as_field = |const_idx: MagicIdx| {
+            let verify_const_as_field = |const_idx: ConstIdx| {
                 if matches!(constants[const_idx as usize], Constant::String(_)) {
                     Ok(())
                 } else {
@@ -200,7 +200,7 @@ impl<'gc> Prototype<'gc> {
                 }
             };
 
-            let verify_const_as_index = |const_idx: MagicIdx| {
+            let verify_const_as_index = |const_idx: ConstIdx| {
                 if matches!(constants[const_idx as usize], Constant::Integer(_)) {
                     Ok(())
                 } else {
