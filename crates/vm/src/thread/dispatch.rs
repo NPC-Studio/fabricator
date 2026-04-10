@@ -687,7 +687,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] = left
             .less_than(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "is_less",
+                op: "is_less / is_greater",
                 left: left.into(),
                 right: right.into(),
             })?
@@ -707,7 +707,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         self.registers[dest as usize] = left
             .less_equal(right)
             .ok_or_else(|| OpError::BadBinOp {
-                op: "is_less_eq",
+                op: "is_less_eq / is_greater_eq",
                 left: left.into(),
                 right: right.into(),
             })?

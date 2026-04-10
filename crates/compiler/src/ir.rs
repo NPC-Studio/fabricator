@@ -815,9 +815,9 @@ pub type FunctionMap<S> = IdMap<FuncId, Function<S>>;
 
 #[derive(Clone)]
 pub struct Function<S> {
+    pub reference: FunctionRef,
     pub num_parameters: usize,
 
-    pub reference: FunctionRef,
     pub instructions: InstructionMap<S>,
     pub blocks: BlockMap,
     pub variables: VariableMap<S>,

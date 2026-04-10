@@ -365,8 +365,8 @@ where
         };
 
         let function = ir::Function {
-            num_parameters: 0,
             reference,
+            num_parameters: 0,
             instructions,
             blocks,
             variables,

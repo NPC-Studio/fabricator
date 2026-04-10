@@ -441,8 +441,8 @@ mod tests {
         block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
+            num_parameters: 0,
             instructions,
             blocks,
             variables: Default::default(),
@@ -503,8 +503,8 @@ mod tests {
             )));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
+            num_parameters: 0,
             instructions,
             blocks,
             variables: Default::default(),
@@ -571,8 +571,8 @@ mod tests {
             )));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
+            num_parameters: 0,
             instructions,
             blocks,
             variables: Default::default(),
@@ -652,8 +652,8 @@ mod tests {
             )));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
+            num_parameters: 0,
             instructions,
             blocks,
             variables: Default::default(),
@@ -731,8 +731,8 @@ mod tests {
             )));
 
         let ir = ir::Function {
-            num_parameters: 0,
             reference: FunctionRef::Chunk,
+            num_parameters: 0,
             instructions,
             blocks,
             variables: Default::default(),
