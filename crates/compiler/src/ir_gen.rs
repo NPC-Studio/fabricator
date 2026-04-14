@@ -858,9 +858,9 @@ where
         name: &ast::Ident<S>,
         value: Option<&ast::Expression<S>>,
     ) -> Result<(), IrGenError> {
+        let value = value.map(|value| self.expression(value)).transpose()?;
         let var = self.declare_var(name.clone(), ir::Variable::Owned.into())?;
-        if let Some(value) = value {
-            let inst_id = self.expression(value)?;
+        if let Some(inst_id) = value {
             self.set_var(span, var, inst_id);
         }
         Ok(())

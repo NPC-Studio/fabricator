@@ -1,0 +1,5 @@
+var foo = 1;
+var foo = foo + 1;
+assert(foo == 2);
+
+return true;
