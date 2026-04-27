@@ -7,6 +7,7 @@ use crate::{
     closure::{Closure, ClosureInner, Prototype},
     magic::MagicSet,
     object::{Object, ObjectInner},
+    string::{SharedStr, String},
     thread::{Thread, ThreadInner},
     user_data::{UserData, UserDataInner, UserDataMethods},
     value::Function,
@@ -27,6 +28,33 @@ pub trait Fetchable {
     type Fetched<'gc>;
 
     fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc>;
+}
+
+#[derive(Clone)]
+pub struct StashedString(DynamicRoot<Rootable![SharedStr]>);
+
+impl fmt::Debug for StashedString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("StashedString")
+            .field(&self.0.as_ptr())
+            .finish()
+    }
+}
+
+impl<'gc> Stashable<'gc> for String<'gc> {
+    type Stashed = StashedString;
+
+    fn stash(self, mc: &Mutation<'gc>, roots: DynamicRootSet<'gc>) -> Self::Stashed {
+        StashedString(roots.stash::<Rootable![SharedStr]>(mc, self.into_inner()))
+    }
+}
+
+impl Fetchable for StashedString {
+    type Fetched<'gc> = String<'gc>;
+
+    fn fetch<'gc>(&self, roots: DynamicRootSet<'gc>) -> Self::Fetched<'gc> {
+        String::from_inner(roots.fetch(&self.0))
+    }
 }
 
 #[derive(Clone)]
