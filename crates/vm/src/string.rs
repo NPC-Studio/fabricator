@@ -16,6 +16,12 @@ use rustc_hash::FxHashMap;
 #[collect(require_static)]
 pub struct SharedStr(Arc<str>);
 
+impl<S: Into<StdString>> From<S> for SharedStr {
+    fn from(value: S) -> Self {
+        SharedStr::new(value)
+    }
+}
+
 impl fmt::Display for SharedStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0.as_ref())

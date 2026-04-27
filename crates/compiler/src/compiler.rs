@@ -17,7 +17,10 @@ use crate::{
         dead_code_elim::eliminate_dead_code,
         eliminate_copies::eliminate_copies,
         instruction_liveness::{InstructionLiveness, InstructionVerificationError},
-        nested_scope_liveness::{ThisScopeLiveness, ThisScopeVerificationError},
+        nested_scope_liveness::{
+            CallScopeLiveness, CallScopeVerificationError, ThisScopeLiveness,
+            ThisScopeVerificationError,
+        },
         shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         shadow_reduction::reduce_shadows,
         ssa_conversion::convert_to_ssa,
@@ -27,16 +30,18 @@ use crate::{
         verify_upvars::{UpVarVerificationError, verify_no_root_upvars, verify_upvars},
     },
     code_gen::{Prototype, gen_prototype},
-    enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet, EnumSetBuilder},
-    exports::{DuplicateExportError, Export, ExportSet, ExportSettings},
+    enums::{EnumError, EnumEvaluationError, EnumResolutionError, EnumSet},
+    exports::{DuplicateExportError, Export},
     ir,
     ir_gen::{FreeVarMode, IrGenError, IrGenSettings, VarDict},
-    lexer::{LexError, Lexer},
+    lexer::LexError,
     line_numbers::LineNumbers,
     macros::{MacroError, MacroSet, RecursiveMacro},
     parser::{ParseError, ParseSettings},
+    preprocessor::{
+        PreprocessError, PreprocessErrorKind, Preprocessor, PreprocessorOutput, ShadowsSpecialError,
+    },
     string_interner::VmInterner,
-    tokens::Token,
 };
 
 #[derive(Debug, Error)]
@@ -57,8 +62,8 @@ pub enum CompileErrorKind {
     EnumEvaluation(#[source] EnumEvaluationError),
     #[error("duplicate export error: {0}")]
     DuplicateExport(#[source] DuplicateExportError),
-    #[error("enum or export `{name}` shares a name with a conflicting enum or export")]
-    ShadowsSpecial { name: String, span: vm::Span },
+    #[error("shadows special error: {0}")]
+    ShadowsSpecial(#[source] ShadowsSpecialError),
     #[error("IR gen error: {0}")]
     IrGen(#[source] IrGenError),
 }
@@ -70,6 +75,28 @@ pub struct CompileError {
     pub kind: CompileErrorKind,
     pub chunk_name: vm::SharedStr,
     pub line_number: vm::LineNumber,
+}
+
+impl From<PreprocessError> for CompileError {
+    fn from(err: PreprocessError) -> Self {
+        let kind = match err.kind {
+            PreprocessErrorKind::Lexing(err) => CompileErrorKind::Lexing(err),
+            PreprocessErrorKind::Macro(err) => CompileErrorKind::Macro(err),
+            PreprocessErrorKind::RecursiveMacro(err) => CompileErrorKind::RecursiveMacro(err),
+            PreprocessErrorKind::Parsing(err) => CompileErrorKind::Parsing(err),
+            PreprocessErrorKind::Enum(err) => CompileErrorKind::Enum(err),
+            PreprocessErrorKind::EnumResolution(err) => CompileErrorKind::EnumResolution(err),
+            PreprocessErrorKind::EnumEvaluation(err) => CompileErrorKind::EnumEvaluation(err),
+            PreprocessErrorKind::DuplicateExport(err) => CompileErrorKind::DuplicateExport(err),
+            PreprocessErrorKind::ShadowsSpecial(err) => CompileErrorKind::ShadowsSpecial(err),
+        };
+
+        Self {
+            kind,
+            chunk_name: err.chunk_name,
+            line_number: err.line_number,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -154,6 +181,8 @@ pub enum IrVerificationError {
     VariableVerification(#[from] VariableVerificationError),
     #[error("{0}")]
     ThisScopeVerification(#[from] ThisScopeVerificationError),
+    #[error("{0}")]
+    CallScopeVerification(#[from] CallScopeVerificationError),
 }
 
 /// Verify that IR is well-formed.
@@ -166,6 +195,7 @@ pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationErr
         ShadowLiveness::compute(ir)?;
         VariableLiveness::compute(ir)?;
         ThisScopeLiveness::compute(ir)?;
+        CallScopeLiveness::compute(ir)?;
 
         for func in ir.functions.values() {
             inner_verify_ir(func)?;
@@ -287,12 +317,10 @@ impl vm::Fetchable for StashedImportItems {
 /// Compiles separate code units together in multiple phases to allow for interdependencies.
 pub struct Compiler<'gc> {
     ctx: vm::Context<'gc>,
-    config: String,
-    macros: MacroSet<vm::String<'gc>>,
-    enums: EnumSetBuilder<vm::String<'gc>>,
+    preprocessor: Preprocessor<'gc>,
     global_vars: HashSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
-    chunks: Vec<Chunk<'gc>>,
+    chunk_settings: Vec<ChunkCompileSettings>,
 }
 
 impl<'gc> Compiler<'gc> {
@@ -328,52 +356,41 @@ impl<'gc> Compiler<'gc> {
         let global_vars = imports.global_vars.as_ref().clone();
         let magic = imports.magic.as_ref().clone();
 
+        let preprocessor = Preprocessor::new(ctx, config, macros, enums);
+
         Self {
             ctx,
-            config: config.into(),
-            macros,
-            enums: enums.into_builder(),
+            preprocessor,
             global_vars,
             magic,
-            chunks: Vec::new(),
+            chunk_settings: Vec::new(),
         }
     }
 
-    /// Returns the index in the chunk output which will contain the main prototype for this chunk.
-    /// This will always start at `0` for the first chunk and increase by one for each.
     pub fn add_chunk(
         &mut self,
         settings: CompileSettings,
-        chunk_name: impl Into<String>,
+        chunk_name: impl Into<vm::SharedStr>,
         code: &str,
-    ) -> Result<usize, CompileError> {
-        let chunk_name = vm::SharedStr::new(chunk_name);
-        let line_numbers = LineNumbers::new(code);
+    ) -> Result<(), CompileError> {
+        self.preprocessor.add_chunk(
+            settings.parse,
+            settings.export_top_level_functions,
+            chunk_name,
+            code,
+        )?;
 
-        let mut tokens = Vec::new();
-        if let Err(err) = Lexer::tokenize(VmInterner::new(self.ctx), code, &mut tokens) {
-            let line_number = line_numbers.line(err.span.start());
-            return Err(CompileError {
-                kind: CompileErrorKind::Lexing(err),
-                chunk_name,
-                line_number,
-            });
-        }
-
-        let index = self.chunks.len();
-        self.chunks.push(Chunk {
-            name: chunk_name,
-            line_numbers,
-            tokens,
-            compile_settings: settings,
+        self.chunk_settings.push(ChunkCompileSettings {
+            ir_gen: settings.ir_gen,
+            optimization_passes: settings.optimization_passes,
         });
 
-        Ok(index)
+        Ok(())
     }
 
     pub fn compile(self) -> Result<CompilerOutput<'gc>, CompileError> {
         fn optimize_and_generate_proto<'gc>(
-            compile_settings: CompileSettings,
+            compile_settings: ChunkCompileSettings,
             ir: &mut ir::Function<vm::String<'gc>>,
             magic: &vm::MagicSet<'gc>,
         ) -> Prototype<vm::String<'gc>> {
@@ -397,235 +414,58 @@ impl<'gc> Compiler<'gc> {
 
         let Self {
             ctx,
-            config,
-            mut macros,
-            mut enums,
+            preprocessor,
             mut global_vars,
             mut magic,
-            mut chunks,
+            chunk_settings,
         } = self;
 
-        // Extract all macro definitions from all chunks.
+        let PreprocessorOutput {
+            preprocessed_chunks,
+            macros,
+            enums,
+            exports,
+            export_chunk_indexes,
+            ..
+        } = preprocessor
+            .preprocess(|ident| global_vars.contains(&ident) || magic.find(ident).is_some())?;
 
-        // List of starting macro indexes per chunk, to identify which macros come from which
-        // chunk.
-        let mut macro_chunk_indexes = Vec::new();
-
-        for chunk in &mut chunks {
-            macro_chunk_indexes.push(macros.len());
-            if let Err(err) = macros.extract(&mut chunk.tokens) {
-                let line_number = chunk.line_numbers.line(err.span.start());
-                return Err(CompileError {
-                    kind: CompileErrorKind::Macro(err),
-                    chunk_name: chunk.name.clone(),
-                    line_number,
-                });
-            }
-        }
-
-        // Apply a config and resolve all macro interdependencies.
-
-        let resolved_macros =
-            match macros
-                .clone()
-                .resolve_with_skip_recursive(&ctx.intern(&config), |&token| {
-                    // GMS2 doesn't expand macro tokens that match a defined macro if the token name
-                    // is also a part of the stdlib. This allows re-defining builtins with macros
-                    // (at the cost of making the macro system even more complicated and special
-                    // case).
-                    //
-                    // We do something similar here, except we skip expansion for *all* exports
-                    // defined in a previous compilation unit.
-                    magic.find(token).is_none() && !global_vars.contains(&token)
-                }) {
-                Ok(macros) => macros,
-                Err(err) => {
-                    let macro_ = macros.get(err.0).unwrap();
-                    let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0))
-                    {
-                        Ok(i) => i,
-                        Err(i) => i
-                            .checked_sub(1)
-                            .expect("pre-existing macros should not have recursion errors"),
-                    };
-                    let chunk = &chunks[chunk_index];
-                    let line_number = chunk.line_numbers.line(macro_.span.start());
-                    return Err(CompileError {
-                        kind: CompileErrorKind::RecursiveMacro(err),
-                        chunk_name: chunk.name.clone(),
-                        line_number,
-                    });
-                }
-            };
-
-        // Use macro definitions to replace macro instances in every chunk, then parse the resulting
-        // token list.
-
-        let mut parsed_chunks = Vec::new();
-
-        for chunk in chunks {
-            let Chunk {
-                name,
-                line_numbers,
-                mut tokens,
-                compile_settings,
-            } = chunk;
-            resolved_macros.expand(&mut tokens);
-
-            let chunk = vm::Chunk::new_static(
-                &ctx,
-                SourceChunk {
-                    name: name.clone(),
-                    line_numbers,
-                },
-            );
-
-            let block = compile_settings.parse.parse(tokens).map_err(|e| {
-                let line_number = chunk.line_number(e.span.start());
-                CompileError {
-                    kind: CompileErrorKind::Parsing(e),
-                    chunk_name: name.clone(),
-                    line_number,
-                }
-            })?;
-
-            parsed_chunks.push((chunk, block, compile_settings));
-        }
-
-        // Extract all enum definitions from every parsed AST, and make sure none of the enum names
-        // conflict with any pre-existing special.
-
-        // List of starting enum indexes per chunk, to identify which enums come from which chunk.
-        let mut enum_chunk_indexes = Vec::new();
-
-        for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
-            let prev_enum_len = enums.len();
-            enum_chunk_indexes.push(prev_enum_len);
-
-            if let Err(err) = enums.extract(block) {
-                let line_number = chunk.line_number(err.span.start());
-                return Err(CompileError {
-                    kind: CompileErrorKind::Enum(err),
-                    chunk_name: chunk.name().clone(),
-                    line_number,
-                });
-            }
-
-            for i in prev_enum_len..enums.len() {
-                let enum_ = enums.get(i).unwrap();
-                // Enums are not allowed to shadow names of existing magic variables or global
-                // variables.
-                if magic.find(enum_.name.inner).is_some() || global_vars.contains(&enum_.name.inner)
-                {
-                    let line_number = chunk.line_number(enum_.span.start());
-                    return Err(CompileError {
-                        kind: CompileErrorKind::ShadowsSpecial {
-                            name: enum_.name.as_str().to_owned(),
-                            span: enum_.span,
+        assert_eq!(preprocessed_chunks.len(), chunk_settings.len());
+        let compiling_chunks = preprocessed_chunks
+            .into_iter()
+            .zip(chunk_settings.into_iter())
+            .map(|(chunk, compile_settings)| {
+                (
+                    vm::Chunk::new_static(
+                        &ctx,
+                        SourceChunk {
+                            name: chunk.name,
+                            line_numbers: chunk.line_numbers,
                         },
-                        chunk_name: chunk.name().clone(),
-                        line_number,
-                    });
-                }
-            }
-        }
+                    ),
+                    chunk.block,
+                    compile_settings,
+                )
+            })
+            .collect::<Vec<_>>();
 
-        // Resolve all enum interdependencies.
+        // Produce a read-only *stub* magic variable for each export.
 
-        let enums = enums.clone().resolve().map_err(|err| {
-            let enum_ = enums.get(err.enum_index).unwrap();
-            let chunk_index = match enum_chunk_indexes.binary_search_by(|i| i.cmp(&err.enum_index))
-            {
-                Ok(i) => i,
-                Err(i) => i
-                    .checked_sub(1)
-                    .expect("pre-existing enums should not have recursion errors"),
-            };
-            let chunk = &parsed_chunks[chunk_index].0;
-            let line_number = chunk.line_number(enum_.span.start());
-            CompileError {
-                kind: CompileErrorKind::EnumResolution(err),
-                chunk_name: chunk.name().clone(),
-                line_number,
-            }
-        })?;
-
-        // Check and expand any references to enums in every AST.
-
-        for &mut (chunk, ref mut block, _) in &mut parsed_chunks {
-            if let Err(err) = enums.expand(block) {
-                let line_number = chunk.line_number(err.span.start());
-                return Err(CompileError {
-                    kind: CompileErrorKind::EnumEvaluation(err),
-                    chunk_name: chunk.name().clone(),
-                    line_number,
-                });
-            }
-        }
-
-        // Gather all exported items from every AST, then produce a new read-only *stub* magic
-        // variable for each export, making sure that the exported name does not conflict with any
-        // pre-existing special.
-
-        let mut exports = ExportSet::new();
-
-        // List of starting export indexes per chunk, to identify which exports come from which
-        // chunk.
-        let mut export_chunk_indexes = Vec::new();
-
-        // The magic index for each exported item, if one exists.
+        // The magic index for each exported item.
         let mut export_magic_indexes = IndexMap::new();
 
         let stub_magic = vm::MagicConstant::new_ptr(&ctx, vm::Value::Undefined);
 
-        for &mut (chunk, ref mut block, settings) in &mut parsed_chunks {
-            let prev_exports_len = exports.len();
-            export_chunk_indexes.push(prev_exports_len);
+        for (i, export) in exports.iter().enumerate() {
+            let export_name = export.name();
 
-            if let Err(err) = exports.extract(
-                block,
-                ExportSettings {
-                    export_top_level_functions: settings.export_top_level_functions,
-                },
-            ) {
-                let line_number = chunk.line_number(err.span.start());
-                return Err(CompileError {
-                    kind: CompileErrorKind::DuplicateExport(err),
-                    chunk_name: chunk.name().clone(),
-                    line_number,
-                });
-            }
-
-            for i in prev_exports_len..exports.len() {
-                let export = exports.get(i).unwrap();
-                let export_name = export.name();
-                let export_span = export.span();
-
-                // New exports are not allowed to shadow names for existing magic variables, enums
-                // or global variables.
-                if magic.find(*export_name).is_some()
-                    || enums.find(export_name).is_some()
-                    || global_vars.contains(export_name)
-                {
-                    let line_number = chunk.line_number(export_span.start());
-                    return Err(CompileError {
-                        kind: CompileErrorKind::ShadowsSpecial {
-                            name: export_name.as_str().to_owned(),
-                            span: export_span,
-                        },
-                        chunk_name: chunk.name().clone(),
-                        line_number,
-                    });
+            match export {
+                Export::Function(_) => {
+                    let index = magic.insert(export_name.clone(), stub_magic).0;
+                    export_magic_indexes.insert(i, index);
                 }
-
-                match export {
-                    Export::Function(_) => {
-                        let index = magic.insert(export_name.clone(), stub_magic).0;
-                        export_magic_indexes.insert(i, index);
-                    }
-                    Export::GlobalVar(ident) => {
-                        global_vars.insert(ident.inner);
-                    }
+                Export::GlobalVar(ident) => {
+                    global_vars.insert(ident.inner);
                 }
             }
         }
@@ -635,59 +475,59 @@ impl<'gc> Compiler<'gc> {
 
         let mut all_prototypes = Vec::new();
 
-        // For each exported item, produce a "magic chunk" in the IR output.
+        // Compile each exported function and place the result into the reserved stub magic
+        // variable.
 
         for (i, export) in exports.iter().enumerate() {
             let chunk_index = match export_chunk_indexes.binary_search_by(|j| j.cmp(&i)) {
                 Ok(i) => i,
                 Err(i) => i.checked_sub(1).unwrap(),
             };
-            let (chunk, _, compile_settings) = parsed_chunks[chunk_index];
+            let (chunk, _, compile_settings) = compiling_chunks[chunk_index];
 
-            match export {
-                Export::Function(func_stmt) => {
-                    let magic_index = export_magic_indexes[i];
+            if let Export::Function(func_stmt) = export {
+                let magic_index = export_magic_indexes[i];
 
-                    let mut ir = compile_settings
-                        .ir_gen
-                        .gen_func_stmt_ir(
-                            &mut VmInterner::new(ctx),
-                            func_stmt,
-                            &CompilerVarDict {
-                                enums: &enums,
-                                global_vars: &global_vars,
-                                magic: &magic,
-                            },
-                        )
-                        .map_err(|e| {
-                            let line_number = chunk.line_number(e.span.start());
-                            CompileError {
-                                kind: CompileErrorKind::IrGen(e),
-                                chunk_name: chunk.name().clone(),
-                                line_number,
-                            }
-                        })?;
-
-                    let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
-                    let vm_proto = proto.into_vm(&ctx, chunk, magic);
-                    let closure = vm::Closure::new(&ctx, vm_proto, vm::Value::Undefined).unwrap();
-
-                    all_prototypes.push((ir, vm_proto));
-
-                    vm::MagicSet::replace(
-                        magic_write,
-                        magic_index,
-                        vm::MagicConstant::new_ptr(&ctx, closure),
+                let mut ir = compile_settings
+                    .ir_gen
+                    .gen_func_stmt_ir(
+                        &mut VmInterner::new(ctx),
+                        func_stmt,
+                        &CompilerVarDict {
+                            enums: &enums,
+                            global_vars: &global_vars,
+                            magic: &magic,
+                        },
                     )
-                    .unwrap();
-                }
-                Export::GlobalVar(_) => {}
+                    .map_err(|e| {
+                        let line_number = chunk.line_number(e.span.start());
+                        CompileError {
+                            kind: CompileErrorKind::IrGen(e),
+                            chunk_name: chunk.name().clone(),
+                            line_number,
+                        }
+                    })?;
+
+                let proto = optimize_and_generate_proto(compile_settings, &mut ir, &magic);
+                let vm_proto = proto.into_vm(&ctx, chunk, magic);
+                let closure = vm::Closure::new(&ctx, vm_proto, vm::Value::Undefined).unwrap();
+
+                all_prototypes.push((ir, vm_proto));
+
+                vm::MagicSet::replace(
+                    magic_write,
+                    magic_index,
+                    vm::MagicConstant::new_ptr(&ctx, closure),
+                )
+                .unwrap();
             }
         }
 
+        // Compile the top-level chunks
+
         let mut chunks = Vec::new();
 
-        for (chunk, block, compile_settings) in parsed_chunks {
+        for (chunk, block, compile_settings) in compiling_chunks {
             let mut ir = compile_settings
                 .ir_gen
                 .gen_chunk_ir(
@@ -737,7 +577,7 @@ pub struct CompilerOutput<'gc> {
     /// One generated prototype per input chunk, in the order provided to [`Compiler`].
     pub chunks: Vec<Gc<'gc, vm::Prototype<'gc>>>,
 
-    /// A prototype for evern input chunk and function export, paired with the final IR used to
+    /// A prototype for every input chunk and function export, paired with the final IR used to
     /// generate the prototype.
     pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
 }
@@ -749,11 +589,10 @@ pub struct ChunkOutput<'gc> {
     pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
 }
 
-struct Chunk<'gc> {
-    name: vm::SharedStr,
-    line_numbers: LineNumbers,
-    tokens: Vec<Token<vm::String<'gc>>>,
-    compile_settings: CompileSettings,
+#[derive(Debug, Copy, Clone)]
+struct ChunkCompileSettings {
+    ir_gen: IrGenSettings,
+    optimization_passes: u8,
 }
 
 struct CompilerVarDict<'gc, 'a> {

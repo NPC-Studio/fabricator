@@ -155,7 +155,7 @@ pub fn ds_priority_destroy<'gc>(
     ds_priority_clear(ctx, ds_priority_queue)
 }
 
-/// Gets the size of the [`BinaryHeap`](std::collections::BinaryHeap).
+/// Gets the size of the [`BinaryHeap`].
 pub fn ds_priority_size<'gc>(
     _ctx: vm::Context<'gc>,
     ds_priority_queue: vm::UserData<'gc>,

@@ -546,19 +546,20 @@ impl<'gc> Frame<'gc> {
 }
 
 impl<'gc> ThreadState<'gc> {
+    // Call a closure with arguments starting at `stack_bottom`.
     fn call(
         &mut self,
         ctx: Context<'gc>,
-        initial_closure: Closure<'gc>,
-        mut initial_this: Value<'gc>,
-        mut initial_other: Value<'gc>,
-        initial_stack_bottom: usize,
+        closure: Closure<'gc>,
+        mut this: Value<'gc>,
+        mut other: Value<'gc>,
+        stack_bottom: usize,
     ) -> Result<(), VmError<'gc>> {
         let bottom_frame = self.frames.len();
 
-        if !initial_closure.this().is_undefined() {
-            initial_other = initial_this;
-            initial_this = initial_closure.this();
+        if !closure.this().is_undefined() {
+            other = this;
+            this = closure.this();
         }
 
         self.frames.push({
@@ -566,22 +567,19 @@ impl<'gc> ThreadState<'gc> {
             // Registers are resized at the beginning of the bytecode dispatch.
 
             let heap_bottom = self.heap.len();
-            self.heap.resize_with(
-                heap_bottom + initial_closure.prototype().owned_heap(),
-                || OwnedHeapVar::unique(Value::Undefined),
-            );
+            self.heap
+                .resize_with(heap_bottom + closure.prototype().owned_heap(), || {
+                    OwnedHeapVar::unique(Value::Undefined)
+                });
 
             Frame::Closure(ClosureFrame {
-                closure: initial_closure,
-                this: initial_this,
-                other: initial_other,
+                closure: closure,
+                this: this,
+                other: other,
                 register_bottom,
-                stack_bottom: initial_stack_bottom,
+                stack_bottom: stack_bottom,
                 heap_bottom,
-                dispatcher: instructions::Dispatcher::new(
-                    initial_closure.prototype().bytecode(),
-                    0,
-                ),
+                dispatcher: instructions::Dispatcher::new(closure.prototype().bytecode(), 0),
             })
         });
 
@@ -692,8 +690,7 @@ impl<'gc> ThreadState<'gc> {
                                 }
 
                                 // We only need to preserve the registers that the prototype claims
-                                // to use, so resize the registers vec to be 256 above the registers
-                                // we are preserving.
+                                // to use.
                                 debug_assert!(closure.prototype().used_registers() <= 256);
                                 let register_bottom = frame.register_bottom
                                     + frame.closure.prototype().used_registers();

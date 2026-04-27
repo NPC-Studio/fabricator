@@ -594,8 +594,10 @@ fn load_scripts(
                 code_buf.clear();
                 File::open(&script.path)?.read_to_string(&mut code_buf)?;
                 let name = script.path.to_string_lossy();
-                let mut compiler = compiler::Compiler::new(ctx, config_name, script_output.exports);
-                compiler.add_chunk(
+                let proto_output = compiler::Compiler::compile_chunk(
+                    ctx,
+                    config_name,
+                    script_output.exports,
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Modern => compiler::CompileSettings::modern(),
@@ -604,8 +606,7 @@ fn load_scripts(
                     name.into_owned(),
                     &code_buf,
                 )?;
-                let proto_output = compiler.compile()?;
-                let proto = proto_output.chunks[0];
+                let proto = proto_output.chunk_prototype;
                 object_events
                     .entry(config.object_dict[object_name])
                     .or_default()
