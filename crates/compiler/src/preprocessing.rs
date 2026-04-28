@@ -14,6 +14,50 @@ use crate::{
 };
 
 #[derive(Debug, Error)]
+#[error("{error} at {chunk_name}:{line_number}")]
+pub struct ChunkLexError {
+    #[source]
+    pub error: LexError,
+    pub chunk_name: vm::SharedStr,
+    pub line_number: vm::LineNumber,
+}
+
+#[derive(Clone)]
+pub struct LexedChunk<'gc> {
+    pub chunk: vm::Chunk<'gc>,
+    pub tokens: Vec<Token<vm::String<'gc>>>,
+}
+
+impl<'gc> LexedChunk<'gc> {
+    /// Lex the given chunk and produce the token stream and a `vm::Chunk` identifier.
+    pub fn lex(
+        ctx: vm::Context<'gc>,
+        chunk_name: impl Into<vm::SharedStr>,
+        code: &str,
+    ) -> Result<LexedChunk<'gc>, ChunkLexError> {
+        let chunk = vm::Chunk::new_static(
+            &ctx,
+            SourceChunk {
+                name: chunk_name.into(),
+                line_numbers: LineNumbers::new(code),
+            },
+        );
+
+        let mut tokens = Vec::new();
+        if let Err(error) = Lexer::tokenize(VmInterner::new(ctx), code, &mut tokens) {
+            let line_number = chunk.line_number(error.span.start());
+            return Err(ChunkLexError {
+                error,
+                chunk_name: chunk.name().clone(),
+                line_number,
+            });
+        }
+
+        Ok(LexedChunk { chunk, tokens })
+    }
+}
+
+#[derive(Debug, Error)]
 #[error("enum or export `{name}` conflicts with an existing special")]
 pub struct ShadowsSpecialError {
     pub name: String,
@@ -49,15 +93,6 @@ pub struct PreprocessError {
     pub line_number: vm::LineNumber,
 }
 
-#[derive(Debug, Error)]
-#[error("{error} at {chunk_name}:{line_number}")]
-pub struct ChunkLexError {
-    #[source]
-    pub error: LexError,
-    pub chunk_name: vm::SharedStr,
-    pub line_number: vm::LineNumber,
-}
-
 /// Extracts and resolves macros, then extracts and resolves enums, then extracts exported functions
 /// and globalvar declarations.
 pub struct Preprocessor<'gc> {
@@ -69,33 +104,6 @@ pub struct Preprocessor<'gc> {
 }
 
 impl<'gc> Preprocessor<'gc> {
-    /// Lex the given chunk and produce the token stream and a `vm::Chunk` identifier.
-    pub fn lex(
-        ctx: vm::Context<'gc>,
-        chunk_name: impl Into<vm::SharedStr>,
-        code: &str,
-    ) -> Result<LexedChunk<'gc>, ChunkLexError> {
-        let chunk = vm::Chunk::new_static(
-            &ctx,
-            SourceChunk {
-                name: chunk_name.into(),
-                line_numbers: LineNumbers::new(code),
-            },
-        );
-
-        let mut tokens = Vec::new();
-        if let Err(error) = Lexer::tokenize(VmInterner::new(ctx), code, &mut tokens) {
-            let line_number = chunk.line_number(error.span.start());
-            return Err(ChunkLexError {
-                error,
-                chunk_name: chunk.name().clone(),
-                line_number,
-            });
-        }
-
-        Ok(LexedChunk { chunk, tokens })
-    }
-
     pub fn new(
         ctx: vm::Context<'gc>,
         config: impl Into<String>,
@@ -119,7 +127,7 @@ impl<'gc> Preprocessor<'gc> {
         code: &str,
     ) -> Result<(), ChunkLexError> {
         self.add_lexed_chunk(
-            Self::lex(self.ctx, chunk_name, code)?,
+            LexedChunk::lex(self.ctx, chunk_name, code)?,
             parse_settings,
             export_top_level_funcs,
         );
@@ -400,12 +408,6 @@ impl vm::debug::ChunkData for SourceChunk {
     fn line_number(&self, byte_offset: usize) -> vm::LineNumber {
         self.line_numbers.line(byte_offset)
     }
-}
-
-#[derive(Clone)]
-pub struct LexedChunk<'gc> {
-    pub chunk: vm::Chunk<'gc>,
-    pub tokens: Vec<Token<vm::String<'gc>>>,
 }
 
 struct ChunkInput<'gc> {
