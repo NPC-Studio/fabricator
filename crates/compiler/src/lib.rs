@@ -12,7 +12,7 @@ pub mod lexer;
 pub mod line_numbers;
 pub mod macros;
 pub mod parser;
-pub mod preprocessor;
+pub mod preprocessing;
 pub mod string_interner;
 pub mod tokens;
 

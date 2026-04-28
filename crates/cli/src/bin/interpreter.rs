@@ -154,7 +154,7 @@ fn main() -> Result<ExitCode, Error> {
 
                         match compile_res {
                             Ok(output) => {
-                                imports = ctx.stash(output.exports);
+                                imports = ctx.stash(output.exported_imports);
 
                                 let closure = vm::Closure::new(
                                     &ctx,

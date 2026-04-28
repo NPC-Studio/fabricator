@@ -6,6 +6,14 @@ pub trait StringInterner {
     fn intern(&mut self, s: &str) -> Self::String;
 }
 
+impl<S, F: FnMut(&str) -> S> StringInterner for F {
+    type String = S;
+
+    fn intern(&mut self, s: &str) -> Self::String {
+        (self)(s)
+    }
+}
+
 pub struct VmInterner<'gc>(vm::Context<'gc>);
 
 impl<'gc> VmInterner<'gc> {

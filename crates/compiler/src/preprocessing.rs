@@ -22,8 +22,6 @@ pub struct ShadowsSpecialError {
 
 #[derive(Debug, Error)]
 pub enum PreprocessErrorKind {
-    #[error("lex error: {0}")]
-    Lexing(#[source] LexError),
     #[error("macro error: {0}")]
     Macro(#[source] MacroError),
     #[error("recursive macro: {0}")]
@@ -51,15 +49,53 @@ pub struct PreprocessError {
     pub line_number: vm::LineNumber,
 }
 
+#[derive(Debug, Error)]
+#[error("{error} at {chunk_name}:{line_number}")]
+pub struct ChunkLexError {
+    #[source]
+    pub error: LexError,
+    pub chunk_name: vm::SharedStr,
+    pub line_number: vm::LineNumber,
+}
+
+/// Extracts and resolves macros, then extracts and resolves enums, then extracts exported functions
+/// and globalvar declarations.
 pub struct Preprocessor<'gc> {
     ctx: vm::Context<'gc>,
     config: String,
     macros: MacroSet<vm::String<'gc>>,
     enums: EnumSetBuilder<vm::String<'gc>>,
-    chunks: Vec<Chunk<'gc>>,
+    chunk_inputs: Vec<ChunkInput<'gc>>,
 }
 
 impl<'gc> Preprocessor<'gc> {
+    /// Lex the given chunk and produce the token stream and a `vm::Chunk` identifier.
+    pub fn lex(
+        ctx: vm::Context<'gc>,
+        chunk_name: impl Into<vm::SharedStr>,
+        code: &str,
+    ) -> Result<LexedChunk<'gc>, ChunkLexError> {
+        let chunk = vm::Chunk::new_static(
+            &ctx,
+            SourceChunk {
+                name: chunk_name.into(),
+                line_numbers: LineNumbers::new(code),
+            },
+        );
+
+        let mut tokens = Vec::new();
+        if let Err(error) = Lexer::tokenize(VmInterner::new(ctx), code, &mut tokens) {
+            let line_number = chunk.line_number(error.span.start());
+            return Err(ChunkLexError {
+                error,
+                chunk_name: chunk.name().clone(),
+                line_number,
+            });
+        }
+
+        Ok(LexedChunk { chunk, tokens })
+    }
+
     pub fn new(
         ctx: vm::Context<'gc>,
         config: impl Into<String>,
@@ -71,41 +107,41 @@ impl<'gc> Preprocessor<'gc> {
             config: config.into(),
             macros: external_macros,
             enums: external_enums.into_builder(),
-            chunks: Vec::new(),
+            chunk_inputs: Vec::new(),
         }
     }
 
-    /// Returns the index in [`PreprocessorOutput::preprocessed_chunks`] which will contain the
-    /// output for this chunk (always simply incremented starting from `0`)
     pub fn add_chunk(
         &mut self,
         parse_settings: ParseSettings,
         export_top_level_funcs: bool,
         chunk_name: impl Into<vm::SharedStr>,
         code: &str,
-    ) -> Result<usize, PreprocessError> {
-        let chunk_name = chunk_name.into();
-        let line_numbers = LineNumbers::new(code);
+    ) -> Result<(), ChunkLexError> {
+        self.add_lexed_chunk(
+            Self::lex(self.ctx, chunk_name, code)?,
+            parse_settings,
+            export_top_level_funcs,
+        );
+        Ok(())
+    }
 
-        let mut tokens = Vec::new();
-        if let Err(err) = Lexer::tokenize(VmInterner::new(self.ctx), code, &mut tokens) {
-            let line_number = line_numbers.line(err.span.start());
-            return Err(PreprocessError {
-                kind: PreprocessErrorKind::Lexing(err),
-                chunk_name,
-                line_number,
-            });
-        }
-
-        let index = self.chunks.len();
-        self.chunks.push(Chunk {
-            name: chunk_name,
-            line_numbers,
-            tokens,
+    pub fn add_lexed_chunk(
+        &mut self,
+        lexed_chunk: LexedChunk<'gc>,
+        parse_settings: ParseSettings,
+        export_top_level_funcs: bool,
+    ) {
+        self.chunk_inputs.push(ChunkInput {
+            chunk: lexed_chunk.chunk,
+            tokens: lexed_chunk.tokens,
             parse_settings,
             export_top_level_funcs,
         });
-        Ok(index)
+    }
+
+    pub fn chunk_len(&self) -> usize {
+        self.chunk_inputs.len()
     }
 
     /// Preprocess all added chunks.
@@ -121,13 +157,13 @@ impl<'gc> Preprocessor<'gc> {
     pub fn preprocess(
         self,
         is_special: impl Fn(vm::String<'gc>) -> bool,
-    ) -> Result<PreprocessorOutput<'gc>, PreprocessError> {
+    ) -> Result<PreprocessOutput<'gc>, PreprocessError> {
         let Self {
             ctx,
             config,
             mut macros,
             mut enums,
-            mut chunks,
+            mut chunk_inputs,
         } = self;
 
         // Extract all macro definitions from all chunks.
@@ -135,13 +171,13 @@ impl<'gc> Preprocessor<'gc> {
         // List of starting macro indexes per chunk, to identify which macros come from which chunk.
         let mut macro_chunk_indexes = Vec::new();
 
-        for chunk in &mut chunks {
+        for input in &mut chunk_inputs {
             macro_chunk_indexes.push(macros.len());
-            if let Err(err) = macros.extract(&mut chunk.tokens) {
-                let line_number = chunk.line_numbers.line(err.span.start());
+            if let Err(err) = macros.extract(&mut input.tokens) {
+                let line_number = input.chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::Macro(err),
-                    chunk_name: chunk.name.clone(),
+                    chunk_name: input.chunk.name().clone(),
                     line_number,
                 });
             }
@@ -172,11 +208,11 @@ impl<'gc> Preprocessor<'gc> {
                             .checked_sub(1)
                             .expect("pre-existing macros should not have recursion errors"),
                     };
-                    let chunk = &chunks[chunk_index];
-                    let line_number = chunk.line_numbers.line(macro_.span.start());
+                    let chunk_input = &chunk_inputs[chunk_index];
+                    let line_number = chunk_input.chunk.line_number(macro_.span.start());
                     return Err(PreprocessError {
                         kind: PreprocessErrorKind::RecursiveMacro(err),
-                        chunk_name: chunk.name.clone(),
+                        chunk_name: chunk_input.chunk.name().clone(),
                         line_number,
                     });
                 }
@@ -187,10 +223,9 @@ impl<'gc> Preprocessor<'gc> {
 
         let mut preprocessing_chunks = Vec::new();
 
-        for chunk in chunks {
-            let Chunk {
-                name,
-                line_numbers,
+        for chunk in chunk_inputs {
+            let ChunkInput {
+                chunk,
                 mut tokens,
                 parse_settings,
                 export_top_level_funcs,
@@ -198,22 +233,15 @@ impl<'gc> Preprocessor<'gc> {
             resolved_macros.expand(&mut tokens);
 
             let block = parse_settings.parse(tokens).map_err(|e| {
-                let line_number = line_numbers.line(e.span.start());
+                let line_number = chunk.line_number(e.span.start());
                 PreprocessError {
                     kind: PreprocessErrorKind::Parsing(e),
-                    chunk_name: name.clone(),
+                    chunk_name: chunk.name().clone(),
                     line_number,
                 }
             })?;
 
-            preprocessing_chunks.push((
-                PreprocessedChunk {
-                    block,
-                    name,
-                    line_numbers,
-                },
-                export_top_level_funcs,
-            ));
+            preprocessing_chunks.push(((block, chunk), export_top_level_funcs));
         }
 
         // Extract all enum definitions from every parsed AST, and make sure none of the enum names
@@ -222,15 +250,15 @@ impl<'gc> Preprocessor<'gc> {
         // List of starting enum indexes per chunk, to identify which enums come from which chunk.
         let mut enum_chunk_indexes = Vec::new();
 
-        for (chunk, _) in &mut preprocessing_chunks {
+        for ((block, chunk), _) in &mut preprocessing_chunks {
             let prev_enum_len = enums.len();
             enum_chunk_indexes.push(prev_enum_len);
 
-            if let Err(err) = enums.extract(&mut chunk.block) {
-                let line_number = chunk.line_numbers.line(err.span.start());
+            if let Err(err) = enums.extract(block) {
+                let line_number = chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::Enum(err),
-                    chunk_name: chunk.name.clone(),
+                    chunk_name: chunk.name().clone(),
                     line_number,
                 });
             }
@@ -239,13 +267,13 @@ impl<'gc> Preprocessor<'gc> {
                 let enum_ = enums.get(i).unwrap();
                 // Enums are not allowed to shadow names of existing specials.
                 if is_special(enum_.name.inner) {
-                    let line_number = chunk.line_numbers.line(enum_.span.start());
+                    let line_number = chunk.line_number(enum_.span.start());
                     return Err(PreprocessError {
                         kind: PreprocessErrorKind::ShadowsSpecial(ShadowsSpecialError {
                             name: enum_.name.as_str().to_owned(),
                             span: enum_.span,
                         }),
-                        chunk_name: chunk.name.clone(),
+                        chunk_name: chunk.name().clone(),
                         line_number,
                     });
                 }
@@ -263,23 +291,23 @@ impl<'gc> Preprocessor<'gc> {
                     .checked_sub(1)
                     .expect("pre-existing enums should not have recursion errors"),
             };
-            let chunk = &preprocessing_chunks[chunk_index].0;
-            let line_number = chunk.line_numbers.line(enum_.span.start());
+            let (_, chunk) = &preprocessing_chunks[chunk_index].0;
+            let line_number = chunk.line_number(enum_.span.start());
             PreprocessError {
                 kind: PreprocessErrorKind::EnumResolution(err),
-                chunk_name: chunk.name.clone(),
+                chunk_name: chunk.name().clone(),
                 line_number,
             }
         })?;
 
         // Check and expand any references to enums in every AST.
 
-        for (chunk, _) in &mut preprocessing_chunks {
-            if let Err(err) = enums.expand(&mut chunk.block) {
-                let line_number = chunk.line_numbers.line(err.span.start());
+        for ((block, chunk), _) in &mut preprocessing_chunks {
+            if let Err(err) = enums.expand(block) {
+                let line_number = chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::EnumEvaluation(err),
-                    chunk_name: chunk.name.clone(),
+                    chunk_name: chunk.name().clone(),
                     line_number,
                 });
             }
@@ -294,20 +322,22 @@ impl<'gc> Preprocessor<'gc> {
         // chunk.
         let mut export_chunk_indexes = Vec::new();
 
-        for &mut (ref mut chunk, export_top_level_funcs) in &mut preprocessing_chunks {
+        for &mut ((ref mut block, ref mut chunk), export_top_level_funcs) in
+            &mut preprocessing_chunks
+        {
             let prev_exports_len = exports.len();
             export_chunk_indexes.push(prev_exports_len);
 
             if let Err(err) = exports.extract(
-                &mut chunk.block,
+                block,
                 ExportSettings {
                     export_top_level_functions: export_top_level_funcs,
                 },
             ) {
-                let line_number = chunk.line_numbers.line(err.span.start());
+                let line_number = chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::DuplicateExport(err),
-                    chunk_name: chunk.name.clone(),
+                    chunk_name: chunk.name().clone(),
                     line_number,
                 });
             }
@@ -319,20 +349,20 @@ impl<'gc> Preprocessor<'gc> {
 
                 // Exports are not allowed to shadow names of existing specials.
                 if is_special(*export_name) || enums.find(export_name).is_some() {
-                    let line_number = chunk.line_numbers.line(export_span.start());
+                    let line_number = chunk.line_number(export_span.start());
                     return Err(PreprocessError {
                         kind: PreprocessErrorKind::ShadowsSpecial(ShadowsSpecialError {
                             name: export_name.as_str().to_owned(),
                             span: export_span,
                         }),
-                        chunk_name: chunk.name.clone(),
+                        chunk_name: chunk.name().clone(),
                         line_number,
                     });
                 }
             }
         }
 
-        Ok(PreprocessorOutput {
+        Ok(PreprocessOutput {
             preprocessed_chunks: preprocessing_chunks.into_iter().map(|(c, _)| c).collect(),
             macros,
             macro_chunk_indexes,
@@ -344,8 +374,8 @@ impl<'gc> Preprocessor<'gc> {
     }
 }
 
-pub struct PreprocessorOutput<'gc> {
-    pub preprocessed_chunks: Vec<PreprocessedChunk<'gc>>,
+pub struct PreprocessOutput<'gc> {
+    pub preprocessed_chunks: Vec<(ast::Block<vm::String<'gc>>, vm::Chunk<'gc>)>,
 
     pub macros: MacroSet<vm::String<'gc>>,
     pub macro_chunk_indexes: Vec<usize>,
@@ -357,15 +387,29 @@ pub struct PreprocessorOutput<'gc> {
     pub export_chunk_indexes: Vec<usize>,
 }
 
-pub struct PreprocessedChunk<'gc> {
-    pub block: ast::Block<vm::String<'gc>>,
+pub struct SourceChunk {
     pub name: vm::SharedStr,
     pub line_numbers: LineNumbers,
 }
 
-struct Chunk<'gc> {
-    name: vm::SharedStr,
-    line_numbers: LineNumbers,
+impl vm::debug::ChunkData for SourceChunk {
+    fn name(&self) -> &vm::SharedStr {
+        &self.name
+    }
+
+    fn line_number(&self, byte_offset: usize) -> vm::LineNumber {
+        self.line_numbers.line(byte_offset)
+    }
+}
+
+#[derive(Clone)]
+pub struct LexedChunk<'gc> {
+    pub chunk: vm::Chunk<'gc>,
+    pub tokens: Vec<Token<vm::String<'gc>>>,
+}
+
+struct ChunkInput<'gc> {
+    chunk: vm::Chunk<'gc>,
     tokens: Vec<Token<vm::String<'gc>>>,
     parse_settings: ParseSettings,
     export_top_level_funcs: bool,

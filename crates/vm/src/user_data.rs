@@ -200,10 +200,12 @@ impl<'gc> UserData<'gc> {
         Self::new::<Static<T>>(mc, Static(val))
     }
 
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, UserDataInner<'gc>>) -> Self {
         Self(Any::from_inner(inner))
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, UserDataInner<'gc>> {
         self.0.into_inner()
     }
@@ -213,6 +215,7 @@ impl<'gc> UserData<'gc> {
     /// `UserData` is identified by the `TypeId` of the [`trait@Rootable`] impl, NOT the type
     /// itself. We must do things this way, because GC types are non-'static (so you cannot obtain
     /// their `TypeId` in the first place).
+    #[inline]
     pub fn is<R>(self) -> bool
     where
         R: for<'a> Rootable<'a> + 'static,
@@ -223,6 +226,7 @@ impl<'gc> UserData<'gc> {
     /// Check if a `UserData` is of type `T` created with [`UserData::new_static`].
     ///
     /// This is equivalent to calling `this.is::<Static<T>>()`.
+    #[inline]
     pub fn is_static<T: 'static>(self) -> bool {
         self.is::<Static<T>>()
     }
@@ -231,6 +235,7 @@ impl<'gc> UserData<'gc> {
     ///
     /// If [`UserData::is`] returns true for the provided type `R`, then this will return a
     /// reference to the held type, otherwise it will return `Err(BadUserDataType)`.
+    #[inline]
     pub fn downcast<R>(self) -> Result<&'gc Root<'gc, R>, BadUserDataType>
     where
         R: for<'b> Rootable<'b> + 'static,
@@ -247,6 +252,7 @@ impl<'gc> UserData<'gc> {
     /// This is ONLY ever useful if the held type is a non-'static GC type, and usually only useful
     /// when the type is something like [`gc_arena::lock::RefLock`], where this would allow you to
     /// call [`gc_arena::barrier::Write::unlock`] on it to get safe mutability.
+    #[inline]
     pub fn downcast_write<R>(
         self,
         mc: &Mutation<'gc>,
@@ -265,6 +271,7 @@ impl<'gc> UserData<'gc> {
     ///
     /// This is equivalent to calling `this.downcast::<Static<T>>()` (except this returns a
     /// reference to the inner [`Static::0`] field instead).
+    #[inline]
     pub fn downcast_static<T: 'static>(self) -> Result<&'gc T, BadUserDataType> {
         self.downcast::<Static<T>>().map(|r| &r.0)
     }

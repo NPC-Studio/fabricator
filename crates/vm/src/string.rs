@@ -2,7 +2,6 @@ use std::{
     borrow::Borrow,
     fmt, hash,
     ops::{self, Deref},
-    string::String as StdString,
     sync::Arc,
 };
 
@@ -16,7 +15,7 @@ use rustc_hash::FxHashMap;
 #[collect(require_static)]
 pub struct SharedStr(Arc<str>);
 
-impl<S: Into<StdString>> From<S> for SharedStr {
+impl<S: Into<Arc<str>>> From<S> for SharedStr {
     fn from(value: S) -> Self {
         SharedStr::new(value)
     }
@@ -44,8 +43,8 @@ impl ops::Deref for SharedStr {
 }
 
 impl SharedStr {
-    pub fn new(name: impl Into<StdString>) -> Self {
-        Self(name.into().into_boxed_str().into())
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self(name.into())
     }
 
     #[inline]
@@ -94,10 +93,12 @@ impl<'gc> fmt::Debug for String<'gc> {
 }
 
 impl<'gc> String<'gc> {
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, SharedStr>) -> Self {
         Self(inner)
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, SharedStr> {
         self.0
     }
@@ -153,7 +154,12 @@ impl<'gc> InternedStrings<'gc> {
         Self(Gc::new(mc, InternedStringsInner(Default::default())))
     }
 
-    pub fn intern(self, mc: &Mutation<'gc>, s: &str) -> String<'gc> {
+    pub fn intern(
+        self,
+        mc: &Mutation<'gc>,
+        s: &str,
+        make_shared: impl FnOnce() -> SharedStr,
+    ) -> String<'gc> {
         // SAFETY: If a new string is added, we call an appropriate write barrier.
         let mut strings = unsafe { self.0.0.unlock_unchecked() }.borrow_mut();
 
@@ -163,7 +169,7 @@ impl<'gc> InternedStrings<'gc> {
             }
         }
 
-        let shared = SharedStr::new(s);
+        let shared = make_shared();
         let string = Gc::new(&mc, shared.clone());
         let weak_string = Gc::downgrade(string);
 

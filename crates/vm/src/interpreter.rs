@@ -64,7 +64,7 @@ impl<'gc> Context<'gc> {
     }
 
     pub fn intern(self, s: &str) -> String<'gc> {
-        self.state.interned_strings.intern(&self, s)
+        self.state.interned_strings.intern(&self, s, || s.into())
     }
 }
 

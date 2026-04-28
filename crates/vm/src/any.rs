@@ -133,26 +133,32 @@ impl<'gc, M> Any<'gc, M> {
         Self(unsafe { Gc::cast::<AnyInner<M>>(val) })
     }
 
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, AnyInner<M>>) -> Self {
         Self(inner)
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, AnyInner<M>> {
         self.0
     }
 
+    #[inline]
     pub fn metadata(self) -> &'gc M {
         &self.0.as_ref().metadata
     }
 
+    #[inline]
     pub fn write_metadata(self, mc: &Mutation<'gc>) -> &'gc Write<M> {
         barrier::field!(Gc::write(mc, self.0), AnyInner, metadata)
     }
 
+    #[inline]
     pub fn type_id(self) -> TypeId {
         self.0.type_id
     }
 
+    #[inline]
     pub fn is<R>(self) -> bool
     where
         R: for<'b> Rootable<'b> + 'static,
@@ -160,6 +166,7 @@ impl<'gc, M> Any<'gc, M> {
         TypeId::of::<R>() == self.0.type_id
     }
 
+    #[inline]
     pub fn downcast<R>(self) -> Option<&'gc Root<'gc, R>>
     where
         R: for<'b> Rootable<'b> + 'static,
@@ -173,6 +180,7 @@ impl<'gc, M> Any<'gc, M> {
         }
     }
 
+    #[inline]
     pub fn downcast_write<R>(self, mc: &Mutation<'gc>) -> Option<&'gc Write<Root<'gc, R>>>
     where
         R: for<'b> Rootable<'b> + 'static,

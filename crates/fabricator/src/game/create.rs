@@ -597,7 +597,7 @@ fn load_scripts(
                 let proto_output = compiler::Compiler::compile_chunk(
                     ctx,
                     config_name,
-                    script_output.exports,
+                    script_output.exported_imports,
                     match script.mode {
                         ScriptMode::Compat => compiler::CompileSettings::compat(),
                         ScriptMode::Modern => compiler::CompileSettings::modern(),

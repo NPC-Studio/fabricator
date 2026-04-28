@@ -107,10 +107,12 @@ impl<'gc> Callback<'gc> {
         Callback::new(mc, RootCallback { root, call }, Value::Undefined)
     }
 
+    #[inline]
     pub fn from_inner(inner: Gc<'gc, CallbackInner<'gc>>) -> Self {
         Self(inner)
     }
 
+    #[inline]
     pub fn into_inner(self) -> Gc<'gc, CallbackInner<'gc>> {
         self.0
     }

@@ -35,11 +35,11 @@ use crate::{
     ir,
     ir_gen::{FreeVarMode, IrGenError, IrGenSettings, VarDict},
     lexer::LexError,
-    line_numbers::LineNumbers,
     macros::{MacroError, MacroSet, RecursiveMacro},
     parser::{ParseError, ParseSettings},
-    preprocessor::{
-        PreprocessError, PreprocessErrorKind, Preprocessor, PreprocessorOutput, ShadowsSpecialError,
+    preprocessing::{
+        ChunkLexError, LexedChunk, PreprocessError, PreprocessErrorKind, PreprocessOutput,
+        Preprocessor, ShadowsSpecialError,
     },
     string_interner::VmInterner,
 };
@@ -77,10 +77,19 @@ pub struct CompileError {
     pub line_number: vm::LineNumber,
 }
 
+impl From<ChunkLexError> for CompileError {
+    fn from(err: ChunkLexError) -> Self {
+        Self {
+            kind: CompileErrorKind::Lexing(err.error),
+            chunk_name: err.chunk_name,
+            line_number: err.line_number,
+        }
+    }
+}
+
 impl From<PreprocessError> for CompileError {
     fn from(err: PreprocessError) -> Self {
         let kind = match err.kind {
-            PreprocessErrorKind::Lexing(err) => CompileErrorKind::Lexing(err),
             PreprocessErrorKind::Macro(err) => CompileErrorKind::Macro(err),
             PreprocessErrorKind::RecursiveMacro(err) => CompileErrorKind::RecursiveMacro(err),
             PreprocessErrorKind::Parsing(err) => CompileErrorKind::Parsing(err),
@@ -147,21 +156,6 @@ impl CompileSettings {
     pub fn export_top_level_functions(mut self, export_top_funcs: bool) -> Self {
         self.export_top_level_functions = export_top_funcs;
         self
-    }
-}
-
-pub struct SourceChunk {
-    pub name: vm::SharedStr,
-    pub line_numbers: LineNumbers,
-}
-
-impl vm::debug::ChunkData for SourceChunk {
-    fn name(&self) -> &vm::SharedStr {
-        &self.name
-    }
-
-    fn line_number(&self, byte_offset: usize) -> vm::LineNumber {
-        self.line_numbers.line(byte_offset)
     }
 }
 
@@ -320,7 +314,7 @@ pub struct Compiler<'gc> {
     preprocessor: Preprocessor<'gc>,
     global_vars: HashSet<vm::String<'gc>>,
     magic: vm::MagicSet<'gc>,
-    chunk_settings: Vec<ChunkCompileSettings>,
+    ir_compile_settings: Vec<IrCompileSettings>,
 }
 
 impl<'gc> Compiler<'gc> {
@@ -333,14 +327,14 @@ impl<'gc> Compiler<'gc> {
         config: impl Into<String>,
         imports: ImportItems<'gc>,
         compile_settings: CompileSettings,
-        chunk_name: impl Into<String>,
+        chunk_name: impl Into<vm::SharedStr>,
         code: &str,
     ) -> Result<ChunkOutput<'gc>, CompileError> {
         let mut this = Self::new(ctx, config, imports);
         this.add_chunk(compile_settings, chunk_name, code)?;
         let output = this.compile()?;
         Ok(ChunkOutput {
-            exports: output.exports,
+            exported_imports: output.exported_imports,
             chunk_prototype: output.chunks[0],
             all_prototypes: output.all_prototypes,
         })
@@ -363,7 +357,7 @@ impl<'gc> Compiler<'gc> {
             preprocessor,
             global_vars,
             magic,
-            chunk_settings: Vec::new(),
+            ir_compile_settings: Vec::new(),
         }
     }
 
@@ -380,7 +374,7 @@ impl<'gc> Compiler<'gc> {
             code,
         )?;
 
-        self.chunk_settings.push(ChunkCompileSettings {
+        self.ir_compile_settings.push(IrCompileSettings {
             ir_gen: settings.ir_gen,
             optimization_passes: settings.optimization_passes,
         });
@@ -388,9 +382,26 @@ impl<'gc> Compiler<'gc> {
         Ok(())
     }
 
-    pub fn compile(self) -> Result<CompilerOutput<'gc>, CompileError> {
+    pub fn add_lexed_chunk(&mut self, lexed_chunk: LexedChunk<'gc>, settings: CompileSettings) {
+        self.preprocessor.add_lexed_chunk(
+            lexed_chunk,
+            settings.parse,
+            settings.export_top_level_functions,
+        );
+
+        self.ir_compile_settings.push(IrCompileSettings {
+            ir_gen: settings.ir_gen,
+            optimization_passes: settings.optimization_passes,
+        });
+    }
+
+    pub fn chunk_len(&self) -> usize {
+        self.preprocessor.chunk_len()
+    }
+
+    pub fn compile(self) -> Result<CompileOutput<'gc>, CompileError> {
         fn optimize_and_generate_proto<'gc>(
-            compile_settings: ChunkCompileSettings,
+            compile_settings: IrCompileSettings,
             ir: &mut ir::Function<vm::String<'gc>>,
             magic: &vm::MagicSet<'gc>,
         ) -> Prototype<vm::String<'gc>> {
@@ -417,10 +428,10 @@ impl<'gc> Compiler<'gc> {
             preprocessor,
             mut global_vars,
             mut magic,
-            chunk_settings,
+            ir_compile_settings,
         } = self;
 
-        let PreprocessorOutput {
+        let PreprocessOutput {
             preprocessed_chunks,
             macros,
             enums,
@@ -430,23 +441,11 @@ impl<'gc> Compiler<'gc> {
         } = preprocessor
             .preprocess(|ident| global_vars.contains(&ident) || magic.find(ident).is_some())?;
 
-        assert_eq!(preprocessed_chunks.len(), chunk_settings.len());
+        assert_eq!(preprocessed_chunks.len(), ir_compile_settings.len());
         let compiling_chunks = preprocessed_chunks
             .into_iter()
-            .zip(chunk_settings.into_iter())
-            .map(|(chunk, compile_settings)| {
-                (
-                    vm::Chunk::new_static(
-                        &ctx,
-                        SourceChunk {
-                            name: chunk.name,
-                            line_numbers: chunk.line_numbers,
-                        },
-                    ),
-                    chunk.block,
-                    compile_settings,
-                )
-            })
+            .zip(ir_compile_settings.into_iter())
+            .map(|((block, chunk), compile_settings)| (chunk, block, compile_settings))
             .collect::<Vec<_>>();
 
         // Produce a read-only *stub* magic variable for each export.
@@ -561,18 +560,18 @@ impl<'gc> Compiler<'gc> {
             magic,
         };
 
-        Ok(CompilerOutput {
-            exports: imports,
+        Ok(CompileOutput {
+            exported_imports: imports,
             chunks,
             all_prototypes,
         })
     }
 }
 
-pub struct CompilerOutput<'gc> {
+pub struct CompileOutput<'gc> {
     /// Provided `ImportItems` merged with all of the exports in the current compilation unit, may
     /// be used in subsequent compilation units.
-    pub exports: ImportItems<'gc>,
+    pub exported_imports: ImportItems<'gc>,
 
     /// One generated prototype per input chunk, in the order provided to [`Compiler`].
     pub chunks: Vec<Gc<'gc, vm::Prototype<'gc>>>,
@@ -584,13 +583,13 @@ pub struct CompilerOutput<'gc> {
 
 /// A version of [`CompilerOutput`] for a single chunk.
 pub struct ChunkOutput<'gc> {
-    pub exports: ImportItems<'gc>,
+    pub exported_imports: ImportItems<'gc>,
     pub chunk_prototype: Gc<'gc, vm::Prototype<'gc>>,
     pub all_prototypes: Vec<(ir::Function<vm::String<'gc>>, Gc<'gc, vm::Prototype<'gc>>)>,
 }
 
 #[derive(Debug, Copy, Clone)]
-struct ChunkCompileSettings {
+struct IrCompileSettings {
     ir_gen: IrGenSettings,
     optimization_passes: u8,
 }
