@@ -34,7 +34,8 @@ pub use self::{
     stack::Stack,
     stash::{
         Fetchable, Stashable, StashedCallback, StashedClosure, StashedFunction, StashedMagicSet,
-        StashedObject, StashedPrototype, StashedThread, StashedUserData, StashedUserDataMethods,
+        StashedObject, StashedPrototype, StashedString, StashedThread, StashedUserData,
+        StashedUserDataMethods,
     },
     string::{InternedStrings, SharedStr, String, StringMap},
     thread::{Backtrace, BacktraceFrame, CallError, Execution, Hook, OpError, Thread, VmError},
