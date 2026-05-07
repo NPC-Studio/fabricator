@@ -7,7 +7,7 @@ use crate::{
     exports::{DuplicateExportError, ExportSet, ExportSettings},
     lexer::{LexError, Lexer},
     line_numbers::LineNumbers,
-    macros::{MacroError, MacroSet, RecursiveMacro},
+    macros::{MacroError, MacroSet, MacroSetBuilder, RecursiveMacro},
     parser::{ParseError, ParseSettings},
     string_interner::VmInterner,
     tokens::Token,
@@ -98,8 +98,8 @@ pub struct PreprocessError {
 pub struct Preprocessor<'gc> {
     ctx: vm::Context<'gc>,
     config: String,
-    macros: MacroSet<vm::String<'gc>>,
-    enums: EnumSetBuilder<vm::String<'gc>>,
+    external_macros: MacroSet<vm::String<'gc>>,
+    external_enums: EnumSet<vm::String<'gc>>,
     chunk_inputs: Vec<ChunkInput<'gc>>,
 }
 
@@ -113,8 +113,8 @@ impl<'gc> Preprocessor<'gc> {
         Self {
             ctx,
             config: config.into(),
-            macros: external_macros,
-            enums: external_enums.into_builder(),
+            external_macros,
+            external_enums,
             chunk_inputs: Vec::new(),
         }
     }
@@ -158,10 +158,10 @@ impl<'gc> Preprocessor<'gc> {
     /// considered reserved for enums and exports, such as the names of magic variables or exports
     /// in previous compilation units.
     ///
-    /// It is possible for a `ShadowsSpecial` error to be returned for a new export shadowing either
-    /// an external enum or a newly parsed enum, as those are also considered special. Thus, it is
-    /// not necessary for the `is_special` callback to check for identifiers for enums passed in
-    /// as `external_enums`.
+    /// The names of enums passed in as `external_enums` are automatically considered special.
+    ///
+    /// Macros will not recurse into identifiers which are considered "special", allowing macros to
+    /// redefine specials.
     pub fn preprocess(
         self,
         is_special: impl Fn(vm::String<'gc>) -> bool,
@@ -169,19 +169,21 @@ impl<'gc> Preprocessor<'gc> {
         let Self {
             ctx,
             config,
-            mut macros,
-            mut enums,
+            external_macros,
+            external_enums,
             mut chunk_inputs,
         } = self;
 
-        // Extract all macro definitions from all chunks.
+        // Extract all new macro definitions from all input chunks.
+
+        let mut macro_builder = MacroSetBuilder::new();
 
         // List of starting macro indexes per chunk, to identify which macros come from which chunk.
         let mut macro_chunk_indexes = Vec::new();
 
         for input in &mut chunk_inputs {
-            macro_chunk_indexes.push(macros.len());
-            if let Err(err) = macros.extract(&mut input.tokens) {
+            macro_chunk_indexes.push(macro_builder.len());
+            if let Err(err) = macro_builder.extract(&mut input.tokens) {
                 let line_number = input.chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::Macro(err),
@@ -191,30 +193,23 @@ impl<'gc> Preprocessor<'gc> {
             }
         }
 
-        // Apply a config and resolve all macro interdependencies.
+        // Apply the given config and resolve all macro interdependencies.
 
-        let resolved_macros =
-            match macros
-                .clone()
-                .resolve_with_skip_recursive(&ctx.intern(&config), |&token| {
-                    // GMS2 doesn't expand macro tokens that match a defined macro if the token name
-                    // is also a part of the stdlib. This allows re-defining builtins with macros
-                    // (at the cost of making the macro system even more complicated and special
-                    // case).
-                    //
-                    // We do something similar here, except we skip expansion for *all* specials
-                    // (exports defined in a previous compilation unit or magic variables).
-                    !is_special(token)
-                }) {
+        let new_macros =
+            match macro_builder.resolve_with_recursion(&ctx.intern(&config), |&token| {
+                // GMS2 doesn't expand macro tokens that match a defined macro if the token name is
+                // also a part of the stdlib. This allows re-defining builtins with macros.
+                //
+                // We do something similar here, except we skip expansion for *all* specials.
+                external_enums.find(&token).is_none() && !is_special(token)
+            }) {
                 Ok(macros) => macros,
                 Err(err) => {
-                    let macro_ = macros.get(err.0).unwrap();
+                    let macro_ = macro_builder.get(err.0).unwrap();
                     let chunk_index = match macro_chunk_indexes.binary_search_by(|i| i.cmp(&err.0))
                     {
                         Ok(i) => i,
-                        Err(i) => i
-                            .checked_sub(1)
-                            .expect("pre-existing macros should not have recursion errors"),
+                        Err(i) => i.checked_sub(1).unwrap(),
                     };
                     let chunk_input = &chunk_inputs[chunk_index];
                     let line_number = chunk_input.chunk.line_number(macro_.span.start());
@@ -226,19 +221,23 @@ impl<'gc> Preprocessor<'gc> {
                 }
             };
 
-        // Use macro definitions to replace macro instances in every chunk, then parse the resulting
-        // token list.
+        // Apply new and external macro definitions then parse the final token list in every input
+        // chunk.
 
         let mut preprocessing_chunks = Vec::new();
 
-        for chunk in chunk_inputs {
+        for input in chunk_inputs {
             let ChunkInput {
                 chunk,
                 mut tokens,
                 parse_settings,
                 export_top_level_funcs,
-            } = chunk;
-            resolved_macros.expand(&mut tokens);
+            } = input;
+
+            // New macros are allowed to depend on external macros, external macros are never
+            // allowed to depend on new macros, so we apply all new macros before externals.
+            new_macros.expand(&mut tokens);
+            external_macros.expand(&mut tokens);
 
             let block = parse_settings.parse(tokens).map_err(|e| {
                 let line_number = chunk.line_number(e.span.start());
@@ -252,17 +251,28 @@ impl<'gc> Preprocessor<'gc> {
             preprocessing_chunks.push(((block, chunk), export_top_level_funcs));
         }
 
-        // Extract all enum definitions from every parsed AST, and make sure none of the enum names
-        // conflict with any pre-existing special.
+        // Apply external enum definitions then extract all new enum definitions from every parsed
+        // AST, and make sure none of the new enum names conflict with any external enum or special.
+
+        let mut enum_builder = EnumSetBuilder::new();
 
         // List of starting enum indexes per chunk, to identify which enums come from which chunk.
         let mut enum_chunk_indexes = Vec::new();
 
         for ((block, chunk), _) in &mut preprocessing_chunks {
-            let prev_enum_len = enums.len();
+            if let Err(err) = external_enums.expand(block) {
+                let line_number = chunk.line_number(err.span.start());
+                return Err(PreprocessError {
+                    kind: PreprocessErrorKind::EnumEvaluation(err),
+                    chunk_name: chunk.name().clone(),
+                    line_number,
+                });
+            }
+
+            let prev_enum_len = enum_builder.len();
             enum_chunk_indexes.push(prev_enum_len);
 
-            if let Err(err) = enums.extract(block) {
+            if let Err(err) = enum_builder.extract(block) {
                 let line_number = chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::Enum(err),
@@ -271,10 +281,11 @@ impl<'gc> Preprocessor<'gc> {
                 });
             }
 
-            for i in prev_enum_len..enums.len() {
-                let enum_ = enums.get(i).unwrap();
-                // Enums are not allowed to shadow names of existing specials.
-                if is_special(enum_.name.inner) {
+            for i in prev_enum_len..enum_builder.len() {
+                let enum_ = enum_builder.get(i).unwrap();
+                // New enums are not allowed to shadow names of external enums or specials.
+                if external_enums.find(&enum_.name.inner).is_some() || is_special(enum_.name.inner)
+                {
                     let line_number = chunk.line_number(enum_.span.start());
                     return Err(PreprocessError {
                         kind: PreprocessErrorKind::ShadowsSpecial(ShadowsSpecialError {
@@ -290,14 +301,12 @@ impl<'gc> Preprocessor<'gc> {
 
         // Resolve all enum interdependencies.
 
-        let enums = enums.clone().resolve().map_err(|err| {
-            let enum_ = enums.get(err.enum_index).unwrap();
+        let new_enums = enum_builder.resolve().map_err(|err| {
+            let enum_ = enum_builder.get(err.enum_index).unwrap();
             let chunk_index = match enum_chunk_indexes.binary_search_by(|i| i.cmp(&err.enum_index))
             {
                 Ok(i) => i,
-                Err(i) => i
-                    .checked_sub(1)
-                    .expect("pre-existing enums should not have recursion errors"),
+                Err(i) => i.checked_sub(1).unwrap(),
             };
             let (_, chunk) = &preprocessing_chunks[chunk_index].0;
             let line_number = chunk.line_number(enum_.span.start());
@@ -308,10 +317,10 @@ impl<'gc> Preprocessor<'gc> {
             }
         })?;
 
-        // Check and expand any references to enums in every AST.
+        // Apply new enum definitions.
 
         for ((block, chunk), _) in &mut preprocessing_chunks {
-            if let Err(err) = enums.expand(block) {
+            if let Err(err) = new_enums.expand(block) {
                 let line_number = chunk.line_number(err.span.start());
                 return Err(PreprocessError {
                     kind: PreprocessErrorKind::EnumEvaluation(err),
@@ -355,8 +364,11 @@ impl<'gc> Preprocessor<'gc> {
                 let export_name = export.name();
                 let export_span = export.span();
 
-                // Exports are not allowed to shadow names of existing specials.
-                if is_special(*export_name) || enums.find(export_name).is_some() {
+                // Exports are not allowed to shadow names of specials.
+                if external_enums.find(export_name).is_some()
+                    || new_enums.find(export_name).is_some()
+                    || is_special(*export_name)
+                {
                     let line_number = chunk.line_number(export_span.start());
                     return Err(PreprocessError {
                         kind: PreprocessErrorKind::ShadowsSpecial(ShadowsSpecialError {
@@ -368,6 +380,22 @@ impl<'gc> Preprocessor<'gc> {
                     });
                 }
             }
+        }
+
+        // Merge macro and enum sets together and offset the chunk indexes.
+
+        let external_macros_len = external_macros.len();
+        let mut macros = external_macros;
+        macros.merge(new_macros);
+        for i in macro_chunk_indexes.iter_mut() {
+            *i += external_macros_len;
+        }
+
+        let external_enums_len = external_enums.len();
+        let mut enums = external_enums;
+        enums.merge(new_enums);
+        for i in enum_chunk_indexes.iter_mut() {
+            *i += external_enums_len;
         }
 
         Ok(PreprocessOutput {

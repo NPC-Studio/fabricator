@@ -2,6 +2,7 @@ use std::{
     borrow::Borrow,
     collections::{HashMap, hash_map},
     hash::Hash,
+    vec,
 };
 
 use fabricator_util::index_containers::{IndexMap, IndexSet};
@@ -32,9 +33,9 @@ pub struct MacroError {
 #[error("macro #{0} depends on itself recursively")]
 pub struct RecursiveMacro(pub usize);
 
-#[derive(Debug, Clone, Collect)]
-#[collect(no_drop)]
-pub struct Macro<S> {
+/// A macro defined in a source file.
+#[derive(Debug, Clone)]
+pub struct SourceMacro<S> {
     pub name: S,
     pub config: Option<S>,
     pub span: Span,
@@ -43,8 +44,7 @@ pub struct Macro<S> {
 
 /// The set of macros with a specific name, mapping from configuration to macro index for that
 /// configuration.
-#[derive(Debug, Clone, Collect)]
-#[collect(no_drop)]
+#[derive(Debug, Clone)]
 pub struct ConfigurationSet<S> {
     /// Macro specified with no configuration option.
     pub default: Option<usize>,
@@ -74,14 +74,13 @@ impl<S: Eq + Hash> ConfigurationSet<S> {
 
 /// Gather a set of macro definitions from multiple sources and then later resolve them as a
 /// potentially recursively dependent set.
-#[derive(Debug, Clone, Collect)]
-#[collect(no_drop)]
-pub struct MacroSet<S> {
-    macros: Vec<Macro<S>>,
+#[derive(Debug, Clone)]
+pub struct MacroSetBuilder<S> {
+    macros: Vec<SourceMacro<S>>,
     macro_dict: HashMap<S, ConfigurationSet<S>>,
 }
 
-impl<S> Default for MacroSet<S> {
+impl<S> Default for MacroSetBuilder<S> {
     fn default() -> Self {
         Self {
             macros: Vec::new(),
@@ -90,7 +89,7 @@ impl<S> Default for MacroSet<S> {
     }
 }
 
-impl<S> MacroSet<S> {
+impl<S> MacroSetBuilder<S> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -108,17 +107,16 @@ impl<S> MacroSet<S> {
         self.macros.len()
     }
 
-    /// Get an extracted macro.
-    pub fn get(&self, index: usize) -> Option<&Macro<S>> {
+    pub fn get(&self, index: usize) -> Option<&SourceMacro<S>> {
         self.macros.get(index)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Macro<S>> {
+    pub fn iter(&self) -> impl Iterator<Item = &SourceMacro<S>> {
         self.macros.iter()
     }
 }
 
-impl<S: Eq + Hash> MacroSet<S> {
+impl<S: Eq + Hash> MacroSetBuilder<S> {
     /// Find the configuration set for a macro by name.
     pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<&ConfigurationSet<S>>
     where
@@ -141,7 +139,7 @@ impl<S: Eq + Hash> MacroSet<S> {
     }
 }
 
-impl<S: Clone + Eq + Hash> MacroSet<S> {
+impl<S: Clone + Eq + Hash> MacroSetBuilder<S> {
     /// Extract macros from the given token list and store them.
     ///
     /// This wiill extract all `#macro NAME <TOKENS>` directives from the token list. Macros must
@@ -251,7 +249,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
                     named.default = Some(self.macros.len());
                 }
 
-                self.macros.push(Macro {
+                self.macros.push(SourceMacro {
                     name: macro_name,
                     config,
                     span: macro_span,
@@ -281,12 +279,12 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// falling back to the default. If only the default configuration is desired, macro
     /// configuration cannot be the empty string, so providing the empty string here will always
     /// result in the default configuration.
-    pub fn resolve<Q: ?Sized>(self, config: &Q) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
+    pub fn resolve<Q: ?Sized>(self, config: &Q) -> Result<MacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.resolve_with_skip_recursive(config, |_| true)
+        self.resolve_with_recursion(config, |_| true)
     }
 
     /// A version of `MacroSet::resolve` that allows optionally skipping recursive expansion.
@@ -294,11 +292,11 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
     /// For any token in a macro that matches another macro, if the `recursively_expand` callback
     /// returns false this token will *not* be recursively expanded. GMS2 skips such recursive
     /// expansion for builtin function names.
-    pub fn resolve_with_skip_recursive<Q: ?Sized>(
-        self,
+    pub fn resolve_with_recursion<Q: ?Sized>(
+        &self,
         config: &Q,
         recursively_expand: impl Fn(&S) -> bool,
-    ) -> Result<ResolvedMacroSet<S>, RecursiveMacro>
+    ) -> Result<MacroSet<S>, RecursiveMacro>
     where
         S: Borrow<S> + Borrow<Q>,
         Q: Hash + Eq,
@@ -376,7 +374,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
         // Once we have a known-good evaluation order, we can evaluate our interdependent macros in
         // this order and all references should be present.
 
-        let mut resolved_macros = IndexMap::<Macro<S>>::new();
+        let mut resolved_macros = IndexMap::<SourceMacro<S>>::new();
 
         for macro_index in eval_order {
             let mut expanded_tokens = Vec::new();
@@ -415,7 +413,7 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
 
             resolved_macros.insert(
                 macro_index,
-                Macro {
+                SourceMacro {
                     name: macro_.name.clone(),
                     config: macro_.config.clone(),
                     tokens: expanded_tokens,
@@ -424,29 +422,58 @@ impl<S: Clone + Eq + Hash> MacroSet<S> {
             );
         }
 
-        Ok(ResolvedMacroSet {
+        Ok(MacroSet {
             macros: (0..self.macros.len())
-                .map(|i| resolved_macros.remove(i).unwrap())
+                .map(|i| {
+                    let m = resolved_macros.remove(i).unwrap();
+                    Macro {
+                        name: m.name,
+                        tokens: m.tokens.into_iter().map(|t| t.kind).collect(),
+                    }
+                })
                 .collect(),
             macro_dict: self
                 .macro_dict
-                .into_iter()
-                .filter_map(|(k, v)| Some((k, v.index_for_config(config)?)))
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.index_for_config(config)?)))
                 .collect(),
         })
     }
 }
 
-/// A set of macros that have been evaluated for a specific configuration and with recursive macros
-/// expanded.
+/// A macro evaluated for a specific configuration with all recursive macros expanted.
+///
+/// All span information is forgotten here, macro expansion will produce the same span as the macro
+/// identifier being expanded.
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
-pub struct ResolvedMacroSet<S> {
+pub struct Macro<S> {
+    pub name: S,
+    pub tokens: Vec<TokenKind<S>>,
+}
+
+/// A set of [`Macro`]s.
+#[derive(Debug, Clone, Collect)]
+#[collect(no_drop)]
+pub struct MacroSet<S> {
     macros: Vec<Macro<S>>,
     macro_dict: HashMap<S, usize>,
 }
 
-impl<S> ResolvedMacroSet<S> {
+impl<S> Default for MacroSet<S> {
+    fn default() -> Self {
+        Self {
+            macros: Vec::new(),
+            macro_dict: HashMap::new(),
+        }
+    }
+}
+
+impl<S> MacroSet<S> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.macros.is_empty()
     }
@@ -465,7 +492,24 @@ impl<S> ResolvedMacroSet<S> {
     }
 }
 
-impl<S: Eq + Hash> ResolvedMacroSet<S> {
+impl<S> IntoIterator for MacroSet<S> {
+    type Item = Macro<S>;
+    type IntoIter = vec::IntoIter<Macro<S>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.macros.into_iter()
+    }
+}
+
+impl<S: Clone + Eq + Hash> FromIterator<Macro<S>> for MacroSet<S> {
+    fn from_iter<T: IntoIterator<Item = Macro<S>>>(iter: T) -> Self {
+        let mut macros = MacroSet::default();
+        macros.merge(iter);
+        macros
+    }
+}
+
+impl<S: Eq + Hash> MacroSet<S> {
     /// Find the index for a macro by name.
     pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
     where
@@ -476,7 +520,28 @@ impl<S: Eq + Hash> ResolvedMacroSet<S> {
     }
 }
 
-impl<S: Clone + Eq + Hash> ResolvedMacroSet<S> {
+impl<S: Clone + Eq + Hash> MacroSet<S> {
+    /// Insert a macro into this set.
+    ///
+    /// Never overwrites an existing macro. If the given macro shares a name with a pre-existing
+    /// one, only the *newly inserted* macro will be returned from [`MacroSet::find`].
+    ///
+    /// The returned index will always be the previous value of [`MacroSet::len`].
+    pub fn insert(&mut self, macro_: Macro<S>) -> usize {
+        let name = macro_.name.clone();
+        let index = self.macros.len();
+        self.macros.push(macro_);
+        self.macro_dict.insert(name, index);
+        index
+    }
+
+    /// Insert all of the given macros into this set.
+    pub fn merge(&mut self, macros: impl IntoIterator<Item = Macro<S>>) {
+        for macro_ in macros {
+            self.insert(macro_);
+        }
+    }
+
     /// Expand all macros in the given token list.
     pub fn expand(&self, tokens: &mut Vec<Token<S>>) {
         let mut expanded_tokens = Vec::new();
@@ -491,7 +556,7 @@ impl<S: Clone + Eq + Hash> ResolvedMacroSet<S> {
             if let Some(macro_index) = macro_index {
                 // Set the span of every expanded token to be the span of the invoking token.
                 expanded_tokens.extend(self.macros[macro_index].tokens.iter().map(|t| Token {
-                    kind: t.kind.clone(),
+                    kind: t.clone(),
                     span: token.span,
                 }));
             } else {
@@ -522,7 +587,7 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(StdStringInterner, SOURCE, &mut tokens).unwrap();
 
-        let mut macros = MacroSet::new();
+        let mut macros = MacroSetBuilder::new();
 
         macros.extract(&mut tokens).unwrap();
         let macros = macros.clone().resolve("correct").unwrap();
@@ -533,7 +598,7 @@ mod tests {
                 .unwrap()
                 .tokens
                 .iter()
-                .map(|t| t.kind.clone())
+                .map(|t| t.clone())
                 .collect::<Vec<_>>(),
             [
                 TokenKind::Integer("1"),
@@ -557,7 +622,7 @@ mod tests {
         let mut tokens = Vec::new();
         Lexer::tokenize(StdStringInterner, SOURCE, &mut tokens).unwrap();
 
-        let mut macros = MacroSet::default();
+        let mut macros = MacroSetBuilder::default();
 
         macros.extract(&mut tokens).unwrap();
         assert!(macros.resolve("").is_err());

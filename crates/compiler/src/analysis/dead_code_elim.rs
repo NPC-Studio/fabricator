@@ -255,8 +255,6 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
 
         match block.exit.kind {
-            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) => {}
-            ir::ExitKind::Jump(_) => {}
             ir::ExitKind::Branch { if_false, .. } => {
                 if !live_branches.contains(block_id.index() as usize) {
                     // If this is not a branch that any live instruction is control-flow dependent
@@ -268,6 +266,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                     block.exit.kind = ir::ExitKind::Jump(if_false);
                 }
             }
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_) | ir::ExitKind::Jump(_) => {}
         }
     }
 }

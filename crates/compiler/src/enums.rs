@@ -3,13 +3,17 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
     ops::ControlFlow,
+    vec,
 };
 
 use fabricator_vm::Span;
 use gc_arena::Collect;
 use thiserror::Error;
 
-use crate::{ast, constant::Constant};
+use crate::{
+    ast::{self, Walk as _, WalkMut as _},
+    constant::Constant,
+};
 
 #[derive(Debug, Error)]
 pub enum EnumErrorKind {
@@ -61,24 +65,22 @@ pub struct EnumEvaluationError {
 pub type EnumValue = i64;
 
 #[derive(Debug, Clone)]
-pub enum ResolvingEnumVariantKind<S> {
-    Evaluated(EnumValue),
+pub enum SourceEnumVariantKind<S> {
     Implicit,
     Expression(ast::Expression<S>),
 }
 
 #[derive(Debug, Clone)]
-pub struct ResolvingEnumVariant<S> {
+pub struct SourceEnumVariant<S> {
     pub name: ast::Ident<S>,
-    pub kind: ResolvingEnumVariantKind<S>,
+    pub kind: SourceEnumVariantKind<S>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct ResolvingEnum<S> {
+pub struct SourceEnum<S> {
     pub name: ast::Ident<S>,
-    pub variants: Vec<ResolvingEnumVariant<S>>,
-    pub dict: HashMap<S, usize>,
+    pub variants: Vec<SourceEnumVariant<S>>,
     pub span: Span,
 }
 
@@ -86,15 +88,17 @@ pub struct ResolvingEnum<S> {
 /// dependent set.
 #[derive(Debug, Clone)]
 pub struct EnumSetBuilder<S> {
-    enums: Vec<ResolvingEnum<S>>,
-    dict: HashMap<S, usize>,
+    enums: Vec<SourceEnum<S>>,
+    enum_dict: HashMap<S, usize>,
+    variant_dicts: Vec<HashMap<S, usize>>,
 }
 
 impl<S> Default for EnumSetBuilder<S> {
     fn default() -> Self {
         Self {
             enums: Vec::new(),
-            dict: HashMap::new(),
+            enum_dict: HashMap::new(),
+            variant_dicts: Vec::new(),
         }
     }
 }
@@ -117,12 +121,11 @@ impl<S> EnumSetBuilder<S> {
         self.enums.is_empty()
     }
 
-    /// Get an extracted enum.
-    pub fn get(&self, index: usize) -> Option<&ResolvingEnum<S>> {
+    pub fn get(&self, index: usize) -> Option<&SourceEnum<S>> {
         self.enums.get(index)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &ResolvingEnum<S>> {
+    pub fn iter(&self) -> impl Iterator<Item = &SourceEnum<S>> {
         self.enums.iter()
     }
 }
@@ -134,7 +137,7 @@ impl<S: Eq + Hash> EnumSetBuilder<S> {
         S: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.dict.get(name).copied()
+        self.enum_dict.get(name).copied()
     }
 }
 
@@ -143,7 +146,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
     pub fn extract(&mut self, block: &mut ast::Block<S>) -> Result<(), EnumError> {
         for stmt in &block.statements {
             if let ast::Statement::Enum(enum_stmt) = stmt {
-                if let Some(&index) = self.dict.get(&enum_stmt.name.inner) {
+                if let Some(&index) = self.enum_dict.get(&enum_stmt.name.inner) {
                     return Err(EnumError {
                         kind: EnumErrorKind::DuplicateEnum(index),
                         span: enum_stmt.span,
@@ -162,39 +165,42 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                 _ => unreachable!(),
             };
 
-            let mut enum_ = ResolvingEnum {
+            let mut enum_ = SourceEnum {
                 name: enum_stmt.name,
                 variants: Vec::new(),
-                dict: HashMap::new(),
                 span: enum_stmt.span,
             };
+
+            let mut variant_dict = HashMap::new();
 
             for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
                     let span = name.span.combine(expr.span());
-                    enum_.dict.insert(name.inner.clone(), enum_.variants.len());
-                    enum_.variants.push(ResolvingEnumVariant {
+                    variant_dict.insert(name.inner.clone(), enum_.variants.len());
+                    enum_.variants.push(SourceEnumVariant {
                         name,
-                        kind: ResolvingEnumVariantKind::Expression(expr),
+                        kind: SourceEnumVariantKind::Expression(expr),
                         span,
                     });
                 } else {
                     let span = name.span;
-                    enum_.dict.insert(name.inner.clone(), enum_.variants.len());
-                    enum_.variants.push(ResolvingEnumVariant {
+                    variant_dict.insert(name.inner.clone(), enum_.variants.len());
+                    enum_.variants.push(SourceEnumVariant {
                         name,
-                        kind: ResolvingEnumVariantKind::Implicit,
+                        kind: SourceEnumVariantKind::Implicit,
                         span,
                     });
                 };
             }
 
             assert!(
-                self.dict
+                self.enum_dict
                     .insert(enum_.name.inner.clone(), self.enums.len())
                     .is_none()
             );
             self.enums.push(enum_);
+            self.variant_dicts.push(variant_dict);
+            assert_eq!(self.enums.len(), self.variant_dicts.len());
         }
 
         Ok(())
@@ -203,7 +209,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
     /// Resolve all inter-variant dependencies and return an `EnumSet`.
     ///
     /// Enums and variants will retain the same indexes they had in the `EnumSetBuilder`.
-    pub fn resolve(mut self) -> Result<EnumSet<S>, EnumResolutionError> {
+    pub fn resolve(&self) -> Result<EnumSet<S>, EnumResolutionError> {
         // Determine a proper enum variant evaluation order.
         //
         // Add all of the enum variants we need to evaluate to a stack.
@@ -247,15 +253,14 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
 
             dependencies.clear();
             match &variant.kind {
-                ResolvingEnumVariantKind::Evaluated(_) => {}
-                ResolvingEnumVariantKind::Implicit => {
+                SourceEnumVariantKind::Implicit => {
                     // Implicit variants depend on the previous enum value, unless they are the
                     // first enum variant, in which case their value is always 0.
                     if variant_index > 0 {
                         dependencies.push((enum_index, variant_index - 1));
                     }
                 }
-                ResolvingEnumVariantKind::Expression(expression) => {
+                SourceEnumVariantKind::Expression(expression) => {
                     struct FindEnumVariants<'a, S> {
                         parent: &'a EnumSetBuilder<S>,
                         dependencies: &'a mut Vec<(usize, usize)>,
@@ -275,12 +280,11 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                                 ast::Expression::Field(field_expr) => {
                                     if let ast::Expression::Ident(ident) = &*field_expr.base {
                                         if let Some(&ref_enum_index) =
-                                            self.parent.dict.get(&ident.inner)
+                                            self.parent.enum_dict.get(&ident.inner)
                                         {
-                                            if let Some(&ref_variant_index) = self.parent.enums
-                                                [ref_enum_index]
-                                                .dict
-                                                .get(&field_expr.field.inner)
+                                            if let Some(&ref_variant_index) =
+                                                self.parent.variant_dicts[ref_enum_index]
+                                                    .get(&field_expr.field.inner)
                                             {
                                                 self.dependencies
                                                     .push((ref_enum_index, ref_variant_index));
@@ -339,27 +343,30 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
         // Once we have a known-good evaluation order, we can evaluate our interdependent variants
         // in this order and all references should be present.
 
-        for (enum_index, variant_index) in eval_order {
-            let get_evaluated = |enum_index: usize, var_index: usize| -> EnumValue {
-                match self.enums[enum_index].variants[var_index].kind {
-                    ResolvingEnumVariantKind::Evaluated(v) => v,
-                    _ => panic!("enum #{enum_index} variant #{var_index} has not been evaluated"),
-                }
-            };
+        let get_evaluated = |evaluated: &HashMap<(usize, usize), EnumValue>,
+                             enum_index: usize,
+                             var_index: usize|
+         -> EnumValue {
+            match evaluated.get(&(enum_index, var_index)) {
+                Some(&v) => v,
+                _ => panic!("enum #{enum_index} variant #{var_index} has not been evaluated"),
+            }
+        };
 
+        let mut evaluated = HashMap::new();
+
+        for (enum_index, variant_index) in eval_order {
             match self.enums[enum_index].variants[variant_index].kind.clone() {
-                ResolvingEnumVariantKind::Evaluated(_) => {}
-                ResolvingEnumVariantKind::Implicit => {
+                SourceEnumVariantKind::Implicit => {
                     let value = if variant_index == 0 {
                         // The first enum value, if not specified, is always 0.
                         0
                     } else {
-                        get_evaluated(enum_index, variant_index - 1).wrapping_add(1)
+                        get_evaluated(&evaluated, enum_index, variant_index - 1).wrapping_add(1)
                     };
-                    self.enums[enum_index].variants[variant_index].kind =
-                        ResolvingEnumVariantKind::Evaluated(value);
+                    evaluated.insert((enum_index, variant_index), value);
                 }
-                ResolvingEnumVariantKind::Expression(mut expression) => {
+                SourceEnumVariantKind::Expression(mut expression) => {
                     struct EnumExpander<'a, S>(&'a dyn Fn(&S, &S) -> Option<EnumValue>);
 
                     impl<'a, S> ast::VisitorMut<S> for EnumExpander<'a, S> {
@@ -391,9 +398,10 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
 
                     let _ = ast::VisitorMut::visit_expr_mut(
                         &mut EnumExpander(&|enum_name, variant_name| {
-                            let &enum_index = self.dict.get(enum_name)?;
-                            let &variant_index = self.enums[enum_index].dict.get(variant_name)?;
-                            Some(get_evaluated(enum_index, variant_index))
+                            let &enum_index = self.enum_dict.get(enum_name)?;
+                            let &variant_index =
+                                self.variant_dicts[enum_index].get(variant_name)?;
+                            Some(get_evaluated(&evaluated, enum_index, variant_index))
                         }),
                         &mut expression,
                     );
@@ -405,8 +413,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                             enum_index,
                             variant_index,
                         })?;
-                    self.enums[enum_index].variants[variant_index].kind =
-                        ResolvingEnumVariantKind::Evaluated(value);
+                    evaluated.insert((enum_index, variant_index), value);
                 }
             }
         }
@@ -414,32 +421,23 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
         Ok(EnumSet::<S> {
             enums: self
                 .enums
-                .into_iter()
+                .iter()
                 .enumerate()
                 .map(|(enum_index, enum_)| Enum {
-                    name: enum_.name.inner,
-                    name_span: enum_.name.span,
+                    name: enum_.name.inner.clone(),
                     variants: enum_
                         .variants
-                        .into_iter()
+                        .iter()
                         .enumerate()
                         .map(|(var_index, variant)| EnumVariant {
-                            name: variant.name.inner,
-                            name_span: variant.name.span,
-                            value: match variant.kind {
-                                ResolvingEnumVariantKind::Evaluated(val) => val,
-                                _ => panic!(
-                                    "enum #{enum_index} variant #{var_index} has not been evaluated"
-                                ),
-                            },
-                            span: variant.span,
+                            name: variant.name.inner.clone(),
+                            value: get_evaluated(&evaluated, enum_index, var_index),
                         })
                         .collect(),
-                    dict: enum_.dict,
-                    span: enum_.span,
                 })
                 .collect(),
-            dict: self.dict,
+            enum_dict: self.enum_dict.clone(),
+            variant_dicts: self.variant_dicts.clone(),
         })
     }
 }
@@ -448,68 +446,31 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
 #[collect(no_drop)]
 pub struct EnumVariant<S> {
     pub name: S,
-    pub name_span: Span,
     pub value: EnumValue,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct Enum<S> {
     pub name: S,
-    pub name_span: Span,
     pub variants: Vec<EnumVariant<S>>,
-    pub dict: HashMap<S, usize>,
-    pub span: Span,
 }
-
-pub type SyntheticEnums<S> = HashMap<S, HashMap<S, EnumValue>>;
 
 #[derive(Debug, Clone, Collect)]
 #[collect(no_drop)]
 pub struct EnumSet<S> {
     enums: Vec<Enum<S>>,
-    dict: HashMap<S, usize>,
+    enum_dict: HashMap<S, usize>,
+    variant_dicts: Vec<HashMap<S, usize>>,
 }
 
 impl<S> Default for EnumSet<S> {
     fn default() -> Self {
         Self {
             enums: Vec::new(),
-            dict: HashMap::new(),
+            enum_dict: HashMap::new(),
+            variant_dicts: Vec::new(),
         }
-    }
-}
-
-impl<S: Clone + Eq + Hash> EnumSet<S> {
-    /// Create an `EnumSet` with externally defined enums from the given [`SyntheticEnums`] set.
-    pub fn with_synthetic(synthetic_enums: SyntheticEnums<S>) -> Self {
-        let mut this = Self::default();
-
-        for (enum_name, enum_variants) in synthetic_enums {
-            let mut variants = Vec::new();
-            let mut dict = HashMap::new();
-            for (variant_name, variant_value) in enum_variants {
-                dict.insert(variant_name.clone(), variants.len());
-                variants.push(EnumVariant {
-                    name: variant_name,
-                    name_span: Span::null(),
-                    value: variant_value,
-                    span: Span::null(),
-                });
-            }
-
-            this.dict.insert(enum_name.clone(), this.enums.len());
-            this.enums.push(Enum {
-                name: enum_name,
-                name_span: Span::null(),
-                variants,
-                dict,
-                span: Span::null(),
-            });
-        }
-
-        this
     }
 }
 
@@ -541,6 +502,23 @@ impl<S> EnumSet<S> {
     }
 }
 
+impl<S> IntoIterator for EnumSet<S> {
+    type Item = Enum<S>;
+    type IntoIter = vec::IntoIter<Enum<S>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.enums.into_iter()
+    }
+}
+
+impl<S: Clone + Eq + Hash> FromIterator<Enum<S>> for EnumSet<S> {
+    fn from_iter<T: IntoIterator<Item = Enum<S>>>(iter: T) -> Self {
+        let mut enums = EnumSet::default();
+        enums.merge(iter);
+        enums
+    }
+}
+
 impl<S: Eq + Hash> EnumSet<S> {
     /// Find a enum index by its name.
     pub fn find<Q: ?Sized>(&self, name: &Q) -> Option<usize>
@@ -548,13 +526,40 @@ impl<S: Eq + Hash> EnumSet<S> {
         S: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.dict.get(name).copied()
+        self.enum_dict.get(name).copied()
     }
 }
 
 impl<S: Clone + Eq + Hash> EnumSet<S> {
+    /// Insert an enum into this set.
+    ///
+    /// Never overwrites an existing enum. If the given enum shares a name with a pre-existing one,
+    /// only the *newly inserted* enum will be returned from [`EnumSet::find`].
+    ///
+    /// The returned index will always be the previous value of [`EnumSet::len`].
+    pub fn insert(&mut self, enum_: Enum<S>) -> usize {
+        let mut variant_dict = HashMap::new();
+        for (i, variant) in enum_.variants.iter().enumerate() {
+            variant_dict.insert(variant.name.clone(), i);
+        }
+
+        let name = enum_.name.clone();
+        let index = self.enums.len();
+        self.enums.push(enum_);
+        self.variant_dicts.push(variant_dict);
+        self.enum_dict.insert(name, index);
+        index
+    }
+
+    /// Insert all of the given enums into this set.
+    pub fn merge(&mut self, enums: impl IntoIterator<Item = Enum<S>>) {
+        for enum_ in enums {
+            self.insert(enum_);
+        }
+    }
+
     /// Expand all enum values referenced anywhere in the given block.
-    pub fn expand(&self, block: &mut ast::Block<S>) -> Result<(), EnumEvaluationError> {
+    pub fn expand(&self, block: &mut impl ast::WalkMut<S>) -> Result<(), EnumEvaluationError> {
         struct EnumExpander<'a, S>(&'a EnumSet<S>);
 
         impl<'a, S: Clone + Eq + Hash> ast::VisitorMut<S> for EnumExpander<'a, S> {
@@ -566,7 +571,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             ) -> ControlFlow<Self::Break> {
                 match expr {
                     ast::Expression::Ident(ident) => {
-                        if let Some(&enum_index) = self.0.dict.get(ident) {
+                        if let Some(&enum_index) = self.0.enum_dict.get(ident) {
                             return ControlFlow::Break(EnumEvaluationError {
                                 kind: EnumEvaluationErrorKind::NoVariant,
                                 enum_index,
@@ -576,9 +581,9 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
                     }
                     ast::Expression::Field(field_expr) => {
                         if let ast::Expression::Ident(ident) = &*field_expr.base {
-                            if let Some(&enum_index) = self.0.dict.get(ident) {
+                            if let Some(&enum_index) = self.0.enum_dict.get(ident) {
                                 if let Some(&var_index) =
-                                    self.0.enums[enum_index].dict.get(&field_expr.field)
+                                    self.0.variant_dicts[enum_index].get(&field_expr.field)
                                 {
                                     let val = self.0.enums[enum_index].variants[var_index].value;
                                     *expr = ast::Expression::Constant(
@@ -608,33 +613,6 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
             Ok(())
         }
     }
-
-    /// Turn an `EnumSet` back into an `EnumSetBuilder` to extend the set of enums.
-    ///
-    /// Existing enums and variants will retain the same indexes that they have in the `EnumSet`.
-    pub fn into_builder(self) -> EnumSetBuilder<S> {
-        EnumSetBuilder {
-            enums: self
-                .enums
-                .into_iter()
-                .map(|e| ResolvingEnum {
-                    name: ast::Ident::new(e.name, e.name_span),
-                    variants: e
-                        .variants
-                        .into_iter()
-                        .map(|v| ResolvingEnumVariant {
-                            name: ast::Ident::new(v.name, v.name_span),
-                            kind: ResolvingEnumVariantKind::Evaluated(v.value),
-                            span: v.span,
-                        })
-                        .collect(),
-                    dict: e.dict,
-                    span: e.span,
-                })
-                .collect(),
-            dict: self.dict,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -659,10 +637,23 @@ mod tests {
             var value = Hello.B;
         "#;
 
-        let enums = EnumSet::with_synthetic(SyntheticEnums::from_iter([(
-            "Hello".to_owned(),
-            HashMap::from_iter([("A".to_owned(), 1), ("B".to_owned(), 2)]),
-        )]));
+        let enums: EnumSet<_> = [Enum {
+            name: "Hello".to_owned(),
+            variants: [
+                EnumVariant {
+                    name: "A".to_owned(),
+                    value: 1,
+                },
+                EnumVariant {
+                    name: "B".to_owned(),
+                    value: 2,
+                },
+            ]
+            .into_iter()
+            .collect(),
+        }]
+        .into_iter()
+        .collect();
 
         let mut tokens = Vec::new();
         Lexer::tokenize(SimpleInterner, SOURCE, &mut tokens).unwrap();
