@@ -1,6 +1,7 @@
-use std::collections::{HashMap, HashSet, hash_map};
+use std::collections::hash_map;
 
 use fabricator_util::typed_id_map::SecondaryMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::{
@@ -41,8 +42,8 @@ pub struct InstructionLivenessRange {
 
 #[derive(Debug)]
 pub struct InstructionLiveness {
-    block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::InstId, InstructionLivenessRange>>,
-    live_blocks_for_instruction: SecondaryMap<ir::InstId, HashSet<ir::BlockId>>,
+    block_liveness: SecondaryMap<ir::BlockId, FxHashMap<ir::InstId, InstructionLivenessRange>>,
+    live_blocks_for_instruction: SecondaryMap<ir::InstId, FxHashSet<ir::BlockId>>,
 }
 
 impl InstructionLiveness {
@@ -57,11 +58,17 @@ impl InstructionLiveness {
         let dominators =
             Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
-        let mut block_definitions: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
-            ir.blocks.ids().map(|id| (id, HashSet::new())).collect();
+        let mut block_definitions: SecondaryMap<ir::BlockId, FxHashSet<ir::InstId>> = ir
+            .blocks
+            .ids()
+            .map(|id| (id, FxHashSet::default()))
+            .collect();
 
-        let mut block_uses: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
-            ir.blocks.ids().map(|id| (id, HashSet::new())).collect();
+        let mut block_uses: SecondaryMap<ir::BlockId, FxHashSet<ir::InstId>> = ir
+            .blocks
+            .ids()
+            .map(|id| (id, FxHashSet::default()))
+            .collect();
 
         let mut inst_positions = SecondaryMap::new();
         for (block_id, block) in ir.blocks.iter() {
@@ -130,8 +137,10 @@ impl InstructionLiveness {
 
         let post_order = dfs_post_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
-        let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::InstId>> =
-            post_order.iter().map(|&id| (id, HashSet::new())).collect();
+        let mut live_in: SecondaryMap<ir::BlockId, FxHashSet<ir::InstId>> = post_order
+            .iter()
+            .map(|&id| (id, FxHashSet::default()))
+            .collect();
         let mut live_out = live_in.clone();
 
         let mut changed = true;
@@ -176,7 +185,7 @@ impl InstructionLiveness {
             let live_in = &live_in[block_id];
             let live_out = &live_out[block_id];
 
-            let mut ranges: HashMap<ir::InstId, InstructionLivenessRange> = HashMap::new();
+            let mut ranges: FxHashMap<ir::InstId, InstructionLivenessRange> = FxHashMap::default();
             let mut mark_use = |inst_id, index| match ranges.entry(inst_id) {
                 hash_map::Entry::Occupied(mut occupied) => {
                     occupied.get_mut().end = Some(index);
@@ -247,7 +256,7 @@ impl InstructionLiveness {
         for (block_id, ranges) in block_ranges.iter() {
             for &inst_id in ranges.keys() {
                 live_blocks_for_instruction
-                    .get_or_insert_with(inst_id, HashSet::new)
+                    .get_or_insert_with(inst_id, FxHashSet::default)
                     .insert(block_id);
             }
         }

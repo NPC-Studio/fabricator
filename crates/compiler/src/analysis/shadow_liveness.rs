@@ -1,6 +1,7 @@
-use std::collections::{HashMap, HashSet, hash_map};
+use std::collections::hash_map;
 
 use fabricator_util::typed_id_map::SecondaryMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::{graph::dfs::dfs_post_order, ir};
@@ -77,8 +78,8 @@ pub struct ShadowLivenessRange {
 
 #[derive(Debug)]
 pub struct ShadowLiveness {
-    block_liveness: SecondaryMap<ir::BlockId, HashMap<ir::ShadowVar, ShadowLivenessRange>>,
-    live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, HashSet<ir::BlockId>>,
+    block_liveness: SecondaryMap<ir::BlockId, FxHashMap<ir::ShadowVar, ShadowLivenessRange>>,
+    live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, FxHashSet<ir::BlockId>>,
 }
 
 impl ShadowLiveness {
@@ -106,8 +107,11 @@ impl ShadowLiveness {
 
         let mut upsilon_instructions: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVar, Vec<usize>>,
-        > = post_order.iter().map(|&id| (id, HashMap::new())).collect();
+            FxHashMap<ir::ShadowVar, Vec<usize>>,
+        > = post_order
+            .iter()
+            .map(|&id| (id, FxHashMap::default()))
+            .collect();
 
         for &block_id in &post_order {
             let upsilon_map = upsilon_instructions.get_mut(block_id).unwrap();
@@ -124,8 +128,11 @@ impl ShadowLiveness {
         let mut shadow_vars: SecondaryMap<ir::ShadowVar, ()> = SecondaryMap::new();
         let mut incoming_ranges: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVar, ShadowIncomingRange>,
-        > = post_order.iter().map(|&id| (id, HashMap::new())).collect();
+            FxHashMap<ir::ShadowVar, ShadowIncomingRange>,
+        > = post_order
+            .iter()
+            .map(|&id| (id, FxHashMap::default()))
+            .collect();
 
         for &block_id in &post_order {
             for (inst_index, &inst_id) in ir.blocks[block_id].instructions.iter().enumerate() {
@@ -162,11 +169,16 @@ impl ShadowLiveness {
 
         let mut outgoing_ranges: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVar, ShadowOutgoingRange>,
-        > = post_order.iter().map(|&id| (id, HashMap::new())).collect();
+            FxHashMap<ir::ShadowVar, ShadowOutgoingRange>,
+        > = post_order
+            .iter()
+            .map(|&id| (id, FxHashMap::default()))
+            .collect();
 
-        let mut live_in: SecondaryMap<ir::BlockId, HashSet<ir::ShadowVar>> =
-            post_order.iter().map(|&id| (id, HashSet::new())).collect();
+        let mut live_in: SecondaryMap<ir::BlockId, FxHashSet<ir::ShadowVar>> = post_order
+            .iter()
+            .map(|&id| (id, FxHashSet::default()))
+            .collect();
         let mut live_out = live_in.clone();
 
         for (block_id, shadow_vars) in incoming_ranges.iter() {
@@ -227,9 +239,9 @@ impl ShadowLiveness {
 
         let mut block_liveness: SecondaryMap<
             ir::BlockId,
-            HashMap<ir::ShadowVar, ShadowLivenessRange>,
+            FxHashMap<ir::ShadowVar, ShadowLivenessRange>,
         > = SecondaryMap::new();
-        let mut live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, HashSet<ir::BlockId>> =
+        let mut live_blocks_for_shadow_var: SecondaryMap<ir::ShadowVar, FxHashSet<ir::BlockId>> =
             SecondaryMap::new();
 
         for &block_id in &post_order {

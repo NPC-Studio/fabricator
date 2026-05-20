@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use fabricator_util::{bit_containers::BitSlice as _, typed_id_map::SecondaryMap};
 use fabricator_vm::instructions::HeapIdx;
+use rustc_hash::FxHashMap;
 
 use crate::{
     analysis::variable_liveness::VariableLiveness,
@@ -23,6 +22,7 @@ impl<S: Clone> HeapAllocation<S> {
     /// same index.
     pub fn allocate(
         ir: &ir::Function<S>,
+        variable_liveness: &VariableLiveness,
         parent_heap_indexes: &SecondaryMap<ir::VarId, HeapIdx>,
     ) -> Result<Self, ProtoGenError> {
         let mut heap_vars = Vec::new();
@@ -48,8 +48,6 @@ impl<S: Clone> HeapAllocation<S> {
             heap_vars.push(desc);
         }
 
-        let variable_liveness = VariableLiveness::compute(ir).unwrap();
-
         // Like SSA instructions, owned variables can be assigned in a single pass. Because we know
         // that a variable cannot become live again after its range ends, we can do a single pass
         // over the CFG in topological order and assign indexes as we go.
@@ -70,8 +68,8 @@ impl<S: Clone> HeapAllocation<S> {
                 live_in_indexes.set_bit(i, true);
             }
 
-            let mut var_life_starts = HashMap::new();
-            let mut var_life_ends = HashMap::new();
+            let mut var_life_starts = FxHashMap::default();
+            let mut var_life_ends = FxHashMap::default();
             for (var_id, range) in variable_liveness.live_for_block(block_id) {
                 if let Some(start) = range.start {
                     assert!(var_life_starts.insert(start, var_id).is_none());

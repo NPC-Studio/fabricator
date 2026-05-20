@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use either::Either;
 use fabricator_util::{
     index_containers::{IndexMap, IndexSet},
@@ -158,18 +156,17 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // We need to add all live instructions to the work queue. First do two things...
     //
     // 1) For every instruction with an effect that is not an `Upsilon`, mark it as live.
-    // 2) For each `Upsilon` instruction, add it and its source to the `upsilon_instructions` map.
-    //    When we encounter a live `Phi` instruction, every instruction in this map for that shadow
-    //    variable will become live. This way, an `Upsilon` and its sources are only live when the
-    //    `Phi` is live.
-    let mut upsilon_instructions: HashMap<ir::ShadowVar, Vec<ir::InstId>> = HashMap::new();
+    // 2) For each `Upsilon` instruction, add it to the `upsilon_instructions` map. When we
+    //    encounter a live `Phi` instruction, every instruction in this map for that shadow variable
+    //    will become live. This way, an `Upsilon` is only live when the `Phi` is live.
+    let mut upsilon_instructions: SecondaryMap<ir::ShadowVar, Vec<ir::InstId>> =
+        SecondaryMap::new();
     for (inst_id, _) in inst_blocks.iter() {
         let inst = &ir.instructions[inst_id];
-        if let ir::InstructionKind::Upsilon(shadow_var, source) = inst.kind {
+        if let ir::InstructionKind::Upsilon(shadow_var, _) = inst.kind {
             upsilon_instructions
-                .entry(shadow_var)
-                .or_default()
-                .extend([inst_id, source]);
+                .get_or_insert_default(shadow_var)
+                .push(inst_id);
         } else if inst.effects.has_effect() {
             live_instructions.insert(inst_id.index() as usize);
             worklist.push(Work::Instruction(inst_id));
@@ -193,8 +190,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
             Work::Instruction(inst_id) => {
                 match &ir.instructions[inst_id].kind {
                     &ir::InstructionKind::Phi(shadow_var) => {
-                        for &inst_id in upsilon_instructions.get(&shadow_var).into_iter().flatten()
-                        {
+                        for &inst_id in upsilon_instructions.get(shadow_var).into_iter().flatten() {
                             if live_instructions.insert(inst_id.index() as usize) {
                                 worklist.push(Work::Instruction(inst_id));
                             }

@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet, hash_map};
+use std::collections::hash_map;
 
 use fabricator_util::{index_containers::IndexSet, typed_id_map::SecondaryMap};
 use fabricator_vm::Span;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     analysis::vec_change_set::VecChangeSet,
@@ -24,7 +25,7 @@ use crate::{
 pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // We don't do SSA conversion of any shared variables: static variables, upvalues, and any owned
     // variables shared to a lower function.
-    let mut skip_vars = HashSet::new();
+    let mut skip_vars = FxHashSet::default();
     for (var_id, var) in ir.variables.iter() {
         if !var.is_owned() {
             skip_vars.insert(var_id);
@@ -40,7 +41,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
 
     let dominators = Dominators::compute(ir.start_block, |b| ir.blocks[b].exit.kind.successors());
 
-    let mut assigning_blocks: SecondaryMap<ir::VarId, HashSet<ir::BlockId>> = SecondaryMap::new();
+    let mut assigning_blocks: SecondaryMap<ir::VarId, FxHashSet<ir::BlockId>> = SecondaryMap::new();
 
     // We don't do any SSA conversion of unreachable blocks.
     for block_id in dominators.topological_order() {
@@ -61,7 +62,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
     // This algorithm is from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
 
-    let mut phi_functions: SecondaryMap<ir::BlockId, HashMap<ir::VarId, ir::ShadowVar>> =
+    let mut phi_functions: SecondaryMap<ir::BlockId, FxHashMap<ir::VarId, ir::ShadowVar>> =
         SecondaryMap::new();
     let mut shadow_map: SecondaryMap<ir::ShadowVar, ir::VarId> = SecondaryMap::new();
 
@@ -119,7 +120,7 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
 
     let current_vars: SecondaryMap<ir::VarId, Vec<ir::InstId>> =
         SecondaryMap::from_iter(assigning_blocks.ids().map(|var_id| (var_id, Vec::new())));
-    let var_stack_bottom: SecondaryMap<ir::BlockId, HashMap<ir::VarId, usize>> =
+    let var_stack_bottom: SecondaryMap<ir::BlockId, FxHashMap<ir::VarId, usize>> =
         SecondaryMap::new();
 
     // We turn the recursive algorithm from Cytron et al. into an explicit DFS of the dominator

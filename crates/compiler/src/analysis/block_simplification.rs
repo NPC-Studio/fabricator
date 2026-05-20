@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{graph::predecessors::Predecessors, ir};
 
@@ -8,8 +8,8 @@ pub fn merge_blocks<S>(ir: &mut ir::Function<S>) {
     let predecessors =
         Predecessors::compute(ir.blocks.ids(), |b| ir.blocks[b].exit.kind.successors());
 
-    let mut merge_next: HashMap<ir::BlockId, ir::BlockId> = HashMap::new();
-    let mut merge_tails: HashSet<ir::BlockId> = HashSet::new();
+    let mut merge_next: FxHashMap<ir::BlockId, ir::BlockId> = FxHashMap::default();
+    let mut merge_tails: FxHashSet<ir::BlockId> = FxHashSet::default();
 
     for (block_id, block) in ir.blocks.iter() {
         let mut merge = |target: ir::BlockId| {
@@ -84,7 +84,7 @@ pub fn block_branch_to_jump<S>(ir: &mut ir::Function<S>) {
 /// For all empty blocks, try to redirect exits for blocks which jump to them.
 pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
     // Gather a list of every empty block and a map from empty blocks' `BlockId` to `Exit`.
-    let mut empty_block_redirects = HashMap::new();
+    let mut empty_block_redirects = FxHashMap::default();
     for (block_id, block) in ir.blocks.iter() {
         if block.instructions.is_empty() {
             empty_block_redirects.insert(block_id, block.exit.kind);
@@ -92,7 +92,7 @@ pub fn redirect_empty_blocks<S>(ir: &mut ir::Function<S>) {
     }
 
     // A set to detect loops in the chain of empty jump targets.
-    let mut encountered_jump_targets: HashSet<ir::BlockId> = HashSet::new();
+    let mut encountered_jump_targets: FxHashSet<ir::BlockId> = FxHashSet::default();
 
     // Resolve all chains of jumps in the map of empty block exits so that each jump is the furthest
     // in the chain.

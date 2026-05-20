@@ -7,6 +7,7 @@ edition.workspace = true
 arrayvec.workspace = true
 either.workspace = true
 gc-arena.workspace = true
+rustc-hash.workspace = true
 thiserror.workspace = true
 
 fabricator-vm.workspace = true

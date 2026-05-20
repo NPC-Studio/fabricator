@@ -8,7 +8,7 @@ use std::{
 use gc_arena::{
     Collect, Gc, GcWeak, Mutation, barrier::Unlock as _, collect::Trace, lock::RefLock,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A shared string with 'static lifetime.
 #[derive(Clone, Eq, PartialEq, Hash, Collect)]
@@ -131,6 +131,7 @@ impl<'gc> Deref for String<'gc> {
 }
 
 pub type StringMap<'gc, V> = FxHashMap<String<'gc>, V>;
+pub type StringSet<'gc> = FxHashSet<String<'gc>>;
 
 struct InternedStringsInner<'gc>(RefLock<FxHashMap<SharedStr, GcWeak<'gc, SharedStr>>>);
 

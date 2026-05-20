@@ -1,16 +1,19 @@
-use std::{
-    collections::{HashMap, HashSet, hash_map},
-    hash::Hash,
-};
+use std::{collections::hash_map, hash::Hash};
 
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
     self as vm,
     instructions::{self, Instruction},
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    analysis::nested_scope_liveness::{CallScopeLiveness, ThisScopeLiveness},
+    analysis::{
+        instruction_liveness::InstructionLiveness,
+        nested_scope_liveness::{CallScopeLiveness, ThisScopeLiveness},
+        shadow_liveness::ShadowLiveness,
+        variable_liveness::VariableLiveness,
+    },
     code_gen::{
         ProtoGenError, heap_alloc::HeapAllocation, prototype::Prototype,
         register_alloc::RegisterAllocation,
@@ -37,11 +40,14 @@ fn codegen_function<S: Clone + Eq + Hash>(
     magic_index: &impl Fn(&S) -> Option<usize>,
     parent_heap_indexes: &SecondaryMap<ir::VarId, instructions::HeapIdx>,
 ) -> Result<Prototype<S>, ProtoGenError> {
-    let mut reg_alloc = RegisterAllocation::allocate(ir)?;
-    let heap_alloc = HeapAllocation::allocate(ir, parent_heap_indexes)?;
-
+    let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
+    let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
+    let variable_liveness = VariableLiveness::compute(ir).unwrap();
     let this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
     let call_scope_liveness = CallScopeLiveness::compute(ir).unwrap();
+
+    let mut reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)?;
+    let heap_alloc = HeapAllocation::allocate(ir, &variable_liveness, parent_heap_indexes)?;
 
     let mut prototypes = Vec::new();
     let mut prototype_indexes: SecondaryMap<ir::FuncId, instructions::ProtoIdx> =
@@ -62,7 +68,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
     }
 
     let mut constants = Vec::new();
-    let mut constant_indexes = HashMap::<Constant<S>, instructions::ConstIdx>::new();
+    let mut constant_indexes = FxHashMap::<Constant<S>, instructions::ConstIdx>::default();
 
     let mut get_const_index = |c: &Constant<S>| -> Result<instructions::ConstIdx, ProtoGenError> {
         Ok(match constant_indexes.entry(c.clone()) {
@@ -81,7 +87,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
     let block_order = topological_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
-    let block_order_indexes: HashMap<ir::BlockId, usize> = block_order
+    let block_order_indexes: FxHashMap<ir::BlockId, usize> = block_order
         .iter()
         .copied()
         .enumerate()
@@ -112,7 +118,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut call_scopes_which_save = call_scope_liveness
         .scopes()
         .filter(|&s| call_scope_liveness.has_inner_scope(s))
-        .collect::<HashSet<_>>();
+        .collect::<FxHashSet<_>>();
 
     let mut saved_stack_top_registers =
         vec![reg_alloc.allocate_extra()?; call_scope_liveness.nesting()];
@@ -555,10 +561,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     }
                 }
                 ir::InstructionKind::Upsilon(shadow, source) => {
-                    if reg_alloc
-                        .shadow_liveness
-                        .is_live_upsilon(shadow, block_id, inst_index)
-                    {
+                    if shadow_liveness.is_live_upsilon(shadow, block_id, inst_index) {
                         let shadow_reg = reg_alloc.shadow_registers[shadow];
                         let source_reg = reg_alloc.instruction_registers[source];
                         if shadow_reg != source_reg {

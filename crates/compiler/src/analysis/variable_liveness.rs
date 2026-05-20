@@ -1,6 +1,5 @@
-use std::collections::HashSet;
-
 use fabricator_util::typed_id_map::SecondaryMap;
+use rustc_hash::FxHashSet;
 use thiserror::Error;
 
 use crate::{
@@ -35,7 +34,7 @@ pub struct VariableVerificationError {
 #[derive(Debug)]
 pub struct VariableLiveness {
     live_ranges: SecondaryMap<ir::VarId, ScopeLiveness>,
-    live_variables_for_block: SecondaryMap<ir::BlockId, HashSet<ir::VarId>>,
+    live_variables_for_block: SecondaryMap<ir::BlockId, FxHashSet<ir::VarId>>,
 }
 
 impl VariableLiveness {

@@ -19,7 +19,6 @@ use crate::{
 pub struct RegisterAllocation {
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
     pub shadow_registers: SecondaryMap<ir::ShadowVar, RegIdx>,
-    pub shadow_liveness: ShadowLiveness,
     pub used_registers: usize,
 }
 
@@ -28,10 +27,11 @@ impl RegisterAllocation {
     ///
     /// Will try to coalesce registers for shadow variables and the registers for the `Phi` /
     /// `Upsilon` instructions that read and write to them.
-    pub fn allocate<S>(ir: &ir::Function<S>) -> Result<Self, ProtoGenError> {
-        let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
-        let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
-
+    pub fn allocate<S>(
+        ir: &ir::Function<S>,
+        instruction_liveness: &InstructionLiveness,
+        shadow_liveness: &ShadowLiveness,
+    ) -> Result<Self, ProtoGenError> {
         let upsilon_reach_map = compute_upsilon_reachability(ir, &shadow_liveness);
 
         // First, we assign shadow variables and the instructions they can coalesce with via graph
@@ -408,7 +408,6 @@ impl RegisterAllocation {
         Ok(Self {
             instruction_registers,
             shadow_registers,
-            shadow_liveness,
             used_registers: register_top,
         })
     }

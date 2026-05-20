@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet, hash_map},
-    hash::Hash,
-};
+use std::{collections::hash_map, hash::Hash};
 
 use fabricator_vm::{BuiltIns, FunctionRef, SharedStr, Span};
+use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::{ast, constant::Constant, ir, string_interner::StringInterner};
@@ -216,7 +214,7 @@ struct FunctionCompiler<'a, S> {
     //
     // This list is always kept in scope stack order, so the top entry in the list is always the
     // variable currently visible for this name.
-    var_lookup: HashMap<ast::Ident<S>, Vec<usize>>,
+    var_lookup: FxHashMap<ast::Ident<S>, Vec<usize>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -294,7 +292,7 @@ struct Scope<S> {
 
     // All variable declarations for this scope which have not been shadowed. When a new declaration
     // shadows another, the new declaration will replace the old in this map.
-    visible: HashMap<ast::Ident<S>, VarDecl<S>>,
+    visible: FxHashMap<ast::Ident<S>, VarDecl<S>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -309,7 +307,7 @@ impl<S> Default for Scope<S> {
     fn default() -> Self {
         Self {
             to_close: Vec::new(),
-            visible: HashMap::new(),
+            visible: FxHashMap::default(),
         }
     }
 }
@@ -389,7 +387,7 @@ where
             closure_bind_mode: Vec::new(),
             // Even with no block scoping, all functions must have one top-level scope.
             scopes: vec![Scope::default()],
-            var_lookup: HashMap::new(),
+            var_lookup: FxHashMap::default(),
         }
     }
 
@@ -623,7 +621,7 @@ where
         // All function expressions within static initializers are *unbound*.
         self.push_closure_bind_mode(ClosureBindMode::BindNothing);
 
-        let mut static_names = HashSet::new();
+        let mut static_names = FxHashSet::default();
 
         for stmt in &body.statements {
             match stmt {
@@ -2590,7 +2588,7 @@ where
 
         // If we allow closures, then pass every currently in-scope variable as an upvar.
         if self.settings.closures || force_closure {
-            let mut upper_constructor_parents = HashMap::new();
+            let mut upper_constructor_parents = FxHashMap::default();
 
             // Takes a `VarId` in this function and returns an upvar in the inner function.
             //

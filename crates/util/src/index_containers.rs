@@ -23,18 +23,22 @@ impl<V> IndexMap<V> {
         self.vec.clear();
     }
 
+    #[inline]
     pub fn contains(&self, i: usize) -> bool {
         self.get(i).is_some()
     }
 
+    #[inline]
     pub fn get(&self, i: usize) -> Option<&V> {
         self.vec.get(i)?.as_ref()
     }
 
+    #[inline]
     pub fn get_mut(&mut self, i: usize) -> Option<&mut V> {
         self.vec.get_mut(i)?.as_mut()
     }
 
+    #[inline]
     pub fn get_mut_option(&mut self, i: usize) -> &mut Option<V> {
         if i >= self.vec.len() {
             self.vec.resize_with(i.checked_add(1).unwrap(), || None);
@@ -55,10 +59,12 @@ impl<V> IndexMap<V> {
         self.get_mut_option(i).get_or_insert_default()
     }
 
+    #[inline]
     pub fn insert(&mut self, i: usize, v: V) -> Option<V> {
         self.get_mut_option(i).replace(v)
     }
 
+    #[inline]
     pub fn remove(&mut self, i: usize) -> Option<V> {
         if let Some(v) = self.vec.get_mut(i) {
             v.take()
@@ -136,35 +142,34 @@ impl IndexSet {
         self.len = 0;
     }
 
+    #[inline]
     pub fn contains(&self, i: usize) -> bool {
         self.vec.get(i).unwrap_or(false)
     }
 
     /// Returns `true` if the index `i` is newly inserted, false otherwise.
+    #[inline]
     pub fn insert(&mut self, i: usize) -> bool {
         !self.set(i, true)
     }
 
     /// Removes the index `i` from the set, returns true if `i` was present in the set.
+    #[inline]
     pub fn remove(&mut self, i: usize) -> bool {
         self.set(i, false)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.vec
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| if b { Some(i) } else { None })
-    }
-
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    #[inline]
     fn set(&mut self, i: usize, val: bool) -> bool {
         if i >= self.vec.len() {
             self.vec.resize(i.checked_add(1).unwrap(), false);
@@ -180,6 +185,13 @@ impl IndexSet {
         }
 
         old
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.vec
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| if b { Some(i) } else { None })
     }
 }
 

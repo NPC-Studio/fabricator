@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::{graph::dfs::topological_order, ir};
 
 pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
     // Map from copy instructions to their sources.
-    let mut copies: HashMap<ir::InstId, ir::InstId> = HashMap::new();
+    let mut copies: FxHashMap<ir::InstId, ir::InstId> = FxHashMap::default();
 
     let reachable_blocks =
         topological_order(ir.start_block, |b| ir.blocks[b].exit.kind.successors());

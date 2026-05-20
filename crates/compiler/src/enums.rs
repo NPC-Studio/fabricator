@@ -1,13 +1,8 @@
-use std::{
-    borrow::Borrow,
-    collections::{HashMap, HashSet},
-    hash::Hash,
-    ops::ControlFlow,
-    vec,
-};
+use std::{borrow::Borrow, hash::Hash, ops::ControlFlow, vec};
 
 use fabricator_vm::Span;
 use gc_arena::Collect;
+use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::{
@@ -89,15 +84,15 @@ pub struct SourceEnum<S> {
 #[derive(Debug, Clone)]
 pub struct EnumSetBuilder<S> {
     enums: Vec<SourceEnum<S>>,
-    enum_dict: HashMap<S, usize>,
-    variant_dicts: Vec<HashMap<S, usize>>,
+    enum_dict: FxHashMap<S, usize>,
+    variant_dicts: Vec<FxHashMap<S, usize>>,
 }
 
 impl<S> Default for EnumSetBuilder<S> {
     fn default() -> Self {
         Self {
             enums: Vec::new(),
-            enum_dict: HashMap::new(),
+            enum_dict: FxHashMap::default(),
             variant_dicts: Vec::new(),
         }
     }
@@ -171,7 +166,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
                 span: enum_stmt.span,
             };
 
-            let mut variant_dict = HashMap::new();
+            let mut variant_dict = FxHashMap::default();
 
             for (name, value) in enum_stmt.variants {
                 if let Some(expr) = value {
@@ -231,8 +226,8 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
             }
         }
 
-        let mut evaluating_variants = HashSet::<(usize, usize)>::new();
-        let mut evaluated_variants = HashSet::<(usize, usize)>::new();
+        let mut evaluating_variants = FxHashSet::<(usize, usize)>::default();
+        let mut evaluated_variants = FxHashSet::<(usize, usize)>::default();
         let mut eval_order = Vec::<(usize, usize)>::new();
         let mut dependencies = Vec::<(usize, usize)>::new();
 
@@ -343,7 +338,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
         // Once we have a known-good evaluation order, we can evaluate our interdependent variants
         // in this order and all references should be present.
 
-        let get_evaluated = |evaluated: &HashMap<(usize, usize), EnumValue>,
+        let get_evaluated = |evaluated: &FxHashMap<(usize, usize), EnumValue>,
                              enum_index: usize,
                              var_index: usize|
          -> EnumValue {
@@ -353,7 +348,7 @@ impl<S: Clone + Eq + Hash> EnumSetBuilder<S> {
             }
         };
 
-        let mut evaluated = HashMap::new();
+        let mut evaluated = FxHashMap::default();
 
         for (enum_index, variant_index) in eval_order {
             match self.enums[enum_index].variants[variant_index].kind.clone() {
@@ -460,15 +455,15 @@ pub struct Enum<S> {
 #[collect(no_drop)]
 pub struct EnumSet<S> {
     enums: Vec<Enum<S>>,
-    enum_dict: HashMap<S, usize>,
-    variant_dicts: Vec<HashMap<S, usize>>,
+    enum_dict: FxHashMap<S, usize>,
+    variant_dicts: Vec<FxHashMap<S, usize>>,
 }
 
 impl<S> Default for EnumSet<S> {
     fn default() -> Self {
         Self {
             enums: Vec::new(),
-            enum_dict: HashMap::new(),
+            enum_dict: FxHashMap::default(),
             variant_dicts: Vec::new(),
         }
     }
@@ -538,7 +533,7 @@ impl<S: Clone + Eq + Hash> EnumSet<S> {
     ///
     /// The returned index will always be the previous value of [`EnumSet::len`].
     pub fn insert(&mut self, enum_: Enum<S>) -> usize {
-        let mut variant_dict = HashMap::new();
+        let mut variant_dict = FxHashMap::default();
         for (i, variant) in enum_.variants.iter().enumerate() {
             variant_dict.insert(variant.name.clone(), i);
         }

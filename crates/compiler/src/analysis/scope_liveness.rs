@@ -1,5 +1,6 @@
-use std::collections::{HashMap, hash_map};
+use std::collections::hash_map;
 
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::{
@@ -38,7 +39,7 @@ pub struct ScopeBlockLiveness {
 
 #[derive(Debug)]
 pub struct ScopeLiveness {
-    live_ranges: HashMap<ir::BlockId, ScopeBlockLiveness>,
+    live_ranges: FxHashMap<ir::BlockId, ScopeBlockLiveness>,
 }
 
 impl ScopeLiveness {
@@ -60,7 +61,7 @@ impl ScopeLiveness {
         // Gather all of the close instruction locations and ensure they are dominated by the open
         // instruction.
 
-        let mut close_for_block = HashMap::<ir::BlockId, usize>::new();
+        let mut close_for_block = FxHashMap::<ir::BlockId, usize>::default();
         for close_loc in close_locs {
             if open_loc.block_id == close_loc.block_id {
                 if close_loc.index < open_loc.index {
@@ -97,7 +98,7 @@ impl ScopeLiveness {
         // this would be a block with indeterminate state). Every block that we reach this way has a
         // live range.
 
-        let mut live_ranges: HashMap<ir::BlockId, ScopeBlockLiveness> = HashMap::new();
+        let mut live_ranges: FxHashMap<ir::BlockId, ScopeBlockLiveness> = FxHashMap::default();
         try_depth_first_search(
             open_loc.block_id,
             |block_id| {

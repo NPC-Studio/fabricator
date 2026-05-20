@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
-
 use fabricator_util::typed_id_map::SecondaryMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{analysis::shadow_liveness::ShadowLiveness, graph::dfs::depth_first_search, ir};
 
@@ -18,7 +17,7 @@ pub fn compute_upsilon_reachability<S>(
     let mut reach_map = UpsilonReachabilityMap::default();
 
     for shadow_var in shadow_liveness.live_shadow_vars() {
-        let mut live_blocks = HashSet::new();
+        let mut live_blocks = FxHashSet::default();
         let mut live_upsilons = Vec::new();
         let mut phi_block = None;
 
@@ -41,8 +40,8 @@ pub fn compute_upsilon_reachability<S>(
 
         let phi_block = phi_block.unwrap();
 
-        let mut outgoing_reach: HashMap<ir::BlockId, Vec<ir::InstLocation>> =
-            HashMap::from_iter(live_blocks.iter().map(|&block_id| (block_id, Vec::new())));
+        let mut outgoing_reach: FxHashMap<ir::BlockId, Vec<ir::InstLocation>> =
+            FxHashMap::from_iter(live_blocks.iter().map(|&block_id| (block_id, Vec::new())));
 
         for &upsilon_loc in &live_upsilons {
             depth_first_search(
@@ -95,7 +94,7 @@ pub struct UpsilonReach {
     /// If there is an outgoing range for the shadow variable in the block key, the `HashMap` will
     /// contain every `Upsilon` instruction that may have written to the variable in this region
     /// since the last execution of the `Phi` instruction.
-    pub outgoing_reach: HashMap<ir::BlockId, Vec<ir::InstLocation>>,
+    pub outgoing_reach: FxHashMap<ir::BlockId, Vec<ir::InstLocation>>,
 }
 
 #[cfg(test)]

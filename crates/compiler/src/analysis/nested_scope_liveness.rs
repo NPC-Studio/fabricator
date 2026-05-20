@@ -1,6 +1,7 @@
-use std::{collections::HashSet, hash::Hash};
+use std::hash::Hash;
 
 use fabricator_util::typed_id_map::{self, SecondaryMap};
+use rustc_hash::FxHashSet;
 use thiserror::Error;
 
 use crate::{
@@ -43,7 +44,7 @@ where
     I: typed_id_map::Id,
 {
     scope_meta: SecondaryMap<I, ScopeMeta<I>>,
-    live_scopes_for_block: SecondaryMap<ir::BlockId, HashSet<I>>,
+    live_scopes_for_block: SecondaryMap<ir::BlockId, FxHashSet<I>>,
     nesting: usize,
 }
 

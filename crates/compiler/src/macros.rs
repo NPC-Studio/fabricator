@@ -1,13 +1,9 @@
-use std::{
-    borrow::Borrow,
-    collections::{HashMap, hash_map},
-    hash::Hash,
-    vec,
-};
+use std::{borrow::Borrow, collections::hash_map, hash::Hash, vec};
 
 use fabricator_util::index_containers::{IndexMap, IndexSet};
 use fabricator_vm::Span;
 use gc_arena::Collect;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::tokens::{Token, TokenKind};
@@ -50,14 +46,14 @@ pub struct ConfigurationSet<S> {
     pub default: Option<usize>,
 
     /// Macros specified with named configurations.
-    pub for_config: HashMap<S, usize>,
+    pub for_config: FxHashMap<S, usize>,
 }
 
 impl<S> Default for ConfigurationSet<S> {
     fn default() -> Self {
         Self {
             default: None,
-            for_config: HashMap::new(),
+            for_config: FxHashMap::default(),
         }
     }
 }
@@ -77,14 +73,14 @@ impl<S: Eq + Hash> ConfigurationSet<S> {
 #[derive(Debug, Clone)]
 pub struct MacroSetBuilder<S> {
     macros: Vec<SourceMacro<S>>,
-    macro_dict: HashMap<S, ConfigurationSet<S>>,
+    macro_dict: FxHashMap<S, ConfigurationSet<S>>,
 }
 
 impl<S> Default for MacroSetBuilder<S> {
     fn default() -> Self {
         Self {
             macros: Vec::new(),
-            macro_dict: HashMap::new(),
+            macro_dict: FxHashMap::default(),
         }
     }
 }
@@ -457,14 +453,14 @@ pub struct Macro<S> {
 #[collect(no_drop)]
 pub struct MacroSet<S> {
     macros: Vec<Macro<S>>,
-    macro_dict: HashMap<S, usize>,
+    macro_dict: FxHashMap<S, usize>,
 }
 
 impl<S> Default for MacroSet<S> {
     fn default() -> Self {
         Self {
             macros: Vec::new(),
-            macro_dict: HashMap::new(),
+            macro_dict: FxHashMap::default(),
         }
     }
 }

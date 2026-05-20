@@ -1,6 +1,7 @@
-use std::{borrow::Borrow, collections::HashMap, hash::Hash};
+use std::{borrow::Borrow, hash::Hash};
 
 use fabricator_vm::Span;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::ast;
@@ -55,14 +56,14 @@ impl<S> Export<S> {
 /// anywhere in the source.
 pub struct ExportSet<S> {
     exports: Vec<Export<S>>,
-    dict: HashMap<S, usize>,
+    dict: FxHashMap<S, usize>,
 }
 
 impl<S> Default for ExportSet<S> {
     fn default() -> Self {
         Self {
             exports: Vec::new(),
-            dict: HashMap::new(),
+            dict: FxHashMap::default(),
         }
     }
 }

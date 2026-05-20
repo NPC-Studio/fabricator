@@ -11,10 +11,12 @@ pub trait BitSlice {
 }
 
 impl BitSlice for [u8] {
+    #[inline]
     fn bit_len(&self) -> usize {
         self.len().saturating_mul(8)
     }
 
+    #[inline]
     fn get_bit(&self, i: usize) -> bool {
         let base = i / 8;
         let off = i % 8;
@@ -24,6 +26,7 @@ impl BitSlice for [u8] {
         byte & (1 << off) != 0
     }
 
+    #[inline]
     fn set_bit(&mut self, i: usize, val: bool) {
         let base = i / 8;
         let off = i % 8;
@@ -106,6 +109,7 @@ impl BitVec {
         self.as_slice().bit_iter()
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         self.bits.as_slice()
     }
@@ -114,6 +118,7 @@ impl BitVec {
 impl ops::Index<usize> for BitVec {
     type Output = bool;
 
+    #[inline]
     fn index(&self, index: usize) -> &Self::Output {
         if self.get(index).expect("index out of range") {
             &true

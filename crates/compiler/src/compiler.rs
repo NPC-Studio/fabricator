@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
 use fabricator_util::index_containers::IndexMap;
 use fabricator_vm as vm;
@@ -114,6 +114,7 @@ pub struct CompileSettings {
     pub ir_gen: IrGenSettings,
     pub optimization_passes: u8,
     pub export_top_level_functions: bool,
+    pub verify_ir: bool,
 }
 
 impl CompileSettings {
@@ -123,6 +124,7 @@ impl CompileSettings {
             ir_gen: IrGenSettings::compat(),
             optimization_passes: 2,
             export_top_level_functions: true,
+            verify_ir: cfg!(debug_assertions),
         }
     }
 
@@ -132,6 +134,7 @@ impl CompileSettings {
             ir_gen: IrGenSettings::modern(),
             optimization_passes: 2,
             export_top_level_functions: true,
+            verify_ir: cfg!(debug_assertions),
         }
     }
 
@@ -155,6 +158,14 @@ impl CompileSettings {
 
     pub fn export_top_level_functions(mut self, export_top_funcs: bool) -> Self {
         self.export_top_level_functions = export_top_funcs;
+        self
+    }
+
+    /// Do extra checks on the produced IR to ensure that it is valid.
+    ///
+    /// Defaults to `cfg!(debug_assertions)`.
+    pub fn verify_ir(mut self, verify_ir: bool) -> Self {
+        self.verify_ir = verify_ir;
         self
     }
 }
@@ -210,11 +221,6 @@ pub fn verify_ir<S: Clone>(ir: &ir::Function<S>) -> Result<(), IrVerificationErr
 ///
 /// May panic if the provided IR is not well-formed.
 pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
-    // Try and eliminate any unused child functions before optimizing them.
-    eliminate_dead_code(ir);
-    clean_unreachable_blocks(ir);
-    clean_unused_functions(ir);
-
     // Optimize all child functions first, which may remove variable references to this parent
     // function, allowing for more SSA conversion.
     for func in ir.functions.values_mut() {
@@ -222,13 +228,9 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
     }
 
     convert_to_ssa(ir);
-
-    fold_constants(ir);
-    eliminate_dead_code(ir);
     reduce_shadows(ir).unwrap();
-
-    eliminate_copies(ir);
     fold_constants(ir);
+    eliminate_copies(ir);
     eliminate_dead_code(ir);
 
     block_branch_to_jump(ir);
@@ -257,7 +259,7 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
 pub struct ImportItems<'gc> {
     pub macros: Gc<'gc, MacroSet<vm::String<'gc>>>,
     pub enums: Gc<'gc, EnumSet<vm::String<'gc>>>,
-    pub global_vars: Gc<'gc, HashSet<vm::String<'gc>>>,
+    pub global_vars: Gc<'gc, vm::StringSet<'gc>>,
     pub magic: Gc<'gc, vm::MagicSet<'gc>>,
 }
 
@@ -266,7 +268,7 @@ impl<'gc> ImportItems<'gc> {
         Self {
             macros: Gc::new(mc, MacroSet::new()),
             enums: Gc::new(mc, EnumSet::new()),
-            global_vars: Gc::new(mc, HashSet::new()),
+            global_vars: Gc::new(mc, vm::StringSet::default()),
             magic: stdlib,
         }
     }
@@ -276,7 +278,7 @@ impl<'gc> ImportItems<'gc> {
 pub struct StashedImportItems {
     macros: DynamicRoot<Rootable![MacroSet<vm::String<'_>>]>,
     enums: DynamicRoot<Rootable![EnumSet<vm::String<'_>>]>,
-    global_vars: DynamicRoot<Rootable![HashSet<vm::String<'_>>]>,
+    global_vars: DynamicRoot<Rootable![vm::StringSet<'_>]>,
     magic: vm::StashedMagicSet,
 }
 
@@ -287,7 +289,7 @@ impl<'gc> vm::Stashable<'gc> for ImportItems<'gc> {
         StashedImportItems {
             macros: roots.stash::<Rootable![MacroSet<vm::String<'_>>]>(mc, self.macros),
             enums: roots.stash::<Rootable![EnumSet<vm::String<'_>>]>(mc, self.enums),
-            global_vars: roots.stash::<Rootable![HashSet<vm::String<'_>>]>(mc, self.global_vars),
+            global_vars: roots.stash::<Rootable![vm::StringSet<'_>]>(mc, self.global_vars),
             magic: vm::Stashable::stash(self.magic, mc, roots),
         }
     }
@@ -312,7 +314,7 @@ impl vm::Fetchable for StashedImportItems {
 pub struct Compiler<'gc> {
     ctx: vm::Context<'gc>,
     preprocessor: Preprocessor<'gc>,
-    global_vars: HashSet<vm::String<'gc>>,
+    global_vars: vm::StringSet<'gc>,
     magic: vm::MagicSet<'gc>,
     ir_compile_settings: Vec<IrCompileSettings>,
 }
@@ -377,6 +379,7 @@ impl<'gc> Compiler<'gc> {
         self.ir_compile_settings.push(IrCompileSettings {
             ir_gen: settings.ir_gen,
             optimization_passes: settings.optimization_passes,
+            verify_ir: settings.verify_ir,
         });
 
         Ok(())
@@ -392,6 +395,7 @@ impl<'gc> Compiler<'gc> {
         self.ir_compile_settings.push(IrCompileSettings {
             ir_gen: settings.ir_gen,
             optimization_passes: settings.optimization_passes,
+            verify_ir: settings.verify_ir,
         });
     }
 
@@ -405,14 +409,20 @@ impl<'gc> Compiler<'gc> {
             ir: &mut ir::Function<vm::String<'gc>>,
             magic: &vm::MagicSet<'gc>,
         ) -> Prototype<vm::String<'gc>> {
-            if let Err(err) = verify_ir(ir) {
-                panic!("Internal IR Generation Error: {err}\nIR: {ir:?}");
+            if compile_settings.verify_ir {
+                if let Err(err) = verify_ir(ir) {
+                    panic!("Internal IR Generation Error: {err}\nIR: {ir:?}");
+                }
             }
+
             for _ in 0..compile_settings.optimization_passes {
                 optimize_ir(ir);
             }
-            if let Err(err) = verify_ir(ir) {
-                panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
+
+            if compile_settings.verify_ir && compile_settings.optimization_passes != 0 {
+                if let Err(err) = verify_ir(ir) {
+                    panic!("Internal IR Optimization Error: {err}\nIR: {ir:?}");
+                }
             }
 
             match gen_prototype(&ir, |n| magic.find(*n)) {
@@ -592,11 +602,12 @@ pub struct ChunkOutput<'gc> {
 struct IrCompileSettings {
     ir_gen: IrGenSettings,
     optimization_passes: u8,
+    verify_ir: bool,
 }
 
 struct CompilerVarDict<'gc, 'a> {
     enums: &'a EnumSet<vm::String<'gc>>,
-    global_vars: &'a HashSet<vm::String<'gc>>,
+    global_vars: &'a vm::StringSet<'gc>,
     magic: &'a vm::MagicSet<'gc>,
 }
 
