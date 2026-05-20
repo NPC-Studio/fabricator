@@ -1,7 +1,13 @@
-use std::{cell::RefCell, convert::Infallible, f64};
+use std::{
+    cell::{RefCell, RefMut},
+    convert::Infallible,
+    f64,
+};
 
 use fabricator_vm as vm;
-use rand::{Rng as _, SeedableRng, rngs::SmallRng, seq::SliceRandom as _};
+use gc_arena::Collect;
+use rand::{RngExt as _, SeedableRng, rngs::SmallRng, seq::SliceRandom as _};
+use thiserror::Error;
 
 use crate::util::{MagicExt as _, resolve_array_range};
 
@@ -88,6 +94,9 @@ pub fn clamp<'gc>(
     Ok(val.max(min).min(max))
 }
 
+/// The pRNG state for the current fabricator instance.
+#[derive(Collect)]
+#[collect(require_static)]
 pub struct Rng {
     rng: RefCell<SmallRng>,
 }
@@ -95,32 +104,80 @@ pub struct Rng {
 impl Default for Rng {
     fn default() -> Self {
         Self {
-            rng: RefCell::new(SmallRng::from_os_rng()),
+            rng: RefCell::new(rand::make_rng()),
         }
     }
 }
 
-pub type RngSingleton = gc_arena::Static<Rng>;
+impl Rng {
+    pub fn singleton<'gc>(ctx: vm::Context<'gc>) -> &'gc Rng {
+        &ctx.singleton::<gc_arena::Static<Rng>>().0
+    }
 
-pub fn randomize<'gc>(ctx: vm::Context<'gc>, (): ()) -> Result<u32, Infallible> {
-    // NOTE: GMS2 only generates a u32 and FoM relies on this.
-    let seed: u32 = rand::rng().random();
-    *ctx.singleton::<RngSingleton>().rng.borrow_mut() = SmallRng::seed_from_u64(seed as u64);
+    pub fn lock(&self) -> Result<RngLock<'_>, RngLockError> {
+        Ok(RngLock(
+            self.rng.try_borrow_mut().map_err(|_| RngLockError)?,
+        ))
+    }
+}
+
+pub struct RngLock<'a>(RefMut<'a, SmallRng>);
+
+#[derive(Debug, Error)]
+#[error("rng is currently locked")]
+pub struct RngLockError;
+
+impl<'a> rand::TryRng for RngLock<'a> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        self.0.try_next_u32()
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        self.0.try_next_u64()
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.try_fill_bytes(dst)
+    }
+}
+
+impl<'a> RngLock<'a> {
+    /// Set a new random state entirely from the given seed.
+    pub fn set_seed(&mut self, seed: i64) {
+        *self.0 = SmallRng::seed_from_u64(seed as u64);
+    }
+}
+
+/// Pick a random i64 as a new pRNG seed, initialize the pRNG with it and return it.
+pub fn randomize<'gc>(ctx: vm::Context<'gc>, (): ()) -> Result<i64, RngLockError> {
+    let seed: i64 = rand::rng().random();
+    Rng::singleton(ctx).lock()?.set_seed(seed);
     Ok(seed)
 }
 
-pub fn random_set_seed<'gc>(ctx: vm::Context<'gc>, seed: u32) -> Result<(), Infallible> {
-    *ctx.singleton::<RngSingleton>().rng.borrow_mut() = SmallRng::seed_from_u64(seed as u64);
+/// Initialize the pRNG with the given seed.
+pub fn random_set_seed<'gc>(ctx: vm::Context<'gc>, seed: i64) -> Result<(), RngLockError> {
+    Rng::singleton(ctx).lock()?.set_seed(seed);
     Ok(())
 }
 
-/// Gets the current random seed. If you set this seed again with [`random_set_seed`],
-/// the random pRNG will be restored to the same state as is after this function.
-pub fn random_get_seed<'gc>(ctx: vm::Context<'gc>, _no_args: ()) -> Result<i64, Infallible> {
-    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+/// Gets the current pRNG random seed.
+///
+/// If you set this seed again with [`random_set_seed`], the pRNG will be restored to the same state
+/// as is after this function.
+///
+/// Unlike GMS2, this function must mutate the current state of the pRNG! This function is nearly
+/// identical to [`randomize`] except that it gets the new random seed from the current state of the
+/// pRNG itself, making its behavior repeatable.
+///
+/// The internal pRNG state may be larger than can fit in an i64, so this function must *shrink* the
+/// state of the Rng to fit in an i64, so mutation is required.
+pub fn random_get_seed<'gc>(ctx: vm::Context<'gc>, _no_args: ()) -> Result<i64, RngLockError> {
+    let mut rng = Rng::singleton(ctx).lock()?;
     let next_seed = rng.random();
-    *rng = SmallRng::seed_from_u64(next_seed);
-
+    *rng.0 = SmallRng::seed_from_u64(next_seed);
     Ok(next_seed as i64)
 }
 
@@ -128,12 +185,12 @@ pub fn random_get_seed<'gc>(ctx: vm::Context<'gc>, _no_args: ()) -> Result<i64, 
 /// can be less than 0 or greater than zero.
 ///
 /// Returns `undefined` if given NaN or `infinity` or `-infinity`.
-pub fn random<'gc>(ctx: vm::Context<'gc>, other_bound: f64) -> Result<Option<f64>, Infallible> {
+pub fn random<'gc>(ctx: vm::Context<'gc>, other_bound: f64) -> Result<Option<f64>, RngLockError> {
     random_range(ctx, (0.0, other_bound))
 }
 /// This is a shorthand, effectively, for `irandom_range(0, other_bound)`. `other_bound`
 /// can be less than 0 or greater than zero
-pub fn irandom<'gc>(ctx: vm::Context<'gc>, other_bound: i64) -> Result<i64, Infallible> {
+pub fn irandom<'gc>(ctx: vm::Context<'gc>, other_bound: i64) -> Result<i64, RngLockError> {
     irandom_range(ctx, (0, other_bound))
 }
 
@@ -144,7 +201,7 @@ pub fn irandom<'gc>(ctx: vm::Context<'gc>, other_bound: i64) -> Result<i64, Infa
 pub fn random_range<'gc>(
     ctx: vm::Context<'gc>,
     (left, right): (f64, f64),
-) -> Result<Option<f64>, Infallible> {
+) -> Result<Option<f64>, RngLockError> {
     let range_test = left - right;
 
     let (lower, upper) = if !range_test.is_finite() {
@@ -155,7 +212,7 @@ pub fn random_range<'gc>(
         (right, left)
     };
 
-    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+    let mut rng = Rng::singleton(ctx).lock()?;
     Ok(Some(rng.random_range(lower..=upper)))
 }
 
@@ -164,23 +221,23 @@ pub fn random_range<'gc>(
 pub fn irandom_range<'gc>(
     ctx: vm::Context<'gc>,
     (left, right): (i64, i64),
-) -> Result<i64, Infallible> {
+) -> Result<i64, RngLockError> {
     let (lower, upper) = match left.cmp(&right) {
         std::cmp::Ordering::Less => (left, right),
         std::cmp::Ordering::Equal => return Ok(left),
         std::cmp::Ordering::Greater => (right, left),
     };
 
-    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+    let mut rng = Rng::singleton(ctx).lock()?;
     Ok(rng.random_range(lower..=upper))
 }
 
 pub fn choose<'gc>(
     ctx: vm::Context<'gc>,
     mut exec: vm::Execution<'gc, '_>,
-) -> Result<(), Infallible> {
+) -> Result<(), RngLockError> {
     let mut stack = exec.stack();
-    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+    let mut rng = Rng::singleton(ctx).lock()?;
     let i = rng.random_range(0..stack.len());
     let v = stack[i];
     stack.replace(ctx, v);
@@ -199,7 +256,7 @@ pub fn array_shuffle<'gc>(
         src_range.map(|i| src.get(i).unwrap()).collect()
     };
 
-    let mut rng = ctx.singleton::<RngSingleton>().rng.borrow_mut();
+    let mut rng = Rng::singleton(ctx).lock()?;
     vals.shuffle(&mut rng);
 
     Ok(vm::Array::from_iter(&ctx, vals))

@@ -155,7 +155,7 @@ struct FitScore<N> {
 mod tests {
     use std::{collections::HashMap, ops::Add};
 
-    use rand::{Rng, SeedableRng, rngs::SmallRng};
+    use rand::{RngExt as _, SeedableRng, rngs::SmallRng};
 
     use super::*;
 
