@@ -117,7 +117,9 @@ pub fn script_execute<'gc>(
         // callbacks while ignoring any bound `this`.
         func = func.rebind(&ctx, vm::Value::Undefined);
     }
-    Ok(exec.with_stack_bottom(1).call(ctx, func)?)
+    exec.with_stack_bottom(1).call(ctx, func)?;
+    exec.stack().drain(0..1);
+    Ok(())
 }
 
 pub fn script_execute_ext<'gc>(
