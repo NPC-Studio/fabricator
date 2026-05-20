@@ -44,7 +44,24 @@ impl<'gc> hash::Hash for Object<'gc> {
 
 impl<'gc> Object<'gc> {
     pub fn new(mc: &Mutation<'gc>) -> Self {
-        Self(Gc::new(mc, Default::default()))
+        Self::with_state(mc, Default::default())
+    }
+
+    pub fn with_state(mc: &Mutation<'gc>, state: ObjectState<'gc>) -> Self {
+        Self(Gc::new(mc, RefLock::new(state)))
+    }
+
+    pub fn from_iter(
+        mc: &Mutation<'gc>,
+        iter: impl IntoIterator<Item = (String<'gc>, Value<'gc>)>,
+    ) -> Self {
+        Self::with_state(
+            mc,
+            ObjectState {
+                map: StringMap::from_iter(iter),
+                parent: None,
+            },
+        )
     }
 
     #[inline]
