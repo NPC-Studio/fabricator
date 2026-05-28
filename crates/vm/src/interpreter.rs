@@ -1,6 +1,10 @@
 use std::ops;
 
-use gc_arena::{Arena, Collect, Mutation, Rootable, arena::Root};
+use gc_arena::{
+    Arena, Collect, Mutation, Rootable,
+    arena::{CollectionPhase as GcCollectionPhase, Root},
+    metrics::Metrics as GcMetrics,
+};
 
 use crate::{
     object::Object,
@@ -85,17 +89,30 @@ impl Interpreter {
         }
     }
 
-    pub fn enter<F, T>(&mut self, f: F) -> T
+    /// Enter the interpreter context.
+    pub fn enter<F, T>(&self, f: F) -> T
     where
         F: for<'gc> FnOnce(Context<'gc>) -> T,
     {
-        const COLLECTOR_GRANULARITY: f64 = 1024.0;
+        self.arena.mutate(move |mc, state| f(state.ctx(mc)))
+    }
 
-        let r = self.arena.mutate(move |mc, state| f(state.ctx(mc)));
-        if self.arena.metrics().allocation_debt() > COLLECTOR_GRANULARITY {
-            self.arena.collect_debt();
-        }
-        r
+    pub fn gc_metrics(&self) -> &GcMetrics {
+        self.arena.metrics()
+    }
+
+    /// Collect any outstanding GC debt according to the configured GC pacing.
+    pub fn gc_collect_debt(&mut self) {
+        self.arena.collect_debt();
+    }
+
+    /// Finish the current GC cycle
+    pub fn gc_finish_cycle(&mut self) {
+        self.arena.finish_cycle();
+    }
+
+    pub fn gc_collection_phase(&self) -> GcCollectionPhase {
+        self.arena.collection_phase()
     }
 }
 

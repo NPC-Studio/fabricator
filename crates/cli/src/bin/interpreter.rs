@@ -197,6 +197,7 @@ fn main() -> Result<ExitCode, Error> {
                     }
                     Ok(())
                 })?;
+                interpreter.gc_collect_debt();
             }
         }
     }

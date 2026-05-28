@@ -26,6 +26,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
         let thread = vm::Thread::new(&ctx);
         (ctx.stash(thread), ctx.stash(closure))
     });
+    interpreter.gc_collect_debt();
 
     c.bench_function(name, move |b| {
         b.iter(|| {
@@ -40,6 +41,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
                     );
                 });
             });
+            interpreter.gc_collect_debt();
         });
     });
 }

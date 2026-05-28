@@ -72,6 +72,7 @@ impl Game {
                 Ok(())
             })?;
         }
+        interpreter.gc_collect_debt();
         log::info!("finished executing all global scripts!");
 
         Ok(Game {

@@ -491,5 +491,7 @@ pub fn tick_state(
 
     state.instances.retain(|_, instance| !instance.dead);
 
+    interpreter.gc_collect_debt();
+
     Ok(())
 }

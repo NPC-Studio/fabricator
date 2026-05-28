@@ -8,7 +8,7 @@ use gc_arena::{Collect, Gc};
 
 #[test]
 fn test_vm_call_return_hooks() {
-    let mut interpreter = vm::Interpreter::new();
+    let interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
         let mut magic = vm::MagicSet::new();
@@ -115,7 +115,7 @@ fn test_vm_call_return_hooks() {
 
 #[test]
 fn test_vm_return_hook_on_error() {
-    let mut interpreter = vm::Interpreter::new();
+    let interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
         let output = compiler::Compiler::compile_chunk(
@@ -186,7 +186,7 @@ fn test_vm_return_hook_on_error() {
 
 #[test]
 fn test_vm_step_hook() {
-    let mut interpreter = vm::Interpreter::new();
+    let interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
         let output = compiler::Compiler::compile_chunk(

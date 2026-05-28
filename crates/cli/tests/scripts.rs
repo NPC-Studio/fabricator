@@ -41,7 +41,7 @@ fn run_code(
     code: &str,
     compile_settings: compiler::CompileSettings,
 ) -> Result<bool, Box<dyn Error>> {
-    let mut interpreter = vm::Interpreter::new();
+    let interpreter = vm::Interpreter::new();
 
     interpreter.enter(|ctx| {
         let output = compiler::Compiler::compile_chunk(
