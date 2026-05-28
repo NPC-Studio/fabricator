@@ -93,6 +93,11 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     }
 
     #[inline]
+    pub fn remove(&mut self, index: usize) -> Value<'gc> {
+        self.values.remove(self.bottom + index)
+    }
+
+    #[inline]
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<'_, Value<'gc>> {
         let start = match range.start_bound().cloned() {
             Bound::Included(r) => Bound::Included(self.bottom + r),

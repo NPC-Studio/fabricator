@@ -118,7 +118,7 @@ pub fn script_execute<'gc>(
         func = func.rebind(&ctx, vm::Value::Undefined);
     }
     exec.with_stack_bottom(1).call(ctx, func)?;
-    exec.stack().drain(0..1);
+    exec.stack().remove(0);
     Ok(())
 }
 
