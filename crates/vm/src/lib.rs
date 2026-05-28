@@ -17,6 +17,7 @@ pub mod string;
 pub mod thread;
 pub mod user_data;
 pub mod value;
+mod vec_end_slice;
 
 pub use self::{
     array::Array,

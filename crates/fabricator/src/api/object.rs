@@ -637,34 +637,35 @@ pub fn object_api<'gc>(
         .unwrap();
 
     let instance_destroy = vm::Callback::from_fn(&ctx, |ctx, mut exec| {
-        let object_or_instance = if let Some(ud) = exec.stack().consume(ctx)? {
-            ud
-        } else {
-            vm::FromValue::from_value(ctx, exec.this())?
-        };
-
-        let mut to_destroy = Vec::new();
+        let mut to_destroy = None;
         State::ctx_with(ctx, |state| {
-            if let Ok(object) = ObjectUserData::downcast(object_or_instance) {
-                if let Some(set) = state.instances_for_object.get(object.id) {
-                    to_destroy.extend(
-                        set.iter()
-                            .copied()
-                            .filter(|&id| state.instances.get(id).is_some_and(|i| !i.dead)),
-                    );
+            for i in 0..exec.this_depth() {
+                if let vm::Value::UserData(ud) = exec.this(ctx, i) {
+                    if let Ok(object) = ObjectUserData::downcast(ud) {
+                        if let Some(set) = state.instances_for_object.get(object.id) {
+                            to_destroy = Some(
+                                set.iter()
+                                    .copied()
+                                    .filter(|&id| state.instances.get(id).is_some_and(|i| !i.dead))
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                        break;
+                    } else if let Ok(instance) = InstanceUserData::downcast(ud) {
+                        if state.instances.get(instance.id).is_some_and(|i| !i.dead) {
+                            to_destroy = Some(vec![instance.id]);
+                        }
+                        break;
+                    };
                 }
-            } else if let Ok(instance) = InstanceUserData::downcast(object_or_instance) {
-                if state.instances.get(instance.id).is_some_and(|i| !i.dead) {
-                    to_destroy.push(instance.id);
-                }
-            } else {
-                return Err(vm::RuntimeError::msg(
-                    "`instance_destroy` expects an object or instance",
-                ));
-            };
+            }
+        })?;
 
-            Ok(())
-        })??;
+        let Some(to_destroy) = to_destroy else {
+            return Err(vm::RuntimeError::msg(
+                "`instance_destroy` expects an object or instance on the `this` stack",
+            ));
+        };
 
         for instance_id in to_destroy {
             if let Some(destroy_closure) = State::ctx_with(ctx, |state| {

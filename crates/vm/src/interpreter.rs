@@ -22,6 +22,7 @@ pub struct Context<'gc> {
 impl<'gc> ops::Deref for Context<'gc> {
     type Target = Mutation<'gc>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         self.mutation
     }
@@ -32,19 +33,23 @@ impl<'gc> Context<'gc> {
     /// object.
     ///
     /// This can also be done automatically with [`ops::Deref`] coercion.
+    #[inline]
     pub fn mutation(self) -> &'gc Mutation<'gc> {
         self.mutation
     }
 
+    #[inline]
     pub fn globals(self) -> Object<'gc> {
         self.state.globals
     }
 
+    #[inline]
     pub fn registry(self) -> Registry<'gc> {
         self.state.registry
     }
 
     /// Calls `ctx.registry().singleton::<S>(ctx)`.
+    #[inline]
     pub fn singleton<S>(self) -> &'gc Root<'gc, S>
     where
         S: for<'a> Rootable<'a> + 'static,
@@ -54,19 +59,23 @@ impl<'gc> Context<'gc> {
     }
 
     /// Calls `ctx.registry().stash(ctx, s)`.
+    #[inline]
     pub fn stash<S: Stashable<'gc>>(self, s: S) -> S::Stashed {
         self.state.registry.stash(&self, s)
     }
 
     /// Calls `ctx.registry().fetch(f)`.
+    #[inline]
     pub fn fetch<F: Fetchable + Fetchable>(self, f: &F) -> F::Fetched<'gc> {
         self.state.registry.fetch(f)
     }
 
+    #[inline]
     pub fn interned_strings(self) -> InternedStrings<'gc> {
         self.state.interned_strings
     }
 
+    #[inline]
     pub fn intern(self, s: &str) -> String<'gc> {
         self.state.interned_strings.intern(&self, s, || s.into())
     }

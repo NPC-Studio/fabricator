@@ -43,7 +43,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
     let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
     let variable_liveness = VariableLiveness::compute(ir).unwrap();
-    let this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
+    let _this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
     let call_scope_liveness = CallScopeLiveness::compute(ir).unwrap();
 
     let mut reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)?;
@@ -105,15 +105,9 @@ fn codegen_function<S: Clone + Eq + Hash>(
     // We do this because there are many more inner scopes than outer scopes, and this saves having
     // to repeatedly save the same values which are not modified.
 
-    // For "this" scopes, any scope that has an inner scope will save the value to restore on open.
-    // The number of required registers is equal to the "this" scope nesting level.
-
-    let saved_other_registers = vec![reg_alloc.allocate_extra()?; this_scope_liveness.nesting()];
-
-    // For "call" scopes, the story is not as simple. We need to save when a "call" scope has an
-    // inner scope, but *also* for certain other instructions which temporarily modify the stack.
-    // Search for which scopes contain those instructions and mark the containing scope as needing
-    // to save state.
+    // For "call" scopes, we need to save when a "call" scope has an inner scope, but *also* for
+    // certain other instructions which temporarily modify the stack. Search for which scopes
+    // contain those instructions and mark the containing scope as needing to save state.
 
     let mut call_scopes_which_save = call_scope_liveness
         .scopes()
@@ -175,17 +169,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
             };
             saved_stack_top_registers[idx]
         };
-
-    // If we need to save the bottom-level value for scopes, do so.
-
-    if !saved_other_registers.is_empty() {
-        vm_instructions.push((
-            Instruction::Other {
-                dest: saved_other_registers[0],
-            },
-            ir.reference.span().start_span(),
-        ));
-    }
 
     if !saved_stack_top_registers.is_empty() {
         vm_instructions.push((
@@ -327,17 +310,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         inst.span,
                     ));
                 }
-                ir::InstructionKind::OpenThisScope(scope) => {
-                    vm_instructions.push((Instruction::SwapThisOther {}, inst.span));
-                    if this_scope_liveness.has_inner_scope(scope) {
-                        let nesting_level = this_scope_liveness.nesting_level(scope).unwrap();
-                        vm_instructions.push((
-                            Instruction::Other {
-                                dest: saved_other_registers[nesting_level + 1],
-                            },
-                            inst.span,
-                        ));
-                    }
+                ir::InstructionKind::OpenThisScope(_) => {
+                    vm_instructions.push((Instruction::PushThis {}, inst.span));
                 }
                 ir::InstructionKind::SetThis(_, this) => {
                     vm_instructions.push((
@@ -347,15 +321,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         inst.span,
                     ));
                 }
-                ir::InstructionKind::CloseThisScope(scope) => {
-                    vm_instructions.push((Instruction::SwapThisOther {}, inst.span));
-                    let nesting_level = this_scope_liveness.nesting_level(scope).unwrap();
-                    vm_instructions.push((
-                        Instruction::SetOther {
-                            source: saved_other_registers[nesting_level],
-                        },
-                        inst.span,
-                    ));
+                ir::InstructionKind::CloseThisScope(_) => {
+                    vm_instructions.push((Instruction::PopThis {}, inst.span));
                 }
                 ir::InstructionKind::NewObject => {
                     vm_instructions.push((

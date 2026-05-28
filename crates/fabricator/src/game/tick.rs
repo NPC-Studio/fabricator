@@ -76,12 +76,8 @@ pub fn tick_state(
                         )
                         .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
-                            ctx.fetch(thread).run_with(
-                                ctx,
-                                room_end_closure,
-                                instance_ud,
-                                vm::Value::Undefined,
-                            )
+                            ctx.fetch(thread)
+                                .run_with(ctx, room_end_closure, instance_ud)
                         })?;
                 }
 
@@ -111,12 +107,8 @@ pub fn tick_state(
                         )
                         .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
-                            ctx.fetch(thread).run_with(
-                                ctx,
-                                clean_up_closure,
-                                instance_ud,
-                                vm::Value::Undefined,
-                            )
+                            ctx.fetch(thread)
+                                .run_with(ctx, clean_up_closure, instance_ud)
                         })?;
                 }
 
@@ -282,9 +274,7 @@ pub fn tick_state(
                                     },
                                 )
                                 .freeze(InputState::ctx_cell(ctx), input_state)
-                                .in_scope(|| {
-                                    thread.run_with(ctx, closure, this, vm::Value::Undefined)
-                                })?;
+                                .in_scope(|| thread.run_with(ctx, closure, this))?;
                         }
 
                         Ok(())
@@ -328,12 +318,8 @@ pub fn tick_state(
                         )
                         .freeze(InputState::ctx_cell(ctx), input_state)
                         .in_scope(|| {
-                            ctx.fetch(thread).run_with(
-                                ctx,
-                                room_start_closure,
-                                instance_ud,
-                                vm::Value::Undefined,
-                            )
+                            ctx.fetch(thread)
+                                .run_with(ctx, room_start_closure, instance_ud)
                         })?;
                 }
 
@@ -384,7 +370,7 @@ pub fn tick_state(
                         },
                     )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
+                    .in_scope(|| thread.run_with(ctx, closure, this))?;
             }
             Ok(())
         })?;
@@ -413,7 +399,7 @@ pub fn tick_state(
                         },
                     )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
+                    .in_scope(|| thread.run_with(ctx, closure, this))?;
             }
             Ok(())
         })?;
@@ -442,7 +428,7 @@ pub fn tick_state(
                         },
                     )
                     .freeze(InputState::ctx_cell(ctx), input_state)
-                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
+                    .in_scope(|| thread.run_with(ctx, closure, this))?;
             }
             Ok(())
         })?;
@@ -472,7 +458,7 @@ pub fn tick_state(
                     )
                     .freeze(InputState::ctx_cell(ctx), input_state)
                     .freeze(DrawingState::ctx_cell(ctx), drawing_state)
-                    .in_scope(|| thread.run_with(ctx, closure, this, vm::Value::Undefined))?;
+                    .in_scope(|| thread.run_with(ctx, closure, this))?;
             }
             Ok(())
         })?;

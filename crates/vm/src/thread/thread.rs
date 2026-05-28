@@ -6,8 +6,7 @@ use gc_arena::{
 use crate::{
     callback::Callback,
     closure::{Closure, SharedValue},
-    error::Error,
-    error::RuntimeError,
+    error::{Error, RuntimeError},
     instructions,
     interpreter::Context,
     stack::Stack,
@@ -16,6 +15,7 @@ use crate::{
         error::{BacktraceFrame, CallError, ClosureBacktraceFrame},
     },
     value::{Function, Value},
+    vec_end_slice::VecEndSlice,
 };
 
 use super::error::VmError;
@@ -32,6 +32,7 @@ pub struct ThreadState<'gc> {
     frames: Vec<Frame<'gc>>,
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
+    this: Vec<Value<'gc>>,
     heap: Vec<OwnedHeapVar<'gc>>,
     hook_state: Option<HookState<'gc>>,
 }
@@ -44,6 +45,7 @@ impl<'gc> Thread<'gc> {
                 frames: Vec::new(),
                 registers: Vec::new(),
                 stack: Vec::new(),
+                this: Vec::new(),
                 heap: Vec::new(),
                 hook_state: None,
             }),
@@ -73,51 +75,38 @@ impl<'gc> Thread<'gc> {
         self.0.borrow_mut(mc).hook_state = None;
     }
 
-    /// Run a function on this `Thread` with `this` set to `ctx.globals()` and `other` set to
-    /// `Value::Undefined`.
-    ///
-    /// This is a convenience method for calling a function using `Thread::with_exec` for top-level
-    /// functions which are not expected to take parameters or return values.
+    /// Run a function on this `Thread` and discard all return values.
     pub fn run(
         self,
         ctx: Context<'gc>,
         function: impl Into<Function<'gc>>,
     ) -> Result<(), CallError> {
-        self.with_exec(ctx, |mut exec| exec.call(ctx, function))
+        self.exec(ctx, |mut exec| exec.call(ctx, function))
     }
 
-    /// Run a function on this `Thread` with the given values of `this` and `other`.
-    ///
-    /// This is a convenience method for calling a function using `Thread::with_exec` for top-level
-    /// functions which are not expected to take parameters or return values.
+    /// Run a function on this `Thread` with the given value of `this` and discard all return
+    /// values.
     pub fn run_with(
         self,
         ctx: Context<'gc>,
         function: impl Into<Function<'gc>>,
         this: impl Into<Value<'gc>>,
-        other: impl Into<Value<'gc>>,
     ) -> Result<(), CallError> {
-        self.with_exec(ctx, |mut exec| {
-            exec.with_this_other(this, other).call(ctx, function)
-        })
+        self.exec(ctx, |mut exec| exec.with_this(this).call(ctx, function))
     }
 
     /// Create a top-level [`Execution`] context outside of a callback.
-    ///
-    /// The provided `Execution` will have `this` set to `ctx.globals()` and `other` set to
-    /// `Value::Undefined` by default.
-    pub fn with_exec<R>(self, ctx: Context<'gc>, f: impl FnOnce(Execution<'gc, '_>) -> R) -> R {
-        self.with_state(&ctx, |state| {
+    pub fn exec<R>(self, ctx: Context<'gc>, f: impl FnOnce(Execution<'gc, '_>) -> R) -> R {
+        self.enter_state(&ctx, |state| {
             f(Execution {
                 thread: state,
                 stack_bottom: 0,
-                this: ctx.globals().into(),
-                other: Value::Undefined,
+                this_bottom: 0,
             })
         })
     }
 
-    fn with_state<R>(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut ThreadState<'gc>) -> R) -> R {
+    fn enter_state<R>(self, mc: &Mutation<'gc>, f: impl FnOnce(&mut ThreadState<'gc>) -> R) -> R {
         let mut thread = self.0.try_borrow_mut(mc).expect("thread locked");
         assert!(
             thread.frames.is_empty()
@@ -133,6 +122,7 @@ impl<'gc> Thread<'gc> {
                 self.0.frames.clear();
                 self.0.registers.clear();
                 self.0.stack.clear();
+                self.0.this.clear();
                 self.0.heap.clear();
             }
         }
@@ -149,8 +139,13 @@ impl<'gc> Thread<'gc> {
 pub struct Execution<'gc, 'a> {
     thread: &'a mut ThreadState<'gc>,
     stack_bottom: usize,
-    this: Value<'gc>,
-    other: Value<'gc>,
+    this_bottom: usize,
+}
+
+impl<'gc, 'a> Drop for Execution<'gc, 'a> {
+    fn drop(&mut self) {
+        self.thread.this.truncate(self.this_bottom);
+    }
 }
 
 impl<'gc, 'a> Execution<'gc, 'a> {
@@ -160,16 +155,33 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         Stack::new(&mut self.thread.stack, self.stack_bottom)
     }
 
-    /// Return the current `this` value.
+    /// Return the current number of *explicitly set* values on the `this` stack.
+    ///
+    /// There is always implicitly an unlimited number of `ctx.globals()` present below the last
+    /// explicit `this` value.
+    ///
+    /// You can add `1` to this value to get indexes for all of the explicitly set `this` values as
+    /// well as one copy of the implicit `ctx.globals()` at the bottom.
     #[inline]
-    pub fn this(&self) -> Value<'gc> {
-        self.this
+    pub fn this_depth(&self) -> usize {
+        self.thread.this.len()
     }
 
-    /// Return the current `other` value.
+    /// Return the nth `this` value.
+    ///
+    /// The 0th `this` value is the topmost one, the 1th `this` value is the current value of
+    /// `other`, etc.
+    ///
+    /// Any value out of range will always return `ctx.globals()`.
     #[inline]
-    pub fn other(&self) -> Value<'gc> {
-        self.other
+    pub fn this(&self, ctx: Context<'gc>, nth: usize) -> Value<'gc> {
+        self.thread
+            .this
+            .iter()
+            .copied()
+            .rev()
+            .nth(nth)
+            .unwrap_or(ctx.globals().into())
     }
 
     /// Return a new execution context with a stack starting at the new provided bottom value.
@@ -179,8 +191,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         Execution {
             thread: self.thread,
             stack_bottom: self.stack_bottom + stack_bottom,
-            this: self.this,
-            other: self.other,
+            this_bottom: self.this_bottom,
         }
     }
 
@@ -188,26 +199,12 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// `other` value set as the previous `this` value.
     #[inline]
     pub fn with_this(&mut self, this: impl Into<Value<'gc>>) -> Execution<'gc, '_> {
+        let this_bottom = self.thread.this.len();
+        self.thread.this.push(this.into());
         Execution {
             thread: self.thread,
             stack_bottom: self.stack_bottom,
-            this: this.into(),
-            other: self.this,
-        }
-    }
-
-    /// Return a new execution context with the `this` and `other` values set to the ones provided.
-    #[inline]
-    pub fn with_this_other(
-        &mut self,
-        this: impl Into<Value<'gc>>,
-        other: impl Into<Value<'gc>>,
-    ) -> Execution<'gc, '_> {
-        Execution {
-            thread: self.thread,
-            stack_bottom: self.stack_bottom,
-            this: this.into(),
-            other: other.into(),
+            this_bottom,
         }
     }
 
@@ -217,8 +214,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         Execution {
             thread: self.thread,
             stack_bottom: self.stack_bottom,
-            this: self.this,
-            other: self.other,
+            this_bottom: self.this_bottom,
         }
     }
 
@@ -232,8 +228,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
     ) -> Result<(), VmError<'gc>> {
-        self.thread
-            .call(ctx, closure, self.this, self.other, self.stack_bottom)
+        self.thread.call(ctx, closure, self.stack_bottom)
     }
 
     #[inline]
@@ -518,10 +513,9 @@ struct HookState<'gc> {
 #[collect(no_drop)]
 struct ClosureFrame<'gc> {
     closure: Closure<'gc>,
-    this: Value<'gc>,
-    other: Value<'gc>,
     register_bottom: usize,
     stack_bottom: usize,
+    this_bottom: usize,
     heap_bottom: usize,
     dispatcher: instructions::Dispatcher<'gc>,
 }
@@ -551,20 +545,20 @@ impl<'gc> ThreadState<'gc> {
         &mut self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        mut this: Value<'gc>,
-        mut other: Value<'gc>,
         stack_bottom: usize,
     ) -> Result<(), VmError<'gc>> {
         let bottom_frame = self.frames.len();
 
-        if !closure.this().is_undefined() {
-            other = this;
-            this = closure.this();
-        }
-
         self.frames.push({
             let register_bottom = self.registers.len();
             // Registers are resized at the beginning of the bytecode dispatch.
+
+            // Always push a "base" `this` value.
+            let this_bottom = self.this.len();
+            let this = closure
+                .this()
+                .null_coalesce(self.this.last().copied().unwrap_or(ctx.globals().into()));
+            self.this.push(this);
 
             let heap_bottom = self.heap.len();
             self.heap
@@ -574,10 +568,9 @@ impl<'gc> ThreadState<'gc> {
 
             Frame::Closure(ClosureFrame {
                 closure: closure,
-                this: this,
-                other: other,
                 register_bottom,
-                stack_bottom: stack_bottom,
+                stack_bottom,
+                this_bottom,
                 heap_bottom,
                 dispatcher: instructions::Dispatcher::new(closure.prototype().bytecode(), 0),
             })
@@ -639,17 +632,11 @@ impl<'gc> ThreadState<'gc> {
                 [frame.register_bottom..frame.register_bottom + 256])
                 .try_into()
                 .unwrap();
-            let heap = &mut self.heap[frame.heap_bottom..];
             let stack = Stack::new(&mut self.stack, frame.stack_bottom);
-            let mut dispatch = dispatch::Dispatch::new(
-                ctx,
-                frame.closure,
-                &mut frame.this,
-                &mut frame.other,
-                registers,
-                heap,
-                stack,
-            );
+            let this = VecEndSlice::new(&mut self.this, frame.this_bottom);
+            let heap = &mut self.heap[frame.heap_bottom..];
+            let mut dispatch =
+                dispatch::Dispatch::new(ctx, frame.closure, registers, stack, this, heap);
 
             let next = if let Some(hook_state) = &mut self.hook_state
                 && hook_state.hook_step_next != 0
@@ -682,13 +669,6 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         match function {
                             Function::Closure(closure) => {
-                                let mut this = frame.this;
-                                let mut other = frame.other;
-                                if !closure.this().is_undefined() {
-                                    other = this;
-                                    this = closure.this();
-                                }
-
                                 // We only need to preserve the registers that the prototype claims
                                 // to use.
                                 debug_assert!(closure.prototype().used_registers() <= 256);
@@ -696,6 +676,13 @@ impl<'gc> ThreadState<'gc> {
                                     + frame.closure.prototype().used_registers();
 
                                 let stack_bottom = frame.stack_bottom + args_bottom;
+
+                                // Always push a "base" `this` value.
+                                let this_bottom = self.this.len();
+                                let this = closure.this().null_coalesce(
+                                    self.this.last().copied().unwrap_or(ctx.globals().into()),
+                                );
+                                self.this.push(this);
 
                                 let heap_bottom = self.heap.len();
                                 self.heap.resize_with(
@@ -705,10 +692,9 @@ impl<'gc> ThreadState<'gc> {
 
                                 self.frames.push(Frame::Closure(ClosureFrame {
                                     closure,
-                                    this,
-                                    other,
                                     register_bottom,
                                     stack_bottom,
+                                    this_bottom,
                                     heap_bottom,
                                     dispatcher: instructions::Dispatcher::new(
                                         closure.prototype().bytecode(),
@@ -729,14 +715,12 @@ impl<'gc> ThreadState<'gc> {
                             }
                             Function::Callback(callback) => {
                                 let stack_bottom = frame.stack_bottom + args_bottom;
-                                let this = frame.this;
-                                let other = frame.other;
+                                let this_bottom = self.this.len();
 
                                 if let Err(err) = (Execution {
                                     thread: self,
                                     stack_bottom,
-                                    this,
-                                    other,
+                                    this_bottom,
                                 })
                                 .call_callback(ctx, callback)
                                 {
@@ -752,6 +736,9 @@ impl<'gc> ThreadState<'gc> {
                         // Drain everything on the stack up until the returns.
                         self.stack
                             .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
+
+                        // Clear any unpopped `this` values.
+                        self.this.truncate(frame.this_bottom);
 
                         // Clear the heap values for this frame.
                         self.heap.truncate(frame.heap_bottom);

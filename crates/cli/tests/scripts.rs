@@ -55,7 +55,7 @@ fn run_code(
         let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
-        thread.with_exec(ctx, |mut exec| {
+        thread.exec(ctx, |mut exec| {
             exec.call(ctx, closure)?;
             Ok(exec.stack().get(0) == vm::Value::Boolean(true))
         })

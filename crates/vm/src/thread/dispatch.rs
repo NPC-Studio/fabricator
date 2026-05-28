@@ -1,4 +1,4 @@
-use std::{mem, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use gc_arena::Gc;
 use thiserror::Error;
@@ -14,6 +14,7 @@ use crate::{
     string::String,
     thread::thread::OwnedHeapVar,
     value::{Function, Value},
+    vec_end_slice::VecEndSlice,
 };
 
 #[derive(Debug, Clone, Error)]
@@ -72,32 +73,29 @@ pub(super) enum Next<'gc> {
 pub(super) struct Dispatch<'gc, 'a> {
     ctx: Context<'gc>,
     closure: Closure<'gc>,
-    this: &'a mut Value<'gc>,
-    other: &'a mut Value<'gc>,
     // The register slice is fixed size to avoid bounds checks.
     registers: &'a mut [Value<'gc>; 256],
-    heap: &'a mut [OwnedHeapVar<'gc>],
     stack: Stack<'gc, 'a>,
+    this: VecEndSlice<'a, Value<'gc>>,
+    heap: &'a mut [OwnedHeapVar<'gc>],
 }
 
 impl<'gc, 'a> Dispatch<'gc, 'a> {
     pub(super) fn new(
         ctx: Context<'gc>,
         closure: Closure<'gc>,
-        this: &'a mut Value<'gc>,
-        other: &'a mut Value<'gc>,
         registers: &'a mut [Value<'gc>; 256],
-        heap: &'a mut [OwnedHeapVar<'gc>],
         stack: Stack<'gc, 'a>,
+        this: VecEndSlice<'a, Value<'gc>>,
+        heap: &'a mut [OwnedHeapVar<'gc>],
     ) -> Self {
         Self {
             ctx,
             closure,
-            this,
-            other,
             registers,
             heap,
             stack,
+            this,
         }
     }
 }
@@ -299,32 +297,42 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
+    fn push_this(&mut self) -> Result<(), Self::Error> {
+        self.this.push_back(self.this[self.this.len() - 1]);
+        Ok(())
+    }
+
+    #[inline]
+    fn pop_this(&mut self) -> Result<(), Self::Error> {
+        // We must always have one "base" `this` value
+        if self.this.len() > 1 {
+            self.this.pop_back();
+        }
+        Ok(())
+    }
+
+    #[inline]
     fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = *self.this;
+        self.registers[dest as usize] = self.this[self.this.len() - 1];
         Ok(())
     }
 
     #[inline]
     fn set_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        *self.this = self.registers[source as usize];
+        let this_slice = &mut *self.this;
+        this_slice[this_slice.len() - 1] = self.registers[source as usize];
         Ok(())
     }
 
     #[inline]
     fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = *self.other;
-        Ok(())
-    }
-
-    #[inline]
-    fn set_other(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        *self.other = self.registers[source as usize];
-        Ok(())
-    }
-
-    #[inline]
-    fn swap_this_other(&mut self) -> Result<(), Self::Error> {
-        mem::swap(self.this, self.other);
+        self.registers[dest as usize] = self
+            .this
+            .iter()
+            .copied()
+            .rev()
+            .nth(1)
+            .unwrap_or(self.ctx.globals().into());
         Ok(())
     }
 
@@ -361,7 +369,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             &self.ctx,
             proto,
             if bind_this {
-                *self.this
+                self.this[self.this.len() - 1]
             } else {
                 Value::Undefined
             },

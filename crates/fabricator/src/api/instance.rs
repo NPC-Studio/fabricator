@@ -31,9 +31,7 @@ impl<'gc> InstanceUserData<'gc> {
         ud
     }
 
-    pub fn downcast(
-        userdata: vm::UserData<'gc>,
-    ) -> Result<&'gc Self, vm::BadUserDataType> {
+    pub fn downcast(userdata: vm::UserData<'gc>) -> Result<&'gc Self, vm::BadUserDataType> {
         userdata.downcast::<Rootable![InstanceUserData<'_>]>()
     }
 }
@@ -243,8 +241,21 @@ pub fn instance_api<'gc>(ctx: vm::Context<'gc>) -> vm::MagicSet<'gc> {
         let (event_type, sub_event): (vm::UserData, Option<vm::UserData>) =
             exec.stack().consume(ctx)?;
 
-        let instance_ud: vm::UserData = vm::FromValue::from_value(ctx, exec.this())?;
-        let instance_id = InstanceUserData::downcast(instance_ud)?.id;
+        let mut instance_ud_id = None;
+        for i in 0..exec.this_depth() {
+            if let vm::Value::UserData(ud) = exec.this(ctx, i) {
+                if let Ok(iud) = InstanceUserData::downcast(ud) {
+                    instance_ud_id = Some((ud, iud.id));
+                    break;
+                }
+            }
+        }
+
+        let Some((instance_ud, instance_id)) = instance_ud_id else {
+            return Err(vm::RuntimeError::msg(
+                "no instance userdata is currently on the `this` stack",
+            ));
+        };
 
         let event = match *event_type.downcast_static::<EventType>()? {
             EventType::Create => ObjectEvent::Create,

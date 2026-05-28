@@ -33,7 +33,7 @@ fn benchmark_script(c: &mut Criterion, name: &str, code: &str) {
             interpreter.enter(|ctx| {
                 let thread = ctx.fetch(&thread);
                 let closure = ctx.fetch(&closure);
-                thread.with_exec(ctx, |mut exec| {
+                thread.exec(ctx, |mut exec| {
                     exec.call_closure(ctx, closure).expect("execution error");
                     assert!(
                         exec.stack().get(0) == vm::Value::Boolean(true),

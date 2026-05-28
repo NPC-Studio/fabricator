@@ -40,24 +40,24 @@ macro_rules! for_each_instruction {
             [basic] globals = Globals { dest: RegIdx };
 
             [basic]
-            /// Get the current value of the `this` register and place it in `dest`.
+            /// Push the top value of the `this` stack onto the `this` stack.
+            push_this = PushThis {};
+
+            [basic]
+            /// Pop the top value off of the `this` stack.
+            pop_this = PopThis {};
+
+            [basic]
+            /// Get the value at the top of the `this` stack.
             this = This { dest: RegIdx };
 
             [basic]
-            /// Copy the `source` register to the `this` register.
+            /// Set the value at the top of the `this` stack.
             set_this = SetThis { source: RegIdx };
 
             [basic]
-            /// Get the current value of the `other` register and place it in `dest`.
+            /// Get the value one under the top of the `this` stack.
             other = Other { dest: RegIdx };
-
-            [basic]
-            /// Copy the `source` register to the `other` register.
-            set_other = SetOther { source: RegIdx };
-
-            [basic]
-            /// Swap the values of the `this` and `other` registers.
-            swap_this_other = SwapThisOther {};
 
             [basic] closure = Closure { dest: RegIdx, proto: ProtoIdx, bind_this: bool };
 

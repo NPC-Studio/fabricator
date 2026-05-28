@@ -164,7 +164,7 @@ fn main() -> Result<ExitCode, Error> {
                                 .unwrap();
 
                                 let thread = ctx.fetch(&thread);
-                                thread.with_exec(ctx, |mut exec| {
+                                thread.exec(ctx, |mut exec| {
                                     if let Err(err) = exec.call_closure(ctx, closure) {
                                         eprintln!("{}", err);
                                     } else {
