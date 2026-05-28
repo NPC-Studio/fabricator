@@ -357,11 +357,11 @@ pub fn lengthdir_y<'gc>(
     Ok(-length * angle_rad.sin())
 }
 
-/// The equivalent to running [`degtorad`] and then [`arctan2`] on the resulting output. In fact,
+/// The equivalent to running [`arctan2`] and then [`radtodeg`] on the resulting output. In fact,
 /// this is what it does internally.
 pub fn darctan2<'gc>(ctx: vm::Context<'gc>, (y, x): (f64, f64)) -> Result<f64, Infallible> {
     let Ok(angle) = arctan2(ctx, (y, x));
-    degtorad(ctx, angle)
+    radtodeg(ctx, angle)
 }
 
 /// Computes the arc tangent. See [`f64::atan2`] for more information.
@@ -376,7 +376,7 @@ pub fn degtorad<'gc>(_ctx: vm::Context<'gc>, input: f64) -> Result<f64, Infallib
     Ok(input.to_radians())
 }
 
-/// Converts degrees to radians.
+/// Converts radians to degrees.
 pub fn radtodeg<'gc>(_ctx: vm::Context<'gc>, input: f64) -> Result<f64, Infallible> {
     Ok(input.to_degrees())
 }
