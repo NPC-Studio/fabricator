@@ -7,7 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 gc-arena.workspace = true
-rustyline = "17"
+rustyline = "18"
 
 fabricator-compiler.workspace = true
 fabricator-stdlib.workspace = true
@@ -16,7 +16,7 @@ fabricator-vm.workspace = true
 fabricator.workspace = true
 
 [dev-dependencies]
-criterion = "0.6"
+criterion = "0.8"
 
 [[bench]]
 name = "scripts"

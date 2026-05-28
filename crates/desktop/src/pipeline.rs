@@ -98,10 +98,10 @@ impl Pipeline {
                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
                     bind_group_layouts: &[
-                        &texture_bind_group_layout,
-                        &parameters_bind_group_layout,
+                        Some(&texture_bind_group_layout),
+                        Some(&parameters_bind_group_layout),
                     ],
-                    push_constant_ranges: &[],
+                    immediate_size: 0,
                 }),
             ),
             vertex: wgpu::VertexState {
@@ -134,7 +134,7 @@ impl Pipeline {
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

@@ -18,7 +18,7 @@ use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 use winit::{
     application::ApplicationHandler,
     event::{MouseButton, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
     window::{Window, WindowId},
 };
 
@@ -53,8 +53,15 @@ struct AppState {
 }
 
 impl AppState {
-    async fn new(window: Arc<Window>, project_file: &Path, config: &str) -> AppState {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    async fn new(
+        display_handle: OwnedDisplayHandle,
+        window: Arc<Window>,
+        project_file: &Path,
+        config: &str,
+    ) -> AppState {
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(display_handle)),
+        );
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
@@ -272,10 +279,20 @@ impl AppState {
             self.frames_behind -= 1.0;
         }
 
-        let surface_texture = self
-            .surface
-            .get_current_texture()
-            .expect("failed to acquire next swapchain texture");
+        let surface_texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
+            wgpu::CurrentSurfaceTexture::Suboptimal(_) | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.configure_surface();
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Validation => {
+                panic!("surface lost or validation error");
+            }
+        };
+
         let texture_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor {
@@ -333,6 +350,7 @@ impl AppState {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         rpass.set_pipeline(&self.pipeline.pipeline);
@@ -388,6 +406,7 @@ impl ApplicationHandler for App {
         );
 
         let state = pollster::block_on(AppState::new(
+            event_loop.owned_display_handle(),
             window.clone(),
             &self.project_file,
             &self.config,
