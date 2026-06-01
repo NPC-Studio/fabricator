@@ -231,15 +231,16 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
     reduce_shadows(ir).unwrap();
     fold_constants(ir);
     eliminate_copies(ir);
+
     eliminate_dead_code(ir);
+    clean_unreachable_blocks(ir);
+    clean_instructions(ir);
 
     block_branch_to_jump(ir);
     redirect_empty_blocks(ir);
-    clean_unreachable_blocks(ir);
     merge_blocks(ir);
 
     clean_unreachable_blocks(ir);
-    clean_instructions(ir);
     clean_unused_variables(ir);
     clean_unused_shadow_vars(ir);
     clean_unused_this_scopes(ir);

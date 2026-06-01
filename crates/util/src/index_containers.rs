@@ -1,6 +1,6 @@
-use std::ops;
+use std::{ops, slice};
 
-use crate::bit_containers::BitVec;
+use crate::bit_containers::BitSlice as _;
 
 /// A map of `usize` to `V` designed for low-value `usize` indexes and backed by a `Vec<Option<V>>`.
 #[derive(Debug, Clone)]
@@ -125,10 +125,10 @@ impl<V> ops::Index<usize> for IndexMap<V> {
     }
 }
 
-/// A `usize` set, designed for low-value `usize` indexes and backed by a `BitVec`.
+/// A `usize` set, designed for low-value `usize` indexes and backed by a bit vector.
 #[derive(Debug, Clone, Default)]
 pub struct IndexSet {
-    vec: BitVec,
+    bytes: Vec<u8>,
     len: usize,
 }
 
@@ -138,13 +138,17 @@ impl IndexSet {
     }
 
     pub fn clear(&mut self) {
-        self.vec.clear();
+        self.bytes.clear();
         self.len = 0;
     }
 
     #[inline]
     pub fn contains(&self, i: usize) -> bool {
-        self.vec.get(i).unwrap_or(false)
+        if i < self.bytes.bit_len() {
+            self.bytes.get_bit(i)
+        } else {
+            false
+        }
     }
 
     /// Returns `true` if the index `i` is newly inserted, false otherwise.
@@ -171,12 +175,16 @@ impl IndexSet {
 
     #[inline]
     fn set(&mut self, i: usize, val: bool) -> bool {
-        if i >= self.vec.len() {
-            self.vec.resize(i.checked_add(1).unwrap(), false);
+        if i >= self.bytes.bit_len() {
+            if val {
+                self.bytes.resize((i / 8) + 1, 0);
+            } else {
+                return false;
+            }
         }
 
-        let old = self.vec[i];
-        self.vec.set(i, val);
+        let old = self.bytes.get_bit(i);
+        self.bytes.set_bit(i, val);
 
         if !old && val {
             self.len += 1;
@@ -187,11 +195,43 @@ impl IndexSet {
         old
     }
 
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.vec
+        struct ByteIter {
+            base: usize,
+            byte: u8,
+            i: u8,
+        }
+
+        impl Iterator for ByteIter {
+            type Item = usize;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let byte = slice::from_mut(&mut self.byte);
+                while self.i < 8 {
+                    let i = self.i;
+                    self.i += 1;
+
+                    if byte.get_bit(i as usize) {
+                        byte.set_bit(i as usize, false);
+                        return Some(self.base + i as usize);
+                    }
+                }
+
+                None
+            }
+        }
+
+        self.bytes
+            .as_slice()
             .iter()
+            .copied()
             .enumerate()
-            .filter_map(|(i, b)| if b { Some(i) } else { None })
+            .flat_map(|(i, b)| ByteIter {
+                base: i * 8,
+                byte: b,
+                i: 0,
+            })
     }
 }
 
@@ -210,5 +250,56 @@ impl ops::Index<usize> for IndexSet {
 
     fn index(&self, index: usize) -> &bool {
         if self.contains(index) { &true } else { &false }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_index_set_iter() {
+        let mut iset = IndexSet::new();
+
+        assert!(iset.iter().next().is_none());
+
+        assert!(iset.insert(0));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0]);
+
+        assert!(iset.insert(7));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7]);
+
+        assert!(iset.insert(8));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7, 8]);
+
+        assert!(iset.insert(14));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7, 8, 14]);
+
+        assert!(!iset.insert(14));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7, 8, 14]);
+
+        assert!(iset.insert(15));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7, 8, 14, 15]);
+
+        assert!(iset.insert(16));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 7, 8, 14, 15, 16]);
+
+        assert!(iset.remove(7));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 8, 14, 15, 16]);
+
+        assert!(iset.remove(8));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 14, 15, 16]);
+
+        assert!(iset.remove(15));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 14, 16]);
+
+        assert!(iset.remove(16));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [0, 14]);
+
+        assert!((iset.remove(0)));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [14]);
+
+        assert!(!iset.remove(24));
+        assert_eq!(iset.iter().collect::<Vec<_>>(), [14]);
     }
 }

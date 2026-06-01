@@ -242,7 +242,8 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    for (block_id, block) in ir.blocks.iter_mut() {
+    for &block_id in &reachable_blocks {
+        let block = &mut ir.blocks[block_id];
         for &inst_id in &block.instructions {
             if !live_instructions.contains(inst_id.index() as usize) {
                 // Any dead instruction can be replaced with a `NoOp`.

@@ -64,11 +64,8 @@ impl InstructionLiveness {
             .map(|id| (id, FxHashSet::default()))
             .collect();
 
-        let mut block_uses: SecondaryMap<ir::BlockId, FxHashSet<ir::InstId>> = ir
-            .blocks
-            .ids()
-            .map(|id| (id, FxHashSet::default()))
-            .collect();
+        let mut block_uses: SecondaryMap<ir::BlockId, Vec<ir::InstId>> =
+            ir.blocks.ids().map(|id| (id, Vec::new())).collect();
 
         let mut inst_positions = SecondaryMap::new();
         for (block_id, block) in ir.blocks.iter() {
@@ -87,12 +84,12 @@ impl InstructionLiveness {
                 }
 
                 for source_inst_id in inst.kind.sources() {
-                    block_uses.insert(source_inst_id);
+                    block_uses.push(source_inst_id);
                 }
             }
 
             for source_inst_id in block.exit.kind.sources() {
-                block_uses.insert(source_inst_id);
+                block_uses.push(source_inst_id);
             }
         }
 

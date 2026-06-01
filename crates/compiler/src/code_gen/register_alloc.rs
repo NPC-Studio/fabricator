@@ -103,12 +103,10 @@ impl RegisterAllocation {
 
             // Pick a non-interfering register for this shadow variable
 
-            let assigned_reg = interfering_registers
-                .bit_iter()
-                .enumerate()
-                .find(|(_, interfering)| !interfering)
-                .ok_or(ProtoGenError::RegisterOverflow)?
-                .0 as u8;
+            let assigned_reg = (0usize..256)
+                .into_iter()
+                .find(|&i| !interfering_registers.get_bit(i))
+                .ok_or(ProtoGenError::RegisterOverflow)? as u8;
             shadow_registers.insert(shadow_var, assigned_reg);
 
             // Construct a list of instructions we would like to coalesce into this shadow variable

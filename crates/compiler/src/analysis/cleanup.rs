@@ -5,26 +5,29 @@ use crate::{graph::dfs::depth_first_search, ir};
 /// Remove all `NoOp` instructions and clear instructions not present in any block, then clean all
 /// instruction spans for instructions that no longer exist.
 pub fn clean_instructions<S>(ir: &mut ir::Function<S>) {
-    let mut used_instructions = IndexSet::new();
+    let mut removed_instructions = IndexSet::new();
 
     for block in ir.blocks.values_mut() {
         block.instructions.retain(|&inst_id| {
             if let ir::InstructionKind::NoOp = &ir.instructions[inst_id].kind {
+                removed_instructions.insert(inst_id.index() as usize);
                 false
             } else {
-                used_instructions.insert(inst_id.index() as usize);
                 true
             }
         });
     }
 
-    ir.instructions
-        .retain(|id, _| used_instructions.contains(id.index() as usize));
+    for inst_index in removed_instructions.iter() {
+        ir.instructions
+            .remove(ir.instructions.id_for_index(inst_index as u32).unwrap());
+    }
 }
 
 /// Remove any blocks that are not reachable from the `start_block`.
 pub fn clean_unreachable_blocks<S>(ir: &mut ir::Function<S>) {
     let mut reachable_blocks = IndexSet::new();
+
     depth_first_search(
         ir.start_block,
         |b| {

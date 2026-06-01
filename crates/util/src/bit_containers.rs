@@ -1,42 +1,54 @@
 use std::ops;
 
+pub trait BitNum {
+    const BITS: usize;
+
+    fn get_bit(&self, i: usize) -> bool;
+    fn set_bit(&mut self, i: usize, val: bool);
+}
+
+impl BitNum for u8 {
+    const BITS: usize = 8;
+
+    fn get_bit(&self, i: usize) -> bool {
+        (*self) & (1 << i) != 0
+    }
+
+    fn set_bit(&mut self, i: usize, val: bool) {
+        if val {
+            *self |= 1 << i;
+        } else {
+            *self &= !(1 << i);
+        }
+    }
+}
+
 pub trait BitSlice {
     fn bit_len(&self) -> usize;
     fn get_bit(&self, i: usize) -> bool;
     fn set_bit(&mut self, i: usize, val: bool);
-
-    fn bit_iter(&self) -> impl Iterator<Item = bool> + '_ {
-        (0..self.bit_len()).map(move |i| self.get_bit(i))
-    }
 }
 
-impl BitSlice for [u8] {
+impl<B: BitNum> BitSlice for [B] {
     #[inline]
     fn bit_len(&self) -> usize {
-        self.len().saturating_mul(8)
+        self.len()
+            .checked_mul(B::BITS)
+            .expect("overflow in BitSlice::bit_len")
     }
 
     #[inline]
     fn get_bit(&self, i: usize) -> bool {
         let base = i / 8;
         let off = i % 8;
-
-        let byte = (*self)[base];
-
-        byte & (1 << off) != 0
+        self[base].get_bit(off)
     }
 
     #[inline]
     fn set_bit(&mut self, i: usize, val: bool) {
         let base = i / 8;
         let off = i % 8;
-        let byte = &mut (*self)[base];
-
-        if val {
-            *byte |= 1 << off;
-        } else {
-            *byte &= !(1 << off);
-        }
+        self[base].set_bit(off, val);
     }
 }
 
@@ -103,15 +115,6 @@ impl BitVec {
     pub fn set(&mut self, i: usize, val: bool) {
         assert!(i < self.len, "index out of range");
         self.bits.as_mut_slice().set_bit(i, val);
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = bool> + '_ {
-        self.as_slice().bit_iter()
-    }
-
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] {
-        self.bits.as_slice()
     }
 }
 
