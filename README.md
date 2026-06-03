@@ -4,7 +4,7 @@
 A WIP replacement for the GameMaker Studio runtime, used by
 [Fields of Mistria](https://www.fieldsofmistria.com/).
 
-Written to be compatilbe *enough* with GML and GameMaker to make it possible to port a large,
+Written to be compatible *enough* with GML and GameMaker to make it possible to port a large,
 complex project, but is explicitly NOT aiming for perfect compatibility.
 
 Includes a working Parser, Compiler, and VM for GML that compiles GML faster than GameMaker's VM
