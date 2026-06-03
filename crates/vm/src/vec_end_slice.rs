@@ -73,6 +73,11 @@ impl<'a, T> VecEndSlice<'a, T> {
     }
 
     #[inline]
+    pub fn truncate(&mut self, size: usize) {
+        self.values.truncate(self.bottom + size);
+    }
+
+    #[inline]
     pub fn reserve(&mut self, additional: usize) {
         self.values.reserve(additional);
     }

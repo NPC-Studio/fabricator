@@ -81,8 +81,10 @@ pub enum PrototypeVerificationError {
     BadMagicIdx(MagicIdx, usize),
     #[error("field constant {0} is not a `Constant::String` at instruction {1}")]
     FieldIsNotString(ConstIdx, usize),
-    #[error("index constant {0} is not a `Constant::Integer` at instruction {1}")]
-    IndexIsNotInt(ConstIdx, usize),
+    #[error(
+        "index constant {0} is not an `Constant::Integer` convertible to `usize` at instruction {1}"
+    )]
+    IndexIsNotUsize(ConstIdx, usize),
     #[error("cannot reset a shared heap variable {0} at instruction {1}")]
     ResetSharedHeap(HeapIdx, usize),
 }
@@ -201,10 +203,11 @@ impl<'gc> Prototype<'gc> {
             };
 
             let verify_const_as_index = |const_idx: ConstIdx| {
-                if matches!(constants[const_idx as usize], Constant::Integer(_)) {
+                if matches!(constants[const_idx as usize], Constant::Integer(i) if usize::try_from(i).is_ok())
+                {
                     Ok(())
                 } else {
-                    Err(PrototypeVerificationError::IndexIsNotInt(
+                    Err(PrototypeVerificationError::IndexIsNotUsize(
                         const_idx, inst_index,
                     ))
                 }
@@ -257,6 +260,17 @@ impl<'gc> Prototype<'gc> {
                 }
                 Instruction::CurrentClosure { dest } => {
                     verify_reg_idx(dest)?;
+                }
+                Instruction::ArgCount { dest } => {
+                    verify_reg_idx(dest)?;
+                }
+                Instruction::GetArg { dest, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(index)?;
+                }
+                Instruction::GetArgConst { dest, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_const_as_index(index)?;
                 }
                 Instruction::NewObject { dest } => {
                     verify_reg_idx(dest)?;
@@ -352,61 +366,49 @@ impl<'gc> Prototype<'gc> {
                     verify_reg_idx(left)?;
                     verify_reg_idx(right)?;
                 }
-                Instruction::StackTop { dest } => {
-                    verify_reg_idx(dest)?;
-                }
-                Instruction::StackResize { stack_top } => {
-                    verify_reg_idx(stack_top)?;
-                }
-                Instruction::StackResizeConst { stack_top } => {
-                    verify_const_idx(stack_top)?;
-                    verify_const_as_index(stack_top)?;
-                }
-                Instruction::StackGet { dest, stack_pos } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(stack_pos)?;
-                }
-                Instruction::StackGetConst { dest, stack_pos } => {
-                    verify_reg_idx(dest)?;
-                    verify_const_idx(stack_pos)?;
-                    verify_const_as_index(stack_pos)?;
-                }
-                Instruction::StackGetOffset {
-                    dest,
-                    stack_base,
-                    offset,
-                } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(stack_base)?;
-                    verify_const_idx(offset)?;
-                    verify_const_as_index(offset)?;
-                }
-                Instruction::StackSet { source, stack_pos } => {
-                    verify_reg_idx(source)?;
-                    verify_reg_idx(stack_pos)?;
-                }
+                Instruction::PushStackFrame {} => {}
+                Instruction::PopStackFrame {} => {}
                 Instruction::StackPush { source } => {
                     verify_reg_idx(source)?;
                 }
-                Instruction::StackPop { dest } => {
-                    verify_reg_idx(dest)?;
+                Instruction::StackPush2 { source_a, source_b } => {
+                    verify_reg_idx(source_a)?;
+                    verify_reg_idx(source_b)?;
                 }
-                Instruction::GetIndexMulti {
-                    dest,
-                    array,
-                    stack_bottom,
+                Instruction::StackPush3 {
+                    source_a,
+                    source_b,
+                    source_c,
                 } => {
+                    verify_reg_idx(source_a)?;
+                    verify_reg_idx(source_b)?;
+                    verify_reg_idx(source_c)?;
+                }
+                Instruction::StackPush4 {
+                    source_a,
+                    source_b,
+                    source_c,
+                    source_d,
+                } => {
+                    verify_reg_idx(source_a)?;
+                    verify_reg_idx(source_b)?;
+                    verify_reg_idx(source_c)?;
+                    verify_reg_idx(source_d)?;
+                }
+                Instruction::StackGet { dest, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_reg_idx(index)?;
+                }
+                Instruction::StackGetConst { dest, index } => {
+                    verify_reg_idx(dest)?;
+                    verify_const_as_index(index)?;
+                }
+                Instruction::GetIndexMulti { dest, array } => {
                     verify_reg_idx(dest)?;
                     verify_reg_idx(array)?;
-                    verify_reg_idx(stack_bottom)?;
                 }
-                Instruction::SetIndexMulti {
-                    array,
-                    stack_bottom,
-                    value,
-                } => {
+                Instruction::SetIndexMulti { array, value } => {
                     verify_reg_idx(array)?;
-                    verify_reg_idx(stack_bottom)?;
                     verify_reg_idx(value)?;
                 }
                 Instruction::GetMagic { dest, magic } => {
@@ -424,13 +426,10 @@ impl<'gc> Prototype<'gc> {
                 Instruction::JumpIf { arg, .. } => {
                     verify_reg_idx(arg)?;
                 }
-                Instruction::Call { func, stack_bottom } => {
+                Instruction::Call { func } => {
                     verify_reg_idx(func)?;
-                    verify_reg_idx(stack_bottom)?;
                 }
-                Instruction::Return { stack_bottom } => {
-                    verify_reg_idx(stack_bottom)?;
-                }
+                Instruction::Return {} => {}
             }
         }
 

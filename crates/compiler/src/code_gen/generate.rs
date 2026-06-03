@@ -2,16 +2,14 @@ use std::{collections::hash_map, hash::Hash};
 
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
-    self as vm,
+    self as vm, Span,
     instructions::{self, Instruction},
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::{
     analysis::{
-        instruction_liveness::InstructionLiveness,
-        nested_scope_liveness::{CallScopeLiveness, ThisScopeLiveness},
-        shadow_liveness::ShadowLiveness,
+        instruction_liveness::InstructionLiveness, shadow_liveness::ShadowLiveness,
         variable_liveness::VariableLiveness,
     },
     code_gen::{
@@ -43,10 +41,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let instruction_liveness = InstructionLiveness::compute(ir).unwrap();
     let shadow_liveness = ShadowLiveness::compute(ir).unwrap();
     let variable_liveness = VariableLiveness::compute(ir).unwrap();
-    let _this_scope_liveness = ThisScopeLiveness::compute(ir).unwrap();
-    let call_scope_liveness = CallScopeLiveness::compute(ir).unwrap();
 
-    let mut reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)?;
+    let reg_alloc = RegisterAllocation::allocate(ir, &instruction_liveness, &shadow_liveness)?;
     let heap_alloc = HeapAllocation::allocate(ir, &variable_liveness, parent_heap_indexes)?;
 
     let mut prototypes = Vec::new();
@@ -98,86 +94,53 @@ fn codegen_function<S: Clone + Eq + Hash>(
     let mut block_vm_starts = SecondaryMap::<ir::BlockId, usize>::new();
     let mut block_vm_jumps = Vec::new();
 
-    // Whenever entering a scope, if we know that something inside that scope will need to change
-    // and then restore the previous state, we save the state to restore upon entering the *outer*
-    // scope.
-    //
-    // We do this because there are many more inner scopes than outer scopes, and this saves having
-    // to repeatedly save the same values which are not modified.
-
-    // For "call" scopes, we need to save when a "call" scope has an inner scope, but *also* for
-    // certain other instructions which temporarily modify the stack. Search for which scopes
-    // contain those instructions and mark the containing scope as needing to save state.
-
-    let mut call_scopes_which_save = call_scope_liveness
-        .scopes()
-        .filter(|&s| call_scope_liveness.has_inner_scope(s))
-        .collect::<FxHashSet<_>>();
-
-    let mut saved_stack_top_registers =
-        vec![reg_alloc.allocate_extra()?; call_scope_liveness.nesting()];
-
-    for &block_id in &block_order {
-        let mut needs_to_save = |inst_index: usize| -> Result<(), ProtoGenError> {
-            if let Some(call_scope) =
-                call_scope_liveness.deepest_for(ir::InstLocation::new(block_id, inst_index))
-            {
-                call_scopes_which_save.insert(call_scope);
-                // If this is a most-inner scope, then we need to add another register to
-                // save to.
-                if call_scope_liveness.nesting_level(call_scope).unwrap()
-                    >= saved_stack_top_registers.len()
-                {
-                    saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
-                }
-            } else {
-                // If there is no enclosing scope for this instruction, we need to ensure
-                // that we at least save the bottom-level value.
-                if saved_stack_top_registers.is_empty() {
-                    saved_stack_top_registers.push(reg_alloc.allocate_extra()?);
+    let push_stack_push_insts =
+        |vm_instructions: &mut Vec<(Instruction, Span)>, insts: &[ir::InstId], span: Span| {
+            for chunk in insts.chunks(4) {
+                match chunk.len() {
+                    0 => {}
+                    1 => {
+                        vm_instructions.push((
+                            Instruction::StackPush {
+                                source: reg_alloc.instruction_registers[chunk[0]],
+                            },
+                            span,
+                        ));
+                    }
+                    2 => {
+                        vm_instructions.push((
+                            Instruction::StackPush2 {
+                                source_a: reg_alloc.instruction_registers[chunk[0]],
+                                source_b: reg_alloc.instruction_registers[chunk[1]],
+                            },
+                            span,
+                        ));
+                    }
+                    3 => {
+                        vm_instructions.push((
+                            Instruction::StackPush3 {
+                                source_a: reg_alloc.instruction_registers[chunk[0]],
+                                source_b: reg_alloc.instruction_registers[chunk[1]],
+                                source_c: reg_alloc.instruction_registers[chunk[2]],
+                            },
+                            span,
+                        ));
+                    }
+                    4 => {
+                        vm_instructions.push((
+                            Instruction::StackPush4 {
+                                source_a: reg_alloc.instruction_registers[chunk[0]],
+                                source_b: reg_alloc.instruction_registers[chunk[1]],
+                                source_c: reg_alloc.instruction_registers[chunk[2]],
+                                source_d: reg_alloc.instruction_registers[chunk[3]],
+                            },
+                            span,
+                        ));
+                    }
+                    _ => unreachable!(),
                 }
             }
-            Ok(())
         };
-
-        let block = &ir.blocks[block_id];
-        for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
-            match ir.instructions[inst_id].kind {
-                ir::InstructionKind::GetIndex { .. } | ir::InstructionKind::SetIndex { .. } => {
-                    needs_to_save(inst_index)?;
-                }
-                _ => {}
-            }
-        }
-
-        if let ir::ExitKind::Return { .. } = block.exit.kind {
-            needs_to_save(ir.instructions.len())?;
-        }
-    }
-
-    let get_current_stack_top_register =
-        |block_id: ir::BlockId, inst_index: usize| -> instructions::RegIdx {
-            let idx = if let Some(enclosing_call_scope) =
-                call_scope_liveness.deepest_for(ir::InstLocation::new(block_id, inst_index))
-            {
-                call_scope_liveness
-                    .nesting_level(enclosing_call_scope)
-                    .unwrap()
-                    + 1
-            } else {
-                0
-            };
-            saved_stack_top_registers[idx]
-        };
-
-    if !saved_stack_top_registers.is_empty() {
-        vm_instructions.push((
-            Instruction::StackTop {
-                dest: saved_stack_top_registers[0],
-            },
-            ir.reference.span().start_span(),
-        ));
-    }
 
     for (order_index, &block_id) in block_order.iter().enumerate() {
         let block = &ir.blocks[block_id];
@@ -342,38 +305,26 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 }
                 ir::InstructionKind::FixedArgument(index) => {
                     vm_instructions.push((
-                        Instruction::StackGetConst {
+                        Instruction::GetArgConst {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            stack_pos: get_const_index(&Constant::Integer(
-                                index.try_into().unwrap(),
-                            ))?,
+                            index: get_const_index(&Constant::Integer(index.try_into().unwrap()))?,
                         },
                         inst.span,
                     ));
                 }
                 ir::InstructionKind::ArgumentCount => {
-                    if saved_stack_top_registers.is_empty() {
-                        vm_instructions.push((
-                            Instruction::StackTop {
-                                dest: reg_alloc.instruction_registers[inst_id],
-                            },
-                            inst.span,
-                        ));
-                    } else {
-                        vm_instructions.push((
-                            Instruction::Copy {
-                                dest: reg_alloc.instruction_registers[inst_id],
-                                source: saved_stack_top_registers[0],
-                            },
-                            inst.span,
-                        ));
-                    }
+                    vm_instructions.push((
+                        Instruction::ArgCount {
+                            dest: reg_alloc.instruction_registers[inst_id],
+                        },
+                        inst.span,
+                    ));
                 }
                 ir::InstructionKind::Argument(index) => {
                     vm_instructions.push((
-                        Instruction::StackGet {
+                        Instruction::GetArg {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            stack_pos: reg_alloc.instruction_registers[index],
+                            index: reg_alloc.instruction_registers[index],
                         },
                         inst.span,
                     ));
@@ -433,22 +384,12 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             inst.span,
                         ));
                     } else {
-                        let stack_bottom = get_current_stack_top_register(block_id, inst_index);
-
-                        for &index in indexes {
-                            vm_instructions.push((
-                                Instruction::StackPush {
-                                    source: reg_alloc.instruction_registers[index],
-                                },
-                                inst.span,
-                            ));
-                        }
-
+                        vm_instructions.push((Instruction::PushStackFrame {}, inst.span));
+                        push_stack_push_insts(&mut vm_instructions, indexes, inst.span);
                         vm_instructions.push((
                             Instruction::GetIndexMulti {
                                 dest: reg_alloc.instruction_registers[inst_id],
                                 array: reg_alloc.instruction_registers[array],
-                                stack_bottom,
                             },
                             inst.span,
                         ));
@@ -469,21 +410,11 @@ fn codegen_function<S: Clone + Eq + Hash>(
                             inst.span,
                         ));
                     } else {
-                        let stack_bottom = get_current_stack_top_register(block_id, inst_index);
-
-                        for &index in indexes {
-                            vm_instructions.push((
-                                Instruction::StackPush {
-                                    source: reg_alloc.instruction_registers[index],
-                                },
-                                inst.span,
-                            ));
-                        }
-
+                        vm_instructions.push((Instruction::PushStackFrame {}, inst.span));
+                        push_stack_push_insts(&mut vm_instructions, indexes, inst.span);
                         vm_instructions.push((
                             Instruction::SetIndexMulti {
                                 array: reg_alloc.instruction_registers[array],
-                                stack_bottom,
                                 value: reg_alloc.instruction_registers[value],
                             },
                             inst.span,
@@ -724,66 +655,34 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::InstructionKind::OpenCall {
-                    scope,
-                    func,
-                    ref args,
-                } => {
-                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
-
-                    for &arg in args {
-                        vm_instructions.push((
-                            Instruction::StackPush {
-                                source: reg_alloc.instruction_registers[arg],
-                            },
-                            inst.span,
-                        ));
-                    }
-
+                ir::InstructionKind::OpenCall { func, ref args, .. } => {
+                    vm_instructions.push((Instruction::PushStackFrame {}, inst.span));
+                    push_stack_push_insts(&mut vm_instructions, args, inst.span);
                     vm_instructions.push((
                         Instruction::Call {
                             func: reg_alloc.instruction_registers[func],
-                            stack_bottom: saved_stack_top_registers[nesting_level],
                         },
                         inst.span,
                     ));
-
-                    if call_scopes_which_save.contains(&scope) {
-                        vm_instructions.push((
-                            Instruction::StackTop {
-                                dest: saved_stack_top_registers[nesting_level + 1],
-                            },
-                            inst.span,
-                        ));
-                    }
                 }
-                ir::InstructionKind::FixedReturn(scope, index) => {
-                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
+                ir::InstructionKind::FixedReturn(_, index) => {
                     vm_instructions.push((
-                        Instruction::StackGetOffset {
+                        Instruction::StackGetConst {
                             dest: reg_alloc.instruction_registers[inst_id],
-                            stack_base: saved_stack_top_registers[nesting_level],
-                            offset: get_const_index(&Constant::Integer(index.try_into().unwrap()))?,
+                            index: get_const_index(&Constant::Integer(index.try_into().unwrap()))?,
                         },
                         inst.span,
                     ));
                 }
-                ir::InstructionKind::CloseCall(scope) => {
-                    let nesting_level = call_scope_liveness.nesting_level(scope).unwrap();
-                    vm_instructions.push((
-                        Instruction::StackResize {
-                            stack_top: saved_stack_top_registers[nesting_level],
-                        },
-                        inst.span,
-                    ));
+                ir::InstructionKind::CloseCall(_) => {
+                    vm_instructions.push((Instruction::PopStackFrame {}, inst.span));
                 }
             }
         }
 
         match block.exit.kind {
             ir::ExitKind::Return { value } => {
-                let stack_bottom =
-                    get_current_stack_top_register(block_id, block.instructions.len());
+                vm_instructions.push((Instruction::PushStackFrame {}, block.exit.span));
 
                 if let Some(value) = value {
                     vm_instructions.push((
@@ -794,7 +693,7 @@ fn codegen_function<S: Clone + Eq + Hash>(
                     ));
                 }
 
-                vm_instructions.push((Instruction::Return { stack_bottom }, block.exit.span));
+                vm_instructions.push((Instruction::Return {}, block.exit.span));
             }
             ir::ExitKind::Throw(value) => {
                 vm_instructions.push((

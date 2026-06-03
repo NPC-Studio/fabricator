@@ -69,6 +69,11 @@ impl<'gc, 'a> Stack<'gc, 'a> {
     }
 
     #[inline]
+    pub fn truncate(&mut self, size: usize) {
+        self.slice.truncate(size);
+    }
+
+    #[inline]
     pub fn reserve(&mut self, additional: usize) {
         self.slice.reserve(additional);
     }

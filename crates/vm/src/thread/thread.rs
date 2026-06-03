@@ -32,6 +32,7 @@ pub struct ThreadState<'gc> {
     frames: Vec<Frame<'gc>>,
     registers: Vec<Value<'gc>>,
     stack: Vec<Value<'gc>>,
+    stack_frame_boundaries: Vec<usize>,
     this: Vec<Value<'gc>>,
     heap: Vec<OwnedHeapVar<'gc>>,
     hook_state: Option<HookState<'gc>>,
@@ -45,6 +46,7 @@ impl<'gc> Thread<'gc> {
                 frames: Vec::new(),
                 registers: Vec::new(),
                 stack: Vec::new(),
+                stack_frame_boundaries: Vec::new(),
                 this: Vec::new(),
                 heap: Vec::new(),
                 hook_state: None,
@@ -515,6 +517,7 @@ struct ClosureFrame<'gc> {
     closure: Closure<'gc>,
     register_bottom: usize,
     stack_bottom: usize,
+    stack_frame_boundaries_bottom: usize,
     this_bottom: usize,
     heap_bottom: usize,
     dispatcher: instructions::Dispatcher<'gc>,
@@ -553,6 +556,8 @@ impl<'gc> ThreadState<'gc> {
             let register_bottom = self.registers.len();
             // Registers are resized at the beginning of the bytecode dispatch.
 
+            let stack_frame_boundaries_bottom = self.stack_frame_boundaries.len();
+
             // Always push a "base" `this` value.
             let this_bottom = self.this.len();
             let this = closure
@@ -570,6 +575,7 @@ impl<'gc> ThreadState<'gc> {
                 closure: closure,
                 register_bottom,
                 stack_bottom,
+                stack_frame_boundaries_bottom,
                 this_bottom,
                 heap_bottom,
                 dispatcher: instructions::Dispatcher::new(closure.prototype().bytecode(), 0),
@@ -633,10 +639,21 @@ impl<'gc> ThreadState<'gc> {
                 .try_into()
                 .unwrap();
             let stack = Stack::new(&mut self.stack, frame.stack_bottom);
+            let stack_frame_boundaries = VecEndSlice::new(
+                &mut self.stack_frame_boundaries,
+                frame.stack_frame_boundaries_bottom,
+            );
             let this = VecEndSlice::new(&mut self.this, frame.this_bottom);
             let heap = &mut self.heap[frame.heap_bottom..];
-            let mut dispatch =
-                dispatch::Dispatch::new(ctx, frame.closure, registers, stack, this, heap);
+            let mut dispatch = dispatch::Dispatch::new(
+                ctx,
+                frame.closure,
+                registers,
+                stack,
+                stack_frame_boundaries,
+                this,
+                heap,
+            );
 
             let next = if let Some(hook_state) = &mut self.hook_state
                 && hook_state.hook_step_next != 0
@@ -677,6 +694,9 @@ impl<'gc> ThreadState<'gc> {
 
                                 let stack_bottom = frame.stack_bottom + args_bottom;
 
+                                let stack_frame_boundaries_bottom =
+                                    self.stack_frame_boundaries.len();
+
                                 // Always push a "base" `this` value.
                                 let this_bottom = self.this.len();
                                 let this = closure.this().null_coalesce(
@@ -694,6 +714,7 @@ impl<'gc> ThreadState<'gc> {
                                     closure,
                                     register_bottom,
                                     stack_bottom,
+                                    stack_frame_boundaries_bottom,
                                     this_bottom,
                                     heap_bottom,
                                     dispatcher: instructions::Dispatcher::new(
@@ -736,6 +757,10 @@ impl<'gc> ThreadState<'gc> {
                         // Drain everything on the stack up until the returns.
                         self.stack
                             .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
+
+                        // Clear any unpopped stack frames.
+                        self.stack_frame_boundaries
+                            .truncate(frame.stack_frame_boundaries_bottom);
 
                         // Clear any unpopped `this` values.
                         self.this.truncate(frame.this_bottom);

@@ -33,8 +33,8 @@ macro_rules! for_each_instruction {
             [basic]
             /// Reset an *owned* heap variable.
             ///
-            /// This creates a new owned heap variable with the value `Undefined`, and can be used
-            /// to disconnect heap variables that are shared with any previously created closures.
+            /// This resets a heap variable to the value `Undefined`, and also  disconnects heap
+            /// variables that are shared with any previously created closures.
             reset_heap = ResetHeap { heap: HeapIdx };
 
             [basic] globals = Globals { dest: RegIdx };
@@ -64,6 +64,18 @@ macro_rules! for_each_instruction {
             [basic]
             /// Set the `dest` register to the currently executing closure.
             current_closure = CurrentClosure { dest: RegIdx };
+
+            [basic] arg_count = ArgCount { dest: RegIdx };
+
+            [basic]
+            /// Get an argument with index from the value in the `index` register and place it in
+            /// the `dest` register.
+            ///
+            /// If the argument index is out of range of the current argument list, then the
+            /// destination register is set to `Undefined`.
+            get_arg = GetArg { dest: RegIdx, index: RegIdx };
+
+            [basic] get_arg_const = GetArgConst { dest: RegIdx, index: ConstIdx };
 
             [basic] new_object = NewObject { dest: RegIdx };
             [basic] new_array = NewArray { dest: RegIdx };
@@ -113,58 +125,55 @@ macro_rules! for_each_instruction {
             [basic] null_coalesce = NullCoalesce { dest: RegIdx, left: RegIdx, right: RegIdx };
 
             [basic]
-            /// Get the current size of the stack and place it in the `dest` register.
-            stack_top = StackTop { dest: RegIdx };
+            /// Push a new frame on the stack.
+            push_stack_frame = PushStackFrame {};
 
             [basic]
-            /// Resize the stack to the size in the `stack_top` register.
-            stack_resize = StackResize { stack_top: RegIdx };
-
-            [basic] stack_resize_const = StackResizeConst { stack_top: ConstIdx };
+            /// Pops the topmost stack frame.
+            pop_stack_frame = PopStackFrame {};
 
             [basic]
-            /// Get a value from the stack at the position in the `stack_pos` register.
-            ///
-            /// If the stack position is out of range of the current stack top, then the destination
-            /// register is set to `Undefined`.
-            stack_get = StackGet { dest: RegIdx, stack_pos: RegIdx };
-
-            [basic] stack_get_const = StackGetConst { dest: RegIdx, stack_pos: ConstIdx };
-
-            [basic] stack_get_offset = StackGetOffset {
-                dest: RegIdx,
-                stack_base: RegIdx,
-                offset: ConstIdx
-            };
-
-            [basic]
-            /// Set a value in the stack at the position in the `stack_pos` register.
-            ///
-            /// If the stack position is out of range of the current stack top, the stack is
-            /// implicitly grown to fit the set value.
-            stack_set = StackSet { source: RegIdx, stack_pos: RegIdx };
-
-            [basic]
-            /// Push a value onto the top of the stack.
+            /// Push a value onto the top of the current stack frame.
             stack_push = StackPush { source: RegIdx };
 
             [basic]
-            /// Pop a value from the top of the stack.
-            stack_pop = StackPop { dest: RegIdx };
+            /// Push two values onto the top of the topmost stack frame.
+            stack_push_2 = StackPush2 { source_a: RegIdx, source_b: RegIdx };
 
             [basic]
-            /// Get an index from a value with multiple indexes from the stack.
-            ///
-            /// Index valuess are all stack elements starting above the position in the
-            /// `stack_bottom` register.
-            get_index_multi = GetIndexMulti { dest: RegIdx, array: RegIdx, stack_bottom: RegIdx };
+            /// Push three values onto the top of the topmost stack frame.
+            stack_push_3 = StackPush3 { source_a: RegIdx, source_b: RegIdx, source_c: RegIdx };
 
             [basic]
-            /// Set an index on a value with multiple indexes from the stack.
+            /// Push four values onto the top of the topmost stack frame.
+            stack_push_4 = StackPush4 {
+                source_a: RegIdx,
+                source_b: RegIdx,
+                source_c: RegIdx,
+                source_d: RegIdx,
+            };
+
+            [basic]
+            /// Get an element of the current stack frame with index from the value in the `index`
+            /// register and place it in the `dest` register.
             ///
-            /// Index valuess are all stack elements starting above the position in the
-            /// `stack_bottom` register.
-            set_index_multi = SetIndexMulti { array: RegIdx, stack_bottom: RegIdx, value: RegIdx };
+            /// If the stack index is out of range of the current stack frame, then the destination
+            /// register is set to `Undefined`.
+            stack_get = StackGet { dest: RegIdx, index: RegIdx };
+
+            [basic] stack_get_const = StackGetConst { dest: RegIdx, index: ConstIdx };
+
+            [basic]
+            /// Get an index from a value with multiple indexes from the topmost stack frame.
+            ///
+            /// Automatically pops the topmost stack frame.
+            get_index_multi = GetIndexMulti { dest: RegIdx, array: RegIdx };
+
+            [basic]
+            /// Set an index on a value with multiple indexes from the topmost stack frame.
+            ///
+            /// Automatically pops the topmost stack frame.
+            set_index_multi = SetIndexMulti { array: RegIdx, value: RegIdx };
 
             [basic] get_magic = GetMagic { dest: RegIdx, magic: MagicIdx };
             [basic] set_magic = SetMagic { magic: MagicIdx, source: RegIdx };
@@ -178,19 +187,22 @@ macro_rules! for_each_instruction {
             [jump_if] jump_if = JumpIf { target: InstIdx, arg: RegIdx, is_true: bool };
 
             [special]
-            /// Call a function with arguments starting at `stack_bottom`.
-            call = Call { func: RegIdx, stack_bottom: RegIdx };
+            /// Call a function with arguments in the topmost stack frame.
+            ///
+            /// Pops all arguments from the topmost stack frame, then pushes all returns as a new
+            /// stack frame.
+            call = Call { func: RegIdx };
 
             [special]
-            /// Return with values starting at `stack_bottom`.
-            return_ = Return { stack_bottom: RegIdx };
+            /// Return with values in the topmost stack frame.
+            return_ = Return {};
         }
     };
 }
 
 macro_rules! define_instruction {
     ($(
-        [$_category:ident] $(#[$attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ty),* };
+        [$_category:ident] $(#[$attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ty),* $(,)? };
     )*) => {
         #[derive(Copy, Clone, Eq, PartialEq)]
         pub enum Instruction {
@@ -233,7 +245,7 @@ impl Instruction {
 
         macro_rules! impl_debug {
             ($(
-                [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ident),* };
+                [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ident),* $(,)? };
             )*) => {
                 match self {
                     $(Instruction::$name { $($field),* } => {

@@ -24,7 +24,7 @@ pub enum NestedScopeVerificationErrorKind<I> {
     UseNotInRange(ir::InstLocation),
     #[error("is not strictly nested within scope {other_scope}")]
     ScopeNotNested { other_scope: I },
-    #[error("has use is within an inner scope {inner_scope} at location {instruction}")]
+    #[error("use is within an inner scope {inner_scope} at location {instruction}")]
     UseOverlapsInner {
         inner_scope: I,
         instruction: ir::InstLocation,

@@ -409,16 +409,6 @@ impl RegisterAllocation {
             used_registers: register_top,
         })
     }
-
-    pub fn allocate_extra(&mut self) -> Result<RegIdx, ProtoGenError> {
-        match RegIdx::try_from(self.used_registers) {
-            Ok(r) => {
-                self.used_registers += 1;
-                Ok(r)
-            }
-            Err(_) => Err(ProtoGenError::RegisterOverflow),
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone)]

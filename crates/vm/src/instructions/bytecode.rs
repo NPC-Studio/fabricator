@@ -46,7 +46,7 @@ impl ByteCode {
         fn opcode_for_inst(inst: Instruction) -> OpCode {
             macro_rules! match_inst {
                 ($(
-                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* $(,)? };
                 )*) => {
                     match inst {
                         $(Instruction::$name { .. } => OpCode::$name),*
@@ -59,7 +59,7 @@ impl ByteCode {
         fn op_param_len(opcode: OpCode) -> usize {
             macro_rules! match_opcode {
                 ($(
-                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident : $field_ty:ty),* $(,)? };
                 )*) => {
                     match opcode {
                         $(OpCode::$name { .. } => mem::size_of::<params::$name>()),*
@@ -103,9 +103,9 @@ impl ByteCode {
 
             macro_rules! fixup_targets {
                 (
-                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
-                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
+                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
@@ -123,7 +123,7 @@ impl ByteCode {
 
             macro_rules! write_instruction {
                 ($(
-                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+                    [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* $(,)? };
                 )*) => {
                     match inst {
                         $(Instruction::$name { $($field),* } => {
@@ -202,9 +202,9 @@ impl ByteCode {
 
             macro_rules! decode {
                 (
-                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
-                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
+                    $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
                 ) => {
                     match opcode {
                         $(OpCode::$basic_name => {
@@ -380,10 +380,10 @@ impl<'gc> Dispatcher<'gc> {
 
             macro_rules! dispatch {
                 (
-                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
-                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $($jump_field:ident : $jump_field_ty:ty),* };)*
-                    $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+                    $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
+                    $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $($jump_field:ident : $jump_field_ty:ty),* $(,)? };)*
+                    $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* $(,)? };)*
+                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
                 ) => {
                     match opcode {
                         $(
@@ -410,15 +410,14 @@ impl<'gc> Dispatcher<'gc> {
                         OpCode::Call => {
                             let params::Call {
                                 func,
-                                stack_bottom,
                             } = bytecode_read(&mut self.ptr);
-                            if let ControlFlow::Break(b) = dispatch.call(func, stack_bottom)? {
+                            if let ControlFlow::Break(b) = dispatch.call(func)? {
                                 return Ok(ControlFlow::Break(b));
                             }
                         }
                         OpCode::Return => {
-                            let params::Return { stack_bottom } = bytecode_read(&mut self.ptr);
-                            return dispatch.return_(stack_bottom).map(ControlFlow::Break);
+                            let params::Return { } = bytecode_read(&mut self.ptr);
+                            return dispatch.return_().map(ControlFlow::Break);
                         }
                     }
                 };
@@ -433,10 +432,10 @@ impl<'gc> Dispatcher<'gc> {
 
 macro_rules! define_dispatch {
     (
-        $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* };)*
-        $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* };)*
-        $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* };)*
-        $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* };)*
+        $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
+        $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
+        $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* $(,)? };)*
+        $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
     ) => {
         pub trait Dispatch {
             type Break;
@@ -448,10 +447,9 @@ macro_rules! define_dispatch {
             fn call(
                 &mut self,
                 func: RegIdx,
-                stack_bottom: RegIdx,
             ) -> Result<ControlFlow<Self::Break>, Self::Error>;
 
-            fn return_(&mut self, stack_bottom: RegIdx) -> Result<Self::Break, Self::Error>;
+            fn return_(&mut self) -> Result<Self::Break, Self::Error>;
         }
     };
 }
@@ -462,7 +460,7 @@ mod params {
 
     macro_rules! define_params {
         ($(
-            [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+            [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* $(,)? };
         )*) => {
             $(
                 #[derive(Copy, Clone)]
@@ -478,7 +476,7 @@ mod params {
 
 macro_rules! define_opcode {
     ($(
-        [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* };
+        [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $( $field:ident : $field_ty:ty ),* $(,)? };
     )*) => {
         #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
         #[repr(u8)]
@@ -535,7 +533,7 @@ mod tests {
                 is_true: true,
             },
             Instruction::Copy { source: 7, dest: 8 },
-            Instruction::Return { stack_bottom: 0 },
+            Instruction::Return {},
         ];
 
         let bytecode = ByteCode::encode(insts.iter().map(|&i| (i, Span::null()))).unwrap();
