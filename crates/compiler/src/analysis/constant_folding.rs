@@ -159,7 +159,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
             }
 
             if let Some(new_inst) = new_inst {
-                ir.instructions[inst_id].set_kind(new_inst);
+                ir.instructions[inst_id].kind = new_inst;
             }
         }
 

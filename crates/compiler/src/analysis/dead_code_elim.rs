@@ -5,6 +5,7 @@ use fabricator_util::{
 };
 
 use crate::{
+    analysis::types_and_effects::TypesAndEffects,
     graph::{
         Node,
         dfs::{depth_first_search, topological_order},
@@ -17,6 +18,8 @@ use crate::{
 pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
     // Dead code elimination algorithm from Cytron et al. (1991)
     // https://bears.ece.ucsb.edu/class/ece253/papers/cytron91.pdf
+
+    let types_and_effects = TypesAndEffects::analyze(ir);
 
     // Find all of the (forward) reachable blocks and number them according to a topological
     // ordering. We will use this to find retreating edges.
@@ -167,14 +170,21 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
             upsilon_instructions
                 .get_or_insert_default(shadow_var)
                 .push(inst_id);
-        } else if inst.effects.has_effect() {
+        } else if types_and_effects.instructions[inst_id].effects.has_effect() {
             live_instructions.insert(inst_id.index() as usize);
             worklist.push(Work::Instruction(inst_id));
         }
     }
 
-    // Additionally, any parameter of `Exit::Return` or `Exit::Throw` is always live.
     for &block_id in &reachable_blocks {
+        // The sources for all branches with effects are live.
+        if let Some(effects) = types_and_effects.branches.get(block_id) {
+            if effects.has_effect() {
+                worklist.push(Work::Branch(block_id));
+            }
+        }
+
+        // Any parameter of `Exit::Return` or `Exit::Throw` is always live.
         match ir.blocks[block_id].exit.kind {
             ir::ExitKind::Return { value: Some(value) } | ir::ExitKind::Throw(value) => {
                 live_instructions.insert(value.index() as usize);
@@ -208,8 +218,6 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                 live_block = inst_blocks[inst_id];
             }
             Work::Branch(block_id) => {
-                // The branch condition sources are only live if there is a live instruction that is
-                // control-flow dependent on this branch.
                 let block = &ir.blocks[block_id];
                 match block.exit.kind {
                     ir::ExitKind::Branch { cond, .. } => {
@@ -219,10 +227,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                             }
                         }
                     }
-                    _ => {
-                        // This node must have a retreating edge, which can make it a live branch
-                        // without being an actual branch.
-                    }
+                    _ => {}
                 }
 
                 live_block = block_id;
@@ -249,7 +254,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         for &inst_id in &block.instructions {
             if !live_instructions.contains(inst_id.index() as usize) {
                 // Any dead instruction can be replaced with a `NoOp`.
-                ir.instructions[inst_id].set_kind(ir::InstructionKind::NoOp);
+                ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
             }
         }
 

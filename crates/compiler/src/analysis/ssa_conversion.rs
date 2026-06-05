@@ -103,10 +103,10 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
             for &shadow_var in phi_functions.values() {
                 inst_change_set.insert(
                     0,
-                    ir.instructions.insert(ir::Instruction::new(
-                        ir::InstructionKind::Phi(shadow_var),
-                        Span::null(),
-                    )),
+                    ir.instructions.insert(ir::Instruction {
+                        kind: ir::InstructionKind::Phi(shadow_var),
+                        span: Span::null(),
+                    }),
                 );
             }
             inst_change_set.apply(&mut block.instructions);
@@ -142,16 +142,16 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     ir::InstructionKind::GetVariable(var_id) => {
                         if let Some(top) = current_vars.get(var_id).and_then(|s| s.last().copied())
                         {
-                            inst.set_kind(ir::InstructionKind::Copy(top));
+                            inst.kind = ir::InstructionKind::Copy(top);
                         } else if !skip_vars.contains(&var_id) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
-                            inst.set_kind(ir::InstructionKind::Constant(Constant::Undefined));
+                            inst.kind = ir::InstructionKind::Constant(Constant::Undefined);
                         }
                     }
                     ir::InstructionKind::SetVariable(var_id, source) => {
                         if let Some(stack) = current_vars.get_mut(var_id) {
-                            inst.set_kind(ir::InstructionKind::NoOp);
+                            inst.kind = ir::InstructionKind::NoOp;
                             stack.push(source);
                         } else {
                             assert!(skip_vars.contains(&var_id));
@@ -165,12 +165,12 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     }
                     ir::InstructionKind::OpenVariable(var_id) => {
                         if !skip_vars.contains(&var_id) {
-                            inst.set_kind(ir::InstructionKind::NoOp);
+                            inst.kind = ir::InstructionKind::NoOp;
                         }
                     }
                     ir::InstructionKind::CloseVariable(var_id) => {
                         if !skip_vars.contains(&var_id) {
-                            inst.set_kind(ir::InstructionKind::NoOp);
+                            inst.kind = ir::InstructionKind::NoOp;
                         }
                     }
                     _ => {}
@@ -190,19 +190,19 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                             // If we don't have a value to add to an `Upsilon`, then we have to
                             // make one to keep the IR well-formed. This was use of a value that was
                             // undefined on this code path, so we set the value to undefined.
-                            var_inst = ir.instructions.insert(ir::Instruction::new(
-                                ir::InstructionKind::Constant(Constant::Undefined),
-                                Span::null(),
-                            ));
+                            var_inst = ir.instructions.insert(ir::Instruction {
+                                kind: ir::InstructionKind::Constant(Constant::Undefined),
+                                span: Span::null(),
+                            });
                             block.instructions.push(var_inst);
                         }
 
                         block
                             .instructions
-                            .push(ir.instructions.insert(ir::Instruction::new(
-                                ir::InstructionKind::Upsilon(shadow_var, var_inst),
-                                ir.instructions[var_inst].span,
-                            )));
+                            .push(ir.instructions.insert(ir::Instruction {
+                                kind: ir::InstructionKind::Upsilon(shadow_var, var_inst),
+                                span: ir.instructions[var_inst].span,
+                            }));
                     }
                 }
             }

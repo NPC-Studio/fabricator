@@ -69,7 +69,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                 if ir
                     .instructions
                     .get(source)
-                    .is_none_or(|s| s.output_type.is_void())
+                    .is_none_or(|s| !s.kind.has_output())
                 {
                     return Err(ReferenceVerificationError::BadSource {
                         bad: source,
@@ -130,7 +130,7 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
             if ir
                 .instructions
                 .get(source)
-                .is_none_or(|s| s.output_type.is_void())
+                .is_none_or(|s| !s.kind.has_output())
             {
                 return Err(ReferenceVerificationError::BadSource {
                     bad: source,

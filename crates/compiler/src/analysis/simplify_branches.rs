@@ -2,11 +2,19 @@ use std::collections::hash_map;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::ir;
+use crate::{
+    analysis::types_and_effects::{InstructionOutputType, TypesAndEffects},
+    ir,
+};
 
 /// Combine is_true and is_false branch conditions that reference test operations into just
 /// branches, if possible.
-pub fn simplify_branch_conditions<S>(ir: &mut ir::Function<S>) {
+///
+/// Additionally, simplify `NullCoalesce` instructions whose output is known due to computed type
+/// information.
+pub fn simplify_branches<S>(ir: &mut ir::Function<S>) {
+    let types_and_effects = TypesAndEffects::analyze(ir);
+
     // Find all the branch source instructions for is_true and is_false that are:
     //   1) Compatible testing UnOp or BinOp instructions.
     //   2) Not used by any other instruction or branch.
@@ -19,7 +27,11 @@ pub fn simplify_branch_conditions<S>(ir: &mut ir::Function<S>) {
         if let ir::ExitKind::Branch { cond, .. } = &mut block.exit.kind {
             match *cond {
                 ir::BranchCondition::IsTrue(inst_id) | ir::BranchCondition::IsFalse(inst_id) => {
-                    if !ir.instructions[inst_id].effects.has_effect() {
+                    if types_and_effects
+                        .instructions
+                        .get(inst_id)
+                        .is_some_and(|e| !e.effects.has_effect())
+                    {
                         match unique_branch_sources.entry(inst_id) {
                             hash_map::Entry::Occupied(occupied) => {
                                 // If this instruction was been used by another branch, then it is
@@ -89,7 +101,7 @@ pub fn simplify_branch_conditions<S>(ir: &mut ir::Function<S>) {
                     get_equivalent_condition(&ir.instructions[inst_id].kind)
                 {
                     *cond = simplified_cond;
-                    ir.instructions[inst_id].set_kind(ir::InstructionKind::NoOp);
+                    ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
                 }
             }
             ir::BranchCondition::IsFalse(inst_id) => {
@@ -97,10 +109,31 @@ pub fn simplify_branch_conditions<S>(ir: &mut ir::Function<S>) {
                     get_equivalent_condition(&ir.instructions[inst_id].kind)
                 {
                     *cond = simplified_cond.reverse();
-                    ir.instructions[inst_id].set_kind(ir::InstructionKind::NoOp);
+                    ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
                 }
             }
             _ => {}
+        }
+    }
+
+    // Simplify all `NullCoalesce` instructions whose input types are known.
+
+    for inst in ir.instructions.values_mut() {
+        if let ir::InstructionKind::BinOp {
+            left,
+            op: ir::BinOp::NullCoalesce,
+            right,
+        } = inst.kind
+        {
+            if let Some(left_tae) = types_and_effects.instructions.get(left) {
+                let left_output = left_tae.output_type.unwrap();
+                if left_output == InstructionOutputType::Undefined {
+                    inst.kind = ir::InstructionKind::Copy(right);
+                }
+                if left_output != InstructionOutputType::Any {
+                    inst.kind = ir::InstructionKind::Copy(left);
+                }
+            }
         }
     }
 }

@@ -218,10 +218,10 @@ mod tests {
 
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::OpenVariable(var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenVariable(var),
+                span: Span::null(),
+            }));
 
         block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
@@ -229,10 +229,10 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::CloseVariable(var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseVariable(var),
+                span: Span::null(),
+            }));
 
         block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
@@ -271,17 +271,17 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let true_ = instructions.insert(ir::Instruction::new(
-            ir::InstructionKind::Constant(Constant::Boolean(true)),
-            Span::null(),
-        ));
+        let true_ = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Boolean(true)),
+            span: Span::null(),
+        });
         block_a.instructions.push(true_);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::OpenVariable(var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::OpenVariable(var),
+                span: Span::null(),
+            }));
 
         block_a.exit.kind = ir::ExitKind::Branch {
             cond: ir::BranchCondition::IsTrue(true_),
@@ -293,10 +293,10 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::CloseVariable(var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::CloseVariable(var),
+                span: Span::null(),
+            }));
 
         let ir = ir::Function {
             reference: FunctionRef::Chunk,

@@ -118,17 +118,17 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let one = instructions.insert(ir::Instruction::new(
-            ir::InstructionKind::Constant(Constant::Integer(1)),
-            Span::null(),
-        ));
+        let one = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(1)),
+            span: Span::null(),
+        });
         block_a.instructions.push(one);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::Upsilon(shadow_var, one),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, one),
+                span: Span::null(),
+            }));
 
         block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
@@ -136,22 +136,22 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::Phi(shadow_var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Phi(shadow_var),
+                span: Span::null(),
+            }));
 
-        let two = instructions.insert(ir::Instruction::new(
-            ir::InstructionKind::Constant(Constant::Integer(2)),
-            Span::null(),
-        ));
+        let two = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(2)),
+            span: Span::null(),
+        });
         block_b.instructions.push(two);
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::Upsilon(shadow_var, two),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, two),
+                span: Span::null(),
+            }));
 
         block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 
@@ -201,17 +201,17 @@ mod tests {
 
         let block_a = &mut blocks[block_a_id];
 
-        let one = instructions.insert(ir::Instruction::new(
-            ir::InstructionKind::Constant(Constant::Integer(1)),
-            Span::null(),
-        ));
+        let one = instructions.insert(ir::Instruction {
+            kind: ir::InstructionKind::Constant(Constant::Integer(1)),
+            span: Span::null(),
+        });
         block_a.instructions.push(one);
         block_a
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::Upsilon(shadow_var, one),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Upsilon(shadow_var, one),
+                span: Span::null(),
+            }));
 
         block_a.exit.kind = ir::ExitKind::Jump(block_b_id);
 
@@ -219,10 +219,10 @@ mod tests {
 
         block_b
             .instructions
-            .push(instructions.insert(ir::Instruction::new(
-                ir::InstructionKind::Phi(shadow_var),
-                Span::null(),
-            )));
+            .push(instructions.insert(ir::Instruction {
+                kind: ir::InstructionKind::Phi(shadow_var),
+                span: Span::null(),
+            }));
 
         block_b.exit.kind = ir::ExitKind::Jump(block_b_id);
 

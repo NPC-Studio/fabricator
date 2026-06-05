@@ -79,7 +79,7 @@ impl InstructionLiveness {
 
                 let inst = &ir.instructions[inst_id];
 
-                if !inst.output_type.is_void() {
+                if inst.kind.has_output() {
                     block_definitions.insert(inst_id);
                 }
 
@@ -102,7 +102,7 @@ impl InstructionLiveness {
                 let inst = &ir.instructions[inst_id];
 
                 for source_inst in inst.kind.sources() {
-                    if ir.instructions[source_inst].output_type.is_void() {
+                    if !ir.instructions[source_inst].kind.has_output() {
                         return Err(InstructionVerificationError::SourceIsVoid);
                     }
 
@@ -200,7 +200,7 @@ impl InstructionLiveness {
             for (inst_index, &inst_id) in block.instructions.iter().enumerate() {
                 let inst = &ir.instructions[inst_id];
 
-                if !inst.output_type.is_void() {
+                if inst.kind.has_output() {
                     mark_use(inst_id, inst_index);
                 }
 

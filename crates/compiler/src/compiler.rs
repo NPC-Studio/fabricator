@@ -17,14 +17,13 @@ use crate::{
         dead_code_elim::eliminate_dead_code,
         eliminate_copies::eliminate_copies,
         instruction_liveness::{InstructionLiveness, InstructionVerificationError},
-        narrow_instructions::narrow_instructions,
         nested_scope_liveness::{
             CallScopeLiveness, CallScopeVerificationError, ThisScopeLiveness,
             ThisScopeVerificationError,
         },
         shadow_liveness::{ShadowLiveness, ShadowVerificationError},
         shadow_reduction::reduce_shadows,
-        simplify_branch_conditions::simplify_branch_conditions,
+        simplify_branches::simplify_branches,
         ssa_conversion::convert_to_ssa,
         variable_liveness::{VariableLiveness, VariableVerificationError},
         verify_arguments::{ArgumentVerificationError, verify_arguments},
@@ -233,8 +232,7 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
     reduce_shadows(ir).unwrap();
     fold_constants(ir);
     eliminate_copies(ir);
-    narrow_instructions(ir);
-    simplify_branch_conditions(ir);
+    simplify_branches(ir);
 
     eliminate_dead_code(ir);
     clean_unreachable_blocks(ir);
