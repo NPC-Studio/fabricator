@@ -32,7 +32,7 @@ pub fn eliminate_copies<S>(ir: &mut ir::Function<S>) {
                 copies.insert(inst_id, real_source);
 
                 // We're removing every copy, so the existing copy instruction should be unused.
-                inst.kind = ir::InstructionKind::NoOp;
+                inst.set_kind(ir::InstructionKind::NoOp);
             }
 
             for source in inst.kind.sources_mut() {

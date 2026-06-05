@@ -77,7 +77,7 @@ pub fn clean_unused_variables<S>(ir: &mut ir::Function<S>) {
             | ir::InstructionKind::CloseVariable(var_id)
                 if !used_variables.contains(var_id.index() as usize) =>
             {
-                inst.kind = ir::InstructionKind::NoOp;
+                inst.set_kind(ir::InstructionKind::NoOp);
             }
             _ => {}
         }

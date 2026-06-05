@@ -208,13 +208,15 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
                 live_block = inst_blocks[inst_id];
             }
             Work::Branch(block_id) => {
-                // The `cond` parameter of `Exit::Branch` is only live if there is a live
-                // instruction that is control-flow dependent on this branch.
+                // The branch condition sources are only live if there is a live instruction that is
+                // control-flow dependent on this branch.
                 let block = &ir.blocks[block_id];
                 match block.exit.kind {
                     ir::ExitKind::Branch { cond, .. } => {
-                        if live_instructions.insert(cond.index() as usize) {
-                            worklist.push(Work::Instruction(cond));
+                        for inst_id in cond.sources() {
+                            if live_instructions.insert(inst_id.index() as usize) {
+                                worklist.push(Work::Instruction(inst_id));
+                            }
                         }
                     }
                     _ => {
@@ -247,7 +249,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         for &inst_id in &block.instructions {
             if !live_instructions.contains(inst_id.index() as usize) {
                 // Any dead instruction can be replaced with a `NoOp`.
-                ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
+                ir.instructions[inst_id].set_kind(ir::InstructionKind::NoOp);
             }
         }
 

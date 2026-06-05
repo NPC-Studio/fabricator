@@ -142,16 +142,16 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     ir::InstructionKind::GetVariable(var_id) => {
                         if let Some(top) = current_vars.get(var_id).and_then(|s| s.last().copied())
                         {
-                            inst.kind = ir::InstructionKind::Copy(top);
+                            inst.set_kind(ir::InstructionKind::Copy(top));
                         } else if !skip_vars.contains(&var_id) {
                             // If the current variable has had no assignments, then we replace it
                             // with `Undefined`.
-                            inst.kind = ir::InstructionKind::Constant(Constant::Undefined);
+                            inst.set_kind(ir::InstructionKind::Constant(Constant::Undefined));
                         }
                     }
                     ir::InstructionKind::SetVariable(var_id, source) => {
                         if let Some(stack) = current_vars.get_mut(var_id) {
-                            inst.kind = ir::InstructionKind::NoOp;
+                            inst.set_kind(ir::InstructionKind::NoOp);
                             stack.push(source);
                         } else {
                             assert!(skip_vars.contains(&var_id));
@@ -165,12 +165,12 @@ pub fn convert_to_ssa<S>(ir: &mut ir::Function<S>) {
                     }
                     ir::InstructionKind::OpenVariable(var_id) => {
                         if !skip_vars.contains(&var_id) {
-                            inst.kind = ir::InstructionKind::NoOp;
+                            inst.set_kind(ir::InstructionKind::NoOp);
                         }
                     }
                     ir::InstructionKind::CloseVariable(var_id) => {
                         if !skip_vars.contains(&var_id) {
-                            inst.kind = ir::InstructionKind::NoOp;
+                            inst.set_kind(ir::InstructionKind::NoOp);
                         }
                     }
                     _ => {}

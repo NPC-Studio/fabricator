@@ -1099,6 +1099,47 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
+    fn jump_if_undefined(&mut self, test: RegIdx, is_undefined: bool) -> Result<bool, Self::Error> {
+        Ok(self.registers[test as usize].is_undefined() == is_undefined)
+    }
+
+    #[inline]
+    fn jump_if_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        Ok(left.equal(right))
+    }
+
+    #[inline]
+    fn jump_if_not_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        Ok(!left.equal(right))
+    }
+
+    #[inline]
+    fn jump_if_less(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        Ok(left.less_than(right).ok_or_else(|| OpError::BadBinOp {
+            op: "is_less",
+            left: left.into(),
+            right: right.into(),
+        })?)
+    }
+
+    #[inline]
+    fn jump_if_less_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
+        let left = self.registers[left as usize];
+        let right = self.registers[right as usize];
+        Ok(left.less_equal(right).ok_or_else(|| OpError::BadBinOp {
+            op: "is_less",
+            left: left.into(),
+            right: right.into(),
+        })?)
+    }
+
+    #[inline]
     fn call(&mut self, func: RegIdx) -> Result<ControlFlow<Self::Break>, Self::Error> {
         let func = self.registers[func as usize];
         let func = func.as_function().ok_or_else(|| OpError::BadCall {

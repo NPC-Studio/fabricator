@@ -180,14 +180,14 @@ impl<I: Id, V> ops::Index<I> for IdMap<I, V> {
 
     #[inline]
     fn index(&self, id: I) -> &V {
-        self.get(id).expect("no such id in `SecondaryMap`")
+        self.get(id).expect("no such id in `IdMap`")
     }
 }
 
 impl<I: Id, V> ops::IndexMut<I> for IdMap<I, V> {
     #[inline]
     fn index_mut(&mut self, id: I) -> &mut Self::Output {
-        self.get_mut(id).expect("no such id in `SecondaryMap`")
+        self.get_mut(id).expect("no such id in `IdMap`")
     }
 }
 

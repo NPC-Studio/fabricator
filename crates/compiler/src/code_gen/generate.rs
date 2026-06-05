@@ -715,30 +715,85 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 if_true,
                 if_false,
             } => {
-                // If we are jumping to the next block in output order, we don't need to add a jump.
+                // Generate the minimal number of jump tests.
+                //
+                // If our `if_true` block is next, then jump to the `if_false` block when the
+                // reversed condition is true.
+                //
+                // If the `if_false` block is next, then jump to the `if_true` block when the normal
+                // condition is true.
+                //
+                // Otherwise, jump to the `if_true` block when the condition is true, then jump to
+                // the `if_false` block unconditionally afterwards.
+                let (cond, jump_test_branch, jump_after_branch) =
+                    if block_order_indexes[&if_true] == order_index + 1 {
+                        (cond.reverse(), if_false, None)
+                    } else if block_order_indexes[&if_false] == order_index + 1 {
+                        (cond, if_true, None)
+                    } else {
+                        (cond, if_true, Some(if_false))
+                    };
 
-                if block_order_indexes[&if_true] != order_index + 1 {
-                    block_vm_jumps.push((vm_instructions.len(), if_true));
-                    vm_instructions.push((
-                        Instruction::JumpIf {
+                block_vm_jumps.push((vm_instructions.len(), jump_test_branch));
+                vm_instructions.push((
+                    match cond {
+                        ir::BranchCondition::IsDefined(a) => Instruction::JumpIfUndefined {
                             target: 0,
-                            arg: reg_alloc.instruction_registers[cond],
+                            arg: reg_alloc.instruction_registers[a],
+                            is_undefined: false,
+                        },
+                        ir::BranchCondition::IsUndefined(a) => Instruction::JumpIfUndefined {
+                            target: 0,
+                            arg: reg_alloc.instruction_registers[a],
+                            is_undefined: true,
+                        },
+                        ir::BranchCondition::IsTrue(a) => Instruction::JumpIf {
+                            target: 0,
+                            arg: reg_alloc.instruction_registers[a],
                             is_true: true,
                         },
-                        block.exit.span,
-                    ));
-                }
-
-                if block_order_indexes[&if_false] != order_index + 1 {
-                    block_vm_jumps.push((vm_instructions.len(), if_false));
-                    vm_instructions.push((
-                        Instruction::JumpIf {
+                        ir::BranchCondition::IsFalse(a) => Instruction::JumpIf {
                             target: 0,
-                            arg: reg_alloc.instruction_registers[cond],
+                            arg: reg_alloc.instruction_registers[a],
                             is_true: false,
                         },
-                        block.exit.span,
-                    ));
+                        ir::BranchCondition::Equal(a, b) => Instruction::JumpIfEqual {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[a],
+                            right: reg_alloc.instruction_registers[b],
+                        },
+                        ir::BranchCondition::NotEqual(a, b) => Instruction::JumpIfNotEqual {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[a],
+                            right: reg_alloc.instruction_registers[b],
+                        },
+                        ir::BranchCondition::LessThan(a, b) => Instruction::JumpIfLess {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[a],
+                            right: reg_alloc.instruction_registers[b],
+                        },
+                        ir::BranchCondition::LessEqual(a, b) => Instruction::JumpIfLessEqual {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[a],
+                            right: reg_alloc.instruction_registers[b],
+                        },
+                        ir::BranchCondition::GreaterThan(a, b) => Instruction::JumpIfLess {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[b],
+                            right: reg_alloc.instruction_registers[a],
+                        },
+                        ir::BranchCondition::GreaterEqual(a, b) => Instruction::JumpIfLessEqual {
+                            target: 0,
+                            left: reg_alloc.instruction_registers[b],
+                            right: reg_alloc.instruction_registers[a],
+                        },
+                    },
+                    block.exit.span,
+                ));
+
+                if let Some(jump_after) = jump_after_branch {
+                    block_vm_jumps.push((vm_instructions.len(), jump_after));
+                    vm_instructions.push((Instruction::Jump { target: 0 }, block.exit.span));
                 }
             }
         }
@@ -751,6 +806,21 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 *target = jump_offset;
             }
             Instruction::JumpIf { target, .. } => {
+                *target = jump_offset;
+            }
+            Instruction::JumpIfUndefined { target, .. } => {
+                *target = jump_offset;
+            }
+            Instruction::JumpIfEqual { target, .. } => {
+                *target = jump_offset;
+            }
+            Instruction::JumpIfNotEqual { target, .. } => {
+                *target = jump_offset;
+            }
+            Instruction::JumpIfLess { target, .. } => {
+                *target = jump_offset;
+            }
+            Instruction::JumpIfLessEqual { target, .. } => {
                 *target = jump_offset;
             }
             _ => panic!("instruction not a jump"),

@@ -561,7 +561,7 @@ where
         self.end_current_block(
             body.span.start_span(),
             ir::ExitKind::Branch {
-                cond: check_initialized,
+                cond: ir::BranchCondition::IsTrue(check_initialized),
                 if_true: main_block,
                 if_false: init_block,
             },
@@ -898,7 +898,7 @@ where
                 self.end_current_block(
                     span,
                     ir::ExitKind::Branch {
-                        cond: check_initialized,
+                        cond: ir::BranchCondition::IsTrue(check_initialized),
                         if_true: successor,
                         if_false: init_block,
                     },
@@ -1051,7 +1051,7 @@ where
         self.end_current_block(
             if_statement.condition.span(),
             ir::ExitKind::Branch {
-                cond,
+                cond: ir::BranchCondition::IsTrue(cond),
                 if_true: then_block,
                 if_false: else_block,
             },
@@ -1100,7 +1100,7 @@ where
         self.end_current_block(
             for_statement.condition.span(),
             ir::ExitKind::Branch {
-                cond,
+                cond: ir::BranchCondition::IsTrue(cond),
                 if_true: body_block,
                 if_false: successor_block,
             },
@@ -1151,7 +1151,7 @@ where
         self.end_current_block(
             while_stmt.target.span(),
             ir::ExitKind::Branch {
-                cond,
+                cond: ir::BranchCondition::IsTrue(cond),
                 if_true: body_block,
                 if_false: successor_block,
             },
@@ -1203,7 +1203,7 @@ where
         self.end_current_block(
             repeat_stmt.body.span().start_span(),
             ir::ExitKind::Branch {
-                cond: prev,
+                cond: ir::BranchCondition::IsTrue(prev),
                 if_true: body_block,
                 if_false: successor_block,
             },
@@ -1256,21 +1256,13 @@ where
 
         for (i, case) in switch_stmt.cases.iter().enumerate() {
             let compare = self.expression(&case.compare)?;
-            let is_equal = self.push_instruction(
-                case.span,
-                ir::InstructionKind::BinOp {
-                    left: target,
-                    op: ir::BinOp::Equal,
-                    right: compare,
-                },
-            );
 
             let body_block = body_blocks[i];
             let next_block = self.new_block();
             self.end_current_block(
                 case.span,
                 ir::ExitKind::Branch {
-                    cond: is_equal,
+                    cond: ir::BranchCondition::Equal(target, compare),
                     if_true: body_block,
                     if_false: next_block,
                 },
@@ -1418,18 +1410,10 @@ where
             ir::InstructionKind::CloseCall(iter_call_scope),
         );
 
-        let control_is_undef = self.push_instruction(
-            with_stmt.span,
-            ir::InstructionKind::UnOp {
-                op: ir::UnOp::IsUndefined,
-                source: next_control,
-            },
-        );
-
         self.end_current_block(
             with_stmt.target.span(),
             ir::ExitKind::Branch {
-                cond: control_is_undef,
+                cond: ir::BranchCondition::IsUndefined(next_control),
                 if_true: successor_block,
                 if_false: body_block,
             },
@@ -1552,7 +1536,7 @@ where
         self.end_current_block(
             closure_span,
             ir::ExitKind::Branch {
-                cond: success,
+                cond: ir::BranchCondition::IsTrue(success),
                 if_true: success_block,
                 if_false: err_block,
             },
@@ -1569,21 +1553,13 @@ where
             closure_span,
             ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Return as i64)),
         );
-        let exit_code_is_return = self.push_instruction(
-            closure_span,
-            ir::InstructionKind::BinOp {
-                left: exit_code,
-                op: ir::BinOp::Equal,
-                right: return_code,
-            },
-        );
 
         let do_return = self.new_block();
         let no_return = self.new_block();
         self.end_current_block(
             closure_span,
             ir::ExitKind::Branch {
-                cond: exit_code_is_return,
+                cond: ir::BranchCondition::Equal(exit_code, return_code),
                 if_true: do_return,
                 if_false: no_return,
             },
@@ -1607,21 +1583,13 @@ where
                 closure_span,
                 ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Break as i64)),
             );
-            let exit_code_is_break = self.push_instruction(
-                closure_span,
-                ir::InstructionKind::BinOp {
-                    left: exit_code,
-                    op: ir::BinOp::Equal,
-                    right: break_code,
-                },
-            );
 
             let do_break = self.new_block();
             let no_break = self.new_block();
             self.end_current_block(
                 closure_span,
                 ir::ExitKind::Branch {
-                    cond: exit_code_is_break,
+                    cond: ir::BranchCondition::Equal(exit_code, break_code),
                     if_true: do_break,
                     if_false: no_break,
                 },
@@ -1642,21 +1610,13 @@ where
                 closure_span,
                 ir::InstructionKind::Constant(Constant::Integer(TryCatchExitCode::Continue as i64)),
             );
-            let exit_code_is_continue = self.push_instruction(
-                closure_span,
-                ir::InstructionKind::BinOp {
-                    left: exit_code,
-                    op: ir::BinOp::Equal,
-                    right: continue_code,
-                },
-            );
 
             let do_continue = self.new_block();
             let no_continue = self.new_block();
             self.end_current_block(
                 closure_span,
                 ir::ExitKind::Branch {
-                    cond: exit_code_is_continue,
+                    cond: ir::BranchCondition::Equal(exit_code, continue_code),
                     if_true: do_continue,
                     if_false: no_continue,
                 },
@@ -2285,7 +2245,7 @@ where
         self.end_current_block(
             span,
             ir::ExitKind::Branch {
-                cond,
+                cond: ir::BranchCondition::IsTrue(cond),
                 if_true: if_true_block,
                 if_false: if_false_block,
             },

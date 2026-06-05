@@ -489,7 +489,7 @@ mod tests {
             )));
 
         block_a.exit.kind = ir::ExitKind::Branch {
-            cond: true_,
+            cond: ir::BranchCondition::IsTrue(true_),
             if_false: block_b_id,
             if_true: block_a_id,
         };

@@ -58,9 +58,9 @@ pub fn reduce_shadows<S>(ir: &mut ir::Function<S>) -> Result<(), ShadowVerificat
         }
 
         if trivial {
-            ir.instructions[phi].kind = ir::InstructionKind::Copy(first_source);
+            ir.instructions[phi].set_kind(ir::InstructionKind::Copy(first_source));
             for &inst_id in &upsilons {
-                ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
+                ir.instructions[inst_id].set_kind(ir::InstructionKind::NoOp);
             }
         }
     }

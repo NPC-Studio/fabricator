@@ -275,7 +275,7 @@ impl ShadowLiveness {
                 let inst = &mut ir.instructions[inst_id];
                 if let ir::InstructionKind::Upsilon(shadow_var, _) = inst.kind {
                     if !self.is_live_upsilon(shadow_var, block_id, inst_index) {
-                        inst.kind = ir::InstructionKind::NoOp;
+                        inst.set_kind(ir::InstructionKind::NoOp);
                     }
                 }
             }

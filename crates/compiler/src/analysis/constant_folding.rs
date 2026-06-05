@@ -159,7 +159,7 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
             }
 
             if let Some(new_inst) = new_inst {
-                ir.instructions[inst_id].kind = new_inst;
+                ir.instructions[inst_id].set_kind(new_inst);
             }
         }
 
@@ -171,8 +171,43 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                 if_false,
                 if_true,
             } => {
-                if let ir::InstructionKind::Constant(c) = ir.instructions[cond].kind.clone() {
-                    let target = if c.cast_bool() { if_true } else { if_false };
+                let get_constant = |inst_id| {
+                    if let ir::InstructionKind::Constant(c) = &ir.instructions[inst_id].kind {
+                        Some(c)
+                    } else {
+                        None
+                    }
+                };
+
+                let const_cond = match cond {
+                    ir::BranchCondition::IsDefined(a) => get_constant(a).map(|c| !c.is_undefined()),
+                    ir::BranchCondition::IsUndefined(a) => {
+                        get_constant(a).map(|c| c.is_undefined())
+                    }
+                    ir::BranchCondition::IsTrue(a) => get_constant(a).map(|c| c.cast_bool()),
+                    ir::BranchCondition::IsFalse(a) => get_constant(a).map(|c| !c.cast_bool()),
+                    ir::BranchCondition::Equal(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .map(|(a, b)| a.equal(b)),
+                    ir::BranchCondition::NotEqual(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .map(|(a, b)| !a.equal(b)),
+                    ir::BranchCondition::LessThan(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .and_then(|(a, b)| a.less_than(b)),
+                    ir::BranchCondition::LessEqual(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .and_then(|(a, b)| a.less_equal(b)),
+                    ir::BranchCondition::GreaterThan(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .and_then(|(a, b)| b.less_than(a)),
+                    ir::BranchCondition::GreaterEqual(a, b) => get_constant(a)
+                        .and_then(|a| Some((a, get_constant(b)?)))
+                        .and_then(|(a, b)| b.less_equal(a)),
+                };
+
+                if let Some(cond_is_true) = const_cond {
+                    let target = if cond_is_true { if_true } else { if_false };
                     block.exit.kind = ir::ExitKind::Jump(target);
                 }
             }

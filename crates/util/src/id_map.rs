@@ -380,7 +380,7 @@ impl<V> ops::Index<Id> for IdMap<V> {
 impl<V> ops::IndexMut<Id> for IdMap<V> {
     #[inline]
     fn index_mut(&mut self, id: Id) -> &mut Self::Output {
-        self.get_mut(id).expect("no such id in `SecondaryMap`")
+        self.get_mut(id).expect("no such id in `IdMap`")
     }
 }
 

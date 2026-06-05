@@ -937,16 +937,18 @@ dependencies = [
 
 [[package]]
 name = "gc-arena"
-version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=22c71148007d723cdce4c9f43c8eadad9d13c0c3#22c71148007d723cdce4c9f43c8eadad9d13c0c3"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e930dd41c7e12e4f12211d5a33317c77871a214482afd8a3aa63c0a0a51debed"
 dependencies = [
  "gc-arena-derive",
 ]
 
 [[package]]
 name = "gc-arena-derive"
-version = "0.5.3"
-source = "git+https://github.com/kyren/gc-arena?rev=22c71148007d723cdce4c9f43c8eadad9d13c0c3#22c71148007d723cdce4c9f43c8eadad9d13c0c3"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98db22d439d1c003fd875e5961560886e6eb2194637d0705029a017f6f984dbf"
 dependencies = [
  "proc-macro2",
  "quote",

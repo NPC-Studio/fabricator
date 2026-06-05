@@ -184,7 +184,47 @@ macro_rules! for_each_instruction {
 
             [jump] jump = Jump { target: InstIdx };
 
-            [jump_if] jump_if = JumpIf { target: InstIdx, arg: RegIdx, is_true: bool };
+            [jump_if]
+            jump_if = JumpIf {
+                target: InstIdx,
+                arg: RegIdx,
+                is_true: bool,
+            };
+
+            [jump_if]
+            jump_if_undefined = JumpIfUndefined {
+                target: InstIdx,
+                arg: RegIdx,
+                is_undefined: bool,
+            };
+
+            [jump_if]
+            jump_if_equal = JumpIfEqual {
+                target: InstIdx,
+                left: RegIdx,
+                right: RegIdx,
+            };
+
+            [jump_if]
+            jump_if_not_equal = JumpIfNotEqual {
+                target: InstIdx,
+                left: RegIdx,
+                right: RegIdx,
+            };
+
+            [jump_if]
+            jump_if_less = JumpIfLess {
+                target: InstIdx,
+                left: RegIdx,
+                right: RegIdx,
+            };
+
+            [jump_if]
+            jump_if_less_equal = JumpIfLessEqual {
+                target: InstIdx,
+                left: RegIdx,
+                right: RegIdx,
+            };
 
             [special]
             /// Call a function with arguments in the topmost stack frame.

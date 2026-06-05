@@ -426,6 +426,25 @@ impl<'gc> Prototype<'gc> {
                 Instruction::JumpIf { arg, .. } => {
                     verify_reg_idx(arg)?;
                 }
+                Instruction::JumpIfUndefined { arg, .. } => {
+                    verify_reg_idx(arg)?;
+                }
+                Instruction::JumpIfEqual { left, right, .. } => {
+                    verify_reg_idx(left)?;
+                    verify_reg_idx(right)?;
+                }
+                Instruction::JumpIfNotEqual { left, right, .. } => {
+                    verify_reg_idx(left)?;
+                    verify_reg_idx(right)?;
+                }
+                Instruction::JumpIfLess { left, right, .. } => {
+                    verify_reg_idx(left)?;
+                    verify_reg_idx(right)?;
+                }
+                Instruction::JumpIfLessEqual { left, right, .. } => {
+                    verify_reg_idx(left)?;
+                    verify_reg_idx(right)?;
+                }
                 Instruction::Call { func } => {
                     verify_reg_idx(func)?;
                 }

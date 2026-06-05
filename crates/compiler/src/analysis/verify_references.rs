@@ -66,7 +66,11 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                     })?;
 
             for source in inst.kind.sources() {
-                if !ir.instructions.contains(source) {
+                if ir
+                    .instructions
+                    .get(source)
+                    .is_none_or(|s| s.output_type.is_void())
+                {
                     return Err(ReferenceVerificationError::BadSource {
                         bad: source,
                         inst_location,
@@ -118,6 +122,20 @@ pub fn verify_references<S>(ir: &ir::Function<S>) -> Result<(), ReferenceVerific
                 }
 
                 _ => {}
+            }
+        }
+
+        let inst_location = ir::InstLocation::new(block_id, block.instructions.len());
+        for source in block.exit.kind.sources() {
+            if ir
+                .instructions
+                .get(source)
+                .is_none_or(|s| s.output_type.is_void())
+            {
+                return Err(ReferenceVerificationError::BadSource {
+                    bad: source,
+                    inst_location,
+                });
             }
         }
     }

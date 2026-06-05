@@ -1,6 +1,7 @@
 use std::fmt;
 
 use arrayvec::ArrayVec;
+use either::Either;
 use fabricator_util::typed_id_map::{IdMap, new_id_type};
 use fabricator_vm::{FunctionRef, Span};
 
@@ -441,7 +442,6 @@ impl<S> InstructionKind<S> {
 pub enum OutputType {
     Void,
     Undefined,
-    Boolean,
     Scalar,
     String,
     Object,
@@ -579,14 +579,18 @@ impl Effects {
         }
     }
 
+    /// Instruction can be a variable, shadow, or global state write.
     pub fn can_write(&self) -> bool {
         self.variable.can_write() || self.shadow.can_write() || self.global.can_write()
     }
 
+    /// Instruction can have a write effect or can error.
     pub fn has_effect(&self) -> bool {
         self.can_write() || self.can_error
     }
 
+    /// Reordering an instruction with these effects and an instruction with `other` effects can
+    /// change the observable properties of a program.
     pub fn has_dependency(&self, other: &Self) -> bool {
         self.variable.has_dependency(other.variable)
             || self.shadow.has_dependency(other.shadow)
@@ -621,12 +625,26 @@ impl<S> Instruction<S> {
     /// be known using only the created instruction itself.
     #[must_use]
     pub fn new(kind: InstructionKind<S>, span: Span) -> Self {
-        let output_type = match kind {
+        let mut this = Self {
+            kind: InstructionKind::NoOp,
+            span,
+            output_type: OutputType::Void,
+            effects: Effects::none(),
+        };
+
+        this.set_kind(kind);
+        this
+    }
+
+    /// Change the instruction `kind` and update the known type and effect information.
+    pub fn set_kind(&mut self, kind: InstructionKind<S>) {
+        self.output_type = match kind {
             InstructionKind::Copy(_) => OutputType::Any,
             InstructionKind::Constant(ref constant) => match constant {
                 Constant::Undefined => OutputType::Undefined,
-                Constant::Boolean(_) => OutputType::Boolean,
-                Constant::Integer(_) | Constant::Float(_) => OutputType::Scalar,
+                Constant::Boolean(_) | Constant::Integer(_) | Constant::Float(_) => {
+                    OutputType::Scalar
+                }
                 Constant::String(_) => OutputType::String,
             },
             InstructionKind::Closure { .. } => OutputType::Function,
@@ -646,13 +664,16 @@ impl<S> Instruction<S> {
             InstructionKind::GetIndex { .. } => OutputType::Any,
             InstructionKind::GetIndexConst { .. } => OutputType::Any,
             InstructionKind::Phi(_) => OutputType::Any,
-            InstructionKind::UnOp { .. } => OutputType::Any,
-            InstructionKind::BinOp { .. } => OutputType::Any,
+            InstructionKind::UnOp { .. } => OutputType::Scalar,
+            InstructionKind::BinOp { op, .. } => match op {
+                BinOp::NullCoalesce => OutputType::Any,
+                _ => OutputType::Scalar,
+            },
             InstructionKind::FixedReturn(..) => OutputType::Any,
             _ => OutputType::Void,
         };
 
-        let effects = match kind {
+        self.effects = match kind {
             InstructionKind::GetVariable(var_id) => Effects {
                 variable: VariableEffect::Read(var_id),
                 ..Effects::none()
@@ -698,8 +719,23 @@ impl<S> Instruction<S> {
                 shadow: VariableEffect::Write(shadow_var),
                 ..Effects::none()
             },
-            InstructionKind::UnOp { .. } | InstructionKind::BinOp { .. } => Effects {
-                can_error: true,
+            InstructionKind::UnOp { op, .. } => Effects {
+                can_error: match op {
+                    UnOp::IsDefined | UnOp::IsUndefined | UnOp::Test | UnOp::Not => false,
+                    _ => true,
+                },
+                ..Effects::none()
+            },
+            InstructionKind::BinOp { op, .. } => Effects {
+                can_error: match op {
+                    BinOp::Equal
+                    | BinOp::NotEqual
+                    | BinOp::And
+                    | BinOp::Or
+                    | BinOp::Xor
+                    | BinOp::NullCoalesce => false,
+                    _ => true,
+                },
                 ..Effects::none()
             },
             InstructionKind::OpenCall { .. } => Effects {
@@ -714,11 +750,86 @@ impl<S> Instruction<S> {
             _ => Effects::none(),
         };
 
-        Self {
-            kind,
-            span,
-            output_type,
-            effects,
+        self.kind = kind;
+    }
+}
+
+/// Condition used in a block exit branch.
+///
+/// Currently, all branch conditions are required to have no effects.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum BranchCondition {
+    IsDefined(InstId),
+    IsUndefined(InstId),
+    IsTrue(InstId),
+    IsFalse(InstId),
+    Equal(InstId, InstId),
+    NotEqual(InstId, InstId),
+    LessThan(InstId, InstId),
+    LessEqual(InstId, InstId),
+    GreaterThan(InstId, InstId),
+    GreaterEqual(InstId, InstId),
+}
+
+impl BranchCondition {
+    pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
+        macro_rules! make_iter {
+            ($arr:expr) => {
+                ArrayVec::<_, 2>::from_iter($arr.into_iter()).into_iter()
+            };
+        }
+
+        match *self {
+            BranchCondition::IsDefined(a) => make_iter!([a]),
+            BranchCondition::IsUndefined(a) => make_iter!([a]),
+            BranchCondition::IsTrue(a) => make_iter!([a]),
+            BranchCondition::IsFalse(a) => make_iter!([a]),
+            BranchCondition::Equal(a, b) => make_iter!([a, b]),
+            BranchCondition::NotEqual(a, b) => make_iter!([a, b]),
+            BranchCondition::LessThan(a, b) => make_iter!([a, b]),
+            BranchCondition::LessEqual(a, b) => make_iter!([a, b]),
+            BranchCondition::GreaterThan(a, b) => make_iter!([a, b]),
+            BranchCondition::GreaterEqual(a, b) => make_iter!([a, b]),
+        }
+    }
+
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
+        macro_rules! make_iter {
+            ($arr:expr) => {
+                ArrayVec::<_, 2>::from_iter($arr.into_iter()).into_iter()
+            };
+        }
+
+        match self {
+            BranchCondition::IsDefined(a) => make_iter!([a]),
+            BranchCondition::IsUndefined(a) => make_iter!([a]),
+            BranchCondition::IsTrue(a) => make_iter!([a]),
+            BranchCondition::IsFalse(a) => make_iter!([a]),
+            BranchCondition::Equal(a, b) => make_iter!([a, b]),
+            BranchCondition::NotEqual(a, b) => make_iter!([a, b]),
+            BranchCondition::LessThan(a, b) => make_iter!([a, b]),
+            BranchCondition::LessEqual(a, b) => make_iter!([a, b]),
+            BranchCondition::GreaterThan(a, b) => make_iter!([a, b]),
+            BranchCondition::GreaterEqual(a, b) => make_iter!([a, b]),
+        }
+    }
+
+    /// Return a branch condition which is the reverse of this one.
+    ///
+    /// If the branch condition has two inputs, will always return the condition with the arguments
+    /// in the same order.
+    pub fn reverse(&self) -> BranchCondition {
+        match *self {
+            BranchCondition::IsDefined(a) => BranchCondition::IsUndefined(a),
+            BranchCondition::IsUndefined(a) => BranchCondition::IsDefined(a),
+            BranchCondition::IsTrue(a) => BranchCondition::IsFalse(a),
+            BranchCondition::IsFalse(a) => BranchCondition::IsTrue(a),
+            BranchCondition::Equal(a, b) => BranchCondition::NotEqual(a, b),
+            BranchCondition::NotEqual(a, b) => BranchCondition::Equal(a, b),
+            BranchCondition::LessThan(a, b) => BranchCondition::GreaterEqual(a, b),
+            BranchCondition::LessEqual(a, b) => BranchCondition::GreaterThan(a, b),
+            BranchCondition::GreaterThan(a, b) => BranchCondition::LessEqual(a, b),
+            BranchCondition::GreaterEqual(a, b) => BranchCondition::LessThan(a, b),
         }
     }
 }
@@ -731,29 +842,29 @@ pub enum ExitKind {
     Throw(InstId),
     Jump(BlockId),
     Branch {
-        cond: InstId,
-        if_true: BlockId,
+        cond: BranchCondition,
         if_false: BlockId,
+        if_true: BlockId,
     },
 }
 
 impl ExitKind {
     pub fn sources(&self) -> impl Iterator<Item = InstId> + '_ {
         match self {
-            ExitKind::Throw(value) => Some(*value),
-            ExitKind::Return { value } => *value,
-            ExitKind::Branch { cond, .. } => Some(*cond),
-            _ => None,
+            ExitKind::Throw(value) => Either::Left(Some(*value)),
+            ExitKind::Return { value } => Either::Left(*value),
+            ExitKind::Branch { cond, .. } => Either::Right(cond.sources()),
+            _ => Either::Left(None),
         }
         .into_iter()
     }
 
     pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut InstId> + '_ {
         match self {
-            ExitKind::Throw(value) => Some(value),
-            ExitKind::Return { value } => value.as_mut(),
-            ExitKind::Branch { cond, .. } => Some(cond),
-            _ => None,
+            ExitKind::Throw(value) => Either::Left(Some(value)),
+            ExitKind::Return { value } => Either::Left(value.as_mut()),
+            ExitKind::Branch { cond, .. } => Either::Right(cond.sources_mut()),
+            _ => Either::Left(None),
         }
         .into_iter()
     }
@@ -765,8 +876,8 @@ impl ExitKind {
             ExitKind::Return { .. } | ExitKind::Throw(_) => Array::from_iter([]),
             &ExitKind::Jump(block_id) => Array::from_iter([block_id]),
             &ExitKind::Branch {
-                if_true, if_false, ..
-            } => Array::from_iter([if_true, if_false]),
+                if_false, if_true, ..
+            } => Array::from_iter([if_false, if_true]),
         }
         .into_iter()
     }
@@ -991,7 +1102,7 @@ impl<S: AsRef<str>> Function<S> {
                     InstructionKind::UnOp { op, source } => match op {
                         UnOp::IsDefined => writeln!(f, "is_defined({source})")?,
                         UnOp::IsUndefined => writeln!(f, "is_undefined({source})")?,
-                        UnOp::Test => writeln!(f, "into_bool({source})")?,
+                        UnOp::Test => writeln!(f, "test({source})")?,
                         UnOp::Not => writeln!(f, "not({source})")?,
                         UnOp::Negate => writeln!(f, "neg({source})")?,
                         UnOp::BitNegate => writeln!(f, "bitneg({source})")?,
@@ -1062,10 +1173,24 @@ impl<S: AsRef<str>> Function<S> {
                 }
                 ExitKind::Branch {
                     cond,
-                    if_true,
                     if_false,
+                    if_true,
                 } => {
-                    writeln!(f, "branch({cond}, false => {if_false}, true => {if_true})")?;
+                    write!(f, "branch(")?;
+                    match cond {
+                        BranchCondition::IsDefined(a) => write!(f, "is_defined({a})"),
+                        BranchCondition::IsUndefined(a) => write!(f, "is_undefined({a})"),
+                        BranchCondition::IsTrue(a) => write!(f, "is_true({a})"),
+                        BranchCondition::IsFalse(a) => write!(f, "is_false({a})"),
+                        BranchCondition::Equal(a, b) => write!(f, "equal({a}, {b})"),
+                        BranchCondition::NotEqual(a, b) => write!(f, "not_equal({a}, {b})"),
+                        BranchCondition::LessThan(a, b) => write!(f, "less_than({a}, {b})"),
+                        BranchCondition::LessEqual(a, b) => write!(f, "less_equal({a}, {b})"),
+                        BranchCondition::GreaterThan(a, b) => write!(f, "greater_than({a}, {b})"),
+                        BranchCondition::GreaterEqual(a, b) => write!(f, "greater_equal({a}, {b})"),
+                    }?;
+
+                    writeln!(f, ", true => {if_true}, false => {if_false})")?;
                 }
             }
 
