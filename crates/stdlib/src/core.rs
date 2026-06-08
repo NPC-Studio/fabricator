@@ -194,24 +194,32 @@ pub fn array_concat<'gc>(
     Ok(())
 }
 
-pub fn struct_get_names<'gc>(
-    ctx: vm::Context<'gc>,
-    obj: vm::Object<'gc>,
-) -> Result<vm::Array<'gc>, Infallible> {
-    Ok(vm::Array::from_iter(
-        &ctx,
-        obj.borrow().map.keys().map(|&k| k.into()),
-    ))
-}
-
-pub fn struct_remove<'gc>(
+/// Gets a value from the given struct with key `key`.
+///
+/// If such a value does not exist, returns [`vm::Value::Undefined`].
+///
+/// This is the equivalent of doing `obj[$ "key"]` in GML.
+pub fn struct_get<'gc>(
     ctx: vm::Context<'gc>,
     (obj, key): (vm::Object<'gc>, vm::Value<'gc>),
+) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+    let key = key
+        .coerce_string(ctx)
+        .ok_or_else(|| vm::RuntimeError::msg("key not coercible to string"))?;
+    Ok(obj.get(key).unwrap_or(vm::Value::Undefined))
+}
+
+/// Set a key / value pair in a struct.
+///
+/// This is the equivalent of doing `struct[$ "key"] = value;` in GML.
+pub fn struct_set<'gc>(
+    ctx: vm::Context<'gc>,
+    (obj, key, value): (vm::Object<'gc>, vm::Value<'gc>, vm::Value<'gc>),
 ) -> Result<(), vm::RuntimeError> {
     let key = key
         .coerce_string(ctx)
         .ok_or_else(|| vm::RuntimeError::msg("key not coercible to string"))?;
-    obj.remove(&ctx, key);
+    obj.set(&ctx, key, value);
     Ok(())
 }
 
@@ -225,6 +233,27 @@ pub fn struct_exists<'gc>(
     Ok(obj.get(key).is_some())
 }
 
+pub fn struct_remove<'gc>(
+    ctx: vm::Context<'gc>,
+    (obj, key): (vm::Object<'gc>, vm::Value<'gc>),
+) -> Result<(), vm::RuntimeError> {
+    let key = key
+        .coerce_string(ctx)
+        .ok_or_else(|| vm::RuntimeError::msg("key not coercible to string"))?;
+    obj.remove(&ctx, key);
+    Ok(())
+}
+
+pub fn struct_get_names<'gc>(
+    ctx: vm::Context<'gc>,
+    obj: vm::Object<'gc>,
+) -> Result<vm::Array<'gc>, Infallible> {
+    Ok(vm::Array::from_iter(
+        &ctx,
+        obj.borrow().map.keys().map(|&k| k.into()),
+    ))
+}
+
 pub fn struct_names_count<'gc>(
     _ctx: vm::Context<'gc>,
     obj: vm::Object<'gc>,
@@ -232,19 +261,25 @@ pub fn struct_names_count<'gc>(
     Ok(obj.borrow().map.keys().len() as i64)
 }
 
-/// Gets a key from a struct.
-///
-/// This is the equivalent of doing `struct[$ "key"]`.
-pub fn struct_get<'gc>(
-    _ctx: vm::Context<'gc>,
-    (obj, key): (vm::Object<'gc>, vm::String<'gc>),
-) -> Result<vm::Value<'gc>, Infallible> {
-    Ok(obj
-        .borrow()
-        .map
-        .get(&key)
-        .copied()
-        .unwrap_or(vm::Value::Undefined))
+pub fn variable_global_get<'gc>(
+    ctx: vm::Context<'gc>,
+    key: vm::Value<'gc>,
+) -> Result<vm::Value<'gc>, vm::RuntimeError> {
+    struct_get(ctx, (ctx.globals(), key))
+}
+
+pub fn variable_global_set<'gc>(
+    ctx: vm::Context<'gc>,
+    (key, value): (vm::Value<'gc>, vm::Value<'gc>),
+) -> Result<(), vm::RuntimeError> {
+    struct_set(ctx, (ctx.globals(), key, value))
+}
+
+pub fn variable_global_exists<'gc>(
+    ctx: vm::Context<'gc>,
+    key: vm::Value<'gc>,
+) -> Result<bool, vm::RuntimeError> {
+    struct_exists(ctx, (ctx.globals(), key))
 }
 
 pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
@@ -266,10 +301,13 @@ pub fn core_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {
     lib.insert_exec_callback(ctx, "script_execute_ext", script_execute_ext);
     lib.insert_exec_callback(ctx, "method_call", method_call);
     lib.insert_exec_callback(ctx, "array_concat", array_concat);
-    lib.insert_callback(ctx, "struct_get_names", struct_get_names);
-    lib.insert_callback(ctx, "struct_remove", struct_remove);
-    lib.insert_callback(ctx, "struct_exists", struct_exists);
-    lib.insert_callback(ctx, "struct_names_count", struct_names_count);
     lib.insert_callback(ctx, "struct_get", struct_get);
-    lib.insert_callback(ctx, "variable_instance_get", struct_get);
+    lib.insert_callback(ctx, "struct_set", struct_set);
+    lib.insert_callback(ctx, "struct_exists", struct_exists);
+    lib.insert_callback(ctx, "struct_remove", struct_remove);
+    lib.insert_callback(ctx, "struct_get_names", struct_get_names);
+    lib.insert_callback(ctx, "struct_names_count", struct_names_count);
+    lib.insert_callback(ctx, "variable_global_get", variable_global_get);
+    lib.insert_callback(ctx, "variable_global_set", variable_global_set);
+    lib.insert_callback(ctx, "variable_global_exists", variable_global_exists);
 }

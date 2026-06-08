@@ -1,0 +1,23 @@
+var s = {};
+
+struct_set(s, "and", "you");
+assert(struct_get(s, "and") == "you");
+
+global.may = "ask";
+assert(struct_get(global, "may") == "ask");
+
+struct_set(global, "yourself", "well");
+assert(global["yourself"] == "well");
+
+s.how = "did";
+struct_get(s, "how", "did");
+struct_remove(s, "how");
+assert(s["how"] == undefined);
+
+variable_global_set("i", "get");
+assert(variable_global_get("i") == "get");
+assert(variable_global_exists("i"));
+
+assert(!struct_exists(s, "here?"));
+
+return true;
