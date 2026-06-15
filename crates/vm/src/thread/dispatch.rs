@@ -10,11 +10,9 @@ use crate::{
     instructions::{self, ConstIdx, HeapIdx, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
-    stack::Stack,
     string::String,
-    thread::thread::OwnedHeapVar,
+    thread::{thread::OwnedHeapVar, vec_end_slice::VecEndSlice},
     value::{Function, Value},
-    vec_end_slice::VecEndSlice,
 };
 
 #[derive(Debug, Clone, Error)]
@@ -72,7 +70,7 @@ pub(super) struct Dispatch<'gc, 'a> {
     closure: Closure<'gc>,
     // The register slice is fixed size to avoid bounds checks.
     registers: &'a mut [Value<'gc>; 256],
-    stack: Stack<'gc, 'a>,
+    stack: VecEndSlice<'a, Value<'gc>>,
     stack_frame_boundaries: VecEndSlice<'a, usize>,
     this: VecEndSlice<'a, Value<'gc>>,
     heap: &'a mut [OwnedHeapVar<'gc>],
@@ -83,7 +81,7 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
         registers: &'a mut [Value<'gc>; 256],
-        stack: Stack<'gc, 'a>,
+        stack: VecEndSlice<'a, Value<'gc>>,
         stack_frame_boundaries: VecEndSlice<'a, usize>,
         this: VecEndSlice<'a, Value<'gc>>,
         heap: &'a mut [OwnedHeapVar<'gc>],
@@ -101,6 +99,26 @@ impl<'gc, 'a> Dispatch<'gc, 'a> {
 }
 
 impl<'gc, 'a> Dispatch<'gc, 'a> {
+    #[inline]
+    fn get_this(&self) -> Value<'gc> {
+        self.this
+            .last()
+            .or_else(|| self.this.below().last())
+            .copied()
+            .unwrap_or_else(|| self.ctx.globals().into())
+    }
+
+    #[inline]
+    fn get_other(&self) -> Value<'gc> {
+        self.this
+            .iter()
+            .rev()
+            .chain(self.this.below().iter().rev())
+            .copied()
+            .nth(1)
+            .unwrap_or_else(|| self.ctx.globals().into())
+    }
+
     #[inline]
     fn get_arg_count(&self) -> usize {
         self.stack_frame_boundaries
@@ -306,41 +324,33 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn push_this(&mut self) -> Result<(), Self::Error> {
-        self.this.push_back(self.this[self.this.len() - 1]);
+        self.this.push_back(self.get_this());
         Ok(())
     }
 
     #[inline]
     fn pop_this(&mut self) -> Result<(), Self::Error> {
-        // We must always have one "base" `this` value
-        if self.this.len() > 1 {
-            self.this.pop_back();
-        }
+        self.this.pop_back();
         Ok(())
     }
 
     #[inline]
     fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.this[self.this.len() - 1];
+        self.registers[dest as usize] = self.get_this();
         Ok(())
     }
 
     #[inline]
     fn set_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        let this_slice = &mut *self.this;
-        this_slice[this_slice.len() - 1] = self.registers[source as usize];
+        if let Some(last) = self.this.last_mut() {
+            *last = self.registers[source as usize];
+        }
         Ok(())
     }
 
     #[inline]
     fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self
-            .this
-            .iter()
-            .copied()
-            .rev()
-            .nth(1)
-            .unwrap_or(self.ctx.globals().into());
+        self.registers[dest as usize] = self.get_other();
         Ok(())
     }
 
@@ -377,7 +387,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             &self.ctx,
             proto,
             if bind_this {
-                self.this[self.this.len() - 1]
+                self.get_this()
             } else {
                 Value::Undefined
             },
@@ -402,7 +412,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn get_arg(&mut self, dest: RegIdx, index: RegIdx) -> Result<(), Self::Error> {
         let arg_idx = self.registers[index as usize];
-        let arg_idx = arg_idx
+        let arg_idx: usize = arg_idx
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadIndexValue {
@@ -410,7 +420,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             })?;
 
         self.registers[dest as usize] = if arg_idx < self.get_arg_count() {
-            self.stack.get(arg_idx)
+            self.stack[arg_idx]
         } else {
             Value::Undefined
         };
@@ -420,14 +430,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn get_arg_const(&mut self, dest: RegIdx, index: ConstIdx) -> Result<(), Self::Error> {
         let arg_idx = self.closure.prototype().constants()[index as usize];
-        let arg_idx = arg_idx
+        let arg_idx: usize = arg_idx
             .to_value()
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .expect("const index is not convertible to usize");
 
         self.registers[dest as usize] = if arg_idx < self.get_arg_count() {
-            self.stack.get(arg_idx)
+            self.stack[arg_idx]
         } else {
             Value::Undefined
         };
@@ -994,14 +1004,19 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .ok_or_else(|| OpError::NoStackFrame { op: "stack_get" })?;
 
         let stack_idx = self.registers[index as usize];
-        let stack_idx = stack_idx
+        let stack_idx: usize = stack_idx
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .ok_or_else(|| OpError::BadIndexValue {
                 index: stack_idx.into(),
             })?;
 
-        self.registers[dest as usize] = self.stack.sub_stack(stack_frame_start).get(stack_idx);
+        self.registers[dest as usize] = self
+            .stack
+            .sub_slice(stack_frame_start)
+            .get(stack_idx)
+            .copied()
+            .unwrap_or_default();
         Ok(())
     }
 
@@ -1016,13 +1031,18 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                 })?;
 
         let stack_idx = self.closure.prototype().constants()[index as usize];
-        let stack_idx = stack_idx
+        let stack_idx: usize = stack_idx
             .to_value()
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .expect("const index is not convertible to usize");
 
-        self.registers[dest as usize] = self.stack.sub_stack(stack_frame_start).get(stack_idx);
+        self.registers[dest as usize] = self
+            .stack
+            .sub_slice(stack_frame_start)
+            .get(stack_idx)
+            .copied()
+            .unwrap_or_default();
         Ok(())
     }
 

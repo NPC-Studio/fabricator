@@ -1,6 +1,8 @@
 mod dispatch;
 mod error;
+mod stack;
 mod thread;
+mod vec_end_slice;
 
 pub use self::{
     dispatch::{ArrayBoundsError, OpError},
@@ -8,5 +10,6 @@ pub use self::{
         BacktraceFrame, CallError, ClosureBacktraceFrame, ExternBacktraceFrame,
         ExternClosureBacktraceFrame, VmError,
     },
+    stack::Stack,
     thread::{Backtrace, Execution, Hook, Thread, ThreadInner, ThreadState},
 };

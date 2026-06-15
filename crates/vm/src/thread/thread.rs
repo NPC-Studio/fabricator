@@ -9,13 +9,13 @@ use crate::{
     error::{Error, RuntimeError},
     instructions,
     interpreter::Context,
-    stack::Stack,
     thread::{
         dispatch,
         error::{BacktraceFrame, CallError, ClosureBacktraceFrame},
+        stack::Stack,
+        vec_end_slice::VecEndSlice,
     },
     value::{Function, Value},
-    vec_end_slice::VecEndSlice,
 };
 
 use super::error::VmError;
@@ -558,12 +558,13 @@ impl<'gc> ThreadState<'gc> {
 
             let stack_frame_boundaries_bottom = self.stack_frame_boundaries.len();
 
-            // Always push a "base" `this` value.
+            // Push the closure's bound `this` value, if it has one.
             let this_bottom = self.this.len();
-            let this = closure
-                .this()
-                .null_coalesce(self.this.last().copied().unwrap_or(ctx.globals().into()));
-            self.this.push(this);
+            if let closure_this = closure.this()
+                && !closure_this.is_undefined()
+            {
+                self.this.push(closure_this)
+            }
 
             let heap_bottom = self.heap.len();
             self.heap
@@ -638,7 +639,7 @@ impl<'gc> ThreadState<'gc> {
                 [frame.register_bottom..frame.register_bottom + 256])
                 .try_into()
                 .unwrap();
-            let stack = Stack::new(&mut self.stack, frame.stack_bottom);
+            let stack = VecEndSlice::new(&mut self.stack, frame.stack_bottom);
             let stack_frame_boundaries = VecEndSlice::new(
                 &mut self.stack_frame_boundaries,
                 frame.stack_frame_boundaries_bottom,
@@ -697,12 +698,13 @@ impl<'gc> ThreadState<'gc> {
                                 let stack_frame_boundaries_bottom =
                                     self.stack_frame_boundaries.len();
 
-                                // Always push a "base" `this` value.
+                                // Push the closure's bound `this` value, if it has one.
                                 let this_bottom = self.this.len();
-                                let this = closure.this().null_coalesce(
-                                    self.this.last().copied().unwrap_or(ctx.globals().into()),
-                                );
-                                self.this.push(this);
+                                if let closure_this = closure.this()
+                                    && !closure_this.is_undefined()
+                                {
+                                    self.this.push(closure_this)
+                                }
 
                                 let heap_bottom = self.heap.len();
                                 self.heap.resize_with(

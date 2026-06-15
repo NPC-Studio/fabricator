@@ -27,6 +27,12 @@ impl<'a, T> VecEndSlice<'a, T> {
         Self { values, bottom }
     }
 
+    /// Return an immutable slice of the values *below* the current bottom.
+    #[inline]
+    pub fn below(&self) -> &[T] {
+        &self.values[0..self.bottom]
+    }
+
     #[inline]
     pub fn reborrow(&mut self) -> VecEndSlice<'_, T> {
         self.sub_slice(0)

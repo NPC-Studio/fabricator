@@ -8,10 +8,11 @@ use std::{
 use crate::{
     conversion::{FromMultiValue, FromValue, IntoMultiValue, TypeError},
     interpreter::Context,
+    thread::vec_end_slice::VecEndSlice,
     value::Value,
-    vec_end_slice::VecEndSlice,
 };
 
+/// A reference to the top of the current thread's stack.
 #[derive(Debug)]
 pub struct Stack<'gc, 'a> {
     slice: VecEndSlice<'a, Value<'gc>>,

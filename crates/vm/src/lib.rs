@@ -11,13 +11,11 @@ pub mod interpreter;
 pub mod magic;
 pub mod object;
 pub mod registry;
-pub mod stack;
 pub mod stash;
 pub mod string;
 pub mod thread;
 pub mod user_data;
 pub mod value;
-mod vec_end_slice;
 
 pub use self::{
     array::Array,
@@ -32,7 +30,6 @@ pub use self::{
     magic::{Magic, MagicConstant, MagicSet},
     object::Object,
     registry::{Registry, Singleton},
-    stack::Stack,
     stash::{
         Fetchable, Stashable, StashedCallback, StashedClosure, StashedFunction, StashedMagicSet,
         StashedObject, StashedPrototype, StashedString, StashedThread, StashedUserData,
@@ -40,8 +37,8 @@ pub use self::{
     },
     string::{InternedStrings, SharedStr, String, StringMap, StringSet},
     thread::{
-        ArrayBoundsError, Backtrace, BacktraceFrame, CallError, Execution, Hook, OpError, Thread,
-        VmError,
+        ArrayBoundsError, Backtrace, BacktraceFrame, CallError, Execution, Hook, OpError, Stack,
+        Thread, VmError,
     },
     user_data::{BadUserDataType, UserData, UserDataIter, UserDataMeta, UserDataMethods},
     value::{Function, Value},
