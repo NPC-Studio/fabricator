@@ -19,7 +19,6 @@ use crate::{
 pub struct RegisterAllocation {
     pub instruction_registers: SecondaryMap<ir::InstId, RegIdx>,
     pub shadow_registers: SecondaryMap<ir::ShadowVar, RegIdx>,
-    pub used_registers: usize,
 }
 
 impl RegisterAllocation {
@@ -78,7 +77,8 @@ impl RegisterAllocation {
                         {
                             for shadow_range in shadow_ranges.clone() {
                                 if shadow_range.interferes(other_shadow_range) {
-                                    interfering_registers.set_bit(other_shadow_reg as usize, true);
+                                    interfering_registers
+                                        .set_bit(other_shadow_reg.0 as usize, true);
                                     continue 'next_var;
                                 }
                             }
@@ -93,7 +93,7 @@ impl RegisterAllocation {
                         let inst_range = InterferenceRange::from_instruction_range(inst_range);
                         for shadow_range in shadow_ranges.clone() {
                             if shadow_range.interferes(inst_range) {
-                                interfering_registers.set_bit(inst_reg as usize, true);
+                                interfering_registers.set_bit(inst_reg.0 as usize, true);
                                 continue 'next_inst;
                             }
                         }
@@ -103,10 +103,12 @@ impl RegisterAllocation {
 
             // Pick a non-interfering register for this shadow variable
 
-            let assigned_reg = (0usize..256)
-                .into_iter()
-                .find(|&i| !interfering_registers.get_bit(i))
-                .ok_or(ProtoGenError::RegisterOverflow)? as u8;
+            let assigned_reg = RegIdx(
+                (0usize..256)
+                    .into_iter()
+                    .find(|&i| !interfering_registers.get_bit(i))
+                    .ok_or(ProtoGenError::RegisterOverflow)? as u8,
+            );
             shadow_registers.insert(shadow_var, assigned_reg);
 
             // Construct a list of instructions we would like to coalesce into this shadow variable
@@ -317,7 +319,7 @@ impl RegisterAllocation {
         let globally_used_registers = {
             let mut regs = [0u8; 32];
             for &shadow_reg in shadow_registers.values() {
-                regs.set_bit(shadow_reg as usize, true);
+                regs.set_bit(shadow_reg.0 as usize, true);
             }
             regs
         };
@@ -334,7 +336,7 @@ impl RegisterAllocation {
                     if let Some(start) = range.start {
                         assert!(inst_life_starts.insert(start, inst_id).is_none());
                     } else {
-                        live_in_registers.set_bit(instruction_registers[inst_id] as usize, true);
+                        live_in_registers.set_bit(instruction_registers[inst_id].0 as usize, true);
                     }
 
                     if let Some(end) = range.end {
@@ -351,7 +353,7 @@ impl RegisterAllocation {
                     if live_in_registers.get_bit(index as usize) {
                         None
                     } else {
-                        Some(index)
+                        Some(RegIdx(index))
                     }
                 })
                 .collect::<Vec<_>>();
@@ -392,21 +394,9 @@ impl RegisterAllocation {
             }
         }
 
-        let register_top = if let Some(max) = shadow_registers
-            .values()
-            .copied()
-            .chain(instruction_registers.values().copied())
-            .max()
-        {
-            max as usize + 1
-        } else {
-            0
-        };
-
         Ok(Self {
             instruction_registers,
             shadow_registers,
-            used_registers: register_top,
         })
     }
 }

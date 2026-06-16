@@ -3,7 +3,7 @@ use std::{collections::hash_map, hash::Hash};
 use fabricator_util::typed_id_map::SecondaryMap;
 use fabricator_vm::{
     self as vm, Span,
-    instructions::{self, Instruction},
+    instructions::{self, InstIdx, Instruction},
 };
 use rustc_hash::FxHashMap;
 
@@ -707,7 +707,8 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 // If we are the next block in output order, we don't need to add a jump
                 if block_order_indexes[&block_id] != order_index + 1 {
                     block_vm_jumps.push((vm_instructions.len(), block_id));
-                    vm_instructions.push((Instruction::Jump { target: 0 }, block.exit.span));
+                    vm_instructions
+                        .push((Instruction::Jump { target: InstIdx(0) }, block.exit.span));
                 }
             }
             ir::ExitKind::Branch {
@@ -738,52 +739,52 @@ fn codegen_function<S: Clone + Eq + Hash>(
                 vm_instructions.push((
                     match cond {
                         ir::BranchCondition::IsDefined(a) => Instruction::JumpIfUndefined {
-                            target: 0,
+                            target: InstIdx(0),
                             arg: reg_alloc.instruction_registers[a],
                             is_undefined: false,
                         },
                         ir::BranchCondition::IsUndefined(a) => Instruction::JumpIfUndefined {
-                            target: 0,
+                            target: InstIdx(0),
                             arg: reg_alloc.instruction_registers[a],
                             is_undefined: true,
                         },
                         ir::BranchCondition::IsTrue(a) => Instruction::JumpIf {
-                            target: 0,
+                            target: InstIdx(0),
                             arg: reg_alloc.instruction_registers[a],
                             is_true: true,
                         },
                         ir::BranchCondition::IsFalse(a) => Instruction::JumpIf {
-                            target: 0,
+                            target: InstIdx(0),
                             arg: reg_alloc.instruction_registers[a],
                             is_true: false,
                         },
                         ir::BranchCondition::Equal(a, b) => Instruction::JumpIfEqual {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[a],
                             right: reg_alloc.instruction_registers[b],
                         },
                         ir::BranchCondition::NotEqual(a, b) => Instruction::JumpIfNotEqual {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[a],
                             right: reg_alloc.instruction_registers[b],
                         },
                         ir::BranchCondition::LessThan(a, b) => Instruction::JumpIfLess {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[a],
                             right: reg_alloc.instruction_registers[b],
                         },
                         ir::BranchCondition::LessEqual(a, b) => Instruction::JumpIfLessEqual {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[a],
                             right: reg_alloc.instruction_registers[b],
                         },
                         ir::BranchCondition::GreaterThan(a, b) => Instruction::JumpIfLess {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[b],
                             right: reg_alloc.instruction_registers[a],
                         },
                         ir::BranchCondition::GreaterEqual(a, b) => Instruction::JumpIfLessEqual {
-                            target: 0,
+                            target: InstIdx(0),
                             left: reg_alloc.instruction_registers[b],
                             right: reg_alloc.instruction_registers[a],
                         },
@@ -793,14 +794,17 @@ fn codegen_function<S: Clone + Eq + Hash>(
 
                 if let Some(jump_after) = jump_after_branch {
                     block_vm_jumps.push((vm_instructions.len(), jump_after));
-                    vm_instructions.push((Instruction::Jump { target: 0 }, block.exit.span));
+                    vm_instructions
+                        .push((Instruction::Jump { target: InstIdx(0) }, block.exit.span));
                 }
             }
         }
     }
 
     for (index, block_id) in block_vm_jumps {
-        let jump_offset = block_vm_starts[block_id].try_into().unwrap();
+        let jump_offset = block_vm_starts[block_id]
+            .try_into()
+            .expect("instruction length overflow");
         match &mut vm_instructions[index].0 {
             Instruction::Jump { target } => {
                 *target = jump_offset;
@@ -834,7 +838,6 @@ fn codegen_function<S: Clone + Eq + Hash>(
         bytecode,
         constants: constants.into_boxed_slice(),
         prototypes: prototypes.into_boxed_slice(),
-        used_registers: reg_alloc.used_registers,
         heap_vars: heap_alloc.heap_var_descriptors.into_boxed_slice(),
     })
 }

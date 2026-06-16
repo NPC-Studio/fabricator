@@ -57,13 +57,14 @@ impl<S: Clone> HeapAllocation<S> {
         let block_order =
             topological_order(ir.start_block, |id| ir.blocks[id].exit.kind.successors());
 
+        let mut available_indexes = Vec::new();
         for &block_id in &block_order {
             let block = &ir.blocks[block_id];
 
             // The set of heap indexes that are used at the start of this block.
             //
             // All upvalue and static indexes are always added to this set unconditionally.
-            let mut live_in_indexes = [0u8; 32];
+            let mut live_in_indexes = [0u8; (u16::MAX as usize + 1) / 8];
             for i in 0..heap_vars.len() {
                 live_in_indexes.set_bit(i, true);
             }
@@ -74,7 +75,7 @@ impl<S: Clone> HeapAllocation<S> {
                 if let Some(start) = range.start {
                     assert!(var_life_starts.insert(start, var_id).is_none());
                 } else {
-                    live_in_indexes.set_bit(assigned_indexes[var_id] as usize, true);
+                    live_in_indexes.set_bit(assigned_indexes[var_id].0 as usize, true);
                 }
 
                 if let Some(end) = range.end {
@@ -85,16 +86,14 @@ impl<S: Clone> HeapAllocation<S> {
                 }
             }
 
-            let mut available_indexes = (0u8..=255u8)
-                .rev()
-                .flat_map(|index| {
-                    if live_in_indexes.get_bit(index as usize) {
-                        None
-                    } else {
-                        Some(index)
-                    }
-                })
-                .collect::<Vec<_>>();
+            available_indexes.clear();
+            available_indexes.extend((0u16..=u16::MAX).rev().flat_map(|index| {
+                if live_in_indexes.get_bit(index as usize) {
+                    None
+                } else {
+                    Some(HeapIdx(index))
+                }
+            }));
 
             for inst_index in 0..=block.instructions.len() {
                 if let Some(&var_life_start) = var_life_starts.get(&inst_index) {
@@ -113,14 +112,14 @@ impl<S: Clone> HeapAllocation<S> {
         if !assigned_indexes.is_empty() {
             let mut max_idx = None;
             for (var_id, heap_idx) in assigned_indexes.into_iter() {
+                assert!(heap_idx.0 as usize >= heap_vars.len());
                 assert!(heap_indexes.insert(var_id, heap_idx).is_none());
                 max_idx = max_idx.max(Some(heap_idx));
-                assert!(heap_idx as usize >= heap_vars.len());
             }
 
             let owned_start = heap_vars.len();
-            for idx in heap_vars.len() as HeapIdx..=max_idx.unwrap() {
-                heap_vars.push(HeapVarDescriptor::Owned(idx - owned_start as HeapIdx));
+            for idx in heap_vars.len() as u16..=max_idx.unwrap().0 {
+                heap_vars.push(HeapVarDescriptor::Owned(HeapIdx(idx - owned_start as u16)));
             }
         }
 

@@ -109,7 +109,7 @@ impl ByteCode {
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
-                            *target = inst_positions[*target as usize].try_into().map_err(|_| {
+                            *target = inst_positions[target.0 as usize].try_into().map_err(|_| {
                                 ByteCodeEncodingError::InvalidJump(*target)
                             })?;
                         }
@@ -213,7 +213,7 @@ impl ByteCode {
                         })*
                         $(OpCode::$jump_name => {
                             let params::$jump_name { mut target $(, $jump_field)* } = bytecode_read(&mut ptr);
-                            target = self.instruction_index_for_pc(target as usize).unwrap() as InstIdx;
+                            target = InstIdx(self.instruction_index_for_pc(target.0 as usize).unwrap() as _);
                             Instruction::$jump_name { target $(, $jump_field)* }
                         })*
                         $(OpCode::$special_name => {
@@ -395,14 +395,14 @@ impl<'gc> Dispatcher<'gc> {
 
                         OpCode::Jump => {
                             let params::Jump { target } = bytecode_read(&mut self.ptr);
-                            self.ptr = self.bytecode.bytes.as_ptr().add(target as usize);
+                            self.ptr = self.bytecode.bytes.as_ptr().add(target.0 as usize);
                         }
 
                         $(
                             OpCode::$jump_if_name => {
                                 let params::$jump_if_name { target  $(, $jump_if_field)* } = bytecode_read(&mut self.ptr);
                                 if dispatch.$jump_if_snake_name($($jump_if_field),*)? {
-                                    self.ptr = self.bytecode.bytes.as_ptr().add(target as usize);
+                                    self.ptr = self.bytecode.bytes.as_ptr().add(target.0 as usize);
                                 }
                             }
                         )*
@@ -518,21 +518,24 @@ mod tests {
     fn test_encode_decode() {
         let insts = &[
             Instruction::LoadConstant {
-                constant: 1,
-                dest: 2,
+                constant: ConstIdx(1),
+                dest: RegIdx(2),
             },
-            Instruction::Jump { target: 2 },
+            Instruction::Jump { target: InstIdx(2) },
             Instruction::IsEqual {
-                left: 3,
-                right: 4,
-                dest: 5,
+                left: RegIdx(3),
+                right: RegIdx(4),
+                dest: RegIdx(5),
             },
             Instruction::JumpIf {
-                target: 1,
-                arg: 6,
+                target: InstIdx(1),
+                arg: RegIdx(6),
                 is_true: true,
             },
-            Instruction::Copy { source: 7, dest: 8 },
+            Instruction::Copy {
+                source: RegIdx(7),
+                dest: RegIdx(8),
+            },
             Instruction::Return {},
         ];
 

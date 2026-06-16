@@ -1,11 +1,67 @@
 use std::fmt;
 
-pub type RegIdx = u8;
-pub type ConstIdx = u16;
-pub type HeapIdx = u8;
-pub type ProtoIdx = u8;
-pub type MagicIdx = u32;
-pub type InstIdx = u32;
+use gc_arena::Collect;
+
+pub trait IndexType {
+    type Index;
+
+    fn index(&self) -> usize;
+}
+
+macro_rules! make_idx {
+    ($name:ident, $ty:ty, $prefix:literal) => {
+        #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Collect)]
+        #[collect(require_static)]
+        #[repr(transparent)]
+        pub struct $name(pub $ty);
+
+        impl IndexType for $name {
+            type Index = $ty;
+
+            #[inline]
+            fn index(&self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        impl TryFrom<usize> for $name {
+            type Error = <$ty as TryFrom<usize>>::Error;
+
+            #[inline]
+            fn try_from(v: usize) -> Result<Self, Self::Error> {
+                Ok(Self(<$ty>::try_from(v)?))
+            }
+        }
+
+        impl fmt::Debug for $name {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(self, f)
+            }
+        }
+
+        impl fmt::Display for $name {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}{}", $prefix, self.0)
+            }
+        }
+
+        impl PrettyField for $name {
+            #[inline]
+            fn fmt(&self, f: &mut dyn fmt::Write) -> fmt::Result {
+                write!(f, "{}{}", $prefix, self.0)
+            }
+        }
+    };
+}
+
+make_idx!(RegIdx, u8, "R");
+make_idx!(ConstIdx, u16, "C");
+make_idx!(HeapIdx, u16, "H");
+make_idx!(ProtoIdx, u16, "P");
+make_idx!(MagicIdx, u32, "M");
+make_idx!(InstIdx, u32, "I");
 
 macro_rules! for_each_instruction {
     ($macro:ident) => {
@@ -257,32 +313,18 @@ macro_rules! define_instruction {
 }
 for_each_instruction!(define_instruction);
 
+trait PrettyField {
+    fn fmt(&self, f: &mut dyn fmt::Write) -> fmt::Result;
+}
+
+impl PrettyField for bool {
+    fn fmt(&self, f: &mut dyn fmt::Write) -> fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
 impl Instruction {
     pub fn pretty_print(self, f: &mut dyn fmt::Write) -> fmt::Result {
-        macro_rules! prefix {
-            (RegIdx) => {
-                "R"
-            };
-            (ConstIdx) => {
-                "C"
-            };
-            (HeapIdx) => {
-                "H"
-            };
-            (ProtoIdx) => {
-                "P"
-            };
-            (MagicIdx) => {
-                "M"
-            };
-            (InstIdx) => {
-                "I"
-            };
-            ($other:ident) => {
-                ""
-            };
-        }
-
         macro_rules! impl_debug {
             ($(
                 [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ident),* $(,)? };
@@ -304,8 +346,7 @@ impl Instruction {
 
                             write!(f, stringify!($field))?;
                             write!(f, "=")?;
-                            write!(f, prefix!($field_ty))?;
-                            write!(f, "{}", $field)?;
+                            PrettyField::fmt(&$field, f)?;
                         )*
                         write!(f, ")")?;
                     }),*

@@ -5,7 +5,10 @@ use thiserror::Error;
 
 use crate::{
     debug::{Chunk, FunctionIdentifier, FunctionRef},
-    instructions::{ByteCode, ConstIdx, HeapIdx, Instruction, MagicIdx, ProtoIdx, RegIdx},
+    instructions::{
+        ByteCode, ConstIdx, HeapIdx, IndexType as _, InstIdx, Instruction, MagicIdx, ProtoIdx,
+        RegIdx,
+    },
     magic::MagicSet,
     object::Object,
     string::String,
@@ -65,28 +68,30 @@ pub enum HeapVarDescriptor {
 
 #[derive(Debug, Error)]
 pub enum PrototypeVerificationError {
+    #[error("too many instructions: {0}")]
+    InstructionOverflow(usize),
+    #[error("too many prototypes: {0}")]
+    PrototypeOverflow(usize),
     #[error("static index {0} is out of range of the list of static variables")]
     BadStaticIdx(HeapIdx),
     #[error("inner prototype has an invalid upvalue idx {0}, for prototype {1}")]
-    BadUpValueIdx(HeapIdx, usize),
-    #[error("register index {0} is not in range of `used_registers` at instruction {1}")]
-    BadRegIdx(RegIdx, usize),
+    BadUpValueIdx(HeapIdx, ProtoIdx),
     #[error("const idx {0} out of range at instruction {1}")]
-    BadConstIdx(ConstIdx, usize),
+    BadConstIdx(ConstIdx, InstIdx),
     #[error("heap idx {0} out of range at instruction {1}")]
-    BadHeapIdx(HeapIdx, usize),
+    BadHeapIdx(HeapIdx, InstIdx),
     #[error("proto idx {0} out of range at instruction {1}")]
-    BadProtoIdx(ProtoIdx, usize),
+    BadProtoIdx(ProtoIdx, InstIdx),
     #[error("no magic variable with index {0} at instruction {1}")]
-    BadMagicIdx(MagicIdx, usize),
+    BadMagicIdx(MagicIdx, InstIdx),
     #[error("field constant {0} is not a `Constant::String` at instruction {1}")]
-    FieldIsNotString(ConstIdx, usize),
+    FieldIsNotString(ConstIdx, InstIdx),
     #[error(
         "index constant {0} is not an `Constant::Integer` convertible to `usize` at instruction {1}"
     )]
-    IndexIsNotUsize(ConstIdx, usize),
+    IndexIsNotUsize(ConstIdx, InstIdx),
     #[error("cannot reset a shared heap variable {0} at instruction {1}")]
-    ResetSharedHeap(HeapIdx, usize),
+    ResetSharedHeap(HeapIdx, InstIdx),
 }
 
 #[derive(Debug, Clone, Collect)]
@@ -116,16 +121,15 @@ impl<'gc> Prototype<'gc> {
         prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
         static_vars: Box<[SharedValue<'gc>]>,
         heap_vars: Box<[HeapVarDescriptor]>,
-        used_registers: usize,
     ) -> Result<Self, PrototypeVerificationError> {
         let mut owned_heap = 0;
         for &heap_var in &heap_vars {
             match heap_var {
                 HeapVarDescriptor::Owned(idx) => {
-                    owned_heap = owned_heap.max(idx as usize + 1);
+                    owned_heap = owned_heap.max(idx.index() + 1);
                 }
                 HeapVarDescriptor::Static(idx) => {
-                    if idx as usize >= static_vars.len() {
+                    if idx.index() >= static_vars.len() {
                         return Err(PrototypeVerificationError::BadStaticIdx(idx));
                     }
                 }
@@ -134,11 +138,14 @@ impl<'gc> Prototype<'gc> {
         }
 
         for (inner_proto_idx, inner) in prototypes.iter().enumerate() {
+            let inner_proto_idx = ProtoIdx::try_from(inner_proto_idx)
+                .map_err(|_| PrototypeVerificationError::PrototypeOverflow(inner_proto_idx))?;
+
             for &inner_heap_var in &inner.heap_vars {
                 match inner_heap_var {
                     HeapVarDescriptor::Owned(_) | HeapVarDescriptor::Static(_) => {}
                     HeapVarDescriptor::UpValue(upvalue_idx) => {
-                        if (upvalue_idx as usize) >= heap_vars.len() {
+                        if (upvalue_idx.index()) >= heap_vars.len() {
                             return Err(PrototypeVerificationError::BadUpValueIdx(
                                 upvalue_idx,
                                 inner_proto_idx,
@@ -149,17 +156,19 @@ impl<'gc> Prototype<'gc> {
             }
         }
 
+        let mut max_used_register = None;
+        let mut mark_reg_idx = |reg_idx: RegIdx| {
+            if max_used_register.is_none_or(|max: RegIdx| reg_idx.0 > max.0) {
+                max_used_register = Some(reg_idx);
+            }
+        };
+
         for (inst_index, (inst, _)) in bytecode.decode().enumerate() {
-            let verify_reg_idx = |reg_idx: RegIdx| {
-                if (reg_idx as usize) < used_registers {
-                    Ok(())
-                } else {
-                    Err(PrototypeVerificationError::BadRegIdx(reg_idx, inst_index))
-                }
-            };
+            let inst_index = InstIdx::try_from(inst_index)
+                .map_err(|_| PrototypeVerificationError::InstructionOverflow(inst_index))?;
 
             let verify_const_idx = |const_idx: ConstIdx| {
-                if (const_idx as usize) < constants.len() {
+                if (const_idx.index()) < constants.len() {
                     Ok(())
                 } else {
                     Err(PrototypeVerificationError::BadConstIdx(
@@ -169,7 +178,7 @@ impl<'gc> Prototype<'gc> {
             };
 
             let verify_heap_idx = |heap_idx: HeapIdx| {
-                if (heap_idx as usize) < heap_vars.len() {
+                if (heap_idx.index()) < heap_vars.len() {
                     Ok(())
                 } else {
                     Err(PrototypeVerificationError::BadHeapIdx(heap_idx, inst_index))
@@ -177,10 +186,10 @@ impl<'gc> Prototype<'gc> {
             };
 
             let verify_proto_idx = |proto_idx: ProtoIdx| {
-                if (proto_idx as usize) < prototypes.len() {
+                if (proto_idx.index()) < prototypes.len() {
                     Ok(())
                 } else {
-                    Err(PrototypeVerificationError::BadHeapIdx(
+                    Err(PrototypeVerificationError::BadProtoIdx(
                         proto_idx, inst_index,
                     ))
                 }
@@ -188,12 +197,12 @@ impl<'gc> Prototype<'gc> {
 
             let verify_magic_idx = |magic_idx: MagicIdx| {
                 magic
-                    .get(magic_idx as usize)
+                    .get(magic_idx.index())
                     .map_err(|_| PrototypeVerificationError::BadMagicIdx(magic_idx, inst_index))
             };
 
             let verify_const_as_field = |const_idx: ConstIdx| {
-                if matches!(constants[const_idx as usize], Constant::String(_)) {
+                if matches!(constants[const_idx.index()], Constant::String(_)) {
                     Ok(())
                 } else {
                     Err(PrototypeVerificationError::FieldIsNotString(
@@ -203,7 +212,7 @@ impl<'gc> Prototype<'gc> {
             };
 
             let verify_const_as_index = |const_idx: ConstIdx| {
-                if matches!(constants[const_idx as usize], Constant::Integer(i) if usize::try_from(i).is_ok())
+                if matches!(constants[const_idx.index()], Constant::Integer(i) if usize::try_from(i).is_ok())
                 {
                     Ok(())
                 } else {
@@ -215,108 +224,108 @@ impl<'gc> Prototype<'gc> {
 
             match inst {
                 Instruction::Undefined { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::Boolean { dest, .. } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::LoadConstant { dest, constant } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_const_idx(constant)?;
                 }
                 Instruction::GetHeap { dest, heap } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_heap_idx(heap)?;
                 }
                 Instruction::SetHeap { heap, source } => {
                     verify_heap_idx(heap)?;
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(source);
                 }
                 Instruction::ResetHeap { heap } => {
                     verify_heap_idx(heap)?;
-                    if !matches!(heap_vars[heap as usize], HeapVarDescriptor::Owned(_)) {
+                    if !matches!(heap_vars[heap.index()], HeapVarDescriptor::Owned(_)) {
                         return Err(PrototypeVerificationError::ResetSharedHeap(
                             heap, inst_index,
                         ));
                     }
                 }
                 Instruction::Globals { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::PushThis {} => {}
                 Instruction::PopThis {} => {}
                 Instruction::This { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::SetThis { source } => {
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(source);
                 }
                 Instruction::Other { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::Closure { dest, proto, .. } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_proto_idx(proto)?;
                 }
                 Instruction::CurrentClosure { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::ArgCount { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::GetArg { dest, index } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(index)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(index);
                 }
                 Instruction::GetArgConst { dest, index } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_const_as_index(index)?;
                 }
                 Instruction::NewObject { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::NewArray { dest } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                 }
                 Instruction::GetField { dest, object, key } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(object)?;
-                    verify_reg_idx(key)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(object);
+                    mark_reg_idx(key);
                 }
                 Instruction::SetField { object, key, value } => {
-                    verify_reg_idx(object)?;
-                    verify_reg_idx(key)?;
-                    verify_reg_idx(value)?;
+                    mark_reg_idx(object);
+                    mark_reg_idx(key);
+                    mark_reg_idx(value);
                 }
                 Instruction::GetFieldConst { dest, object, key } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(object)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(object);
                     verify_const_idx(key)?;
                     verify_const_as_field(key)?;
                 }
                 Instruction::SetFieldConst { object, key, value } => {
-                    verify_reg_idx(object)?;
+                    mark_reg_idx(object);
                     verify_const_idx(key)?;
                     verify_const_as_field(key)?;
-                    verify_reg_idx(value)?;
+                    mark_reg_idx(value);
                 }
                 Instruction::GetIndex { dest, array, index } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(array)?;
-                    verify_reg_idx(index)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(array);
+                    mark_reg_idx(index);
                 }
                 Instruction::SetIndex {
                     array,
                     index,
                     value,
                 } => {
-                    verify_reg_idx(array)?;
-                    verify_reg_idx(index)?;
-                    verify_reg_idx(value)?;
+                    mark_reg_idx(array);
+                    mark_reg_idx(index);
+                    mark_reg_idx(value);
                 }
                 Instruction::GetIndexConst { dest, array, index } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(array)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(array);
                     verify_const_idx(index)?;
                 }
                 Instruction::SetIndexConst {
@@ -324,13 +333,13 @@ impl<'gc> Prototype<'gc> {
                     index,
                     value,
                 } => {
-                    verify_reg_idx(array)?;
+                    mark_reg_idx(array);
                     verify_const_idx(index)?;
-                    verify_reg_idx(value)?;
+                    mark_reg_idx(value);
                 }
                 Instruction::Copy { dest, source } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(source);
                 }
                 Instruction::IsDefined { dest, arg }
                 | Instruction::IsUndefined { dest, arg }
@@ -340,8 +349,8 @@ impl<'gc> Prototype<'gc> {
                 | Instruction::BitNegate { dest, arg }
                 | Instruction::Increment { dest, arg }
                 | Instruction::Decrement { dest, arg } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(arg)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(arg);
                 }
                 Instruction::Add { dest, left, right }
                 | Instruction::Subtract { dest, left, right }
@@ -362,27 +371,27 @@ impl<'gc> Prototype<'gc> {
                 | Instruction::BitShiftLeft { dest, left, right }
                 | Instruction::BitShiftRight { dest, left, right }
                 | Instruction::NullCoalesce { dest, left, right } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(left)?;
-                    verify_reg_idx(right)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(left);
+                    mark_reg_idx(right);
                 }
                 Instruction::PushStackFrame {} => {}
                 Instruction::PopStackFrame {} => {}
                 Instruction::StackPush { source } => {
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(source);
                 }
                 Instruction::StackPush2 { source_a, source_b } => {
-                    verify_reg_idx(source_a)?;
-                    verify_reg_idx(source_b)?;
+                    mark_reg_idx(source_a);
+                    mark_reg_idx(source_b);
                 }
                 Instruction::StackPush3 {
                     source_a,
                     source_b,
                     source_c,
                 } => {
-                    verify_reg_idx(source_a)?;
-                    verify_reg_idx(source_b)?;
-                    verify_reg_idx(source_c)?;
+                    mark_reg_idx(source_a);
+                    mark_reg_idx(source_b);
+                    mark_reg_idx(source_c);
                 }
                 Instruction::StackPush4 {
                     source_a,
@@ -390,63 +399,63 @@ impl<'gc> Prototype<'gc> {
                     source_c,
                     source_d,
                 } => {
-                    verify_reg_idx(source_a)?;
-                    verify_reg_idx(source_b)?;
-                    verify_reg_idx(source_c)?;
-                    verify_reg_idx(source_d)?;
+                    mark_reg_idx(source_a);
+                    mark_reg_idx(source_b);
+                    mark_reg_idx(source_c);
+                    mark_reg_idx(source_d);
                 }
                 Instruction::StackGet { dest, index } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(index)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(index);
                 }
                 Instruction::StackGetConst { dest, index } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_const_as_index(index)?;
                 }
                 Instruction::GetIndexMulti { dest, array } => {
-                    verify_reg_idx(dest)?;
-                    verify_reg_idx(array)?;
+                    mark_reg_idx(dest);
+                    mark_reg_idx(array);
                 }
                 Instruction::SetIndexMulti { array, value } => {
-                    verify_reg_idx(array)?;
-                    verify_reg_idx(value)?;
+                    mark_reg_idx(array);
+                    mark_reg_idx(value);
                 }
                 Instruction::GetMagic { dest, magic } => {
-                    verify_reg_idx(dest)?;
+                    mark_reg_idx(dest);
                     verify_magic_idx(magic)?;
                 }
                 Instruction::SetMagic { magic, source } => {
                     verify_magic_idx(magic)?;
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(source);
                 }
                 Instruction::Throw { source } => {
-                    verify_reg_idx(source)?;
+                    mark_reg_idx(source);
                 }
                 Instruction::Jump { .. } => {}
                 Instruction::JumpIf { arg, .. } => {
-                    verify_reg_idx(arg)?;
+                    mark_reg_idx(arg);
                 }
                 Instruction::JumpIfUndefined { arg, .. } => {
-                    verify_reg_idx(arg)?;
+                    mark_reg_idx(arg);
                 }
                 Instruction::JumpIfEqual { left, right, .. } => {
-                    verify_reg_idx(left)?;
-                    verify_reg_idx(right)?;
+                    mark_reg_idx(left);
+                    mark_reg_idx(right);
                 }
                 Instruction::JumpIfNotEqual { left, right, .. } => {
-                    verify_reg_idx(left)?;
-                    verify_reg_idx(right)?;
+                    mark_reg_idx(left);
+                    mark_reg_idx(right);
                 }
                 Instruction::JumpIfLess { left, right, .. } => {
-                    verify_reg_idx(left)?;
-                    verify_reg_idx(right)?;
+                    mark_reg_idx(left);
+                    mark_reg_idx(right);
                 }
                 Instruction::JumpIfLessEqual { left, right, .. } => {
-                    verify_reg_idx(left)?;
-                    verify_reg_idx(right)?;
+                    mark_reg_idx(left);
+                    mark_reg_idx(right);
                 }
                 Instruction::Call { func } => {
-                    verify_reg_idx(func)?;
+                    mark_reg_idx(func);
                 }
                 Instruction::Return {} => {}
             }
@@ -463,7 +472,7 @@ impl<'gc> Prototype<'gc> {
             prototypes,
             static_vars,
             heap_vars,
-            used_registers,
+            used_registers: max_used_register.map(|r| r.0 as usize + 1).unwrap_or(0),
             owned_heap,
             constructor_super,
         })
@@ -621,7 +630,7 @@ impl<'gc> Closure<'gc> {
                     heap.push(HeapVar::Owned(idx));
                 }
                 HeapVarDescriptor::Static(idx) => {
-                    heap.push(HeapVar::Shared(proto.static_vars[idx as usize]))
+                    heap.push(HeapVar::Shared(proto.static_vars[idx.index()]))
                 }
                 HeapVarDescriptor::UpValue(_) => {
                     return Err(MissingUpValue);

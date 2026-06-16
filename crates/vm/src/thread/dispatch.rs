@@ -7,7 +7,7 @@ use crate::{
     array::Array,
     closure::{Closure, Constant, HeapVar, HeapVarDescriptor},
     error::{Error, ExternValue, RuntimeError, ScriptError},
-    instructions::{self, ConstIdx, HeapIdx, MagicIdx, ProtoIdx, RegIdx},
+    instructions::{self, ConstIdx, HeapIdx, IndexType as _, MagicIdx, ProtoIdx, RegIdx},
     interpreter::Context,
     object::Object,
     string::String,
@@ -269,27 +269,27 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn undefined(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = Value::Undefined;
+        self.registers[dest.index()] = Value::Undefined;
         Ok(())
     }
 
     #[inline]
     fn boolean(&mut self, dest: RegIdx, value: bool) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = Value::Boolean(value);
+        self.registers[dest.index()] = Value::Boolean(value);
         Ok(())
     }
 
     #[inline]
     fn load_constant(&mut self, dest: RegIdx, constant: ConstIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] =
-            self.closure.prototype().constants()[constant as usize].to_value();
+        self.registers[dest.index()] =
+            self.closure.prototype().constants()[constant.index()].to_value();
         Ok(())
     }
 
     #[inline]
     fn get_heap(&mut self, dest: RegIdx, heap: HeapIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = match self.closure.heap()[heap as usize] {
-            HeapVar::Owned(idx) => self.heap[idx as usize].get(),
+        self.registers[dest.index()] = match self.closure.heap()[heap.index()] {
+            HeapVar::Owned(idx) => self.heap[idx.index()].get(),
             HeapVar::Shared(v) => v.get(),
         };
         Ok(())
@@ -297,9 +297,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn set_heap(&mut self, heap: HeapIdx, source: RegIdx) -> Result<(), Self::Error> {
-        let source = self.registers[source as usize];
-        match self.closure.heap()[heap as usize] {
-            HeapVar::Owned(idx) => self.heap[idx as usize].set(&self.ctx, source),
+        let source = self.registers[source.index()];
+        match self.closure.heap()[heap.index()] {
+            HeapVar::Owned(idx) => self.heap[idx.index()].set(&self.ctx, source),
             HeapVar::Shared(v) => v.set(&self.ctx, source),
         };
         Ok(())
@@ -307,9 +307,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn reset_heap(&mut self, heap: HeapIdx) -> Result<(), Self::Error> {
-        match self.closure.heap()[heap as usize] {
+        match self.closure.heap()[heap.index()] {
             HeapVar::Owned(idx) => {
-                self.heap[idx as usize] = OwnedHeapVar::unique(Value::Undefined);
+                self.heap[idx.index()] = OwnedHeapVar::unique(Value::Undefined);
                 Ok(())
             }
             HeapVar::Shared(_) => panic!("reset of shared heap var"),
@@ -318,7 +318,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn globals(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.ctx.globals().into();
+        self.registers[dest.index()] = self.ctx.globals().into();
         Ok(())
     }
 
@@ -336,21 +336,21 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn this(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.get_this();
+        self.registers[dest.index()] = self.get_this();
         Ok(())
     }
 
     #[inline]
     fn set_this(&mut self, source: RegIdx) -> Result<(), Self::Error> {
         if let Some(last) = self.this.last_mut() {
-            *last = self.registers[source as usize];
+            *last = self.registers[source.index()];
         }
         Ok(())
     }
 
     #[inline]
     fn other(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.get_other();
+        self.registers[dest.index()] = self.get_other();
         Ok(())
     }
 
@@ -361,7 +361,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         proto: ProtoIdx,
         bind_this: bool,
     ) -> Result<(), Self::Error> {
-        let proto = self.closure.prototype().prototypes()[proto as usize];
+        let proto = self.closure.prototype().prototypes()[proto.index()];
 
         let mut heap = Vec::new();
         for &hd in proto.heap_vars() {
@@ -370,11 +370,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                     heap.push(HeapVar::Owned(idx));
                 }
                 HeapVarDescriptor::Static(idx) => {
-                    heap.push(HeapVar::Shared(proto.static_vars()[idx as usize]))
+                    heap.push(HeapVar::Shared(proto.static_vars()[idx.index()]))
                 }
                 HeapVarDescriptor::UpValue(idx) => {
-                    heap.push(HeapVar::Shared(match self.closure.heap()[idx as usize] {
-                        HeapVar::Owned(idx) => self.heap[idx as usize].make_shared(&self.ctx),
+                    heap.push(HeapVar::Shared(match self.closure.heap()[idx.index()] {
+                        HeapVar::Owned(idx) => self.heap[idx.index()].make_shared(&self.ctx),
                         HeapVar::Shared(v) => v,
                     }));
                 }
@@ -383,7 +383,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
         // Inner closures bind the current `this` value if the `bind_this` flag is set, otherwise
         // they are created unbound.
-        self.registers[dest as usize] = Closure::from_parts(
+        self.registers[dest.index()] = Closure::from_parts(
             &self.ctx,
             proto,
             if bind_this {
@@ -399,19 +399,19 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn current_closure(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.closure.into();
+        self.registers[dest.index()] = self.closure.into();
         Ok(())
     }
 
     #[inline]
     fn arg_count(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = (self.get_arg_count() as i64).into();
+        self.registers[dest.index()] = (self.get_arg_count() as i64).into();
         Ok(())
     }
 
     #[inline]
     fn get_arg(&mut self, dest: RegIdx, index: RegIdx) -> Result<(), Self::Error> {
-        let arg_idx = self.registers[index as usize];
+        let arg_idx = self.registers[index.index()];
         let arg_idx: usize = arg_idx
             .as_integer()
             .and_then(|i| i.try_into().ok())
@@ -419,7 +419,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                 index: arg_idx.into(),
             })?;
 
-        self.registers[dest as usize] = if arg_idx < self.get_arg_count() {
+        self.registers[dest.index()] = if arg_idx < self.get_arg_count() {
             self.stack[arg_idx]
         } else {
             Value::Undefined
@@ -429,14 +429,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn get_arg_const(&mut self, dest: RegIdx, index: ConstIdx) -> Result<(), Self::Error> {
-        let arg_idx = self.closure.prototype().constants()[index as usize];
+        let arg_idx = self.closure.prototype().constants()[index.index()];
         let arg_idx: usize = arg_idx
             .to_value()
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .expect("const index is not convertible to usize");
 
-        self.registers[dest as usize] = if arg_idx < self.get_arg_count() {
+        self.registers[dest.index()] = if arg_idx < self.get_arg_count() {
             self.stack[arg_idx]
         } else {
             Value::Undefined
@@ -446,19 +446,19 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn new_object(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = Object::new(&self.ctx).into();
+        self.registers[dest.index()] = Object::new(&self.ctx).into();
         Ok(())
     }
 
     #[inline]
     fn new_array(&mut self, dest: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = Array::new(&self.ctx).into();
+        self.registers[dest.index()] = Array::new(&self.ctx).into();
         Ok(())
     }
 
     #[inline]
     fn get_field(&mut self, dest: RegIdx, object: RegIdx, key: RegIdx) -> Result<(), Self::Error> {
-        let key_val = self.registers[key as usize];
+        let key_val = self.registers[key.index()];
         let Some(key) = key_val.as_string() else {
             return Err(OpError::BadKey {
                 key: key_val.into(),
@@ -466,13 +466,13 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .into());
         };
 
-        self.registers[dest as usize] = self.do_get_field(self.registers[object as usize], key)?;
+        self.registers[dest.index()] = self.do_get_field(self.registers[object.index()], key)?;
         Ok(())
     }
 
     #[inline]
     fn set_field(&mut self, object: RegIdx, key: RegIdx, value: RegIdx) -> Result<(), Self::Error> {
-        let key_val = self.registers[key as usize];
+        let key_val = self.registers[key.index()];
         let Some(key) = key_val.as_string() else {
             return Err(OpError::BadKey {
                 key: key_val.into(),
@@ -480,9 +480,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .into());
         };
         Ok(self.do_set_field(
-            self.registers[object as usize],
+            self.registers[object.index()],
             key,
-            self.registers[value as usize],
+            self.registers[value.index()],
         )?)
     }
 
@@ -493,10 +493,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         object: RegIdx,
         key: ConstIdx,
     ) -> Result<(), Self::Error> {
-        let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
+        let Constant::String(key) = self.closure.prototype().constants()[key.index()] else {
             panic!("const key is not a string");
         };
-        self.registers[dest as usize] = self.do_get_field(self.registers[object as usize], key)?;
+        self.registers[dest.index()] = self.do_get_field(self.registers[object.index()], key)?;
         Ok(())
     }
 
@@ -507,21 +507,21 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         key: ConstIdx,
         value: RegIdx,
     ) -> Result<(), Self::Error> {
-        let Constant::String(key) = self.closure.prototype().constants()[key as usize] else {
+        let Constant::String(key) = self.closure.prototype().constants()[key.index()] else {
             panic!("const key is not a string");
         };
         Ok(self.do_set_field(
-            self.registers[object as usize],
+            self.registers[object.index()],
             key,
-            self.registers[value as usize],
+            self.registers[value.index()],
         )?)
     }
 
     #[inline]
     fn get_index(&mut self, dest: RegIdx, array: RegIdx, index: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.do_get_index(
-            self.registers[array as usize],
-            &[self.registers[index as usize]],
+        self.registers[dest.index()] = self.do_get_index(
+            self.registers[array.index()],
+            &[self.registers[index.index()]],
         )?;
         Ok(())
     }
@@ -534,9 +534,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         value: RegIdx,
     ) -> Result<(), Self::Error> {
         self.do_set_index(
-            self.registers[array as usize],
-            &[self.registers[index as usize]],
-            self.registers[value as usize],
+            self.registers[array.index()],
+            &[self.registers[index.index()]],
+            self.registers[value.index()],
         )?;
         Ok(())
     }
@@ -548,9 +548,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         array: RegIdx,
         index: ConstIdx,
     ) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.do_get_index(
-            self.registers[array as usize],
-            &[self.closure.prototype().constants()[index as usize].to_value()],
+        self.registers[dest.index()] = self.do_get_index(
+            self.registers[array.index()],
+            &[self.closure.prototype().constants()[index.index()].to_value()],
         )?;
         Ok(())
     }
@@ -563,47 +563,47 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         value: RegIdx,
     ) -> Result<(), Self::Error> {
         self.do_set_index(
-            self.registers[array as usize],
-            &[self.closure.prototype().constants()[index as usize].to_value()],
-            self.registers[value as usize],
+            self.registers[array.index()],
+            &[self.closure.prototype().constants()[index.index()].to_value()],
+            self.registers[value.index()],
         )?;
         Ok(())
     }
 
     #[inline]
     fn copy(&mut self, dest: RegIdx, source: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[source as usize];
+        self.registers[dest.index()] = self.registers[source.index()];
         Ok(())
     }
 
     #[inline]
     fn is_defined(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = (!self.registers[arg as usize].is_undefined()).into();
+        self.registers[dest.index()] = (!self.registers[arg.index()].is_undefined()).into();
         Ok(())
     }
 
     #[inline]
     fn is_undefined(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize].is_undefined().into();
+        self.registers[dest.index()] = self.registers[arg.index()].is_undefined().into();
         Ok(())
     }
 
     #[inline]
     fn test(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = self.registers[arg as usize].cast_bool().into();
+        self.registers[dest.index()] = self.registers[arg.index()].cast_bool().into();
         Ok(())
     }
 
     #[inline]
     fn not(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        self.registers[dest as usize] = (!self.registers[arg as usize].cast_bool()).into();
+        self.registers[dest.index()] = (!self.registers[arg.index()].cast_bool()).into();
         Ok(())
     }
 
     #[inline]
     fn negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        let arg = self.registers[arg as usize];
-        self.registers[dest as usize] = arg.negate().ok_or_else(|| OpError::BadUnOp {
+        let arg = self.registers[arg.index()];
+        self.registers[dest.index()] = arg.negate().ok_or_else(|| OpError::BadUnOp {
             op: "neg",
             arg: arg.into(),
         })?;
@@ -612,8 +612,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn bit_negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        let arg = self.registers[arg as usize];
-        self.registers[dest as usize] = arg
+        let arg = self.registers[arg.index()];
+        self.registers[dest.index()] = arg
             .bit_negate()
             .ok_or_else(|| OpError::BadUnOp {
                 op: "bit_neg",
@@ -625,8 +625,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn increment(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        let arg = self.registers[arg as usize];
-        self.registers[dest as usize] =
+        let arg = self.registers[arg.index()];
+        self.registers[dest.index()] =
             arg.add(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
                 op: "inc",
                 arg: arg.into(),
@@ -636,8 +636,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn decrement(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
-        let arg = self.registers[arg as usize];
-        self.registers[dest as usize] =
+        let arg = self.registers[arg.index()];
+        self.registers[dest.index()] =
             arg.sub(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
                 op: "dec",
                 arg: arg.into(),
@@ -647,9 +647,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn add(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .add_or_append(self.ctx, right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -662,9 +662,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn subtract(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.sub(right).ok_or_else(|| OpError::BadBinOp {
             op: "sub",
             left: left.into(),
@@ -675,9 +675,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn multiply(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.mult(right).ok_or_else(|| OpError::BadBinOp {
             op: "mult",
             left: left.into(),
@@ -688,9 +688,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn divide(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.div(right).ok_or_else(|| OpError::BadBinOp {
             op: "div",
             left: left.into(),
@@ -701,9 +701,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn remainder(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.rem(right).ok_or_else(|| OpError::BadBinOp {
             op: "rem",
             left: left.into(),
@@ -714,9 +714,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn int_divide(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .idiv(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -730,9 +730,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn is_equal(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.equal(right).into();
         Ok(())
     }
@@ -744,18 +744,18 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = (!left.equal(right)).into();
         Ok(())
     }
 
     #[inline]
     fn is_less(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        self.registers[dest as usize] = left
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        self.registers[dest.index()] = left
             .less_than(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "is_less",
@@ -773,9 +773,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        self.registers[dest as usize] = left
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        self.registers[dest.index()] = left
             .less_equal(right)
             .ok_or_else(|| OpError::BadBinOp {
                 op: "is_less_eq",
@@ -788,36 +788,36 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn and(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.and(right).into();
         Ok(())
     }
 
     #[inline]
     fn or(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.or(right).into();
         Ok(())
     }
 
     #[inline]
     fn xor(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.xor(right).into();
         Ok(())
     }
 
     #[inline]
     fn bit_and(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_and(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -831,9 +831,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn bit_or(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_or(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -847,9 +847,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn bit_xor(&mut self, dest: RegIdx, left: RegIdx, right: RegIdx) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_xor(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -868,9 +868,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_shift_left(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -889,9 +889,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_shift_right(right)
             .ok_or_else(|| OpError::BadBinOp {
@@ -910,9 +910,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         left: RegIdx,
         right: RegIdx,
     ) -> Result<(), Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
-        let dest = &mut self.registers[dest as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
+        let dest = &mut self.registers[dest.index()];
         *dest = left.null_coalesce(right);
         Ok(())
     }
@@ -941,7 +941,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         if self.stack_frame_boundaries.is_empty() {
             return Err(OpError::NoStackFrame { op: "stack_push" }.into());
         }
-        self.stack.push_back(self.registers[source as usize]);
+        self.stack.push_back(self.registers[source.index()]);
         Ok(())
     }
 
@@ -951,8 +951,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             return Err(OpError::NoStackFrame { op: "stack_push" }.into());
         }
         self.stack.extend([
-            self.registers[source_a as usize],
-            self.registers[source_b as usize],
+            self.registers[source_a.index()],
+            self.registers[source_b.index()],
         ]);
         Ok(())
     }
@@ -968,9 +968,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             return Err(OpError::NoStackFrame { op: "stack_push" }.into());
         }
         self.stack.extend([
-            self.registers[source_a as usize],
-            self.registers[source_b as usize],
-            self.registers[source_c as usize],
+            self.registers[source_a.index()],
+            self.registers[source_b.index()],
+            self.registers[source_c.index()],
         ]);
         Ok(())
     }
@@ -987,10 +987,10 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             return Err(OpError::NoStackFrame { op: "stack_push" }.into());
         }
         self.stack.extend([
-            self.registers[source_a as usize],
-            self.registers[source_b as usize],
-            self.registers[source_c as usize],
-            self.registers[source_d as usize],
+            self.registers[source_a.index()],
+            self.registers[source_b.index()],
+            self.registers[source_c.index()],
+            self.registers[source_d.index()],
         ]);
         Ok(())
     }
@@ -1003,7 +1003,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .copied()
             .ok_or_else(|| OpError::NoStackFrame { op: "stack_get" })?;
 
-        let stack_idx = self.registers[index as usize];
+        let stack_idx = self.registers[index.index()];
         let stack_idx: usize = stack_idx
             .as_integer()
             .and_then(|i| i.try_into().ok())
@@ -1011,7 +1011,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                 index: stack_idx.into(),
             })?;
 
-        self.registers[dest as usize] = self
+        self.registers[dest.index()] = self
             .stack
             .sub_slice(stack_frame_start)
             .get(stack_idx)
@@ -1030,14 +1030,14 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                     op: "stack_get_const",
                 })?;
 
-        let stack_idx = self.closure.prototype().constants()[index as usize];
+        let stack_idx = self.closure.prototype().constants()[index.index()];
         let stack_idx: usize = stack_idx
             .to_value()
             .as_integer()
             .and_then(|i| i.try_into().ok())
             .expect("const index is not convertible to usize");
 
-        self.registers[dest as usize] = self
+        self.registers[dest.index()] = self
             .stack
             .sub_slice(stack_frame_start)
             .get(stack_idx)
@@ -1056,12 +1056,12 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                 })?;
 
         let res = self.do_get_index(
-            self.registers[array as usize],
+            self.registers[array.index()],
             &self.stack[stack_frame_start..],
         );
         self.stack.truncate(stack_frame_start);
 
-        self.registers[dest as usize] = res?;
+        self.registers[dest.index()] = res?;
         Ok(())
     }
 
@@ -1075,9 +1075,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
                 })?;
 
         let res = self.do_set_index(
-            self.registers[array as usize],
+            self.registers[array.index()],
             &self.stack[stack_frame_start..],
-            self.registers[value as usize],
+            self.registers[value.index()],
         );
 
         self.stack.truncate(stack_frame_start);
@@ -1090,9 +1090,9 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .closure
             .prototype()
             .magic()
-            .get(magic as usize)
+            .get(magic.index())
             .expect("magic idx is not valid");
-        self.registers[dest as usize] = magic.get(self.ctx)?;
+        self.registers[dest.index()] = magic.get(self.ctx)?;
         Ok(())
     }
 
@@ -1102,45 +1102,45 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .closure
             .prototype()
             .magic()
-            .get(magic as usize)
+            .get(magic.index())
             .expect("magic idx is not valid");
-        magic.set(self.ctx, self.registers[source as usize])?;
+        magic.set(self.ctx, self.registers[source.index()])?;
         Ok(())
     }
 
     #[inline]
     fn throw(&mut self, source: RegIdx) -> Result<(), Self::Error> {
-        Err(ScriptError::new(self.registers[source as usize]).into())
+        Err(ScriptError::new(self.registers[source.index()]).into())
     }
 
     #[inline]
     fn jump_if(&mut self, test: RegIdx, is_true: bool) -> Result<bool, Self::Error> {
-        Ok(self.registers[test as usize].cast_bool() == is_true)
+        Ok(self.registers[test.index()].cast_bool() == is_true)
     }
 
     #[inline]
     fn jump_if_undefined(&mut self, test: RegIdx, is_undefined: bool) -> Result<bool, Self::Error> {
-        Ok(self.registers[test as usize].is_undefined() == is_undefined)
+        Ok(self.registers[test.index()].is_undefined() == is_undefined)
     }
 
     #[inline]
     fn jump_if_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
         Ok(left.equal(right))
     }
 
     #[inline]
     fn jump_if_not_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
         Ok(!left.equal(right))
     }
 
     #[inline]
     fn jump_if_less(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
         Ok(left.less_than(right).ok_or_else(|| OpError::BadBinOp {
             op: "is_less",
             left: left.into(),
@@ -1150,8 +1150,8 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn jump_if_less_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
-        let left = self.registers[left as usize];
-        let right = self.registers[right as usize];
+        let left = self.registers[left.index()];
+        let right = self.registers[right.index()];
         Ok(left.less_equal(right).ok_or_else(|| OpError::BadBinOp {
             op: "is_less",
             left: left.into(),
@@ -1161,7 +1161,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
 
     #[inline]
     fn call(&mut self, func: RegIdx) -> Result<ControlFlow<Self::Break>, Self::Error> {
-        let func = self.registers[func as usize];
+        let func = self.registers[func.index()];
         let func = func.as_function().ok_or_else(|| OpError::BadCall {
             target: func.type_name(),
         })?;

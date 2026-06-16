@@ -34,7 +34,6 @@ pub struct Prototype<S> {
     pub bytecode: vm::ByteCode,
     pub constants: Box<[Constant<S>]>,
     pub prototypes: Box<[Prototype<S>]>,
-    pub used_registers: usize,
     pub heap_vars: Box<[HeapVarDescriptor<S>]>,
 }
 
@@ -45,7 +44,6 @@ impl<S> Prototype<S> {
             bytecode,
             constants,
             prototypes,
-            used_registers,
             heap_vars,
         } = self;
 
@@ -58,7 +56,6 @@ impl<S> Prototype<S> {
             bytecode,
             constants,
             prototypes,
-            used_registers,
             heap_vars,
         }
     }
@@ -87,7 +84,6 @@ impl<'gc> Prototype<vm::String<'gc>> {
             bytecode,
             constants,
             prototypes,
-            used_registers,
             heap_vars,
         } = self;
 
@@ -129,7 +125,6 @@ impl<'gc> Prototype<vm::String<'gc>> {
                 prototypes,
                 static_vars.into_boxed_slice(),
                 heap_vars,
-                used_registers,
             )
             .unwrap(),
         )
