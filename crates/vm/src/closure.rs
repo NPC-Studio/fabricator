@@ -454,8 +454,11 @@ impl<'gc> Prototype<'gc> {
                     mark_reg_idx(left);
                     mark_reg_idx(right);
                 }
-                Instruction::Call { func } => {
+                Instruction::Call { func, this } => {
                     mark_reg_idx(func);
+                    if let Some(this) = this {
+                        mark_reg_idx(this);
+                    }
                 }
                 Instruction::Return {} => {}
             }

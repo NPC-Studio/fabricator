@@ -282,14 +282,20 @@ macro_rules! for_each_instruction {
                 right: RegIdx,
             };
 
-            [special]
+            [control]
             /// Call a function with arguments in the topmost stack frame.
             ///
             /// Pops all arguments from the topmost stack frame, then pushes all returns as a new
             /// stack frame.
-            call = Call { func: RegIdx };
+            ///
+            /// If a `this` object is given then the the provided `this` will be automatically
+            /// pushed before calling and popped after returning, with one exception: If the
+            /// `func` object is a function with its own bound `this` value, the provided `this`
+            /// object will be *ignored*. This is the only way to perform this operation without
+            /// potentially pushing two `this` values.
+            call = Call { func: RegIdx, this: Option<RegIdx> };
 
-            [special]
+            [control]
             /// Return with values in the topmost stack frame.
             return_ = Return {};
         }
@@ -323,11 +329,20 @@ impl PrettyField for bool {
     }
 }
 
+impl<T: PrettyField> PrettyField for Option<T> {
+    fn fmt(&self, f: &mut dyn fmt::Write) -> fmt::Result {
+        match self {
+            Some(v) => v.fmt(f),
+            None => write!(f, "_"),
+        }
+    }
+}
+
 impl Instruction {
     pub fn pretty_print(self, f: &mut dyn fmt::Write) -> fmt::Result {
         macro_rules! impl_debug {
             ($(
-                [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ident),* $(,)? };
+                [$_category:ident] $(#[$_attr:meta])* $snake_name:ident = $name:ident { $($field:ident: $field_ty:ty),* $(,)? };
             )*) => {
                 match self {
                     $(Instruction::$name { $($field),* } => {

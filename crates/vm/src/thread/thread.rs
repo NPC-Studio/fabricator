@@ -197,8 +197,9 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         }
     }
 
-    /// Return a new execution context with the `this` value set to the one provided, and the
-    /// `other` value set as the previous `this` value.
+    /// Return a new execution context with a new `this` value pushed from the one provided.
+    ///
+    /// On drop, the `this` stack will be reset to its previous state.
     #[inline]
     pub fn with_this(&mut self, this: impl Into<Value<'gc>>) -> Execution<'gc, '_> {
         let this_bottom = self.thread.this.len();
@@ -253,24 +254,33 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         }
 
         let mut drop_frame = DropCallbackFrame(self.reborrow());
-        let mut this = drop_frame.0.reborrow();
+        let mut exec = drop_frame.0.reborrow();
 
-        if let Some(hook_state) = &mut this.thread.hook_state {
+        // Push the callback's bound `this` value if it has one.
+        let mut exec = if let this = callback.this()
+            && !this.is_undefined()
+        {
+            exec.with_this(this)
+        } else {
+            exec
+        };
+
+        if let Some(hook_state) = &mut exec.thread.hook_state {
             hook_state.hook.on_call(
                 ctx,
                 Backtrace {
-                    frames: &this.thread.frames,
+                    frames: &exec.thread.frames,
                 },
             )?;
         }
 
-        let res = callback.call(ctx, this.reborrow());
+        let res = callback.call(ctx, exec.reborrow());
 
-        if let Some(hook_state) = &mut this.thread.hook_state {
+        if let Some(hook_state) = &mut exec.thread.hook_state {
             hook_state.hook.on_return(
                 ctx,
                 Backtrace {
-                    frames: &this.thread.frames,
+                    frames: &exec.thread.frames,
                 },
             );
         }
@@ -684,6 +694,7 @@ impl<'gc> ThreadState<'gc> {
                     dispatch::Next::Call {
                         function,
                         args_bottom,
+                        this,
                     } => {
                         match function {
                             Function::Closure(closure) => {
@@ -698,12 +709,13 @@ impl<'gc> ThreadState<'gc> {
                                 let stack_frame_boundaries_bottom =
                                     self.stack_frame_boundaries.len();
 
-                                // Push the closure's bound `this` value, if it has one.
+                                // Push the closure's bound `this` value or the provided `this` if
+                                // either is defined.
                                 let this_bottom = self.this.len();
-                                if let closure_this = closure.this()
-                                    && !closure_this.is_undefined()
+                                if let this = closure.this().null_coalesce(this)
+                                    && !this.is_undefined()
                                 {
-                                    self.this.push(closure_this)
+                                    self.this.push(this)
                                 }
 
                                 let heap_bottom = self.heap.len();
@@ -738,7 +750,14 @@ impl<'gc> ThreadState<'gc> {
                             }
                             Function::Callback(callback) => {
                                 let stack_bottom = frame.stack_bottom + args_bottom;
+
+                                // Push the provided `this` value if the callback does not have
+                                // one bound, otherwise the bound `this` value will be pushed by
+                                // `Execution::call_callback`.
                                 let this_bottom = self.this.len();
+                                if !this.is_undefined() && callback.this().is_undefined() {
+                                    self.this.push(this)
+                                }
 
                                 if let Err(err) = (Execution {
                                     thread: self,

@@ -655,12 +655,18 @@ fn codegen_function<S: Clone + Eq + Hash>(
                         }
                     }
                 }
-                ir::InstructionKind::OpenCall { func, ref args, .. } => {
+                ir::InstructionKind::OpenCall {
+                    func,
+                    this,
+                    ref args,
+                    ..
+                } => {
                     vm_instructions.push((Instruction::PushStackFrame {}, inst.span));
                     push_stack_push_insts(&mut vm_instructions, args, inst.span);
                     vm_instructions.push((
                         Instruction::Call {
                             func: reg_alloc.instruction_registers[func],
+                            this: this.map(|r| reg_alloc.instruction_registers[r]),
                         },
                         inst.span,
                     ));

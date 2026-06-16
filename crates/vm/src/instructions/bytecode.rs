@@ -105,7 +105,7 @@ impl ByteCode {
                 (
                     $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
                     $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
+                    $([control] $(#[$_control_attr:meta])* $control_snake_name:ident = $control_name:ident { $($control_field:ident : $control_field_ty:ty),* $(,)? };)*
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
@@ -204,7 +204,7 @@ impl ByteCode {
                 (
                     $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
                     $([$(jump)? $(jump_if)?] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
+                    $([control] $(#[$_control_attr:meta])* $control_snake_name:ident = $control_name:ident { $($control_field:ident : $control_field_ty:ty),* $(,)? };)*
                 ) => {
                     match opcode {
                         $(OpCode::$basic_name => {
@@ -216,9 +216,9 @@ impl ByteCode {
                             target = InstIdx(self.instruction_index_for_pc(target.0 as usize).unwrap() as _);
                             Instruction::$jump_name { target $(, $jump_field)* }
                         })*
-                        $(OpCode::$special_name => {
-                            let params::$special_name { $($special_field),* } = bytecode_read(&mut ptr);
-                            Instruction::$special_name { $($special_field),* }
+                        $(OpCode::$control_name => {
+                            let params::$control_name { $($control_field),* } = bytecode_read(&mut ptr);
+                            Instruction::$control_name { $($control_field),* }
                         })*
                     }
                 };
@@ -383,7 +383,7 @@ impl<'gc> Dispatcher<'gc> {
                     $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
                     $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { $($jump_field:ident : $jump_field_ty:ty),* $(,)? };)*
                     $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* $(,)? };)*
-                    $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
+                    $([control] $(#[$_control_attr:meta])* $control_snake_name:ident = $control_name:ident { $($control_field:ident : $control_field_ty:ty),* $(,)? };)*
                 ) => {
                     match opcode {
                         $(
@@ -407,18 +407,14 @@ impl<'gc> Dispatcher<'gc> {
                             }
                         )*
 
-                        OpCode::Call => {
-                            let params::Call {
-                                func,
-                            } = bytecode_read(&mut self.ptr);
-                            if let ControlFlow::Break(b) = dispatch.call(func)? {
-                                return Ok(ControlFlow::Break(b));
+                        $(
+                            OpCode::$control_name => {
+                                let params::$control_name { $($control_field),* } = bytecode_read(&mut self.ptr);
+                                if let ControlFlow::Break(b) = dispatch.$control_snake_name($($control_field),*)? {
+                                    return Ok(ControlFlow::Break(b));
+                                }
                             }
-                        }
-                        OpCode::Return => {
-                            let params::Return { } = bytecode_read(&mut self.ptr);
-                            return dispatch.return_().map(ControlFlow::Break);
-                        }
+                        )*
                     }
                 };
             }
@@ -435,7 +431,7 @@ macro_rules! define_dispatch {
         $([basic] $(#[$_basic_attr:meta])* $basic_snake_name:ident = $basic_name:ident { $($basic_field:ident : $basic_field_ty:ty),* $(,)? };)*
         $([jump] $(#[$_jump_attr:meta])* $jump_snake_name:ident = $jump_name:ident { target: InstIdx $(, $jump_field:ident : $jump_field_ty:ty)* $(,)? };)*
         $([jump_if] $(#[$_jump_if_attr:meta])* $jump_if_snake_name:ident = $jump_if_name:ident { target: InstIdx $(, $jump_if_field:ident : $jump_if_field_ty:ty)* $(,)? };)*
-        $([special] $(#[$_special_attr:meta])* $special_snake_name:ident = $special_name:ident { $($special_field:ident : $special_field_ty:ty),* $(,)? };)*
+        $([control] $(#[$_control_attr:meta])* $control_snake_name:ident = $control_name:ident { $($control_field:ident : $control_field_ty:ty),* $(,)? };)*
     ) => {
         pub trait Dispatch {
             type Break;
@@ -443,13 +439,7 @@ macro_rules! define_dispatch {
 
             $(fn $basic_snake_name(&mut self, $($basic_field: $basic_field_ty),*) -> Result<(), Self::Error>;)*
             $(fn $jump_if_snake_name(&mut self, $($jump_if_field: $jump_if_field_ty),*) -> Result<bool, Self::Error>;)*
-
-            fn call(
-                &mut self,
-                func: RegIdx,
-            ) -> Result<ControlFlow<Self::Break>, Self::Error>;
-
-            fn return_(&mut self) -> Result<Self::Break, Self::Error>;
+            $(fn $control_snake_name(&mut self, $($control_field: $control_field_ty),*) -> Result<ControlFlow<Self::Break>, Self::Error>;)*
         }
     };
 }

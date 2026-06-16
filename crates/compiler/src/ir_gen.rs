@@ -460,6 +460,7 @@ where
             ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: init_constructor_super,
+                this: None,
                 args: vec![our_closure],
             },
         );
@@ -508,6 +509,7 @@ where
                 ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: inherit_func,
+                    this: None,
                     args,
                 },
             );
@@ -529,6 +531,7 @@ where
             ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: set_super,
+                this: None,
                 args: vec![this, our_super],
             },
         );
@@ -580,6 +583,7 @@ where
                 ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: get_constructor_super,
+                    this: None,
                     args: vec![inherit_func.unwrap()],
                 },
             );
@@ -598,6 +602,7 @@ where
                 ir::InstructionKind::OpenCall {
                     scope: call_scope,
                     func: set_super,
+                    this: None,
                     args: vec![our_super, inherited_super],
                 },
             );
@@ -1336,6 +1341,7 @@ where
             ir::InstructionKind::OpenCall {
                 scope: setup_call_scope,
                 func: with_loop_iter,
+                this: None,
                 args: vec![target],
             },
         );
@@ -1394,6 +1400,7 @@ where
             ir::InstructionKind::OpenCall {
                 scope: iter_call_scope,
                 func: iter_fn,
+                this: None,
                 args: vec![state, cur_control],
             },
         );
@@ -1517,6 +1524,7 @@ where
             ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func: pcall,
+                this: None,
                 args: vec![inner_closure],
             },
         );
@@ -2200,30 +2208,18 @@ where
 
         let call_scope = self.function.call_scopes.insert(());
 
-        let this_scope = if let Some(this) = this {
-            let this_scope = self.function.this_scopes.insert(());
-            self.push_instruction(call.span, ir::InstructionKind::OpenThisScope(this_scope));
-            self.push_instruction(call.span, ir::InstructionKind::SetThis(this_scope, this));
-            Some(this_scope)
-        } else {
-            None
-        };
-
         self.push_instruction(
             call.span,
             ir::InstructionKind::OpenCall {
                 scope: call_scope,
                 func,
+                this,
                 args,
             },
         );
 
         let ret = self.push_instruction(call.span, ir::InstructionKind::FixedReturn(call_scope, 0));
         self.push_instruction(call.span, ir::InstructionKind::CloseCall(call_scope));
-
-        if let Some(this_scope) = this_scope {
-            self.push_instruction(call.span, ir::InstructionKind::CloseThisScope(this_scope));
-        }
 
         Ok(ret)
     }

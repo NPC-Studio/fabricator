@@ -336,6 +336,7 @@ pub enum InstructionKind<S> {
     OpenCall {
         scope: CallScope,
         func: InstId,
+        this: Option<InstId>,
         args: Vec<InstId>,
     },
     FixedReturn(CallScope, usize),
@@ -389,8 +390,14 @@ impl<S> InstructionKind<S> {
             &InstructionKind::Upsilon(_, source) => make_iter!([source]),
             &InstructionKind::UnOp { source, .. } => make_iter!([source]),
             &InstructionKind::BinOp { left, right, .. } => make_iter!([left, right]),
-            InstructionKind::OpenCall { func, args, .. } => {
-                make_iter!([*func], args)
+            InstructionKind::OpenCall {
+                func, this, args, ..
+            } => {
+                if let Some(this) = this {
+                    make_iter!([*func, *this], args)
+                } else {
+                    make_iter!([*func], args)
+                }
             }
             _ => make_iter!([]),
         }
@@ -430,8 +437,14 @@ impl<S> InstructionKind<S> {
             InstructionKind::Upsilon(_, source) => make_iter!([source]),
             InstructionKind::UnOp { source, .. } => make_iter!([source]),
             InstructionKind::BinOp { left, right, .. } => make_iter!([left, right]),
-            InstructionKind::OpenCall { func, args, .. } => {
-                make_iter!([func], args)
+            InstructionKind::OpenCall {
+                func, this, args, ..
+            } => {
+                if let Some(this) = this {
+                    make_iter!([func, this], args)
+                } else {
+                    make_iter!([func], args)
+                }
             }
             _ => make_iter!([]),
         }
@@ -853,9 +866,16 @@ impl<S: AsRef<str>> Function<S> {
                     InstructionKind::OpenCall {
                         scope,
                         func,
+                        this,
                         ref args,
                     } => {
-                        write!(f, "open_call({scope}, {func}, args = [",)?;
+                        write!(f, "open_call({scope}, {func}, ")?;
+
+                        if let Some(this) = this {
+                            write!(f, "{this}, ")?;
+                        }
+
+                        write!(f, "args = [",)?;
                         for (i, &arg) in args.iter().enumerate() {
                             if i != 0 {
                                 write!(f, ", ")?;

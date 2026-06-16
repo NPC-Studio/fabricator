@@ -59,6 +59,7 @@ pub(super) enum Next<'gc> {
     Call {
         function: Function<'gc>,
         args_bottom: usize,
+        this: Value<'gc>,
     },
     Return {
         returns_bottom: usize,
@@ -1160,7 +1161,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     }
 
     #[inline]
-    fn call(&mut self, func: RegIdx) -> Result<ControlFlow<Self::Break>, Self::Error> {
+    fn call(
+        &mut self,
+        func: RegIdx,
+        this: Option<RegIdx>,
+    ) -> Result<ControlFlow<Self::Break>, Self::Error> {
         let func = self.registers[func.index()];
         let func = func.as_function().ok_or_else(|| OpError::BadCall {
             target: func.type_name(),
@@ -1172,21 +1177,24 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
             .copied()
             .ok_or_else(|| OpError::NoStackFrame { op: "call" })?;
 
+        let this = this.map(|r| self.registers[r.index()]).unwrap_or_default();
+
         Ok(ControlFlow::Break(Next::Call {
             function: func,
             args_bottom: stack_frame_start,
+            this,
         }))
     }
 
     #[inline]
-    fn return_(&mut self) -> Result<Self::Break, Self::Error> {
+    fn return_(&mut self) -> Result<ControlFlow<Self::Break>, Self::Error> {
         let stack_frame_start = self
             .stack_frame_boundaries
             .pop_back()
             .ok_or_else(|| OpError::NoStackFrame { op: "return" })?;
 
-        Ok(Next::Return {
+        Ok(ControlFlow::Break(Next::Return {
             returns_bottom: stack_frame_start,
-        })
+        }))
     }
 }
