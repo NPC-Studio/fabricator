@@ -114,6 +114,8 @@ impl<'gc> Thread<'gc> {
             thread.frames.is_empty()
                 && thread.registers.is_empty()
                 && thread.stack.is_empty()
+                && thread.stack_frame_boundaries.is_empty()
+                && thread.this.is_empty()
                 && thread.heap.is_empty()
         );
 
@@ -124,6 +126,7 @@ impl<'gc> Thread<'gc> {
                 self.0.frames.clear();
                 self.0.registers.clear();
                 self.0.stack.clear();
+                self.0.stack_frame_boundaries.clear();
                 self.0.this.clear();
                 self.0.heap.clear();
             }
