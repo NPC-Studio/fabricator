@@ -224,7 +224,7 @@ fn test_vm_step_hook() {
         impl Error for ExecLimitError {}
 
         impl<'gc> vm::Hook<'gc> for TestHook {
-            fn on_step_count(&mut self, _ctx: vm::Context<'gc>) -> u32 {
+            fn on_step_count(&self, _ctx: vm::Context<'gc>) -> u32 {
                 10_000
             }
 

@@ -64,7 +64,7 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    pub fn set_hook(self, ctx: Context<'gc>, mut hook: impl Hook<'gc> + Collect<'gc> + 'gc) {
+    pub fn set_hook(self, ctx: Context<'gc>, hook: impl Hook<'gc> + Collect<'gc> + 'gc) {
         let hook_step_next = hook.on_step_count(ctx);
         self.0.borrow_mut(&ctx).hook_state = Some(HookState {
             hook: Box::new(hook),
@@ -452,7 +452,7 @@ pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
     /// This counter is kept between calls and returns, even totally independent thread calls. The
     /// `on_step_count` method itself is called when the hook implementation is set, as well as
     /// immediately after every call to `on_step`.
-    fn on_step_count(&mut self, _ctx: Context<'gc>) -> u32 {
+    fn on_step_count(&self, _ctx: Context<'gc>) -> u32 {
         0
     }
 
