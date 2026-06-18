@@ -44,7 +44,13 @@ pub fn simplify_branches<S>(ir: &mut ir::Function<S>) {
                         }
                     }
                 }
-                _ => {}
+                other_condition => {
+                    for source in other_condition.sources() {
+                        if unique_branch_sources.contains_key(&source) {
+                            duplicate_branch_sources.insert(source);
+                        }
+                    }
+                }
             }
         }
     }
@@ -112,7 +118,7 @@ pub fn simplify_branches<S>(ir: &mut ir::Function<S>) {
                     ir.instructions[inst_id].kind = ir::InstructionKind::NoOp;
                 }
             }
-            _ => {}
+            _ => unreachable!(),
         }
     }
 
