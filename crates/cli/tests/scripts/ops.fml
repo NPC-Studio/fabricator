@@ -25,6 +25,11 @@ assert(false == 0.0);
 assert(false < 1.0);
 assert(true > 0.5);
 
+assert(false != undefined);
+assert(undefined != false);
+assert(!(false == undefined));
+assert(!(undefined == false));
+
 assert(2 % 3 == 2);
 assert(4 mod 3 == 1);
 assert(4.9 div 3.1 == 1);
@@ -99,6 +104,11 @@ assert(black_box(true) != 0.5);
 assert(black_box(false) == 0.0);
 assert(black_box(false) < 1.0);
 assert(black_box(true) > 0.5);
+
+assert(black_box(false) != undefined);
+assert(black_box(undefined) != false);
+assert(!(black_box(false) == undefined));
+assert(!(black_box(undefined) == false));
 
 assert(black_box(2) % 3 == 2);
 assert(black_box(4) mod 3 == 1);
