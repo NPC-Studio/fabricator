@@ -828,18 +828,26 @@ impl<'gc> ThreadState<'gc> {
 
         let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
 
-        if let Some(hook_state) = &mut self.hook_state {
-            while self.frames.len() > bottom_frame {
+        while self.frames.len() > bottom_frame {
+            if let Some(hook_state) = &mut self.hook_state {
                 hook_state.hook.on_return(
                     ctx,
                     Backtrace {
                         frames: &self.frames,
                     },
                 );
-                self.frames.pop();
             }
-        } else {
-            self.frames.truncate(bottom_frame);
+
+            match self.frames.pop().unwrap() {
+                Frame::Closure(closure_frame) => {
+                    self.registers.truncate(closure_frame.register_bottom);
+                    self.stack.truncate(closure_frame.stack_bottom);
+                    self.stack_frame_boundaries
+                        .truncate(closure_frame.stack_frame_boundaries_bottom);
+                    self.this.truncate(closure_frame.this_bottom);
+                }
+                Frame::Callback(_) => {}
+            }
         }
 
         Err(VmError {
