@@ -777,6 +777,12 @@ where
                 let func_id = self.function.functions.insert(function);
                 let func = self.new_closure(func_stmt.span, func_id);
 
+                // Function statements in GML both create a scoped variable *and* insert a named
+                // value into `this`.
+
+                let var = self.declare_var(func_stmt.name.clone(), ir::Variable::Owned.into())?;
+                self.set_var(func_stmt.span, var, func);
+
                 let this = self.push_instruction(func_stmt.span, ir::InstructionKind::This);
                 let key = self.push_instruction(
                     func_stmt.span,
