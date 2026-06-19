@@ -10,7 +10,7 @@ assert(!is_nan(0));
 assert(!is_nan(-0));
 assert(!is_nan(1.5));
 
-// Intentional divergence from GMS2, strings are *always* NaN because no implicit coercion is
+// Intentional divergence from GMS2, strings are *always* NaN because no implicit string coercion is
 // performed in math functions.
 assert(is_nan("5"));
 assert(is_nan("hello"));

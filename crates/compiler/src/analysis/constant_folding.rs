@@ -88,16 +88,12 @@ pub fn fold_constants<S: Eq + Clone>(ir: &mut ir::Function<S>) {
                         }
                         ir::BinOp::Equal => match (left_const, right_const) {
                             (_, Some(Constant::Undefined)) => Some((ir::UnOp::IsUndefined, left)),
-                            (_, Some(Constant::Boolean(true))) => Some((ir::UnOp::Test, left)),
                             (Some(Constant::Undefined), _) => Some((ir::UnOp::IsUndefined, right)),
-                            (Some(Constant::Boolean(true)), _) => Some((ir::UnOp::Test, right)),
                             _ => None,
                         },
                         ir::BinOp::NotEqual => match (left_const, right_const) {
                             (_, Some(Constant::Undefined)) => Some((ir::UnOp::IsDefined, left)),
-                            (_, Some(Constant::Boolean(true))) => Some((ir::UnOp::Not, left)),
                             (Some(Constant::Undefined), _) => Some((ir::UnOp::IsDefined, right)),
-                            (Some(Constant::Boolean(true)), _) => Some((ir::UnOp::Not, right)),
                             _ => None,
                         },
                         _ => None,
