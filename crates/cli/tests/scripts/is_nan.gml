@@ -9,10 +9,13 @@ assert(!is_nan(-infinity));
 assert(!is_nan(0));
 assert(!is_nan(-0));
 assert(!is_nan(1.5));
-assert(!is_nan("5"));
-assert(!is_nan("5.5"));
-assert(is_nan("NaN")); // note: GM actually disagrees with this, which is presumably a bug
+
+// Intentional divergence from GMS2, strings are *always* NaN because no implicit coercion is
+// performed in math functions.
+assert(is_nan("5"));
 assert(is_nan("hello"));
+assert(is_nan("NaN"));
+
 assert(is_nan(undefined));
 assert(is_nan([]));
 assert(is_nan({}));

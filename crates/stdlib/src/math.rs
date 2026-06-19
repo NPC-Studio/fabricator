@@ -381,14 +381,18 @@ pub fn radtodeg<'gc>(_ctx: vm::Context<'gc>, input: f64) -> Result<f64, Infallib
     Ok(input.to_degrees())
 }
 
-/// Returns if the provided input is NaN. 
-/// 
+/// Returns if the provided input is NaN.
+///
 /// GameMaker is consistent with IEEE when dealing with actual floats. It'll attempt to coerce a
 /// a float per its typical rules, but for anything it cannot coerce it returns _true_.
-/// 
+///
+/// We intentionally diverge from GMS2 here and do *not* do automatic string -> number coercion when
+/// testing NaN, to be consistent with fabricator's decision not to do automatic *coercion* in most
+/// cases and to be consistent with the rest of the stdlib.
+///
 /// See `crates/cli/tests/scripts/is_nan.gml` for more.
-pub fn is_nan<'gc>(ctx: vm::Context<'gc>, input: vm::Value<'gc>) -> Result<bool, Infallible> {
-    Ok(input.coerce_float(ctx).is_none_or(f64::is_nan))
+pub fn is_nan<'gc>(_ctx: vm::Context<'gc>, input: vm::Value<'gc>) -> Result<bool, Infallible> {
+    Ok(input.cast_float().is_none_or(f64::is_nan))
 }
 
 pub fn math_lib<'gc>(ctx: vm::Context<'gc>, lib: &mut vm::MagicSet<'gc>) {

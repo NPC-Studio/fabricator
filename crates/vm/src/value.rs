@@ -184,6 +184,7 @@ impl<'gc> From<Function<'gc>> for Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
+    #[inline]
     #[must_use]
     pub fn type_name(self) -> &'static str {
         match self {
