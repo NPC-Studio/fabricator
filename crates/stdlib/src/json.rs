@@ -66,7 +66,8 @@ pub fn value_to_json<'gc>(
         ),
         vm::Value::String(s) => serde_json::Value::String(s.as_str().to_owned()),
         vm::Value::Object(obj) => {
-            if !recursive_check.insert(Gc::as_ptr(obj.into_inner()) as *const ()) {
+            let ptr = Gc::as_ptr(obj.into_inner()) as *const ();
+            if !recursive_check.insert(ptr) {
                 return Err(vm::RuntimeError::msg(
                     "cannot convert recursive object to JSON",
                 ))?;
@@ -80,10 +81,12 @@ pub fn value_to_json<'gc>(
                     value_to_json(ctx, recursive_check, value)?,
                 );
             }
+            recursive_check.remove(&ptr);
             serde_json::Value::Object(map)
         }
         vm::Value::Array(arr) => {
-            if !recursive_check.insert(Gc::as_ptr(arr.into_inner()) as *const ()) {
+            let ptr = Gc::as_ptr(arr.into_inner()) as *const ();
+            if !recursive_check.insert(ptr) {
                 return Err(vm::RuntimeError::msg(
                     "cannot convert recursive array to JSON",
                 ))?;
@@ -94,6 +97,7 @@ pub fn value_to_json<'gc>(
             for &value in &*borrow {
                 array.push(value_to_json(ctx, recursive_check, value)?);
             }
+            recursive_check.remove(&ptr);
             serde_json::Value::Array(array)
         }
         vm::Value::UserData(ud) => {
