@@ -2,12 +2,13 @@ use std::{fs::File, io::Read, path::PathBuf, process::ExitCode};
 
 use anyhow::Error;
 use clap::{Parser, Subcommand};
+use fabricator_cli::TestingStdlibContext as _;
 use fabricator_compiler::{
     CompileError, CompileSettings,
     compiler::{CompileErrorKind, Compiler, ImportItems},
     parser::{ParseError, ParseErrorKind},
 };
-use fabricator_stdlib::{StdlibContext as _, string::debug_value};
+use fabricator_stdlib::string::debug_value;
 use fabricator_vm as vm;
 
 #[derive(Parser)]
@@ -39,7 +40,7 @@ fn main() -> Result<ExitCode, Error> {
                 let output = Compiler::compile_chunk(
                     ctx,
                     "",
-                    ImportItems::with_magic(&ctx, ctx.stdlib()),
+                    ImportItems::with_magic(&ctx, ctx.testing_stdlib()),
                     settings,
                     path.to_string_lossy().into_owned(),
                     &code,
@@ -67,7 +68,7 @@ fn main() -> Result<ExitCode, Error> {
                 let output = Compiler::compile_chunk(
                     ctx,
                     "",
-                    ImportItems::with_magic(&ctx, ctx.stdlib()),
+                    ImportItems::with_magic(&ctx, ctx.testing_stdlib()),
                     settings,
                     path.to_string_lossy().into_owned(),
                     &code,
@@ -105,8 +106,8 @@ fn main() -> Result<ExitCode, Error> {
 
             let settings = CompileSettings::modern().set_optimization_passes(cli.opt_level);
 
-            let mut imports =
-                interpreter.enter(|ctx| ctx.stash(ImportItems::with_magic(&ctx, ctx.stdlib())));
+            let mut imports = interpreter
+                .enter(|ctx| ctx.stash(ImportItems::with_magic(&ctx, ctx.testing_stdlib())));
 
             fn is_end_of_stream_err(e: &CompileError) -> bool {
                 matches!(
