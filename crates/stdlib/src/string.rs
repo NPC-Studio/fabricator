@@ -509,10 +509,18 @@ fn pretty_print_value<'gc>(
         ctx: vm::Context<'gc>,
         mut exec: Option<vm::Execution<'gc, '_>>,
         recursive_check: &mut HashSet<*const ()>,
+        quoted: bool,
         value: vm::Value<'gc>,
     ) -> Result<(), PrintValueError> {
         match value {
-            vm::Value::String(s) => Ok(write!(f, "{:?}", s)?),
+            vm::Value::String(s) => {
+                if quoted {
+                    write!(f, "{:?}", s)?;
+                } else {
+                    write!(f, "{}", s)?;
+                }
+                Ok(())
+            }
             vm::Value::Object(object) => {
                 if let Some(exec) = &mut exec
                     && let Some(to_string) = object.get(ctx.intern("toString"))
@@ -524,33 +532,45 @@ fn pretty_print_value<'gc>(
                         .map_err(vm::RuntimeError::from)?;
                     let s: vm::String =
                         exec.stack().consume(ctx).map_err(vm::RuntimeError::from)?;
-                    Ok(write!(f, "{}", s)?)
-                } else if recursive_check.insert(Gc::as_ptr(object.into_inner()) as *const ()) {
-                    let object = object.borrow();
-                    write!(f, "{{")?;
-                    let mut iter = object.map.iter().map(|(&k, &v)| (k, v)).peekable();
-                    while let Some((key, value)) = iter.next() {
-                        write!(f, " {}: ", key)?;
-                        print_value_inner(
-                            f,
-                            ctx,
-                            exec.as_mut().map(|e| e.reborrow()),
-                            recursive_check,
-                            value,
-                        )?;
-                        if iter.peek().is_some() {
-                            write!(f, ",")?;
-                        } else {
-                            write!(f, " ")?;
-                        }
+
+                    if quoted {
+                        write!(f, "{:?}", s)?;
+                    } else {
+                        write!(f, "{}", s)?;
                     }
-                    Ok(write!(f, "}}")?)
+                    Ok(())
                 } else {
-                    Ok(write!(f, "<recursive object>")?)
+                    let obj_ptr = Gc::as_ptr(object.into_inner()) as *const ();
+                    if recursive_check.insert(obj_ptr) {
+                        let object = object.borrow();
+                        write!(f, "{{")?;
+                        let mut iter = object.map.iter().map(|(&k, &v)| (k, v)).peekable();
+                        while let Some((key, value)) = iter.next() {
+                            write!(f, " {}: ", key)?;
+                            print_value_inner(
+                                f,
+                                ctx,
+                                exec.as_mut().map(|e| e.reborrow()),
+                                recursive_check,
+                                true,
+                                value,
+                            )?;
+                            if iter.peek().is_some() {
+                                write!(f, ",")?;
+                            } else {
+                                write!(f, " ")?;
+                            }
+                        }
+                        recursive_check.remove(&obj_ptr);
+                        Ok(write!(f, "}}")?)
+                    } else {
+                        Ok(write!(f, "<recursive object>")?)
+                    }
                 }
             }
             vm::Value::Array(array) => {
-                if recursive_check.insert(Gc::as_ptr(array.into_inner()) as *const ()) {
+                let array_ptr = Gc::as_ptr(array.into_inner()) as *const ();
+                if recursive_check.insert(array_ptr) {
                     let array = array.borrow();
                     write!(f, "[")?;
                     let mut iter = array.iter().copied().peekable();
@@ -560,12 +580,14 @@ fn pretty_print_value<'gc>(
                             ctx,
                             exec.as_mut().map(|e| e.reborrow()),
                             recursive_check,
+                            true,
                             value,
                         )?;
                         if iter.peek().is_some() {
                             write!(f, ", ")?;
                         }
                     }
+                    recursive_check.remove(&array_ptr);
                     write!(f, "]")?;
                 } else {
                     write!(f, "<recursive array>")?;
@@ -591,12 +613,13 @@ fn pretty_print_value<'gc>(
             ctx,
             Some(exec.with_stack_bottom(stack_top)),
             &mut HashSet::new(),
+            false,
             value,
         );
         exec.stack().drain(stack_top..);
         r
     } else {
-        print_value_inner(f, ctx, None, &mut HashSet::new(), value)
+        print_value_inner(f, ctx, None, &mut HashSet::new(), false, value)
     }
 }
 
