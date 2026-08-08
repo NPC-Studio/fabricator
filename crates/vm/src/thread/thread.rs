@@ -834,6 +834,7 @@ impl<'gc> ThreadState<'gc> {
                     self.stack_frame_boundaries
                         .truncate(closure_frame.stack_frame_boundaries_bottom);
                     self.this.truncate(closure_frame.this_bottom);
+                    self.heap.truncate(closure_frame.heap_bottom);
                 }
                 Frame::Callback(_) => {}
             }
