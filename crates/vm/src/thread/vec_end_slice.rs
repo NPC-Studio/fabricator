@@ -95,6 +95,7 @@ impl<'a, T> VecEndSlice<'a, T> {
         self.values.capacity() - self.bottom
     }
 
+    #[track_caller]
     #[inline]
     pub fn remove(&mut self, index: usize) -> T {
         self.values.remove(self.bottom + index)

@@ -1,8 +1,7 @@
 use std::{
     iter,
-    ops::{self, Index, IndexMut, RangeBounds},
-    slice::{self, SliceIndex},
-    vec,
+    ops::{self, RangeBounds},
+    slice, vec,
 };
 
 use crate::{
@@ -19,6 +18,7 @@ pub struct Stack<'gc, 'a> {
 }
 
 impl<'gc, 'a> Stack<'gc, 'a> {
+    #[track_caller]
     #[inline]
     pub fn new(values: &'a mut Vec<Value<'gc>>, bottom: usize) -> Self {
         Stack {
@@ -33,6 +33,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         }
     }
 
+    #[track_caller]
     #[inline]
     pub fn sub_stack(&mut self, bottom: usize) -> Stack<'gc, '_> {
         Stack {
@@ -84,6 +85,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.slice.capacity()
     }
 
+    #[track_caller]
     #[inline]
     pub fn remove(&mut self, index: usize) -> Value<'gc> {
         self.slice.remove(index)
@@ -153,21 +155,5 @@ impl<'gc, 'a> Extend<&'a Value<'gc>> for Stack<'gc, 'a> {
     #[inline]
     fn extend<I: IntoIterator<Item = &'a Value<'gc>>>(&mut self, iter: I) {
         self.slice.extend(iter);
-    }
-}
-
-impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> Index<I> for Stack<'gc, 'a> {
-    type Output = <Vec<Value<'gc>> as Index<I>>::Output;
-
-    #[inline]
-    fn index(&self, index: I) -> &Self::Output {
-        &self.slice[index]
-    }
-}
-
-impl<'gc, 'a, I: SliceIndex<[Value<'gc>]>> IndexMut<I> for Stack<'gc, 'a> {
-    #[inline]
-    fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        &mut self.slice[index]
     }
 }
