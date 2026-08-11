@@ -253,12 +253,16 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         };
 
         if let Some(hook_state) = &mut exec.thread.hook_state {
-            hook_state.hook.on_call(
+            if let Err(err) = hook_state.hook.on_call(
                 ctx,
                 Backtrace {
                     frames: &exec.thread.frames,
                 },
-            )?;
+            ) {
+                drop(exec);
+                self.thread.frames.pop();
+                return Err(err);
+            }
         }
 
         let res = callback.call(ctx, exec.reborrow());
@@ -273,7 +277,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         }
 
         drop(exec);
-        assert!(matches!(self.thread.frames.pop(), Some(Frame::Callback(_))));
+        self.thread.frames.pop();
 
         res
     }

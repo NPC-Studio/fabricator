@@ -9,6 +9,7 @@ anyhow.workspace = true
 clap.workspace = true
 gc-arena.workspace = true
 rustyline = "18"
+thiserror.workspace = true
 
 fabricator-compiler.workspace = true
 fabricator-stdlib.workspace = true

@@ -1,5 +1,3 @@
-use anyhow::Error;
-use fabricator_compiler as compiler;
 use fabricator_stdlib::StdlibContext as _;
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc, Rootable};
@@ -46,30 +44,4 @@ impl<'gc> TestingStdlibContext<'gc> for vm::Context<'gc> {
 
         self.singleton::<Rootable![TestingStdlibSingleton<'_>]>().0
     }
-}
-
-pub fn run_code(
-    name: &str,
-    code: &str,
-    compile_settings: compiler::CompileSettings,
-) -> Result<bool, Error> {
-    let interpreter = vm::Interpreter::new();
-
-    interpreter.enter(|ctx| {
-        let output = compiler::Compiler::compile_chunk(
-            ctx,
-            "default",
-            compiler::ImportItems::with_magic(&ctx, ctx.testing_stdlib()),
-            compile_settings,
-            name,
-            code,
-        )?;
-        let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
-
-        let thread = vm::Thread::new(&ctx);
-        thread.exec(ctx, |mut exec| {
-            exec.call(ctx, closure)?;
-            Ok(exec.stack().get(0) == vm::Value::Boolean(true))
-        })
-    })
 }

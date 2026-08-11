@@ -3,8 +3,83 @@ use std::{
     io::{self, Write, stdout},
 };
 
-use fabricator_cli::run_code;
+use anyhow::Error;
+use fabricator_cli::TestingStdlibContext as _;
 use fabricator_compiler as compiler;
+use fabricator_vm as vm;
+use gc_arena::Collect;
+use thiserror::Error;
+
+fn run_code(
+    name: &str,
+    code: &str,
+    compile_settings: compiler::CompileSettings,
+) -> Result<bool, Error> {
+    const FRAME_LIMIT: u32 = 64;
+    const INST_LIMIT: u32 = 32678;
+
+    #[derive(Debug, Error)]
+    #[error("vm limit reached")]
+    struct VmLimitError;
+
+    #[derive(Default, Collect)]
+    #[collect(require_static)]
+    struct VmLimiter {
+        frame_count: u32,
+    }
+
+    impl<'gc> vm::Hook<'gc> for VmLimiter {
+        fn on_call(
+            &mut self,
+            _ctx: vm::Context<'gc>,
+            _backtrace: vm::Backtrace<'gc, '_>,
+        ) -> Result<(), vm::RuntimeError> {
+            self.frame_count += 1;
+            if self.frame_count < FRAME_LIMIT {
+                Ok(())
+            } else {
+                Err(VmLimitError.into())
+            }
+        }
+
+        fn on_return(&mut self, _ctx: vm::Context<'gc>, _backtrace: vm::Backtrace<'gc, '_>) {
+            self.frame_count -= 1;
+        }
+
+        fn on_step_count(&self, _ctx: vm::Context<'gc>) -> u32 {
+            INST_LIMIT
+        }
+
+        fn on_step(
+            &mut self,
+            _ctx: vm::Context<'gc>,
+            _backtrace: vm::Backtrace<'gc, '_>,
+        ) -> Result<(), vm::RuntimeError> {
+            Err(VmLimitError.into())
+        }
+    }
+
+    let interpreter = vm::Interpreter::new();
+
+    interpreter.enter(|ctx| {
+        let output = compiler::Compiler::compile_chunk(
+            ctx,
+            "default",
+            compiler::ImportItems::with_magic(&ctx, ctx.testing_stdlib()),
+            compile_settings,
+            name,
+            code,
+        )?;
+        let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
+
+        let thread = vm::Thread::new(&ctx);
+        thread.set_hook(ctx, VmLimiter { frame_count: 0 });
+        thread.exec(ctx, |mut exec| {
+            exec.call(ctx, closure)?;
+            Ok(exec.stack().get(0) == vm::Value::Boolean(true))
+        })
+    })
+}
 
 fn try_scripts(dir: &str) {
     let _ = writeln!(stdout(), "trying all scripts in {dir:?}");

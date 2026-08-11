@@ -3,8 +3,36 @@ use std::{
     io::{self, Write, stdout},
 };
 
-use fabricator_cli::run_code;
+use anyhow::Error;
+use fabricator_cli::TestingStdlibContext as _;
 use fabricator_compiler as compiler;
+use fabricator_vm as vm;
+
+pub fn run_code(
+    name: &str,
+    code: &str,
+    compile_settings: compiler::CompileSettings,
+) -> Result<bool, Error> {
+    let interpreter = vm::Interpreter::new();
+
+    interpreter.enter(|ctx| {
+        let output = compiler::Compiler::compile_chunk(
+            ctx,
+            "default",
+            compiler::ImportItems::with_magic(&ctx, ctx.testing_stdlib()),
+            compile_settings,
+            name,
+            code,
+        )?;
+        let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
+
+        let thread = vm::Thread::new(&ctx);
+        thread.exec(ctx, |mut exec| {
+            exec.call(ctx, closure)?;
+            Ok(exec.stack().get(0) == vm::Value::Boolean(true))
+        })
+    })
+}
 
 fn run_tests(dir: &str) -> bool {
     let _ = writeln!(stdout(), "running all test scripts in {dir:?}");
