@@ -1562,6 +1562,10 @@ where
             closure_span,
             ir::InstructionKind::GetVariable(exit_code_var),
         );
+        self.push_instruction(
+            closure_span,
+            ir::InstructionKind::CloseVariable(exit_code_var),
+        );
 
         let return_code = self.push_instruction(
             closure_span,
@@ -1580,10 +1584,6 @@ where
         );
 
         self.start_new_block(do_return);
-        self.push_instruction(
-            closure_span,
-            ir::InstructionKind::CloseVariable(exit_code_var),
-        );
         if allow_return_with_arg {
             self.do_return(closure_span, Some(ret_or_err))?;
         } else {
@@ -1610,10 +1610,6 @@ where
             );
 
             self.start_new_block(do_break);
-            self.push_instruction(
-                closure_span,
-                ir::InstructionKind::CloseVariable(exit_code_var),
-            );
             self.do_break(closure_span)?;
 
             self.start_new_block(no_break);
@@ -1637,10 +1633,6 @@ where
             );
 
             self.start_new_block(do_continue);
-            self.push_instruction(
-                closure_span,
-                ir::InstructionKind::CloseVariable(exit_code_var),
-            );
             self.do_continue(closure_span)?;
 
             self.start_new_block(no_continue);
@@ -1653,6 +1645,10 @@ where
         );
 
         self.start_new_block(err_block);
+        self.push_instruction(
+            closure_span,
+            ir::InstructionKind::CloseVariable(exit_code_var),
+        );
         self.push_scope();
         let err_var =
             self.declare_var(try_catch_stmt.err_ident.clone(), ir::Variable::Owned.into())?;
@@ -1667,10 +1663,6 @@ where
         );
 
         self.start_new_block(successor_block);
-        self.push_instruction(
-            closure_span,
-            ir::InstructionKind::CloseVariable(exit_code_var),
-        );
 
         Ok(())
     }

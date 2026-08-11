@@ -111,22 +111,35 @@ var t4 = new TestErr4();
 assert(t4.execute(4, 5, 6) == "execute");
 
 function test_it(p) {
-		try {
-			switch black_box(p) {
-				case 0:
-					return "a";
-				case 1:
-					return "b";
-				default:
-				  return "c";
-			}
-		} catch(e) {
-		    assert(false);
-		};
+    try {
+        switch black_box(p) {
+            case 0:
+                return "a";
+            case 1:
+                return "b";
+            default:
+                return "c";
+        }
+    } catch(e) {
+        assert(false);
+    };
 }
 assert(test_it(0) == "a");
 assert(test_it(1) == "b");
 assert(test_it(2) == "c");
 assert(test_it(3) == "c");
+
+function a_lot_of_tries(p) {
+    try {
+        error(1);
+    } catch(_) try {
+        error(2);
+    } catch(_) try {
+        error(p);
+    } catch(e) {
+        return p;
+    }
+}
+assert(a_lot_of_tries("a") == "a");
 
 return true;
