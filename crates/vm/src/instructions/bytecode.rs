@@ -109,9 +109,10 @@ impl ByteCode {
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
-                            *target = inst_positions[target.0 as usize].try_into().map_err(|_| {
-                                ByteCodeEncodingError::InvalidJump(*target)
-                            })?;
+                            *target = inst_positions
+                                .get(target.0 as usize)
+                                .and_then(|&p| p.try_into().ok())
+                                .ok_or_else(|| ByteCodeEncodingError::InvalidJump(*target))?;
                         }
                         _ => {}
                     };
