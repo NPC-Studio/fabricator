@@ -1,6 +1,7 @@
 use std::{cmp, fmt};
 
 use gc_arena::{Collect, Mutation};
+use thiserror::Error;
 
 use crate::{
     array::Array, callback::Callback, closure::Closure, interpreter::Context, object::Object,
@@ -182,6 +183,10 @@ impl<'gc> From<Function<'gc>> for Value<'gc> {
         }
     }
 }
+
+#[derive(Debug, Error)]
+#[error("`Value` operation was performed on the wrong type")]
+pub struct BadValueType;
 
 impl<'gc> Value<'gc> {
     #[inline]
@@ -416,56 +421,84 @@ impl<'gc> Value<'gc> {
     /// strings, appends them.
     #[inline]
     #[must_use]
-    pub fn add_or_append(self, ctx: Context<'gc>, other: Value<'gc>) -> Option<Value<'gc>> {
-        if let Some(r) = self.add(other) {
-            Some(r)
+    pub fn add_or_append(
+        self,
+        ctx: Context<'gc>,
+        other: Value<'gc>,
+    ) -> Result<Value<'gc>, BadValueType> {
+        if let Ok(r) = self.add(other) {
+            Ok(r)
         } else if let (Value::String(a), Value::String(b)) = (self, other) {
-            Some(ctx.intern(&format!("{a}{b}")).into())
+            Ok(ctx.intern(&format!("{a}{b}")).into())
         } else {
-            None
+            Err(BadValueType)
         }
     }
 
     #[inline]
     #[must_use]
-    pub fn negate(self) -> Option<Value<'gc>> {
-        Some(self.to_number()?.negate().into())
+    pub fn negate(self) -> Result<Value<'gc>, BadValueType> {
+        Ok(self.to_number().ok_or(BadValueType)?.negate().into())
     }
 
     #[inline]
     #[must_use]
-    pub fn add(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        Some(self.to_number()?.add(other.to_number()?).into())
+    pub fn add(self, other: Value<'gc>) -> Result<Value<'gc>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.add(b).into())
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn sub(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        Some(self.to_number()?.sub(other.to_number()?).into())
+    pub fn sub(self, other: Value<'gc>) -> Result<Value<'gc>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.sub(b).into())
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn mult(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        Some(self.to_number()?.mult(other.to_number()?).into())
+    pub fn mult(self, other: Value<'gc>) -> Result<Value<'gc>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.mult(b).into())
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn div(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        Some(self.to_number()?.div(other.to_number()?).into())
+    pub fn div(self, other: Value<'gc>) -> Result<Value<'gc>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.div(b).into())
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn idiv(self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.idiv(other.to_number()?).into())
+    pub fn idiv(self, other: Value<'gc>) -> Result<Result<i64, DivByZero>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.idiv(b))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn rem(self, other: Value<'gc>) -> Option<Value<'gc>> {
-        Some(self.to_number()?.rem(other.to_number()?).into())
+    pub fn rem(self, other: Value<'gc>) -> Result<Result<Value<'gc>, DivByZero>, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.rem(b).map(|n| n.into()))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
@@ -494,21 +527,21 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     #[must_use]
-    pub fn less_than(self, other: Value<'gc>) -> Option<bool> {
+    pub fn less_than(self, other: Value<'gc>) -> Result<bool, BadValueType> {
         if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
-            Some(a < b)
+            Ok(a < b)
         } else {
-            None
+            Err(BadValueType)
         }
     }
 
     #[inline]
     #[must_use]
-    pub fn less_equal(self, other: Value<'gc>) -> Option<bool> {
+    pub fn less_equal(self, other: Value<'gc>) -> Result<bool, BadValueType> {
         if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
-            Some(a <= b)
+            Ok(a <= b)
         } else {
-            None
+            Err(BadValueType)
         }
     }
 
@@ -532,38 +565,57 @@ impl<'gc> Value<'gc> {
 
     #[inline]
     #[must_use]
-    pub fn bit_negate(&self) -> Option<i64> {
-        Some(self.to_number()?.bit_negate())
+    pub fn bit_negate(&self) -> Result<i64, BadValueType> {
+        Ok(self.to_number().ok_or(BadValueType)?.bit_negate())
     }
 
     #[inline]
     #[must_use]
-    pub fn bit_and(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.bit_and(other.to_number()?))
+    pub fn bit_and(&self, other: Value<'gc>) -> Result<i64, BadValueType> {
+        Ok(self
+            .to_number()
+            .ok_or(BadValueType)?
+            .bit_and(other.to_number().ok_or(BadValueType)?))
     }
 
     #[inline]
     #[must_use]
-    pub fn bit_or(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.bit_or(other.to_number()?))
+    pub fn bit_or(&self, other: Value<'gc>) -> Result<i64, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.bit_or(b))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn bit_xor(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.bit_xor(other.to_number()?))
+    pub fn bit_xor(&self, other: Value<'gc>) -> Result<i64, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.bit_xor(b))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn bit_shift_left(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.bit_shift_left(other.to_number()?))
+    pub fn bit_shift_left(&self, other: Value<'gc>) -> Result<i64, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.bit_shift_left(b))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn bit_shift_right(&self, other: Value<'gc>) -> Option<i64> {
-        Some(self.to_number()?.bit_shift_right(other.to_number()?))
+    pub fn bit_shift_right(&self, other: Value<'gc>) -> Result<i64, BadValueType> {
+        if let (Some(a), Some(b)) = (self.to_number(), other.to_number()) {
+            Ok(a.bit_shift_right(b))
+        } else {
+            Err(BadValueType)
+        }
     }
 
     #[inline]
@@ -572,6 +624,10 @@ impl<'gc> Value<'gc> {
         if self.is_undefined() { other } else { self }
     }
 }
+
+#[derive(Debug, Error)]
+#[error("integral divide by zero")]
+pub struct DivByZero;
 
 /// A numeric value that has an exact representation in [`Value`].
 #[derive(Debug, Copy, Clone)]
@@ -598,7 +654,12 @@ impl PartialOrd for Number {
             if a.unsigned_abs() <= MAX_EXACT_INTEGER {
                 (a as f64).partial_cmp(&b)
             } else if b.is_finite() {
-                debug_assert!(b.fract() == 0.0);
+                // If `b`'s magnitude is less than `MAX_EXACT_INTEGER`, then since `a` is >
+                // `MAX_EXACT_INTEGER`, casting to an i64 will not change the result.
+                //
+                // If `b`'s magnitude is greater than or equal to `MAX_EXACT_INTEGER` then it will
+                // be an exact integer anyway.
+                debug_assert!(b.abs() < MAX_EXACT_INTEGER as f64 || b.fract() == 0.0);
                 Some(a.cmp(&(b as i64)))
             } else {
                 // `b` is either infinite or NaN, so just compare with zero.
@@ -701,17 +762,27 @@ impl Number {
 
     #[inline]
     #[must_use]
-    pub fn idiv(self, other: Number) -> i64 {
-        self.cast_integer().wrapping_div(other.cast_integer())
+    pub fn idiv(self, other: Number) -> Result<i64, DivByZero> {
+        let a = self.cast_integer();
+        let b = other.cast_integer();
+        if b == 0 {
+            Err(DivByZero)
+        } else {
+            Ok(a.wrapping_div(b))
+        }
     }
 
     #[inline]
     #[must_use]
-    pub fn rem(self, other: Number) -> Number {
+    pub fn rem(self, other: Number) -> Result<Number, DivByZero> {
         if let (Some(a), Some(b)) = (self.as_integer(), other.as_integer()) {
-            Number::Integer(a.wrapping_rem(b))
+            if b == 0 {
+                Err(DivByZero)
+            } else {
+                Ok(Number::Integer(a.wrapping_rem(b)))
+            }
         } else {
-            Number::Float(self.cast_float() % other.cast_float())
+            Ok(Number::Float(self.cast_float() % other.cast_float()))
         }
     }
 
@@ -742,12 +813,14 @@ impl Number {
     #[inline]
     #[must_use]
     pub fn bit_shift_left(&self, other: Number) -> i64 {
-        self.cast_integer() << other.cast_integer()
+        self.cast_integer()
+            .wrapping_shl(other.cast_integer() as u32)
     }
 
     #[inline]
     #[must_use]
     pub fn bit_shift_right(&self, other: Number) -> i64 {
-        self.cast_integer() >> other.cast_integer()
+        self.cast_integer()
+            .wrapping_shr(other.cast_integer() as u32)
     }
 }

@@ -174,12 +174,12 @@ impl<S> Constant<S> {
 
     #[inline]
     pub fn idiv(&self, other: &Constant<S>) -> Option<i64> {
-        Some(self.to_number()?.idiv(other.to_number()?).into())
+        Some(self.to_number()?.idiv(other.to_number()?).ok()?)
     }
 
     #[inline]
     pub fn rem(&self, other: &Constant<S>) -> Option<Constant<S>> {
-        Some(self.to_number()?.rem(other.to_number()?).into())
+        Some(self.to_number()?.rem(other.to_number()?).ok()?.into())
     }
 
     #[inline]

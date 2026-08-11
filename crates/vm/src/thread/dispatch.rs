@@ -604,7 +604,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     #[inline]
     fn negate(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
         let arg = self.registers[arg.index()];
-        self.registers[dest.index()] = arg.negate().ok_or_else(|| OpError::BadUnOp {
+        self.registers[dest.index()] = arg.negate().map_err(|_| OpError::BadUnOp {
             op: "neg",
             arg: arg.into(),
         })?;
@@ -616,7 +616,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let arg = self.registers[arg.index()];
         self.registers[dest.index()] = arg
             .bit_negate()
-            .ok_or_else(|| OpError::BadUnOp {
+            .map_err(|_| OpError::BadUnOp {
                 op: "bit_neg",
                 arg: arg.into(),
             })?
@@ -628,7 +628,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn increment(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
         let arg = self.registers[arg.index()];
         self.registers[dest.index()] =
-            arg.add(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
+            arg.add(Value::Integer(1)).map_err(|_| OpError::BadUnOp {
                 op: "inc",
                 arg: arg.into(),
             })?;
@@ -639,7 +639,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn decrement(&mut self, dest: RegIdx, arg: RegIdx) -> Result<(), Self::Error> {
         let arg = self.registers[arg.index()];
         self.registers[dest.index()] =
-            arg.sub(Value::Integer(1)).ok_or_else(|| OpError::BadUnOp {
+            arg.sub(Value::Integer(1)).map_err(|_| OpError::BadUnOp {
                 op: "dec",
                 arg: arg.into(),
             })?;
@@ -653,7 +653,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .add_or_append(self.ctx, right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "add",
                 left: left.into(),
                 right: right.into(),
@@ -666,7 +666,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
         let dest = &mut self.registers[dest.index()];
-        *dest = left.sub(right).ok_or_else(|| OpError::BadBinOp {
+        *dest = left.sub(right).map_err(|_| OpError::BadBinOp {
             op: "sub",
             left: left.into(),
             right: right.into(),
@@ -679,7 +679,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
         let dest = &mut self.registers[dest.index()];
-        *dest = left.mult(right).ok_or_else(|| OpError::BadBinOp {
+        *dest = left.mult(right).map_err(|_| OpError::BadBinOp {
             op: "mult",
             left: left.into(),
             right: right.into(),
@@ -692,7 +692,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
         let dest = &mut self.registers[dest.index()];
-        *dest = left.div(right).ok_or_else(|| OpError::BadBinOp {
+        *dest = left.div(right).map_err(|_| OpError::BadBinOp {
             op: "div",
             left: left.into(),
             right: right.into(),
@@ -705,11 +705,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
         let dest = &mut self.registers[dest.index()];
-        *dest = left.rem(right).ok_or_else(|| OpError::BadBinOp {
+        *dest = left.rem(right).map_err(|_| OpError::BadBinOp {
             op: "rem",
             left: left.into(),
             right: right.into(),
-        })?;
+        })??;
         Ok(())
     }
 
@@ -720,11 +720,11 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .idiv(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "int_div",
                 left: left.into(),
                 right: right.into(),
-            })?
+            })??
             .into();
         Ok(())
     }
@@ -758,7 +758,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right.index()];
         self.registers[dest.index()] = left
             .less_than(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "is_less",
                 left: left.into(),
                 right: right.into(),
@@ -778,7 +778,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let right = self.registers[right.index()];
         self.registers[dest.index()] = left
             .less_equal(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "is_less_eq",
                 left: left.into(),
                 right: right.into(),
@@ -821,7 +821,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_and(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "bit_and",
                 left: left.into(),
                 right: right.into(),
@@ -837,7 +837,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_or(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "bit_or",
                 left: left.into(),
                 right: right.into(),
@@ -853,7 +853,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_xor(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "bit_xor",
                 left: left.into(),
                 right: right.into(),
@@ -874,7 +874,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_shift_left(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "bit_shl",
                 left: left.into(),
                 right: right.into(),
@@ -895,7 +895,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
         let dest = &mut self.registers[dest.index()];
         *dest = left
             .bit_shift_right(right)
-            .ok_or_else(|| OpError::BadBinOp {
+            .map_err(|_| OpError::BadBinOp {
                 op: "bit_shr",
                 left: left.into(),
                 right: right.into(),
@@ -1142,7 +1142,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn jump_if_less(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
-        Ok(left.less_than(right).ok_or_else(|| OpError::BadBinOp {
+        Ok(left.less_than(right).map_err(|_| OpError::BadBinOp {
             op: "is_less",
             left: left.into(),
             right: right.into(),
@@ -1153,7 +1153,7 @@ impl<'gc, 'a> instructions::Dispatch for Dispatch<'gc, 'a> {
     fn jump_if_less_equal(&mut self, left: RegIdx, right: RegIdx) -> Result<bool, Self::Error> {
         let left = self.registers[left.index()];
         let right = self.registers[right.index()];
-        Ok(left.less_equal(right).ok_or_else(|| OpError::BadBinOp {
+        Ok(left.less_equal(right).map_err(|_| OpError::BadBinOp {
             op: "is_less",
             left: left.into(),
             right: right.into(),
