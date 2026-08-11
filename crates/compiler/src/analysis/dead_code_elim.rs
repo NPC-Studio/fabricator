@@ -76,6 +76,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
 
     // Unlike in Cytron et al., we have two types of instructions: regular instructions and branch
     // instructions. Our worklist must allow for both.
+    //
+    // Our definition of "branch" here is either an `ExitKind::Branch` block exit *or* any other
+    // kind of exit that has an effect.
 
     let mut live_instructions = IndexSet::new();
     let mut live_branches = IndexSet::new();
@@ -180,6 +183,18 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         // The sources for all branches with effects are live.
         if let Some(effects) = types_and_effects.branches.get(block_id) {
             if effects.has_effect() {
+                if live_branches.insert(block_id.index() as usize) {
+                    worklist.push(Work::Branch(block_id));
+                }
+            }
+        }
+
+        // A block exit which is a return or throw has an effect.
+        if matches!(
+            ir.blocks[block_id].exit.kind,
+            ir::ExitKind::Return { .. } | ir::ExitKind::Throw(_)
+        ) {
+            if live_branches.insert(block_id.index() as usize) {
                 worklist.push(Work::Branch(block_id));
             }
         }
@@ -187,8 +202,9 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         // Any parameter of `Exit::Return` or `Exit::Throw` is always live.
         match ir.blocks[block_id].exit.kind {
             ir::ExitKind::Return { value: Some(value) } | ir::ExitKind::Throw(value) => {
-                live_instructions.insert(value.index() as usize);
-                worklist.push(Work::Instruction(value));
+                if live_instructions.insert(value.index() as usize) {
+                    worklist.push(Work::Instruction(value));
+                }
             }
             _ => {}
         }

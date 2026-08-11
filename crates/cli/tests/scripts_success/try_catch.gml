@@ -110,4 +110,23 @@ function TestErr4() constructor {
 var t4 = new TestErr4();
 assert(t4.execute(4, 5, 6) == "execute");
 
+function test_it(p) {
+		try {
+			switch black_box(p) {
+				case 0:
+					return "a";
+				case 1:
+					return "b";
+				default:
+				  return "c";
+			}
+		} catch(e) {
+		    assert(false);
+		};
+}
+assert(test_it(0) == "a");
+assert(test_it(1) == "b");
+assert(test_it(2) == "c");
+assert(test_it(3) == "c");
+
 return true;
