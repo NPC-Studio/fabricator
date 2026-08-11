@@ -223,14 +223,14 @@ impl ThinArcError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{self, AtomicBool};
+    use std::sync::atomic::{self, AtomicU32};
 
     use super::*;
 
     #[test]
     fn runtime_error() {
         struct TestErr {
-            dropped: Arc<AtomicBool>,
+            count: Arc<AtomicU32>,
         }
 
         impl fmt::Display for TestErr {
@@ -247,23 +247,31 @@ mod tests {
 
         impl Drop for TestErr {
             fn drop(&mut self) {
-                self.dropped.store(true, atomic::Ordering::Release);
+                self.count.fetch_sub(1, atomic::Ordering::AcqRel);
             }
         }
 
         impl StdError for TestErr {}
 
-        let dropped = Arc::new(AtomicBool::new(false));
+        let count = Arc::new(AtomicU32::new(0));
 
+        count.fetch_add(1, atomic::Ordering::AcqRel);
         let rt_err = RuntimeError::new(TestErr {
-            dropped: dropped.clone(),
+            count: count.clone(),
         });
 
         assert_eq!(&format!("{}", rt_err), "TestErr");
         assert_eq!(&format!("{:?}", rt_err), "TestErr");
 
-        drop(rt_err);
+        count.fetch_add(1, atomic::Ordering::AcqRel);
+        let rt_err2 = rt_err.clone();
 
-        assert!(dropped.load(atomic::Ordering::Acquire));
+        assert_eq!(&format!("{}", rt_err2), "TestErr");
+        assert_eq!(&format!("{:?}", rt_err2), "TestErr");
+
+        drop(rt_err);
+        drop(rt_err2);
+
+        assert_eq!(count.load(atomic::Ordering::Acquire), 1);
     }
 }

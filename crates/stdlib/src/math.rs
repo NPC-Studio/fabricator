@@ -188,6 +188,7 @@ pub fn random_get_seed<'gc>(ctx: vm::Context<'gc>, _no_args: ()) -> Result<i64, 
 pub fn random<'gc>(ctx: vm::Context<'gc>, other_bound: f64) -> Result<Option<f64>, RngLockError> {
     random_range(ctx, (0.0, other_bound))
 }
+
 /// This is a shorthand, effectively, for `irandom_range(0, other_bound)`. `other_bound`
 /// can be less than 0 or greater than zero
 pub fn irandom<'gc>(ctx: vm::Context<'gc>, other_bound: i64) -> Result<i64, RngLockError> {
