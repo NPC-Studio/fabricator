@@ -233,21 +233,20 @@ pub fn optimize_ir<S: Eq + Clone>(ir: &mut ir::Function<S>) {
     fold_constants(ir);
     eliminate_copies(ir);
     simplify_branches(ir);
-
     eliminate_dead_code(ir);
-    clean_unreachable_blocks(ir);
-    clean_instructions(ir);
 
+    clean_unreachable_blocks(ir);
     block_branch_to_jump(ir);
     redirect_empty_blocks(ir);
     merge_blocks(ir);
 
     clean_unreachable_blocks(ir);
+    clean_unused_functions(ir);
     clean_unused_variables(ir);
     clean_unused_shadow_vars(ir);
     clean_unused_this_scopes(ir);
     clean_unused_call_scopes(ir);
-    clean_unused_functions(ir);
+    clean_instructions(ir);
 }
 
 /// Items shared across compilation units.

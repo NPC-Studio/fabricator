@@ -124,7 +124,8 @@ pub fn simplify_branches<S>(ir: &mut ir::Function<S>) {
 
     // Simplify all `NullCoalesce` instructions whose input types are known.
 
-    for inst in ir.instructions.values_mut() {
+    for inst_id in types_and_effects.instructions.ids() {
+        let inst = &mut ir.instructions[inst_id];
         if let ir::InstructionKind::BinOp {
             left,
             op: ir::BinOp::NullCoalesce,

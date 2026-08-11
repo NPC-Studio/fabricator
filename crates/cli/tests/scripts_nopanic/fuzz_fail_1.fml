@@ -1,0 +1,8 @@
+{
+    return true;
+
+    var e;
+    function a() {
+        black_box(e);
+    }
+}
