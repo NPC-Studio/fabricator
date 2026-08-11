@@ -35,7 +35,7 @@ pub struct ThreadState<'gc> {
     stack_frame_boundaries: Vec<usize>,
     this: Vec<Value<'gc>>,
     heap: Vec<OwnedHeapVar<'gc>>,
-    hook_state: Option<HookState<'gc>>,
+    hook: Option<Box<dyn Hook<'gc>>>,
 }
 
 impl<'gc> Thread<'gc> {
@@ -49,7 +49,7 @@ impl<'gc> Thread<'gc> {
                 stack_frame_boundaries: Vec::new(),
                 this: Vec::new(),
                 heap: Vec::new(),
-                hook_state: None,
+                hook: None,
             }),
         ))
     }
@@ -64,17 +64,12 @@ impl<'gc> Thread<'gc> {
         self.0
     }
 
-    pub fn set_hook(self, ctx: Context<'gc>, hook: impl Hook<'gc> + Collect<'gc> + 'gc) {
-        let hook_step_next = hook.on_step_count(ctx);
-        self.0.borrow_mut(&ctx).hook_state = Some(HookState {
-            hook: Box::new(hook),
-            hook_step_next,
-            hook_step_remain: hook_step_next,
-        });
+    pub fn set_hook(self, mc: &Mutation<'gc>, hook: impl Hook<'gc> + Collect<'gc> + 'gc) {
+        self.0.borrow_mut(mc).hook = Some(Box::new(hook));
     }
 
     pub fn clear_hook(self, mc: &Mutation<'gc>) {
-        self.0.borrow_mut(mc).hook_state = None;
+        self.0.borrow_mut(mc).hook = None;
     }
 
     /// Run a function on this `Thread` and discard all return values.
@@ -232,7 +227,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         ctx: Context<'gc>,
         closure: Closure<'gc>,
     ) -> Result<(), VmError<'gc>> {
-        self.thread.call(ctx, closure, self.stack_bottom)
+        self.thread.call_closure(ctx, closure, self.stack_bottom)
     }
 
     #[inline]
@@ -241,45 +236,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         ctx: Context<'gc>,
         callback: Callback<'gc>,
     ) -> Result<(), RuntimeError> {
-        self.thread.frames.push(Frame::Callback(callback));
-
-        // Push the callback's bound `this` value if it has one.
-        let mut exec = if let this = callback.this()
-            && !this.is_undefined()
-        {
-            self.with_this(this)
-        } else {
-            self.reborrow()
-        };
-
-        if let Some(hook_state) = &mut exec.thread.hook_state {
-            if let Err(err) = hook_state.hook.on_call(
-                ctx,
-                Backtrace {
-                    frames: &exec.thread.frames,
-                },
-            ) {
-                drop(exec);
-                self.thread.frames.pop();
-                return Err(err);
-            }
-        }
-
-        let res = callback.call(ctx, exec.reborrow());
-
-        if let Some(hook_state) = &mut exec.thread.hook_state {
-            hook_state.hook.on_return(
-                ctx,
-                Backtrace {
-                    frames: &exec.thread.frames,
-                },
-            );
-        }
-
-        drop(exec);
-        self.thread.frames.pop();
-
-        res
+        self.thread.call_callback(ctx, callback, self.stack_bottom)
     }
 
     /// Call a `Function` within a callback.
@@ -414,10 +371,10 @@ impl<'gc, 'a> Backtrace<'gc, 'a> {
 }
 
 pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
-    /// Called whenever a [`Closure`] or [`Callback`] is called using the owning [`Thread`].
+    /// Hook that is called whenever a [`Closure`] or [`Callback`] is called.
     ///
     /// At the time of call, the frame for the callee will be newly pushed onto the frame stack, so
-    /// calling `backtrace.upper_frame(0)` will return the function that has just been called.
+    /// calling `frames.upper_frame(0)` will return the function that has just been called.
     fn on_call(
         &mut self,
         _ctx: Context<'gc>,
@@ -426,37 +383,42 @@ pub trait Hook<'gc>: 'gc + DynCollect<'gc> {
         Ok(())
     }
 
-    /// Called whenever a closure or callback returns using the owning [`Thread`].
+    /// Hook that is called whenever a closure or callback returns.
     ///
     /// At the time of call, the frame for the returning function will still be on the frame stack,
-    /// so calling `backtrace.upper_frame(0)` will return the function that has just returned.
+    /// so calling `frames.upper_frame(0)` will return the function that has just returned.
     ///
     /// This function will be called unconditionally whenever a frame is popped, *even* when the
-    /// returning frame is unwinding due to an error.
+    /// returning script frame is unwinding due to a script error.
     ///
     /// This thread hook *cannot* generate synthetic runtime errors because it is too confusing: if
     /// it were allowed to generate an error and did so, the same hook still must be called after
     /// this repeatedly for every upper unwinding frame.
     fn on_return(&mut self, _ctx: Context<'gc>, _backtrace: Backtrace<'gc, '_>) {}
 
-    /// If this method returns a non-zero N, then every [`Hook::on_step`] will be called every
-    /// N VM instructions.
+    /// Hook that is called periodically during execution of VM instructions.
     ///
-    /// This counter is kept between calls and returns, even totally independent thread calls. The
-    /// `on_step_count` method itself is called when the hook implementation is set, as well as
-    /// immediately after every call to `on_step`.
-    fn on_step_count(&self, _ctx: Context<'gc>) -> u32 {
-        0
-    }
-
-    /// Called every N VM instructions, where N is the value returned from the last call to
-    /// [`Hook::on_step_count`].
+    /// Whenever a `Thread` starts running the VM, this hook will be called. Its return value
+    /// determines how many more VM instructions can run before the hook is called again. A value of
+    /// `0` indicates that the hook should be disabled for this VM run.
+    ///
+    /// The `instruction_count` parameter indicates how many instructions were executed
+    /// since the last call to the hook. When the `Thread` first begins running the VM, the
+    /// `instruction_count` will always be `0`. If the this first call does not return `0`,
+    /// then the hook will always be called at least *once* more before the VM finishes. Thus,
+    /// `instruction_count` may be less than the requested amount returned by the last call to the
+    /// hook. The hook will never be called with an `instruction_count` greater than the pause value
+    /// returned by the last call to the hook.
+    ///
+    /// A "VM run" here means running the VM for a closure up until the next function call or
+    /// return. For every one of these runs, this hook (assuming it is not disabled) will be called
+    /// exactly enough to keep track of all the VM instructions that were executed that run.
     fn on_step(
         &mut self,
         _ctx: Context<'gc>,
-        _backtrace: Backtrace<'gc, '_>,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
+        _instruction_count: u32,
+    ) -> Result<u32, RuntimeError> {
+        Ok(0)
     }
 }
 
@@ -511,14 +473,6 @@ impl<'gc> OwnedHeapVar<'gc> {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-struct HookState<'gc> {
-    hook: Box<dyn Hook<'gc>>,
-    hook_step_next: u32,
-    hook_step_remain: u32,
-}
-
-#[derive(Collect)]
-#[collect(no_drop)]
 struct ClosureFrame<'gc> {
     closure: Closure<'gc>,
     register_bottom: usize,
@@ -550,7 +504,7 @@ impl<'gc> Frame<'gc> {
 
 impl<'gc> ThreadState<'gc> {
     // Call a closure with arguments starting at `stack_bottom`.
-    fn call(
+    fn call_closure(
         &mut self,
         ctx: Context<'gc>,
         closure: Closure<'gc>,
@@ -592,8 +546,8 @@ impl<'gc> ThreadState<'gc> {
         });
 
         fn unwind_closure_frame<'gc>(this: &mut ThreadState<'gc>, ctx: Context<'gc>) {
-            if let Some(hook_state) = &mut this.hook_state {
-                hook_state.hook.on_return(
+            if let Some(hook) = &mut this.hook {
+                hook.on_return(
                     ctx,
                     Backtrace {
                         frames: &this.frames,
@@ -614,8 +568,8 @@ impl<'gc> ThreadState<'gc> {
             }
         }
 
-        if let Some(hook_state) = &mut self.hook_state {
-            if let Err(err) = hook_state.hook.on_call(
+        if let Some(hook) = &mut self.hook {
+            if let Err(err) = hook.on_call(
                 ctx,
                 Backtrace {
                     frames: &self.frames,
@@ -632,7 +586,7 @@ impl<'gc> ThreadState<'gc> {
             }
         }
 
-        let err = loop {
+        let err = 'step: loop {
             let Frame::Closure(frame) = self.frames.last_mut().unwrap() else {
                 unreachable!()
             };
@@ -655,160 +609,163 @@ impl<'gc> ThreadState<'gc> {
                 heap,
             );
 
-            let next = if let Some(hook_state) = &mut self.hook_state
-                && hook_state.hook_step_next != 0
-            {
-                match frame
-                    .dispatcher
-                    .dispatch_count(&mut dispatch, hook_state.hook_step_remain)
-                {
-                    Some((res, count)) => {
-                        hook_state.hook_step_remain = count;
-                        match res {
-                            Ok(next) => Some(next),
-                            Err(err) => break err,
+            let next = if let Some(hook) = &mut self.hook {
+                let mut remaining_insts = match hook.on_step(ctx, 0) {
+                    Ok(next_remaining) => next_remaining,
+                    Err(err) => break 'step err.into(),
+                };
+
+                loop {
+                    // if `Hook::on_step` returns 0, this indicates that the step hook is disabled
+                    // for this VM run.
+                    if remaining_insts == 0 {
+                        match frame.dispatcher.dispatch_loop(&mut dispatch) {
+                            Ok(next) => break next,
+                            Err(err) => break 'step err.into(),
                         }
                     }
-                    None => None,
+
+                    if let Some((mut res, remain)) = frame
+                        .dispatcher
+                        .dispatch_count(&mut dispatch, remaining_insts)
+                    {
+                        // The `on_step` hook here takes priority over a script error, because the
+                        // contract is that `on_step` should not lose any VM instructions under
+                        // any circumstances.
+                        //
+                        // If the hook succeeds, we throw away the next requested step count because
+                        // the VM is pausing.
+                        if let Err(err) = hook.on_step(ctx, remaining_insts - remain) {
+                            res = Err(err.into());
+                        }
+
+                        match res {
+                            Ok(next) => break next,
+                            Err(err) => break 'step err.into(),
+                        }
+                    } else {
+                        match hook.on_step(ctx, remaining_insts) {
+                            Ok(next_remaining) => {
+                                remaining_insts = next_remaining;
+                            }
+                            Err(err) => break 'step err.into(),
+                        }
+                    }
                 }
             } else {
                 match frame.dispatcher.dispatch_loop(&mut dispatch) {
-                    Ok(next) => Some(next),
-                    Err(err) => break err,
+                    Ok(next) => next,
+                    Err(err) => break err.into(),
                 }
             };
 
             match next {
-                Some(next) => match next {
-                    dispatch::Next::Call {
-                        function,
-                        args_bottom,
-                        this,
-                    } => {
-                        match function {
-                            Function::Closure(closure) => {
-                                let register_bottom = self.registers.len();
-                                // We only need to preserve the registers that the prototype claims
-                                // to use.
-                                self.registers.set_len(
-                                    register_bottom + closure.prototype().used_registers(),
-                                );
+                dispatch::Next::Call {
+                    function,
+                    args_bottom,
+                    this,
+                } => {
+                    match function {
+                        Function::Closure(closure) => {
+                            let register_bottom = self.registers.len();
+                            // We only need to preserve the registers that the prototype claims
+                            // to use.
+                            self.registers
+                                .set_len(register_bottom + closure.prototype().used_registers());
 
-                                let stack_bottom = frame.stack_bottom + args_bottom;
+                            let stack_bottom = frame.stack_bottom + args_bottom;
 
-                                let stack_frame_boundaries_bottom =
-                                    self.stack_frame_boundaries.len();
+                            let stack_frame_boundaries_bottom = self.stack_frame_boundaries.len();
 
-                                // Push the closure's bound `this` value or the provided `this` if
-                                // either is defined.
-                                let this_bottom = self.this.len();
-                                if let this = closure.this().null_coalesce(this)
-                                    && !this.is_undefined()
-                                {
-                                    self.this.push(this)
-                                }
-
-                                let heap_bottom = self.heap.len();
-                                self.heap.resize_with(
-                                    heap_bottom + closure.prototype().owned_heap(),
-                                    || OwnedHeapVar::unique(Value::Undefined),
-                                );
-
-                                self.frames.push(Frame::Closure(ClosureFrame {
-                                    closure,
-                                    register_bottom,
-                                    stack_bottom,
-                                    stack_frame_boundaries_bottom,
-                                    this_bottom,
-                                    heap_bottom,
-                                    dispatcher: instructions::Dispatcher::new(
-                                        closure.prototype().bytecode(),
-                                        0,
-                                    ),
-                                }));
-
-                                if let Some(hook_state) = &mut self.hook_state {
-                                    if let Err(err) = hook_state.hook.on_call(
-                                        ctx,
-                                        Backtrace {
-                                            frames: &self.frames,
-                                        },
-                                    ) {
-                                        break err.into();
-                                    }
-                                }
+                            // Push the closure's bound `this` value or the provided `this` if
+                            // either is defined.
+                            let this_bottom = self.this.len();
+                            if let this = closure.this().null_coalesce(this)
+                                && !this.is_undefined()
+                            {
+                                self.this.push(this)
                             }
-                            Function::Callback(callback) => {
-                                let stack_bottom = frame.stack_bottom + args_bottom;
 
-                                // Push the provided `this` value if the callback does not have
-                                // one bound, otherwise the bound `this` value will be pushed by
-                                // `Execution::call_callback`.
-                                let this_bottom = self.this.len();
-                                if !this.is_undefined() && callback.this().is_undefined() {
-                                    self.this.push(this)
-                                }
+                            let heap_bottom = self.heap.len();
+                            self.heap.resize_with(
+                                heap_bottom + closure.prototype().owned_heap(),
+                                || OwnedHeapVar::unique(Value::Undefined),
+                            );
 
-                                if let Err(err) = (Execution {
-                                    thread: self,
-                                    stack_bottom,
-                                    this_bottom,
-                                })
-                                .call_callback(ctx, callback)
-                                {
+                            self.frames.push(Frame::Closure(ClosureFrame {
+                                closure,
+                                register_bottom,
+                                stack_bottom,
+                                stack_frame_boundaries_bottom,
+                                this_bottom,
+                                heap_bottom,
+                                dispatcher: instructions::Dispatcher::new(
+                                    closure.prototype().bytecode(),
+                                    0,
+                                ),
+                            }));
+
+                            if let Some(hook) = &mut self.hook {
+                                if let Err(err) = hook.on_call(
+                                    ctx,
+                                    Backtrace {
+                                        frames: &self.frames,
+                                    },
+                                ) {
                                     break err.into();
                                 }
                             }
                         }
-                    }
-                    dispatch::Next::Return { returns_bottom } => {
-                        // Truncate the register vec on return.
-                        self.registers.set_len(frame.register_bottom);
+                        Function::Callback(callback) => {
+                            let stack_bottom = frame.stack_bottom + args_bottom;
 
-                        // Drain everything on the stack up until the returns.
-                        self.stack
-                            .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
+                            // Push the provided `this` value if the callback does not have
+                            // one bound, otherwise the bound `this` value will be set by
+                            // `Callback::call`.
+                            if !this.is_undefined() && callback.this().is_undefined() {
+                                self.this.push(this)
+                            }
 
-                        // Clear any unpopped stack frames.
-                        self.stack_frame_boundaries
-                            .truncate(frame.stack_frame_boundaries_bottom);
-
-                        // Clear any unpopped `this` values.
-                        self.this.truncate(frame.this_bottom);
-
-                        // Clear the heap values for this frame.
-                        self.heap.truncate(frame.heap_bottom);
-
-                        if let Some(hook_state) = &mut self.hook_state {
-                            hook_state.hook.on_return(
-                                ctx,
-                                Backtrace {
-                                    frames: &self.frames,
-                                },
-                            );
-                        }
-
-                        // Pop the returning frame.
-                        self.frames.pop().unwrap();
-
-                        // If we have returned from our initial frame, then we can stop executing.
-                        if self.frames.len() == bottom_frame {
-                            return Ok(());
+                            if let Err(err) = self.call_callback(ctx, callback, stack_bottom) {
+                                break err.into();
+                            }
                         }
                     }
-                },
-                None => {
-                    let hook_state = self.hook_state.as_mut().unwrap();
-                    if let Err(err) = hook_state.hook.on_step(
-                        ctx,
-                        Backtrace {
-                            frames: &self.frames,
-                        },
-                    ) {
-                        break err.into();
+                }
+                dispatch::Next::Return { returns_bottom } => {
+                    // Truncate the register vec on return.
+                    self.registers.set_len(frame.register_bottom);
+
+                    // Drain everything on the stack up until the returns.
+                    self.stack
+                        .drain(frame.stack_bottom..frame.stack_bottom + returns_bottom);
+
+                    // Clear any unpopped stack frames.
+                    self.stack_frame_boundaries
+                        .truncate(frame.stack_frame_boundaries_bottom);
+
+                    // Clear any unpopped `this` values.
+                    self.this.truncate(frame.this_bottom);
+
+                    // Clear the heap values for this frame.
+                    self.heap.truncate(frame.heap_bottom);
+
+                    if let Some(hook) = &mut self.hook {
+                        hook.on_return(
+                            ctx,
+                            Backtrace {
+                                frames: &self.frames,
+                            },
+                        );
                     }
-                    hook_state.hook_step_next = hook_state.hook.on_step_count(ctx);
-                    hook_state.hook_step_remain = hook_state.hook_step_next;
+
+                    // Pop the returning frame.
+                    self.frames.pop().unwrap();
+
+                    // If we have returned from our initial frame, then we can stop executing.
+                    if self.frames.len() == bottom_frame {
+                        return Ok(());
+                    }
                 }
             }
         };
@@ -824,6 +781,52 @@ impl<'gc> ThreadState<'gc> {
             backtrace,
         }
         .into())
+    }
+
+    fn call_callback(
+        &mut self,
+        ctx: Context<'gc>,
+        callback: Callback<'gc>,
+        stack_bottom: usize,
+    ) -> Result<(), RuntimeError> {
+        let this_bottom = self.this.len();
+        self.frames.push(Frame::Callback(callback));
+
+        if let Some(hook) = &mut self.hook {
+            if let Err(err) = hook.on_call(
+                ctx,
+                Backtrace {
+                    frames: &self.frames,
+                },
+            ) {
+                // Pop the callback frame.
+                self.frames.pop();
+                return Err(err);
+            }
+        }
+
+        let ret = callback.call(
+            ctx,
+            Execution {
+                thread: self,
+                stack_bottom,
+                this_bottom,
+            },
+        );
+
+        if let Some(hook) = &mut self.hook {
+            hook.on_return(
+                ctx,
+                Backtrace {
+                    frames: &self.frames,
+                },
+            );
+        }
+
+        // Pop the callback frame.
+        self.frames.pop();
+
+        ret
     }
 }
 

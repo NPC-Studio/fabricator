@@ -99,7 +99,7 @@ fn test_vm_call_return_hooks() {
         let frame_count = Rc::new(Cell::new(0));
         let max_count = Rc::new(Cell::new(0));
         thread.set_hook(
-            ctx,
+            &ctx,
             TestHook {
                 frame_count: frame_count.clone(),
                 max_count: max_count.clone(),
@@ -166,7 +166,7 @@ fn test_vm_return_hook_on_error() {
 
         let frame_count = Rc::new(Cell::new(0));
         thread.set_hook(
-            ctx,
+            &ctx,
             TestHook {
                 frame_count: frame_count.clone(),
             },
@@ -208,10 +208,6 @@ fn test_vm_step_hook() {
         .unwrap();
         let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
 
-        #[derive(Collect)]
-        #[collect(require_static)]
-        struct TestHook;
-
         #[derive(Debug)]
         struct ExecLimitError;
 
@@ -223,23 +219,28 @@ fn test_vm_step_hook() {
 
         impl Error for ExecLimitError {}
 
-        impl<'gc> vm::Hook<'gc> for TestHook {
-            fn on_step_count(&self, _ctx: vm::Context<'gc>) -> u32 {
-                10_000
-            }
+        #[derive(Collect)]
+        #[collect(require_static)]
+        struct TestHook(u32);
 
+        impl<'gc> vm::Hook<'gc> for TestHook {
             fn on_step(
                 &mut self,
                 _ctx: vm::Context<'gc>,
-                _backtrace: vm::Backtrace<'gc, '_>,
-            ) -> Result<(), vm::RuntimeError> {
-                Err(ExecLimitError.into())
+                inst_count: u32,
+            ) -> Result<u32, vm::RuntimeError> {
+                self.0 = self.0.saturating_sub(inst_count);
+                if self.0 == 0 {
+                    Err(ExecLimitError.into())
+                } else {
+                    Ok(self.0)
+                }
             }
         }
 
         let thread = vm::Thread::new(&ctx);
+        thread.set_hook(&ctx, TestHook(10_000));
 
-        thread.set_hook(ctx, TestHook);
         match thread.run(ctx, closure) {
             Err(vm::CallError::Vm {
                 error: vm::ExternError::Runtime(runtime_err),

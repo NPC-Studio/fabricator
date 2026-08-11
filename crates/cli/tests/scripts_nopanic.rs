@@ -25,7 +25,17 @@ fn run_code(
     #[derive(Default, Collect)]
     #[collect(require_static)]
     struct VmLimiter {
-        frame_count: u32,
+        frames_available: u32,
+        insts_available: u32,
+    }
+
+    impl VmLimiter {
+        fn new() -> Self {
+            Self {
+                frames_available: FRAME_LIMIT,
+                insts_available: INST_LIMIT,
+            }
+        }
     }
 
     impl<'gc> vm::Hook<'gc> for VmLimiter {
@@ -34,8 +44,8 @@ fn run_code(
             _ctx: vm::Context<'gc>,
             _backtrace: vm::Backtrace<'gc, '_>,
         ) -> Result<(), vm::RuntimeError> {
-            self.frame_count += 1;
-            if self.frame_count < FRAME_LIMIT {
+            if let Some(dec) = self.frames_available.checked_sub(1) {
+                self.frames_available = dec;
                 Ok(())
             } else {
                 Err(VmLimitError.into())
@@ -43,19 +53,20 @@ fn run_code(
         }
 
         fn on_return(&mut self, _ctx: vm::Context<'gc>, _backtrace: vm::Backtrace<'gc, '_>) {
-            self.frame_count -= 1;
-        }
-
-        fn on_step_count(&self, _ctx: vm::Context<'gc>) -> u32 {
-            INST_LIMIT
+            self.frames_available += 1;
         }
 
         fn on_step(
             &mut self,
             _ctx: vm::Context<'gc>,
-            _backtrace: vm::Backtrace<'gc, '_>,
-        ) -> Result<(), vm::RuntimeError> {
-            Err(VmLimitError.into())
+            instruction_count: u32,
+        ) -> Result<u32, vm::RuntimeError> {
+            self.insts_available = self.insts_available.saturating_sub(instruction_count);
+            if self.insts_available == 0 {
+                Err(VmLimitError.into())
+            } else {
+                Ok(self.insts_available)
+            }
         }
     }
 
@@ -73,7 +84,7 @@ fn run_code(
         let closure = vm::Closure::new(&ctx, output.chunk_prototype, vm::Value::Undefined).unwrap();
 
         let thread = vm::Thread::new(&ctx);
-        thread.set_hook(ctx, VmLimiter { frame_count: 0 });
+        thread.set_hook(&ctx, VmLimiter::new());
         thread.exec(ctx, |mut exec| {
             exec.call(ctx, closure)?;
             Ok(exec.stack().get(0) == vm::Value::Boolean(true))
