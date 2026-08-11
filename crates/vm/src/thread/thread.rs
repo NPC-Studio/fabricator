@@ -30,7 +30,7 @@ pub type ThreadInner<'gc> = RefLock<ThreadState<'gc>>;
 #[collect(no_drop)]
 pub struct ThreadState<'gc> {
     frames: Vec<Frame<'gc>>,
-    registers: Vec<Value<'gc>>,
+    registers: RegisterVec<'gc>,
     stack: Vec<Value<'gc>>,
     stack_frame_boundaries: Vec<usize>,
     this: Vec<Value<'gc>>,
@@ -44,7 +44,7 @@ impl<'gc> Thread<'gc> {
             mc,
             RefLock::new(ThreadState {
                 frames: Vec::new(),
-                registers: Vec::new(),
+                registers: RegisterVec::default(),
                 stack: Vec::new(),
                 stack_frame_boundaries: Vec::new(),
                 this: Vec::new(),
@@ -112,28 +112,25 @@ impl<'gc> Thread<'gc> {
         let mut thread = self.0.try_borrow_mut(mc).expect("thread locked");
         assert!(
             thread.frames.is_empty()
-                && thread.registers.is_empty()
+                && thread.registers.len() == 0
                 && thread.stack.is_empty()
                 && thread.stack_frame_boundaries.is_empty()
                 && thread.this.is_empty()
-                && thread.heap.is_empty()
+                && thread.heap.is_empty(),
+            "cannot enter thread state, thread is poisoned"
         );
 
-        struct DropGuard<'gc, 'a>(&'a mut ThreadState<'gc>);
+        let ret = f(&mut *thread);
 
-        impl<'gc, 'a> Drop for DropGuard<'gc, 'a> {
-            fn drop(&mut self) {
-                self.0.frames.clear();
-                self.0.registers.clear();
-                self.0.stack.clear();
-                self.0.stack_frame_boundaries.clear();
-                self.0.this.clear();
-                self.0.heap.clear();
-            }
-        }
+        thread.registers.clear();
+        thread.stack.clear();
 
-        let guard = DropGuard(&mut *thread);
-        f(guard.0)
+        assert!(thread.frames.is_empty());
+        assert!(thread.stack_frame_boundaries.is_empty());
+        assert!(thread.this.is_empty());
+        assert!(thread.heap.is_empty());
+
+        ret
     }
 }
 
@@ -559,7 +556,9 @@ impl<'gc> ThreadState<'gc> {
 
         self.frames.push({
             let register_bottom = self.registers.len();
-            // Registers are resized at the beginning of the bytecode dispatch.
+            // We only need to preserve the registers that the prototype claims to use.
+            self.registers
+                .set_len(register_bottom + closure.prototype().used_registers());
 
             let stack_frame_boundaries_bottom = self.stack_frame_boundaries.len();
 
@@ -588,6 +587,29 @@ impl<'gc> ThreadState<'gc> {
             })
         });
 
+        fn unwind_closure_frame<'gc>(this: &mut ThreadState<'gc>, ctx: Context<'gc>) {
+            if let Some(hook_state) = &mut this.hook_state {
+                hook_state.hook.on_return(
+                    ctx,
+                    Backtrace {
+                        frames: &this.frames,
+                    },
+                );
+            }
+
+            match this.frames.pop().unwrap() {
+                Frame::Closure(closure_frame) => {
+                    this.registers.set_len(closure_frame.register_bottom);
+                    this.stack.truncate(closure_frame.stack_bottom);
+                    this.stack_frame_boundaries
+                        .truncate(closure_frame.stack_frame_boundaries_bottom);
+                    this.this.truncate(closure_frame.this_bottom);
+                    this.heap.truncate(closure_frame.heap_bottom);
+                }
+                _ => panic!("not a closure frame"),
+            }
+        }
+
         if let Some(hook_state) = &mut self.hook_state {
             if let Err(err) = hook_state.hook.on_call(
                 ctx,
@@ -596,7 +618,7 @@ impl<'gc> ThreadState<'gc> {
                 },
             ) {
                 let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
-                self.frames.truncate(bottom_frame);
+                unwind_closure_frame(self, ctx);
 
                 return Err(VmError {
                     error: err.into(),
@@ -611,39 +633,7 @@ impl<'gc> ThreadState<'gc> {
                 unreachable!()
             };
 
-            // For speed, the slice of registers is always 256 wide to avoid bounds checks, and
-            // we try to resize the vector the absolute *minimal* amount between script calls and
-            // returns.
-            //
-            // On a call, the next frames `register_bottom` value is set to the calling frame's
-            // `register_bottom` value plus the `used_registers` for the calling prototype. At the
-            // beginning of the next loop (right below), the register vector is resized to be 256
-            // above the new bottom. After a return, the registers vector is resized to be 256 above
-            // the *previous* `register_bottom`.
-            //
-            // In this way, there is always the expected slice of 256 registers for the top script
-            // frame. Additionally, the amount that the registers vector is resized is minimal: it
-            // is only grown by the `used_registers` value on a call and it is only shrunk by the
-            // `used_registers` value on a return, and the `used_registers` value is usually small,
-            // especially for small functions.
-            //
-            // The sliding register slice for frames will have overlap, so garbage may be left
-            // in the calling frame's register slice when the called frame returns. This will be
-            // important once coroutines are added, so to make sure minimal GC values are kept alive
-            // by a suspended thread, the registers vector should be truncated to the suspending
-            // frame's `register_bottom` plus the `used_registers` value on yield.
-            //
-            // The performance impact of not aggressively truncating and growing the registers
-            // vector (or equivalently just setting the overlapping slice to `Value::Undefined`) is
-            // *incredible* for lots of calls of small functions, so the slight added complexity is
-            // worth it.
-            self.registers
-                .resize(frame.register_bottom + 256, Value::Undefined);
-
-            let registers = (&mut self.registers
-                [frame.register_bottom..frame.register_bottom + 256])
-                .try_into()
-                .unwrap();
+            let registers = self.registers.frame(frame.register_bottom);
             let stack = VecEndSlice::new(&mut self.stack, frame.stack_bottom);
             let stack_frame_boundaries = VecEndSlice::new(
                 &mut self.stack_frame_boundaries,
@@ -693,11 +683,12 @@ impl<'gc> ThreadState<'gc> {
                     } => {
                         match function {
                             Function::Closure(closure) => {
+                                let register_bottom = self.registers.len();
                                 // We only need to preserve the registers that the prototype claims
                                 // to use.
-                                debug_assert!(closure.prototype().used_registers() <= 256);
-                                let register_bottom = frame.register_bottom
-                                    + frame.closure.prototype().used_registers();
+                                self.registers.set_len(
+                                    register_bottom + closure.prototype().used_registers(),
+                                );
 
                                 let stack_bottom = frame.stack_bottom + args_bottom;
 
@@ -767,8 +758,8 @@ impl<'gc> ThreadState<'gc> {
                         }
                     }
                     dispatch::Next::Return { returns_bottom } => {
-                        // The registers vector will be resized at the beginning of the next loop to
-                        // be 256 above the lower frame's `register_bottom`.
+                        // Truncate the register vec on return.
+                        self.registers.set_len(frame.register_bottom);
 
                         // Drain everything on the stack up until the returns.
                         self.stack
@@ -821,26 +812,7 @@ impl<'gc> ThreadState<'gc> {
         let backtrace = self.frames.iter().map(|f| f.backtrace_frame()).collect();
 
         while self.frames.len() > bottom_frame {
-            if let Some(hook_state) = &mut self.hook_state {
-                hook_state.hook.on_return(
-                    ctx,
-                    Backtrace {
-                        frames: &self.frames,
-                    },
-                );
-            }
-
-            match self.frames.pop().unwrap() {
-                Frame::Closure(closure_frame) => {
-                    self.registers.truncate(closure_frame.register_bottom);
-                    self.stack.truncate(closure_frame.stack_bottom);
-                    self.stack_frame_boundaries
-                        .truncate(closure_frame.stack_frame_boundaries_bottom);
-                    self.this.truncate(closure_frame.this_bottom);
-                    self.heap.truncate(closure_frame.heap_bottom);
-                }
-                Frame::Callback(_) => {}
-            }
+            unwind_closure_frame(self, ctx);
         }
 
         Err(VmError {
@@ -848,5 +820,57 @@ impl<'gc> ThreadState<'gc> {
             backtrace,
         }
         .into())
+    }
+}
+
+/// The register vector.
+///
+/// For speed, we want the slice of registers that the VM operates on to be exactly 256 wide to
+/// avoid bounds checks, and we want to resize the register vector as little as absolutely possible
+/// between calls and returns to avoid having to memset the entire register frame. We use this type
+/// to accomplish this.
+#[derive(Default, Collect)]
+#[collect(no_drop)]
+struct RegisterVec<'gc> {
+    registers: Vec<Value<'gc>>,
+    length: usize,
+}
+
+impl<'gc> RegisterVec<'gc> {
+    /// Get the current logical length of the register vector.
+    #[inline]
+    fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Set the current logical length of the register vector.
+    #[inline]
+    fn set_len(&mut self, length: usize) {
+        self.length = length;
+        // Truncate to the extent of the furthest possible valid frame.
+        self.registers.truncate(length + 256);
+    }
+
+    /// Request a 256 wide slice of registers somewhere in the valid range of the register vector.
+    ///
+    /// The `bottom` value must be less than or equal to the logical length, but the returned slice
+    /// may extend beyond this in order to be exactly 256 wide.
+    #[track_caller]
+    #[inline]
+    fn frame(&mut self, bottom: usize) -> &mut [Value<'gc>; 256] {
+        assert!(bottom <= self.length);
+        if self.registers.len() < bottom + 256 {
+            self.registers.resize(bottom + 256, Value::Undefined);
+        }
+        (&mut self.registers[bottom..bottom + 256])
+            .try_into()
+            .unwrap()
+    }
+
+    /// Clear the vector and set the logical length to 0.
+    #[inline]
+    fn clear(&mut self) {
+        self.registers.clear();
+        self.length = 0;
     }
 }
