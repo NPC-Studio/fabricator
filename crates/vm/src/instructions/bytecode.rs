@@ -149,6 +149,7 @@ impl ByteCode {
         self.inst_boundaries.len() - 1
     }
 
+    #[track_caller]
     #[inline]
     pub fn instruction(&self, inst_index: usize) -> Instruction {
         assert!(inst_index < self.instruction_len());
@@ -260,6 +261,7 @@ impl<'gc> Dispatcher<'gc> {
     ///
     /// Panics if given a program counter that does not fall on an instruction start point. `0` is
     /// always a valid program counter for the starting instruction.
+    #[track_caller]
     #[inline]
     pub fn new(bytecode: Gc<'gc, ByteCode>, pc: usize) -> Self {
         assert!(

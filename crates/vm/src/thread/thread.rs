@@ -190,6 +190,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     }
 
     /// Return a new execution context with a stack starting at the new provided bottom value.
+    #[track_caller]
     #[inline]
     pub fn with_stack_bottom(&mut self, stack_bottom: usize) -> Execution<'gc, '_> {
         assert!(self.thread.stack.len() >= self.stack_bottom + stack_bottom);
@@ -368,6 +369,7 @@ impl<'gc, 'a> Execution<'gc, 'a> {
     /// # Panics
     ///
     /// Panics if given an index that is larger than the return value of [`Execution::frame_depth`].
+    #[track_caller]
     #[inline]
     pub fn upper_frame(&self, index: usize) -> BacktraceFrame<'gc> {
         assert!(index < self.thread.frames.len());
@@ -402,6 +404,7 @@ impl<'gc, 'a> Backtrace<'gc, 'a> {
     /// # Panics
     ///
     /// Panics if given an index that is larger than the return value of [`Execution::frame_depth`].
+    #[track_caller]
     #[inline]
     pub fn frame(&self, index: usize) -> BacktraceFrame<'gc> {
         assert!(index < self.frames.len());

@@ -17,6 +17,7 @@ pub struct VecEndSlice<'a, T> {
 }
 
 impl<'a, T> VecEndSlice<'a, T> {
+    #[track_caller]
     #[inline]
     pub fn new(values: &'a mut Vec<T>, bottom: usize) -> Self {
         assert!(
@@ -38,6 +39,7 @@ impl<'a, T> VecEndSlice<'a, T> {
         self.sub_slice(0)
     }
 
+    #[track_caller]
     #[inline]
     pub fn sub_slice(&mut self, bottom: usize) -> VecEndSlice<'_, T> {
         assert!(
