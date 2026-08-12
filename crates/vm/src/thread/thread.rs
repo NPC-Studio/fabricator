@@ -760,7 +760,7 @@ impl<'gc> ThreadState<'gc> {
                     }
 
                     // Pop the returning frame.
-                    self.frames.pop().unwrap();
+                    self.frames.pop();
 
                     // If we have returned from our initial frame, then we can stop executing.
                     if self.frames.len() == bottom_frame {
@@ -799,6 +799,12 @@ impl<'gc> ThreadState<'gc> {
                     frames: &self.frames,
                 },
             ) {
+                hook.on_return(
+                    ctx,
+                    Backtrace {
+                        frames: &self.frames,
+                    },
+                );
                 // Pop the callback frame.
                 self.frames.pop();
                 return Err(err);
