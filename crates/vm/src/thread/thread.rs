@@ -95,11 +95,14 @@ impl<'gc> Thread<'gc> {
     /// Create a top-level [`Execution`] context outside of a callback.
     pub fn exec<R>(self, ctx: Context<'gc>, f: impl FnOnce(Execution<'gc, '_>) -> R) -> R {
         self.enter_state(&ctx, |state| {
-            f(Execution {
+            let ret = f(Execution {
                 thread: state,
                 stack_bottom: 0,
                 this_bottom: 0,
-            })
+            });
+            // Guard against `Execution` object not being dropped.
+            state.this.clear();
+            ret
         })
     }
 
@@ -806,7 +809,7 @@ impl<'gc> ThreadState<'gc> {
                     },
                 );
                 // Pop the callback frame.
-                self.frames.pop();
+                assert!(matches!(self.frames.pop(), Some(Frame::Callback(_))));
                 return Err(err);
             }
         }
@@ -829,8 +832,11 @@ impl<'gc> ThreadState<'gc> {
             );
         }
 
+        // Guard against the `Execution` not being dropped.
+        self.this.truncate(this_bottom);
+
         // Pop the callback frame.
-        self.frames.pop();
+        assert!(matches!(self.frames.pop(), Some(Frame::Callback(_))));
 
         ret
     }
