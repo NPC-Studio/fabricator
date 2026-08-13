@@ -87,17 +87,17 @@ impl ByteCode {
             return Err(ByteCodeEncodingError::BadLastInstruction);
         }
 
-        let mut inst_positions = Vec::with_capacity(insts.len());
+        let mut inst_boundaries = Vec::with_capacity(insts.len());
         let mut pos = 0;
         for &inst in &insts {
-            inst_positions.push(pos);
+            inst_boundaries.push(pos);
             pos += 1 + op_param_len(opcode_for_inst(inst));
         }
-        inst_positions.push(pos);
+        inst_boundaries.push(pos);
 
         let mut bytes = Vec::new();
         for (i, mut inst) in insts.iter().copied().enumerate() {
-            assert_eq!(inst_positions[i], bytes.len());
+            assert_eq!(inst_boundaries[i], bytes.len());
 
             // Rewrite jump instruction targets to be in bytes
 
@@ -109,7 +109,7 @@ impl ByteCode {
                 ) => {
                     match &mut inst {
                         $(Instruction::$jump_name { target, .. })|* => {
-                            *target = inst_positions
+                            *target = inst_boundaries
                                 .get(target.0 as usize)
                                 .and_then(|&p| p.try_into().ok())
                                 .ok_or_else(|| ByteCodeEncodingError::InvalidJump(*target))?;
@@ -136,9 +136,12 @@ impl ByteCode {
             for_each_instruction!(write_instruction);
         }
 
+        // The final instruction boundary should always be the end of the bytecode bytes.
+        assert!(*inst_boundaries.last().unwrap() == bytes.len());
+
         Ok(Self {
             bytes: bytes.into_boxed_slice(),
-            inst_boundaries: inst_positions.into_boxed_slice(),
+            inst_boundaries: inst_boundaries.into_boxed_slice(),
             inst_spans: inst_spans.into_boxed_slice(),
         })
     }
@@ -149,6 +152,11 @@ impl ByteCode {
         self.inst_boundaries.len() - 1
     }
 
+    /// Return the instruction at the given index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `inst_index` is not less than the instruction length.
     #[track_caller]
     #[inline]
     pub fn instruction(&self, inst_index: usize) -> Instruction {
@@ -157,22 +165,35 @@ impl ByteCode {
         unsafe { self.decode_instruction_at(pc) }
     }
 
+    /// Return the span for the instruction at the given index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `inst_index` is not less than the instruction length.
+    #[track_caller]
     #[inline]
     pub fn span(&self, inst_index: usize) -> Span {
         self.inst_spans[inst_index]
     }
 
-    /// Return the program counter for the given instruction index. The `inst_index` may be any
-    /// *value up to and including* the instruction length (so one past the final instruction).
+    /// Return the program counter for the given instruction index.
+    ///
+    /// The `inst_index` may be any value *up to and including* the instruction length (so one past
+    /// the final instruction).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `inst_index` is out of range.
     #[inline]
-    pub fn pc_for_instruction_index(&self, inst_index: usize) -> usize {
-        self.inst_boundaries[inst_index]
+    pub fn pc_for_instruction_index(&self, inst_index: usize) -> Option<usize> {
+        self.inst_boundaries.get(inst_index).copied()
     }
 
     /// Find the instruction index for the given program counter value.
     ///
     /// If the given `pc` is not the start of an instruction or the exact end of bytecode, will
-    /// return `None`.
+    /// return `None`. This can return an index *up to and including* the instruction length if the
+    /// program counter has reached the end of bytecode.
     #[inline]
     pub fn instruction_index_for_pc(&self, pc: usize) -> Option<usize> {
         self.inst_boundaries

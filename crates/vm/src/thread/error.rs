@@ -101,7 +101,11 @@ impl<'gc> ClosureBacktraceFrame<'gc> {
         let chunk = self.closure.prototype().chunk();
         let prototype = self.closure.prototype();
         let bytecode = prototype.bytecode();
-        let span = bytecode.span(self.instruction);
+        let span = if self.instruction < bytecode.instruction_len() {
+            bytecode.span(self.instruction)
+        } else {
+            prototype.reference().span().end_span()
+        };
         chunk.line_number(span.start())
     }
 
