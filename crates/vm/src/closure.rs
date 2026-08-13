@@ -645,12 +645,22 @@ impl<'gc> Closure<'gc> {
     }
 
     /// Create a new closure using the given `upvalues` array to lookup any required upvalues.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given `heap` slice is not the same length as the prototype's heap variable
+    /// slice.
     pub fn from_parts(
         mc: &Mutation<'gc>,
         proto: Gc<'gc, Prototype<'gc>>,
         this: Value<'gc>,
         heap: Gc<'gc, Box<[HeapVar<'gc>]>>,
     ) -> Result<Self, MissingUpValue> {
+        assert_eq!(
+            heap.len(),
+            proto.heap_vars.len(),
+            "`heap` must be the appropriate length for the prototype"
+        );
         Ok(Self(Gc::new(mc, ClosureInner { proto, this, heap })))
     }
 
