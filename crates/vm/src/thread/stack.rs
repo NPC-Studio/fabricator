@@ -65,6 +65,7 @@ impl<'gc, 'a> Stack<'gc, 'a> {
         self.slice.clear();
     }
 
+    #[track_caller]
     #[inline]
     pub fn resize(&mut self, size: usize) {
         self.slice.resize(size, Value::Undefined);

@@ -21,7 +21,7 @@ impl<'a, T> VecEndSlice<'a, T> {
     #[inline]
     pub fn new(values: &'a mut Vec<T>, bottom: usize) -> Self {
         assert!(
-            values.len() >= bottom,
+            bottom <= values.len(),
             "slice bottom {bottom} is greater than vec len {}",
             values.len()
         );
@@ -42,10 +42,10 @@ impl<'a, T> VecEndSlice<'a, T> {
     #[track_caller]
     #[inline]
     pub fn sub_slice(&mut self, bottom: usize) -> VecEndSlice<'_, T> {
+        let len = self.values.len() - self.bottom;
         assert!(
-            self.values.len() - self.bottom >= bottom,
-            "sub-slice bottom {bottom} is greater than slice len {}",
-            self.values.len() - self.bottom,
+            bottom <= len,
+            "sub-slice bottom {bottom} is greater than slice len {len}"
         );
         VecEndSlice {
             values: self.values,
@@ -72,17 +72,23 @@ impl<'a, T> VecEndSlice<'a, T> {
         self.values.truncate(self.bottom);
     }
 
+    #[track_caller]
     #[inline]
     pub fn resize(&mut self, size: usize, value: T)
     where
         T: Clone,
     {
-        self.values.resize(self.bottom + size, value);
+        self.values.resize(
+            self.bottom
+                .checked_add(size)
+                .expect("size overflow in `VecEndSlice::resize`"),
+            value,
+        );
     }
 
     #[inline]
     pub fn truncate(&mut self, size: usize) {
-        self.values.truncate(self.bottom + size);
+        self.values.truncate(self.bottom.saturating_add(size));
     }
 
     #[inline]
@@ -98,21 +104,20 @@ impl<'a, T> VecEndSlice<'a, T> {
     #[track_caller]
     #[inline]
     pub fn remove(&mut self, index: usize) -> T {
-        self.values.remove(self.bottom + index)
+        self.values.remove(
+            self.bottom
+                .checked_add(index)
+                .expect("size overflow in `VecEndSlice::remove`"),
+        )
     }
 
     #[inline]
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> vec::Drain<'_, T> {
-        let start = match range.start_bound().cloned() {
-            Bound::Included(r) => Bound::Included(self.bottom + r),
-            Bound::Excluded(r) => Bound::Excluded(self.bottom + r),
+        let start = match range.start_bound() {
             Bound::Unbounded => Bound::Included(self.bottom),
+            bound => bound.map(|&r| self.bottom.saturating_add(r)),
         };
-        let end = match range.end_bound().cloned() {
-            Bound::Included(r) => Bound::Included(self.bottom + r),
-            Bound::Excluded(r) => Bound::Excluded(self.bottom + r),
-            Bound::Unbounded => Bound::Unbounded,
-        };
+        let end = range.end_bound().map(|&r| self.bottom.saturating_add(r));
         self.values.drain((start, end))
     }
 }
