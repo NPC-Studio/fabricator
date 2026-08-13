@@ -105,8 +105,8 @@ pub struct Prototype<'gc> {
     prototypes: Box<[Gc<'gc, Prototype<'gc>>]>,
     static_vars: Box<[SharedValue<'gc>]>,
     heap_vars: Box<[HeapVarDescriptor]>,
-    used_registers: usize,
-    owned_heap: usize,
+    max_used_register: Option<RegIdx>,
+    max_owned_heap: Option<HeapIdx>,
     constructor_super: Gc<'gc, Lock<Option<Object<'gc>>>>,
 }
 
@@ -122,11 +122,11 @@ impl<'gc> Prototype<'gc> {
         static_vars: Box<[SharedValue<'gc>]>,
         heap_vars: Box<[HeapVarDescriptor]>,
     ) -> Result<Self, PrototypeVerificationError> {
-        let mut owned_heap = 0;
+        let mut max_owned_heap = None;
         for &heap_var in &heap_vars {
             match heap_var {
                 HeapVarDescriptor::Owned(idx) => {
-                    owned_heap = owned_heap.max(idx.index() + 1);
+                    max_owned_heap = max_owned_heap.max(Some(idx));
                 }
                 HeapVarDescriptor::Static(idx) => {
                     if idx.index() >= static_vars.len() {
@@ -158,9 +158,7 @@ impl<'gc> Prototype<'gc> {
 
         let mut max_used_register = None;
         let mut mark_reg_idx = |reg_idx: RegIdx| {
-            if max_used_register.is_none_or(|max: RegIdx| reg_idx.0 > max.0) {
-                max_used_register = Some(reg_idx);
-            }
+            max_used_register = max_used_register.max(Some(reg_idx));
         };
 
         for (inst_index, (inst, _)) in bytecode.decode().enumerate() {
@@ -475,8 +473,8 @@ impl<'gc> Prototype<'gc> {
             prototypes,
             static_vars,
             heap_vars,
-            used_registers: max_used_register.map(|r| r.0 as usize + 1).unwrap_or(0),
-            owned_heap,
+            max_used_register,
+            max_owned_heap,
             constructor_super,
         })
     }
@@ -547,9 +545,12 @@ impl<'gc> Prototype<'gc> {
         self.constructor_super.get()
     }
 
+    /// Returns the required length for a register slice for this prototype.
+    ///
+    /// This will return 1 + the maximum register used by any instruction.
     #[inline]
     pub fn used_registers(&self) -> usize {
-        self.used_registers
+        self.max_used_register.map(|r| r.index()).unwrap_or(0) + 1
     }
 
     /// Returns the required length for a buffer of owned heap values for this prototype.
@@ -557,7 +558,7 @@ impl<'gc> Prototype<'gc> {
     /// This will return 1 + the maximum "slot" used by any `HeapVarDescriptor::Owned` variable.
     #[inline]
     pub fn owned_heap(&self) -> usize {
-        self.owned_heap
+        self.max_owned_heap.map(|r| r.index()).unwrap_or(0) + 1
     }
 
     pub fn has_upvalues(&self) -> bool {
