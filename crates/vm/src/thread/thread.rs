@@ -544,7 +544,7 @@ impl<'gc> ThreadState<'gc> {
                 stack_frame_boundaries_bottom,
                 this_bottom,
                 heap_bottom,
-                dispatcher: instructions::Dispatcher::new(closure.prototype().bytecode(), 0),
+                dispatcher: instructions::Dispatcher::new(closure.prototype().bytecode()),
             })
         });
 
@@ -704,7 +704,6 @@ impl<'gc> ThreadState<'gc> {
                                 heap_bottom,
                                 dispatcher: instructions::Dispatcher::new(
                                     closure.prototype().bytecode(),
-                                    0,
                                 ),
                             }));
 

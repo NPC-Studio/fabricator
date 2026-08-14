@@ -185,8 +185,8 @@ impl ByteCode {
     ///
     /// Panics if `inst_index` is out of range.
     #[inline]
-    pub fn pc_for_instruction_index(&self, inst_index: usize) -> Option<usize> {
-        self.inst_boundaries.get(inst_index).copied()
+    pub fn pc_for_instruction_index(&self, inst_index: usize) -> usize {
+        self.inst_boundaries[inst_index]
     }
 
     /// Find the instruction index for the given program counter value.
@@ -220,7 +220,7 @@ impl ByteCode {
     // Must be called with a `pc` that is the start of a valid instruction.
     unsafe fn decode_instruction_at(&self, pc: usize) -> Instruction {
         unsafe {
-            let mut ptr = self.bytes.as_ptr().add(pc);
+            let mut ptr = self.bytes.as_ptr().byte_add(pc);
             let opcode: OpCode = bytecode_read(&mut ptr);
 
             macro_rules! decode {
@@ -275,36 +275,18 @@ pub struct Dispatcher<'gc> {
 }
 
 impl<'gc> Dispatcher<'gc> {
-    /// Construct a new `Dispatcher` for the given bytecode, restoring the given `pc` program
-    /// counter.
-    ///
-    /// # Panics
-    ///
-    /// Panics if given a program counter that does not fall on an instruction start point. `0` is
-    /// always a valid program counter for the starting instruction.
-    #[track_caller]
+    /// Construct a new `Dispatcher` for the given bytecode.
     #[inline]
-    pub fn new(bytecode: Gc<'gc, ByteCode>, pc: usize) -> Self {
-        assert!(
-            pc == 0
-                || pc == bytecode.bytes.len()
-                || bytecode.instruction_index_for_pc(pc).is_some()
-        );
+    pub fn new(bytecode: Gc<'gc, ByteCode>) -> Self {
         Self {
             bytecode,
-            ptr: unsafe { bytecode.bytes.as_ptr().add(pc) },
+            ptr: bytecode.bytes.as_ptr(),
         }
     }
 
     #[inline]
     pub fn bytecode(&self) -> Gc<'gc, ByteCode> {
         self.bytecode
-    }
-
-    /// Returns true if this `Dispatcher` has reached the end of the bytecode.
-    #[inline]
-    pub fn at_end(&self) -> bool {
-        self.pc() == self.bytecode.bytes.len()
     }
 
     /// Returns the current program counter.
@@ -315,13 +297,39 @@ impl<'gc> Dispatcher<'gc> {
     /// same [`ByteCode`] and a stored program counter.
     #[inline]
     pub fn pc(&self) -> usize {
-        unsafe { self.ptr.offset_from(self.bytecode.bytes.as_ptr()) as usize }
+        unsafe {
+            self.ptr
+                .byte_offset_from_unsigned(self.bytecode.bytes.as_ptr()) as usize
+        }
+    }
+
+    /// Set the current program counter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if given a program counter that does not fall on an instruction start point or the
+    /// end of bytecode. `0` is always a valid program counter for the starting instruction.
+    #[track_caller]
+    #[inline]
+    pub fn set_pc(&mut self, pc: usize) {
+        assert!(
+            pc == 0
+                || pc == self.bytecode.bytes.len()
+                || self.bytecode.instruction_index_for_pc(pc).is_some()
+        );
+        self.ptr = unsafe { self.bytecode.bytes.as_ptr().byte_add(pc) };
     }
 
     /// Returns the current instruction index.
     #[inline]
     pub fn instruction_index(&self) -> usize {
         self.bytecode.instruction_index_for_pc(self.pc()).unwrap()
+    }
+
+    /// Returns true if this `Dispatcher` has reached the end of the bytecode.
+    #[inline]
+    pub fn at_end(&self) -> bool {
+        self.pc() == self.bytecode.bytes.len()
     }
 
     /// Dispatch instructions to the given [`Dispatch`] impl.
@@ -419,14 +427,14 @@ impl<'gc> Dispatcher<'gc> {
 
                         OpCode::Jump => {
                             let params::Jump { target } = bytecode_read(&mut self.ptr);
-                            self.ptr = self.bytecode.bytes.as_ptr().add(target.0 as usize);
+                            self.ptr = self.bytecode.bytes.as_ptr().byte_add(target.0 as usize);
                         }
 
                         $(
                             OpCode::$jump_if_name => {
                                 let params::$jump_if_name { target  $(, $jump_if_field)* } = bytecode_read(&mut self.ptr);
                                 if dispatch.$jump_if_snake_name($($jump_if_field),*)? {
-                                    self.ptr = self.bytecode.bytes.as_ptr().add(target.0 as usize);
+                                    self.ptr = self.bytecode.bytes.as_ptr().byte_add(target.0 as usize);
                                 }
                             }
                         )*
@@ -507,7 +515,7 @@ fn bytecode_write<T: Copy>(buf: &mut Vec<MaybeUninit<u8>>, val: T) {
     unsafe {
         let len = buf.len();
         buf.reserve(mem::size_of::<T>());
-        let p = buf.as_mut_ptr().add(len) as *mut T;
+        let p = buf.as_mut_ptr().byte_add(len) as *mut T;
         p.write(val);
         buf.set_len(len + mem::size_of::<T>());
     }
@@ -519,7 +527,7 @@ unsafe fn bytecode_read<T: Copy>(ptr: &mut *const MaybeUninit<u8>) -> T {
     unsafe {
         let p = *ptr as *const T;
         let v = p.read();
-        *ptr = ptr.add(mem::size_of::<T>());
+        *ptr = ptr.byte_add(mem::size_of::<T>());
         v
     }
 }
