@@ -1,8 +1,7 @@
 use std::{cell::Cell, error::Error, fmt, rc::Rc};
 
-use fabricator::api::magic::MagicExt;
 use fabricator_compiler as compiler;
-use fabricator_stdlib::StdlibContext;
+use fabricator_stdlib::{StdlibContext as _, util::MagicExt as _};
 use fabricator_vm as vm;
 use gc_arena::{Collect, Gc};
 
@@ -14,16 +13,14 @@ fn test_vm_call_return_hooks() {
         let mut magic = vm::MagicSet::new();
         magic.merge(&ctx.stdlib());
 
-        magic
-            .add_constant(
-                &ctx,
-                ctx.intern("test_callback"),
-                vm::Callback::from_fn(&ctx, |_ctx, mut exec| {
-                    exec.stack().clear();
-                    Ok(())
-                }),
-            )
-            .unwrap();
+        magic.insert_constant(
+            ctx,
+            "test_callback",
+            vm::Callback::from_fn(&ctx, |_ctx, mut exec| {
+                exec.stack().clear();
+                Ok(())
+            }),
+        );
 
         let magic = Gc::new(&ctx, magic);
 
@@ -192,16 +189,14 @@ fn test_vm_call_return_hook_count_with_error() {
         let mut magic = vm::MagicSet::new();
         magic.merge(&ctx.stdlib());
 
-        magic
-            .add_constant(
-                &ctx,
-                ctx.intern("test_callback"),
-                vm::Callback::from_fn(&ctx, |_ctx, mut exec| {
-                    exec.stack().clear();
-                    Ok(())
-                }),
-            )
-            .unwrap();
+        magic.insert_constant(
+            ctx,
+            "test_callback",
+            vm::Callback::from_fn(&ctx, |_ctx, mut exec| {
+                exec.stack().clear();
+                Ok(())
+            }),
+        );
 
         let magic = Gc::new(&ctx, magic);
 
