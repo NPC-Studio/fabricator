@@ -54,7 +54,7 @@ pub fn eliminate_dead_code<S>(ir: &mut ir::Function<S>) {
         }
     }
 
-    let predecessors = Predecessors::compute(ir.blocks.ids(), |b| {
+    let predecessors = Predecessors::compute(reachable_blocks.iter().copied(), |b| {
         ir.blocks[b]
             .exit
             .kind
