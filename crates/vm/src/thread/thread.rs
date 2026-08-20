@@ -239,7 +239,8 @@ impl<'gc, 'a> Execution<'gc, 'a> {
         ctx: Context<'gc>,
         callback: Callback<'gc>,
     ) -> Result<(), RuntimeError> {
-        self.thread.call_callback(ctx, callback, self.stack_bottom)
+        self.thread
+            .call_callback(ctx, callback, self.stack_bottom, None)
     }
 
     /// Call a `Function` within a callback.
@@ -724,11 +725,14 @@ impl<'gc> ThreadState<'gc> {
                             // Push the provided `this` value if the callback does not have
                             // one bound, otherwise the bound `this` value will be set by
                             // `Callback::call`.
-                            if !this.is_undefined() && callback.this().is_undefined() {
-                                self.this.push(this)
-                            }
+                            let this = if !this.is_undefined() && callback.this().is_undefined() {
+                                Some(this)
+                            } else {
+                                None
+                            };
 
-                            if let Err(err) = self.call_callback(ctx, callback, stack_bottom) {
+                            if let Err(err) = self.call_callback(ctx, callback, stack_bottom, this)
+                            {
                                 break err.into();
                             }
                         }
@@ -790,6 +794,7 @@ impl<'gc> ThreadState<'gc> {
         ctx: Context<'gc>,
         callback: Callback<'gc>,
         stack_bottom: usize,
+        with_this: Option<Value<'gc>>,
     ) -> Result<(), RuntimeError> {
         let this_bottom = self.this.len();
         self.frames.push(Frame::Callback(callback));
@@ -813,14 +818,20 @@ impl<'gc> ThreadState<'gc> {
             }
         }
 
+        let mut exec = Execution {
+            thread: self,
+            stack_bottom,
+            this_bottom,
+        };
         let ret = callback.call(
             ctx,
-            Execution {
-                thread: self,
-                stack_bottom,
-                this_bottom,
+            if let Some(this) = with_this {
+                exec.with_this(this)
+            } else {
+                exec.reborrow()
             },
         );
+        drop(exec);
 
         if let Some(hook) = &mut self.hook {
             hook.on_return(
