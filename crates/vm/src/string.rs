@@ -143,9 +143,15 @@ unsafe impl<'gc> Collect<'gc> for InternedStringsInner<'gc> {
     const NEEDS_TRACE: bool = true;
 
     fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+        let _span = tc::span!("GC: intern table");
+
         // SAFETY: No new Gc pointers are adopted or reparented.
         let mut strings = unsafe { self.0.unlock_unchecked() }.borrow_mut();
-        strings.retain(|_, s| !s.is_dropped());
+        {
+            let _retain = tc::span!("GC: intern table retain");
+            strings.retain(|_, s| !s.is_dropped());
+        }
+        tc::plot!("interned strings", strings.len() as f64);
         strings.trace(cc);
     }
 }

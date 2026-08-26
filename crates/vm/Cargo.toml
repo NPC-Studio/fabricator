@@ -8,3 +8,7 @@ license.workspace = true
 gc-arena.workspace = true
 thiserror.workspace = true
 rustc-hash.workspace = true
+tc.workspace = true
+
+[features]
+profile = ["tc/enable"]
